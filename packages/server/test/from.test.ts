@@ -98,3 +98,29 @@ describe("t-096 · display names over the API", () => {
     expect(after.task).toMatchObject({ id: "L-1", label: "T-07 登录", title: "登录超时" });
   });
 });
+
+describe("t-098 · over the API, 迁移完成 waits for the human", () => {
+  it("is refused with the rule name until the check card is answered 对, then accepted", async () => {
+    // its own server: an earlier test in this file already answered a card, and this one is about the state before that
+    const own = createApp({ store: new MemoryStore(), token: "k2", human: "human", sha: "abc1234", alertIntervalMs: 0 });
+    await new Promise<void>((r) => own.listen(0, "127.0.0.1", r));
+    const at = `http://127.0.0.1:${(own.address() as AddressInfo).port}`;
+    const post = async (actor: string, body: unknown) => {
+      const r = await fetch(`${at}/events`, { method: "POST", headers: { authorization: "Bearer k2", "x-actor": actor, "content-type": "application/json", "x-ateam-client": "2" }, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json() };
+    };
+    const base = at; // the rest of this test talks to its own server
+    const fact = () => post("pm", { kind: "reading", surface: "project", key: "migration.done", value: true, from: "pm/广播.md#最后一条", measured_at: new Date(Date.now() - 60_000).toISOString() });
+    const early = await fact();
+    expect(early.status).toBe(409);
+    expect(early.body).toMatchObject({ error: "rejected", rule: "migration" });
+    expect(early.body.message).toContain("点「对」");
+    await post("pm", { kind: "note", body: "导入完成：走完了" });
+    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: "Bearer k2", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
+    expect((await fact()).status).toBe(409); // a card the human has not answered is not permission
+    await fetch(`${base}/decide`, { method: "POST", headers: { authorization: "Bearer k2", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
+    expect((await fact()).status).toBe(201);
+    await new Promise<void>((r) => own.close(() => r()));
+  });
+});

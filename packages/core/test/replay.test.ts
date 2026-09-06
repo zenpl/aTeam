@@ -2025,3 +2025,65 @@ describe("t-096 · a display name people recognise, next to an id that never mov
     expect("label" in t3).toBe(true); // the field exists on the board shape, absent when unset
   });
 });
+
+describe("t-097 / t-098 · the invitation goes back at once; the old channel waits for the human's 对", () => {
+  const moved = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "m-1", title: "旧任务", criteria: ["x"], from: "pm/单据#1", label: "T-01" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "m-1", touches: ["m-1"] });
+    return emit(store, c, { kind: "note", actor: "pm", body: "导入完成：搬完了" });
+  };
+
+  it("t-097: the invitation is sent and recorded before any card is answered; a channel nobody can write to becomes one card for the human", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const done = await moved(store, c);
+    const [card] = await runFollowUps(store, done, HUMAN, c.now());
+    // the importer puts the link back where the team already is, and says so here — with the card still unanswered
+    const sent = await emit(store, c, { kind: "note", actor: "pm", body: `${"邀请已发回旧渠道："}pm/广播.md（提交 abc1234）` });
+    expect(reduce(await store.read(), c.now()).instructions.get((card as { id: string }).id)!.chosen).toBeUndefined();
+    expect(sent.body.startsWith("邀请已发回旧渠道：")).toBe(true);
+    expect(sent.at).toBeTruthy(); // where and when, in the log
+    // a medium nobody can write to: one instruction to the human, in pd's words, using the card shape we already have
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: `${"把这个链接发给他们："}https://ateam.example/invite/abc`, ack_by: c.iso(min(60)) });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((x) => x.id)).toContain(ask.id);
+    expect(b.needs_human.find((x) => x.id === ask.id)!.body).toBe("把这个链接发给他们：https://ateam.example/invite/abc");
+    // who has not arrived is the existing presence machinery, not something new here
+    expect(b.presence.some((p) => p.status === "missing")).toBe(true);
+  });
+
+  it("t-098: 迁移完成 cannot be recorded before the human answered 对 — proved by trying it at every earlier moment", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const finish = () => emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "migration.done", value: true, from: "pm/广播.md#最后一条", measured_at: c.iso(-min(1)) });
+    // before anything
+    expect((await rejected(finish())).rule).toBe("migration");
+    const done = await moved(store, c);
+    // after the import, before the card is answered
+    expect((await rejected(finish())).message).toContain("还没在核对卡上点「对」");
+    const [card] = await runFollowUps(store, done, HUMAN, c.now());
+    const id = (card as { id: string }).id;
+    // the card exists but is unanswered
+    expect((await rejected(finish())).rule).toBe("migration");
+    // answered 有漏: still refused
+    const missing = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 有漏", decision: true, decides: { of: id, option: "有漏" }, refs: [id] });
+    expect((await rejected(finish())).rule).toBe("migration");
+    const told = await runFollowUps(store, missing, HUMAN, c.now());
+    expect((told[0] as { body: string }).body).toContain("回去核对旧单据再补");
+    // the importer fixes things and says so again; the service asks once more; this time the human says 对
+    const again = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：补完了" });
+    const [card2] = await runFollowUps(store, again, HUMAN, c.now());
+    const id2 = (card2 as { id: string }).id;
+    expect((await rejected(finish())).rule).toBe("migration"); // a fresh unanswered card is still not permission
+    const ok = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 对", decision: true, decides: { of: id2, option: "对" }, refs: [id2] });
+    const out = await runFollowUps(store, ok, HUMAN, c.now());
+    expect((out[0] as { to: string; body: string }).to).toBe("pm");
+    expect((out[0] as { body: string }).body).toContain("这里只读");
+    // only now does it land, and it carries where and when, like any imported fact (t-089)
+    const fact = await finish();
+    expect(fact).toMatchObject({ key: "migration.done", from: "pm/广播.md#最后一条" });
+    expect(fact.measured_at).toBeTruthy();
+    const rs = [...reduce(await store.read(), c.now()).readings.values()].find((r) => r.reading.key === "migration.done")!;
+    expect(rs.expired).toBe(true); // it came from the old place, so it follows t-089 like everything else carried in
+  });
+});

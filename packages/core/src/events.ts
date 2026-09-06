@@ -252,6 +252,15 @@ export const MIGRATION_ASK_TITLE = "搬过来了，对吗？";
 export const MIGRATION_OK = "对";
 export const MIGRATION_MISSING = "有漏";
 export const MIGRATION_OPTIONS = [MIGRATION_OK, MIGRATION_MISSING];
+/** t-097 (M6): the note the importer writes once it has put the invitation back where the team already is. */
+export const INVITE_SENT_PREFIX = "邀请已发回旧渠道：";
+/** t-097: when the old place cannot be written to, the human forwards the link. pd's wording (UC-S9). */
+export const FORWARD_LINK = "把这个链接发给他们：";
+/**
+ * t-098 (M7): the fact that says the move is finished. Writing it is refused until the human answered 对 on the check
+ * card — that button is the authorisation to touch someone else's channel, so nothing may claim the move is over before it.
+ */
+export const MIGRATION_DONE_KEY = "migration.done";
 /** What the first node is told to do once the human answered (M7 does the old channel itself). */
 export const MIGRATION_FINISH = "human 说清单对：去旧渠道留最后一条「这里只读」，并记一条事实「迁移完成」。";
 export const MIGRATION_PATCH = "human 说有漏：回去核对旧单据再补，补完再发一条「导入完成：…」，我会重新问他。";
