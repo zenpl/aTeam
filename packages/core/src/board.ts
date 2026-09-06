@@ -729,6 +729,29 @@ function splitRelease(s: State, b: Board) {
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
 }
 
+/**
+ * t-100 (display only, changes nothing in the log): the ids whose display name a reader could mistake for another row —
+ * because it is another row's id, or because two rows carry the same display name. Rows outside this set stay clean.
+ */
+export function ambiguousLabels(b: Board): Set<string> {
+  const tasks = Object.values(b.tasks).flat();
+  const ids = new Set(tasks.map((t) => t.id));
+  const byLabel = new Map<string, string[]>();
+  for (const t of tasks) if (t.label) byLabel.set(t.label, [...(byLabel.get(t.label) ?? []), t.id]);
+  const out = new Set<string>();
+  for (const t of tasks) {
+    if (!t.label) continue;
+    if ((byLabel.get(t.label) ?? []).length > 1 || (ids.has(t.label) && t.label !== t.id)) out.add(t.id);
+  }
+  return out;
+}
+
+/** t-100: what one row calls a task — its display name and title, and the real id only when the name is ambiguous. */
+export function taskHeading(t: { id: string; title: string; label?: string }, ambiguous: Set<string>): string {
+  const name = t.label ? `${t.label} ${t.title}` : t.title;
+  return ambiguous.has(t.id) ? `${name} (${t.id})` : name;
+}
+
 export function boardTask(b: Board, id: string): BoardTask | undefined {
   for (const list of Object.values(b.tasks)) for (const t of list) if (t.id === id) return t;
   return undefined;

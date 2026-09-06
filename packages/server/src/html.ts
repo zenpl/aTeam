@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -475,6 +475,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);
   const inline = inlinedTasks(b);
+  const ambiguous = ambiguousLabels(b); // t-100: the same judgment the CLI uses
   d.push(`<section id="tasks"><h3>${UI.tasks} <span class="meta">${total}</span></h3>`);
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     const list = b.tasks[status] ?? [];
@@ -489,12 +490,12 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
       const href = `${base}/task/${encodeURIComponent(task.id)}`;
       if (st && inline.has(task.id)) {
         // This version's and still-moving tasks carry their criteria and evidence inline (t-065).
-        d.push(`<li><details><summary>${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
+        d.push(`<li><details><summary>${esc(taskHeading(task, ambiguous))}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
         d.push(taskDetail(st, t, ago, href, MOVING.has(status), task.from));
         d.push(`</details></li>`);
       } else {
         // Earlier tasks: the title and one line; everything else lives on the task page.
-        d.push(`<li class="brief"><a href="${esc(href)}">${esc(task.title)}</a>${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</li>`);
+        d.push(`<li class="brief"><a href="${esc(href)}">${esc(taskHeading(task, ambiguous))}</a>${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</li>`);
       }
     }
     d.push(`</ul>`);
@@ -599,7 +600,7 @@ export function renderTask(b: Board, s: State, id: string, opts: RenderOptions =
   if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
   if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
   out.push(`<p class="meta"><a href="${esc(base)}/">${UI.backToBoard}</a></p>`);
-  out.push(`<section class="now task-page"><h2>${esc(task.shows ?? task.title)}</h2>`);
+  out.push(`<section class="now task-page"><h2>${esc(task.shows ?? taskHeading(task, ambiguousLabels(b)))}</h2>`);
   out.push(`<p class="meta">${bits.join(" · ")}</p>`);
   out.push(taskDetail(st, t, ago, null, true, task.from));
   const seams = b.seams.filter((x) => x.tasks.includes(id));

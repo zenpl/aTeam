@@ -1103,3 +1103,54 @@ describe("t-099 · 搬来的东西看得见来自哪一条", () => {
     } finally { await v.stop(); }
   });
 });
+
+describe("t-100 · 显示名撞了才附真 id", () => {
+  const setup = async (v: ReturnType<typeof server>) => {
+    // T-99 is another task's display name AND the third task's id: two different kinds of collision at once
+    await v.post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "T-99", title: "限流", criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-4", title: "本地建的", criteria: ["可用"] });
+    for (const id of ["L-1", "L-2", "T-99", "L-3", "L-4"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+  };
+  const rest = (html: string) => html.slice(html.indexOf('<details class="rest"'));
+
+  it("two rows sharing a display name, and a display name that is another row's id, carry the real id; the rest stay clean", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const r = rest(await v.page());
+      // both T-99 rows are ambiguous twice over: same name as each other, and the name is a real id
+      expect(r).toContain("T-99 登录超时 (L-1)");
+      expect(r).toContain("T-99 导出乱码 (L-2)");
+      // a display name nobody else uses stays clean, and so does a task with no display name
+      expect(r).toContain("T-07 日志脱敏");
+      expect(r).not.toContain("T-07 日志脱敏 (L-3)");
+      expect(r).toContain("本地建的");
+      expect(r).not.toContain("本地建的 (L-4)");
+      // the task whose id is T-99 has no display name of its own: it is not ambiguous, so nothing is appended
+      expect(r).toContain("限流");
+      expect(r).not.toContain("限流 (T-99)");
+    } finally { await v.stop(); }
+  });
+
+  it("the task page uses the same heading, and nothing about the log changes", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const page = await (await fetch(`${v.base}/task/L-1`, { headers: { accept: "text/html" } })).text();
+      expect(page).toContain("<h2>T-99 登录超时 (L-1)</h2>");
+      const clean = await (await fetch(`${v.base}/task/L-3`, { headers: { accept: "text/html" } })).text();
+      expect(clean).toContain("<h2>T-07 日志脱敏</h2>");
+      // ids and display names are untouched: the collision only changes what is printed
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      const byId = Object.fromEntries(Object.values(b.tasks).flat().map((t) => [t.id, t]));
+      expect(byId["L-1"].label).toBe("T-99");
+      expect(byId["L-2"].label).toBe("T-99");
+      expect(byId["T-99"].id).toBe("T-99");
+    } finally { await v.stop(); }
+  });
+});
