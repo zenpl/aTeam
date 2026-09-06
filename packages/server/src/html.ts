@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -19,6 +19,17 @@ const JUST_MS = 60 * 60_000;
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null }
 
+/** The migration check card (t-095): the service's own 「搬过来了，对吗？」, whose numbers it counted itself (t-092). */
+export function isMigrationCard(i: { body: string }): boolean {
+  return i.body.startsWith(MIGRATION_ASK_TITLE);
+}
+
+/** Who is still patching a migration the human said was incomplete; null when nobody is (t-095). */
+export function patchingRole(b: Board): string | null {
+  const i = b.instructions.find((x) => x.from === SERVICE_ACTOR && x.body === MIGRATION_PATCH && x.status !== "acked");
+  return i ? i.to : null;
+}
+
 /** The contact card (t-069): the instruction whose body is the S0 second question. */
 export function isContactCard(i: { body: string }): boolean {
   return i.body === CONTACT_ASK;
@@ -32,6 +43,23 @@ export function isContactCard(i: { body: string }): boolean {
 export const CONTACT_ASK_KEY = "alert.ask";
 export function contactEnabled(b: Board): boolean {
   return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
+}
+
+/** Machine words (a fact name, a command, a sha) inside a human sentence are set as code, so the eye can skip them. */
+export function machineWords(text: string): string {
+  return esc(text).replace(/\b(?:[a-z][a-z0-9]*:[a-z][a-z0-9.]*|ateam [a-z-]+|git|[0-9a-f]{7,40})\b/g, (m) => `<code>${m}</code>`);
+}
+
+/**
+ * t-091: 「有 N 件已验的等一次部署」 from the counts t-078 derives, never recomputed here. Empty when nothing waits;
+ * when the containment fact is missing or stale the board says why instead of inventing a number (t-078's shape).
+ */
+export function waitingLine(b: Board): string {
+  const c = b.release?.counts;
+  if (!c) return "";
+  if (c.pending_deploy > 0) return c.unknown ? `${UI.waitingDeploy(c.pending_deploy).replace(/。$/, "；")}${UI.waitingAlsoUnknown(c.unknown)}` : UI.waitingDeploy(c.pending_deploy);
+  if (c.unknown > 0) return UI.waitingUnknown(b.release.basis || "");
+  return "";
 }
 
 /** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
@@ -171,6 +199,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
         out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      } else if (isMigrationCard(i)) {
+        // t-095: the counts are the question; they are read, not folded away behind 「细节」.
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else {
         out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p>`);
@@ -184,7 +216,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
         if (invite) out.push(inviteLine(invite));
       } else if (kind === "ask") {
-        const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
+        // t-095: the migration card has no default; 「对」 is the primary button because it is the answer that lets the
+        // importer finish, and the human is told nothing happens to the old channel until they answer.
+        const primary = (o: string) => o === i.default || (isMigrationCard(i) && o === MIGRATION_OK);
+        const buttons = i.options!.map((o) => `<button class="btn${primary(o) ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
@@ -213,7 +248,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const { title } = cardTitle(just.i);
     const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
-    const what = isContactCard(just.i) && just.i.chosen
+    const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
+      : isContactCard(just.i) && just.i.chosen
       ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
@@ -232,6 +268,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   // ---------- 现在 ----------
   out.push(`<section class="now" id="now"><h2>${UI.now}</h2>`);
   out.push(`<div class="focus"><span class="label">${UI.focus}</span>${b.focus ? `<p class="focus-text">${esc(str(b.focus.body))}</p><span class="meta">${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}</span>` : `<p class="focus-text quiet">${UI.noFocus}</p>`}</div>`);
+
+  // t-095: the human said the migration was incomplete; the importer is patching it. One line, no button.
+  const patching = patchingRole(b);
+  if (patching) out.push(`<p class="meta patching">${esc(UI.migrationPatching(patching))}</p>`);
 
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
   const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");
@@ -257,6 +297,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
+  // t-091: one standing line for what is verified and not yet deployed, from t-078's counts. Nothing when there is
+  // nothing waiting; when the containment fact cannot answer, the reason instead of a made-up number.
+  const waiting = waitingLine(b);
+  if (waiting) out.push(`<p class="meta waiting">${machineWords(waiting)}</p>`);
   // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
   // no address or skipped; an email that nothing sends to; an https address that gets the call.
   if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
@@ -627,6 +671,7 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .ask .body { margin:-.4rem 0 .85rem; color:var(--muted); max-width:40em; }
 .actions.contact input { flex:1 1 14rem; min-width:0; font:inherit; padding:.55rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 a.btn { text-decoration:none; display:inline-block; }
+.waiting { margin:.35rem 0 0; }
 .contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }

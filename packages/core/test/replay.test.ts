@@ -1961,7 +1961,8 @@ describe("t-092 · the service counts what an import landed and asks the human t
     expect(out).toHaveLength(1);
     const card = out[0] as { kind: string; to: string; intent: string; options: string[]; body: string; refs: string[] };
     expect(card).toMatchObject({ kind: "instruction", actor: "ateam", to: HUMAN, intent: "ask", options: ["对", "有漏"], refs: [done.id] });
-    expect(card.body).toBe("搬过来了，对吗？在途 2 件事、1 条现行决定、2 个数字（都标了要重测）、1 个等你答的问题。旧的那边一条没删。");
+    // pd 23:35 (t-095 review): 「N 件」 not 「N 件事」, and the re-measure caveat is its own sentence at the end
+    expect(card.body).toBe("搬过来了，对吗？在途 2 件、1 条现行决定、2 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。");
     expect(card.default).toBeUndefined(); // no default: the human answers this one
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human.map((x) => x.id)).toContain((out[0] as { id: string }).id);

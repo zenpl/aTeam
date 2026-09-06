@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -275,7 +275,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
   it("线上 line, 在途 chips, working/blocked read, the rest dug; blocked reason in amber clipped to 60", async () => {
     const html = await w.authedPage();
     const now = section(html, "now", "rest");
-    expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对的<\/span>/);
+    expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span>/);
     expect(now).toMatch(/<details class="more-list"><summary>这一版带来了什么<\/summary><ul class="plain"><li>Cookie flags<\/li><\/ul><\/details>/);
     expect(now).toMatch(/<span class="chip"><b>1<\/b> 在做<\/span><span class="chip warn"><b>1<\/b> 卡住<\/span><span class="chip"><b>1<\/b> 做完了，等验<\/span><span class="chip"><b>1<\/b> 没开始<\/span>/);
     expect(now).toMatch(/<div class="grp"><div class="grp-h">在做<\/div><ul class="tasks"><li><span class="dot"><\/span><span class="ttl">Card page for the human<\/span><span class="who">frontend<\/span><\/li><\/ul><\/div>/);
@@ -476,7 +476,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对的", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)
@@ -904,7 +904,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
   });
 });
 
-describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
+describe("t-086 · 「线上」按来源署名：推的 / 核对", () => {
   it("names the pusher when the fact came from release --deploy, the checker when someone measured it, and nobody when the fact says neither", async () => {
     const v = server();
     await v.start();
@@ -912,19 +912,19 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
       // measured: whoever wrote the reading only checked which version is live
       await v.post("qa", { kind: "reading", surface: "production", key: "deployed.sha", value: "eae0b22fd12", method: "curl /health 读到的" });
       let now = section(await v.page(), "now", "rest");
-      expect(now).toContain('<span class="meta">· qa 刚刚核对的</span>');
+      expect(now).toContain('<span class="meta">· qa 刚刚核对</span>');
       expect(now).not.toContain("推的");
       // pushed: the deployer's own release --deploy wrote it
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222", method: "ateam release --deploy 推的" });
       now = section(await v.page(), "now", "rest");
       expect(now).toContain('<span class="meta">· dev 刚刚推的</span>');
-      expect(now).not.toContain("核对的");
+      expect(now).not.toContain("核对");
       // a reading with no method says nothing about its source: the sha stands alone
       await v.post("pm", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
       now = section(await v.page(), "now", "rest");
       expect(now).toContain('<code class="sha">ccccccc</code>');
       expect(now).not.toContain("推的");
-      expect(now).not.toContain("核对的");
+      expect(now).not.toContain("核对");
     } finally { await v.stop(); }
   });
 
@@ -935,6 +935,131 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
     const b = board(state, HUMAN);
     b.live.checked_by = "qa"; // the same version pushed by one and checked by another
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对的</span>');
+    expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对</span>');
+  });
+});
+
+describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", () => {
+  const verified = async (v: ReturnType<typeof server>, id: string, title: string, sha: string) => {
+    await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+    await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+    await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}: 全绿` });
+    await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "测试通过" });
+  };
+  const setup = async (v: ReturnType<typeof server>) => {
+    await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111", method: "读 /health" });
+    await verified(v, "t-1", "登录修复", "1111111");
+    await verified(v, "t-2", "导出报表", "2222222");
+  };
+  const line = (html: string) => /<p class="meta waiting">([\s\S]*?)<\/p>/.exec(html)?.[1] ?? "";
+
+  it("says how many are verified and waiting; says nothing when none wait; says why instead of a number when it cannot tell", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      // no containment fact yet: the board cannot tell, so it says why and what to do, and invents no number
+      let html = await v.page();
+      expect(line(html)).toContain("不知道有多少件在等上线");
+      expect(line(html)).toContain("<code>production:deployed.tasks</code>");
+      expect(line(html)).toContain("<code>ateam release</code>");
+      expect(html).not.toContain("有 0 件");
+
+      // one of the two is not in production yet: exactly that one is waiting
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1"], not_contained: ["t-2"] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(line(html)).toBe("1 件验过了，等一次上线。");
+      expect(html).not.toContain("部署"); // pd: 上线 is the human's word, 部署 is the machine's
+
+      // both in production: nothing waits, so the line is gone entirely
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1", "t-2"], not_contained: [] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(html).not.toContain('class="meta waiting"');
+      expect(html).not.toContain("等一次上线");
+    } finally { await v.stop(); }
+  });
+
+  it("counts only what the data says, and the CLI says the same sentence from the same counts", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-1", "t-2"] }, method: "ateam release 用 git 逐件测" });
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      expect(b.release.counts).toMatchObject({ pending_deploy: 2, deployed_unverified: 0, unknown: 0 });
+      expect(waitingLine(b)).toBe("2 件验过了，等一次上线。");
+      expect(line(await v.page())).toBe("2 件验过了，等一次上线。");
+      // the line states, it never asks: no link and no button in it
+      expect(line(await v.page())).not.toMatch(/<a |<button|<form/);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
+  const migrate = async (v: ReturnType<typeof server>) => {
+    // one in-flight task, one decision, one fact and one open question, each carrying where it came from (t-088/t-089)
+    await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "jira://PROJ-1" });
+    await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+    await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, from: "jira://PROJ-2" });
+    await v.post("dev", { kind: "reading", surface: "staging", key: "users", value: 128, measured_at: new Date(Date.now() - 86_400_000).toISOString(), from: "jira://PROJ-3" });
+    await v.post("dev", { kind: "instruction", to: HUMAN, body: "旧队伍等你答的问题", ack_by: soon(), from: "jira://PROJ-4" });
+    // the importer says so in the log, and claims numbers of its own; the service counts what actually landed
+    return v.post("dev", { kind: "note", body: "导入完成：我搬了 99 件任务、88 条决定", from: "jira://done-1" });
+  };
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say"); // the card, if it is still being asked; the dig layer keeps the answered one
+    const i = needs.indexOf("搬过来了，对吗？");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  it("renders as 问你 with pd's title, the service's counts in the open, 对 primary and 有漏 plain", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await migrate(v);
+      const html = await v.page();
+      const c = card(html);
+      expect(c).toContain('data-kind="ask"');
+      expect(c).toContain('<span class="kind">问你</span>');
+      expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
+      // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
+      expect(c).toContain('<p class="body">在途 1 件、1 条现行决定、1 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。</p>');
+      expect(c).not.toContain("99");
+      expect(c).not.toContain("88");
+      expect(c).not.toContain("<details");
+      expect(c).toContain('<button class="btn primary" type="submit" name="option" value="对">对</button>');
+      expect(c).toContain('<button class="btn" type="submit" name="option" value="有漏">有漏</button>');
+      expect(c).not.toContain("默认"); // no default: the card waits for a real answer
+    } finally { await v.stop(); }
+  });
+
+  it("「对」 leaves 你刚定了：清单对 and no card; 「有漏」 leaves 清单有漏 and 现在 says who is patching", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const note = await migrate(v);
+      const id = JSON.parse(await (await v.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+      const cookie = await v.cookie();
+      expect((await v.form("/decide", { id, option: "对" }, { cookie, accept: "text/html" })).status).toBe(303);
+      let html = await v.page({ cookie });
+      expect(card(html)).toBe("");
+      expect(html).toContain('<p class="recent">你刚定了：<b>清单对</b>');
+      expect(html).not.toContain('class="meta patching"');
+
+      // a second migration that the human says is incomplete
+      const w = server();
+      await w.start();
+      try {
+        await migrate(w);
+        const id2 = JSON.parse(await (await w.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+        const c2 = await w.cookie();
+        expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(303);
+        const h2 = await w.page({ cookie: c2 });
+        expect(card(h2)).toBe("");
+        expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏，已让 dev 回去补</b>');
+        expect(h2).toContain('<p class="meta patching">等 dev 补漏</p>');
+      } finally { await w.stop(); }
+      expect(note).toBeTruthy();
+    } finally { await v.stop(); }
   });
 });

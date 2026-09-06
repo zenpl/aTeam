@@ -70,7 +70,7 @@ describe("t-092 · the check card over the API", () => {
     expect(card).toBeTruthy();
     // this file's earlier test imported a reading too, so the fact count comes from the board, not from a number typed here
     const facts = b.readings.filter((r: { why?: string }) => r.why === "搬进来的数字：在这里没有测过，谁用谁重测").length;
-    expect(card.body).toBe(`搬过来了，对吗？在途 1 件事、1 条现行决定、${facts} 个数字（都标了要重测）、0 个等你答的问题。旧的那边一条没删。`);
+    expect(card.body).toBe(`搬过来了，对吗？在途 1 件、1 条现行决定、${facts} 个数字、0 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`);
     expect(facts).toBeGreaterThan(0);
     expect(card.options).toEqual(["对", "有漏"]);
     // answering it sends the importer one instruction

@@ -35,7 +35,7 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
     const already = [...s.instructions.values()].some((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(MIGRATION_ASK_TITLE) && !st.chosen);
     if (already) return []; // one card at a time: saying it twice does not ask twice
     const c = importCounts(s);
-    const body = `${MIGRATION_ASK_TITLE}在途 ${c.tasks} 件事、${c.decisions} 条现行决定、${c.readings} 个数字（都标了要重测）、${c.asks} 个等你答的问题。旧的那边一条没删。`;
+    const body = `${MIGRATION_ASK_TITLE}在途 ${c.tasks} 件、${c.decisions} 条现行决定、${c.readings} 个数字、${c.asks} 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`;
     return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: MIGRATION_OPTIONS, body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: [e.id] }];
   }
   // t-092: the human answered the card — tell the importer what to do next (M7 touches the old channel itself)
