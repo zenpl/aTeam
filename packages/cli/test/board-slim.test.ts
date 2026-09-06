@@ -27,6 +27,14 @@ async function fixture() {
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-c", touches: ["src/limit.ts"] });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-d", touches: ["src/limit.ts"] });
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-a", surface: "repo", pass: true, evidence: "测试 14/14" });
+  // t-e and t-f: a seam whose both sides are final, which the default board drops entirely (t-070)
+  for (const [id, title] of [["t-e", "缓存"], ["t-f", "预热"]]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+  await emit({ kind: "task", op: "claim", actor: "dev", task: "t-e", touches: ["src/cache.ts"] });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-e", evidence: "提交 2345678" });
+  await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-f", touches: ["src/cache.ts"] });
+  await emit({ kind: "task", op: "done", actor: "frontend", task: "t-f", evidence: "提交 3456789：含 2345678" });
+  await emit({ kind: "task", op: "verify", actor: "qa", task: "t-e", surface: "repo", pass: true });
+  await emit({ kind: "task", op: "verify", actor: "qa", task: "t-f", surface: "repo", pass: true });
   await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], default: "登录", ack_by: new Date(t + 3_600_000).toISOString() });
   await emit({ kind: "instruction", actor: "pm", to: "dev", body: "认领 t-c", ack_by: new Date(t + 3_600_000).toISOString() });
   await emit({ kind: "reading", actor: "dev", surface: "staging", key: "users", value: 4 });
@@ -67,11 +75,47 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     expect(text).toContain("verifications\n  ✓ repo");
     expect(text).toContain("notes\n  (not in the default board; ateam task show t-a has them)");
     expect(text).toContain("stacked (t-b on t-a, blocks nothing)  with t-b");
+    expect(text).toContain("  (the default board lists only seams still in play; ateam task show t-a has all of them)");
     for (const re of RESIDUE) expect(text, String(re)).not.toMatch(re);
     // the full task reads as before
     const fullText = fmt.task(boardTask(full, "t-a")!, full.seams);
     expect(fullText).toContain("  1. 能用");
     expect(fullText).toContain("evidence   提交 1234567：两条都过");
     expect(fullText).toContain("with t-b: src/io.ts");
+  });
+
+  it("the rule, for every task and every section: where the full board has content, the default board never prints a value that reads as none", async () => {
+    const full = await fixture();
+    const slim = slimBoard(full);
+    // t-a is verified, and t-b/t-c/t-d verified too so that their seams drop out of the default board
+    const sections = ["criteria", "touches", "evidence", "seams", "notes"] as const;
+    const section = (text: string, name: string) => {
+      const lines = text.split("\n");
+      const i = lines.findIndex((l) => l.startsWith(name));
+      const j = lines.findIndex((l, k) => k > i && /^[a-z]/.test(l));
+      return lines.slice(i, j < 0 ? undefined : j).join("\n");
+    };
+    // the dropped seam: the full board has it, the default board has nothing for t-e, and says so
+    expect(full.seams.some((x) => x.tasks.includes("t-e"))).toBe(true);
+    expect(slim.seams.some((x) => x.tasks.includes("t-e"))).toBe(false);
+    expect(section(fmt.task(boardTask(slim, "t-e")!, slim.seams), "seams")).toBe("seams\n  (not in the default board; ateam task show t-e has them)");
+    const hasContent = (f: string) => {
+      const lines = f.split("\n");
+      return lines.length > 1 ? !/\(none\)/.test(lines[1]) : /^\S+\s{2,}\S/.test(f) && !/\s(—|\(not reported)/.test(f);
+    };
+    let checked = 0;
+    for (const t of Object.values(full.tasks).flat()) {
+      const fullText = fmt.task(t, full.seams), slimText = fmt.task(boardTask(slim, t.id)!, slim.seams);
+      for (const name of sections) {
+        const f = section(fullText, name), sl = section(slimText, name);
+        if (!hasContent(f)) continue;
+        checked++;
+        expect(sl, `${t.id} ${name}: full=\n${f}\nslim=\n${sl}`).not.toMatch(/\(none\)/);
+        expect(sl, `${t.id} ${name}`).not.toMatch(/^\S+\s+—$/m);
+        // either the same content, or a pointer to the full task
+        if (sl !== f) expect(sl, `${t.id} ${name}`).toContain(`ateam task show ${t.id}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(12); // the rule was exercised across tasks and sections, not vacuously
   });
 });

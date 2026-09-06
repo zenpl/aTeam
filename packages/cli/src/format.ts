@@ -187,12 +187,14 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   }
   const mine = seams.filter((s) => s.tasks.includes(t.id));
   out.push("seams");
-  if (!mine.length) out.push("  (none)");
+  // The default board keeps only the seams still in play (t-070): an empty list there is not "no seams" (t-075 round 2).
+  if (!mine.length) out.push(slim ? `  (not in the default board; ateam task show ${t.id} has them)` : "  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
     const state = s.absorbed ? `absorbed: ${s.absorbed.basis}` : s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
     out.push(`  ${state}  with ${other}${s.overlap?.length ? `: ${s.overlap.join(", ")}` : ""}`);
   }
+  if (slim && mine.length) out.push(`  (the default board lists only seams still in play; ateam task show ${t.id} has all of them)`);
   out.push("notes");
   if (slim) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
   else if (!notes.length) out.push("  (none)");
