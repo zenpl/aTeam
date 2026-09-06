@@ -144,3 +144,8 @@ const EVIDENCE_PREFIX = /^evidence:/i;
 export function isEvidenceUpdate(n: { body: string }): boolean {
   return EVIDENCE_PREFIX.test(n.body.trimStart());
 }
+
+/** Echo of a task just created, so the author can check what the team will read. */
+export function created(title: string, criteria: string[]): string {
+  return [`  title: ${title}`, ...criteria.map((c, i) => `  ${i + 1}. ${c}`)].join("\n");
+}
