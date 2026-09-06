@@ -66,6 +66,13 @@ export interface Ack extends Base {
   of: string;
 }
 
+/** The sender takes an instruction back (t-064): only before it was acked or decided. The instruction stays in the log. */
+export interface Untell extends Base {
+  kind: "untell";
+  of: string;
+  reason: string;
+}
+
 /** Discussion, decisions, concerns. Carries no action. */
 export interface Note extends Base {
   kind: "note";
@@ -98,7 +105,7 @@ export type TaskOp =
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
-export type Event = Reading | Instruction | Ack | Note | TaskEvent;
+export type Event = Reading | Instruction | Ack | Untell | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;

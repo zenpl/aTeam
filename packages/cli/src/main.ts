@@ -24,6 +24,7 @@ setup
 every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
+  ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
   ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
@@ -152,6 +153,7 @@ async function main(argv: string[]) {
       return;
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
+    case "untell": return emit({ kind: "untell", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
     case "board": {
       exact(rest);
       const b = await client.board();

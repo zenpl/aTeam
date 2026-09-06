@@ -126,7 +126,9 @@ export interface Board {
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
-    id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue";
+    id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
+    /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
+    withdrawn?: { by: string; at: string; reason: string; seen: boolean };
     sent: string; delivered?: string; acked?: string;
     /** For instructions to the human: how it reads on the board, and the first sentence as a title. */
     kind?: InstructionIntent; title?: string; detail?: string;
@@ -337,17 +339,17 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
 
   for (const st of [...s.instructions.values()].sort(byId((x) => x.instruction.id))) {
     const i = st.instruction;
-    const status = st.acked_at ? "acked" : st.overdue ? "overdue" : st.delivered_at ? "delivered" : "pending";
+    const status = st.withdrawn ? "withdrawn" : st.acked_at ? "acked" : st.overdue ? "overdue" : st.delivered_at ? "delivered" : "pending";
     const toHuman = i.to === human;
     const deferNote = toHuman ? s.notes.find((n) => n.actor === human && n.body.startsWith(DEFER_PREFIX) && n.refs?.includes(i.id)) : undefined;
     b.instructions.push({
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
       kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
-      options: i.options, default: i.default,
+      options: i.options, default: i.default, withdrawn: st.withdrawn,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
-    if (status === "acked") continue;
+    if (status === "acked" || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on

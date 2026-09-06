@@ -111,3 +111,16 @@ describe("t-057 · task show and the board say what superseded an obsolete task"
     expect(fmt.board(b)).toContain(`obsolete  t-001          Server reports which commit is deployed  @dev  已被 ${d.id} 取代`);
   });
 });
+
+describe("t-064 · sync shows a withdrawal, and warns when I had already seen the instruction", () => {
+  it("UNTELL line with the reason; the warning only when the pull says I had pulled it before", async () => {
+    const { report } = await import("../src/loop.js");
+    const i = { id: "01I", at: new Date().toISOString(), kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: new Date().toISOString() } as never;
+    const u = { id: "01U", at: new Date().toISOString(), kind: "untell", actor: "pm", of: "01I", reason: "不用了" } as never;
+    const together = report({ events: [i, u], for_me: [], cursor: "01U" }, "dev", null).join("\n");
+    expect(together).toContain("UNTELL 01I  已撤回：不用了");
+    expect(together).not.toContain("你已看过");
+    const later = report({ events: [u], for_me: [], cursor: "01U", taken_back_seen: ["01I"] }, "dev", "01I").join("\n");
+    expect(later).toContain("⇐ 你已看过的这条被撤回了（01I），不要照着做");
+  });
+});

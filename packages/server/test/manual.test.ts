@@ -94,3 +94,18 @@ describe("t-059 · the manual ends with what this project says the role holds", 
     expect(page).toContain("<li>没人管定方向：pm 声明了但没在场</li>"); // pm holds R1 but has not pulled (writing is not listening)
   });
 });
+
+describe("t-066 · the manual says how to write an instruction to the human", () => {
+  it("the common part and the pm part both carry the rule: first sentence is an action or a question, 30 chars, self-contained; options with a default", async () => {
+    for (const path of ["/manual/dev", "/manual/pm"]) {
+      const text = await (await fetch(`${base}${path}`)).text();
+      expect(text).toContain("第一句就是全部");
+      expect(text).toContain("不超过 30 字");
+      expect(text).toContain("脱离上下文也能读懂");
+      expect(text).toContain("--default");
+      for (const re of OVERFIT) expect(text, `${path} leaks ${re}`).not.toMatch(re);
+    }
+    const pm = await (await fetch(`${base}/manual/pm`)).text();
+    expect(pm.split("第一句就是全部").length).toBe(3); // once in the common part, once in pm's own
+  });
+});

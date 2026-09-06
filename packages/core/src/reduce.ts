@@ -79,6 +79,8 @@ export interface InstructionState {
   delivered_at?: string;
   acked_at?: string;
   acked_by?: string;
+  /** Set when the sender took it back (t-064). `seen`: the recipient had already pulled it, so it must be told. */
+  withdrawn?: { by: string; at: string; reason: string; seen: boolean };
   /** now > ack_by and not acked */
   overdue?: boolean;
   /**
@@ -184,6 +186,11 @@ export function reduce(log: Log, now: Date = new Date()): State {
         if (st && !st.acked_at) { st.acked_at = e.at; st.acked_by = e.actor; }
         break;
       }
+      case "untell": {
+        const st = s.instructions.get(e.of);
+        if (st && !st.withdrawn) st.withdrawn = { by: e.actor, at: e.at, reason: e.reason, seen: false };
+        break;
+      }
       case "note": {
         s.notes.push(e);
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
@@ -209,6 +216,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   for (const st of s.instructions.values()) {
     const i = st.instruction;
     // An ask with a default answers itself at ack_by: the human's silence is the default, and it stays overridable.
+    if (st.withdrawn) { st.withdrawn.seen = !!st.delivered_at && st.delivered_at < st.withdrawn.at; st.overdue = false; continue; } // taken back: nothing is due, no default fires
     if (!st.chosen && !st.acked_at && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
       st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
     }

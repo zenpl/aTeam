@@ -79,6 +79,19 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (st.instruction.to !== e.actor && e.actor !== human && !(e.actor === SERVICE_ACTOR && st.instruction.actor === SERVICE_ACTOR))
         throw new Rejected("ack", `${e.of} is addressed to ${st.instruction.to}, not ${e.actor}`);
       if (st.acked_at) throw new Rejected("ack", `${e.of} already acked at ${st.acked_at}`);
+      if (st.withdrawn) throw new Rejected("ack", `${e.of} was taken back by ${st.withdrawn.by} (${st.withdrawn.reason}); nothing to ack`);
+      return;
+    }
+
+    // R1c (t-064): the sender may take an instruction back to stop harm, only while nobody has acted on it.
+    case "untell": {
+      const st = state.instructions.get(e.of);
+      if (!st) throw new Rejected("untell", `${e.of} is not an instruction`);
+      if (!e.reason?.trim()) throw new Rejected("untell", "say why (--reason)");
+      if (st.instruction.actor !== e.actor && e.actor !== human) throw new Rejected("untell", `${e.of} was sent by ${st.instruction.actor}; only the sender or ${human} can take it back, not ${e.actor}`);
+      if (st.withdrawn) throw new Rejected("untell", `${e.of} was already taken back by ${st.withdrawn.by}`);
+      if (st.acked_at) throw new Rejected("untell", `${e.of} was acked by ${st.acked_by} at ${st.acked_at}; what was seen and confirmed cannot be unsaid. Send a new instruction that cancels it`);
+      if (st.chosen) throw new Rejected("untell", `${e.of} was decided (${st.chosen.option} by ${st.chosen.by}); a decision is not taken back. Send a new ask`);
       return;
     }
 
@@ -93,6 +106,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (!st) throw new Rejected("decide", `${e.decides.of} is not an instruction`);
         const i = st.instruction;
         if (!i.options?.length) throw new Rejected("decide", `${i.id} carries no options`);
+        if (st.withdrawn) throw new Rejected("decide", `${i.id} was taken back by ${st.withdrawn.by} (${st.withdrawn.reason})`);
         if (!i.options.includes(e.decides.option)) throw new Rejected("decide", `"${e.decides.option}" is not one of: ${i.options.join(" | ")}`);
         if (i.to !== e.actor && e.actor !== human) throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
         // a default that took effect at ack_by may still be overridden; a real decision may not

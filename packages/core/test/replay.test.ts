@@ -1422,3 +1422,62 @@ describe("t-059 · who holds what: the board says which responsibilities nobody 
     expect(b.needs_human).toEqual([]);
   });
 });
+
+describe("t-064 · the sender takes an instruction back", () => {
+  it("before an ack: withdrawn, out of for_me / open / needs_human, never overdue, no default fires; the log keeps the original", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const i = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: c.iso(min(15)) });
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "上 A 还是 B？", options: ["A", "B"], default: "B", ack_by: c.iso(min(15)) });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "qa", of: i.id, reason: "x" }))).message).toMatch(/only the sender or human/);
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: " " }))).message).toMatch(/say why/);
+    const u = await emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "t-1 已经不用改了" });
+    await emit(store, c, { kind: "untell", actor: HUMAN, of: ask.id, reason: "问题问错了" }); // the human may take back anyone's
+    // dev pulls now: the instruction and its untell arrive together; it is not "for me"
+    const p = await pull(store, "dev", null, c.now());
+    expect(p.events.map((e) => e.kind)).toEqual(["instruction", "instruction", "untell", "untell"]);
+    expect(p.for_me).toEqual([]);
+    expect(p.taken_back_seen).toBeUndefined();
+    c.tick(min(30)); // past ack_by: not overdue, and the ask's default does not fire
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(i.id)).toMatchObject({ withdrawn: { by: "pm", reason: "t-1 已经不用改了", seen: false }, overdue: false });
+    expect(s.instructions.get(ask.id)!.chosen).toBeUndefined();
+    const b = board(s, HUMAN, c.now());
+    expect(b.instructions.map((x) => [x.id, x.status])).toEqual([[i.id, "withdrawn"], [ask.id, "withdrawn"]]);
+    expect(b.overdue).toEqual([]);
+    expect(b.needs_human).toEqual([]);
+    expect(b.instructions[0].withdrawn).toMatchObject({ reason: "t-1 已经不用改了" });
+    expect((await store.read()).events.map((e) => e.kind)).toEqual(["instruction", "instruction", "untell", "untell"]); // nothing rewritten
+    // acking or deciding what was taken back is refused; taking it back twice too
+    expect((await rejected(emit(store, c, { kind: "ack", actor: "dev", of: i.id }))).message).toMatch(/taken back/);
+    expect((await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "A", decision: true, decides: { of: ask.id, option: "A" } }))).message).toMatch(/taken back/);
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "再撤" }))).message).toMatch(/already taken back/);
+    void u;
+  });
+
+  it("after an ack or a decision it is refused; once delivered, the recipient is told it had seen it", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const i = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: c.iso(min(15)) });
+    await pull(store, "dev", null, c.now()); // dev has seen it
+    c.tick(min(1));
+    const cursor = i.id;
+    const u = await emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "不用了" });
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(i.id)!.withdrawn).toMatchObject({ seen: true });
+    const p = await pull(store, "dev", cursor, c.now());
+    expect(p.events.map((e) => e.id)).toEqual([u.id]);
+    expect(p.taken_back_seen).toEqual([i.id]); // the CLI turns this into 你已看过的这条被撤回了
+    // acked: too late
+    const j = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-2", ack_by: c.iso(min(15)) });
+    await emit(store, c, { kind: "ack", actor: "dev", of: j.id });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: j.id, reason: "x" }))).message).toMatch(/was acked by dev/);
+    // decided: too late
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "A 还是 B？", options: ["A", "B"], ack_by: c.iso(min(15)) });
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "A", decision: true, decides: { of: ask.id, option: "A" } });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: ask.id, reason: "x" }))).message).toMatch(/was decided/);
+    // F1/F2 still hold for an instruction nobody took back
+    c.tick(min(30));
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).overdue.map((o) => o.instruction)).toEqual([]); // j acked, ask decided, i withdrawn
+  });
+});

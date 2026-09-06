@@ -12,6 +12,7 @@ export function event(e: Event, me: string): string {
       return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${ask}${mark}`;
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
+    case "untell": return `${t} ${who} UNTELL ${e.of}  已撤回：${e.reason}`;
     case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
     case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.task ? `[${e.task}] ` : ""}${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
