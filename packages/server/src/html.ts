@@ -45,6 +45,17 @@ export function contactEnabled(b: Board): boolean {
   return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
 }
 
+/**
+ * t-099: 「来自 <出处>」 for something carried in from another system. The value is a machine string of any shape — a path,
+ * a ticket number, a message id, a URL — so it is set as code and linked only when it is a link one can follow.
+ * Empty for anything created here, which must render exactly as it did before (pm's criterion 4).
+ */
+export function sourceLine(from: string | undefined | null): string {
+  if (!from) return "";
+  const value = /^https?:\/\/\S+$/i.test(from) ? `<a href="${esc(from)}"><code>${esc(from)}</code></a>` : `<code>${esc(from)}</code>`;
+  return `<div class="meta from">${UI.carriedFrom} ${value}</div>`;
+}
+
 /** Machine words (a fact name, a command, a sha) inside a human sentence are set as code, so the eye can skip them. */
 export function machineWords(text: string): string {
   return esc(text).replace(/\b(?:[a-z][a-z0-9]*:[a-z][a-z0-9.]*|ateam [a-z-]+|git|[0-9a-f]{7,40})\b/g, (m) => `<code>${m}</code>`);
@@ -479,7 +490,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
       if (st && inline.has(task.id)) {
         // This version's and still-moving tasks carry their criteria and evidence inline (t-065).
         d.push(`<li><details><summary>${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
-        d.push(taskDetail(st, t, ago, href, MOVING.has(status)));
+        d.push(taskDetail(st, t, ago, href, MOVING.has(status), task.from));
         d.push(`</details></li>`);
       } else {
         // Earlier tasks: the title and one line; everything else lives on the task page.
@@ -545,7 +556,7 @@ const VERDICT_MAX = 80;
 const MOVING = new Set(["open", "working", "blocked", "done", "failed"]);
 
 /** A task's criteria, evidence, verdicts and notes; the same block inline on the board and on the task page. */
-function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string) => string, href: string | null, withNotes = true): string {
+function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string) => string, href: string | null, withNotes = true, from?: string): string {
   const d: string[] = [];
   d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
   d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
@@ -562,8 +573,9 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
   if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
   if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
   const other = withNotes ? st.notes.filter((n) => !/^\s*evidence:/i.test(n.body)) : st.notes;
+  d.push(sourceLine(from)); // t-099: after the criteria and the evidence, never at the top (pd 23:42)
   if (st.touches.length && (withNotes || !href)) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(body(n.body))}</li>`).join("")}</ul>`);
+  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(body(n.body))}${sourceLine(n.from)}</li>`).join("")}</ul>`);
   // On the board, a finished task's notes are a count and a link: they are what made the page grow with the log (t-065).
   if (href) d.push(`<div class="meta">${other.length && !withNotes ? esc(UI.notesCount(other.length)) + " · " : ""}<a href="${esc(href)}">${UI.details}</a></div>`);
   return d.join("\n");
@@ -589,7 +601,7 @@ export function renderTask(b: Board, s: State, id: string, opts: RenderOptions =
   out.push(`<p class="meta"><a href="${esc(base)}/">${UI.backToBoard}</a></p>`);
   out.push(`<section class="now task-page"><h2>${esc(task.shows ?? task.title)}</h2>`);
   out.push(`<p class="meta">${bits.join(" · ")}</p>`);
-  out.push(taskDetail(st, t, ago, null));
+  out.push(taskDetail(st, t, ago, null, true, task.from));
   const seams = b.seams.filter((x) => x.tasks.includes(id));
   if (seams.length) out.push(`<h3>${UI.taskSeams} <span class="meta">${seams.length}</span></h3><ul class="plain">${seams.map((x) => seamLine(x, base)).join("")}</ul>`);
   out.push(`<details class="meta"><summary>${UI.forAgents}</summary><code>${esc(task.id)}</code> · <code>ateam task show ${esc(task.id)}</code></details>`);
@@ -672,6 +684,7 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .actions.contact input { flex:1 1 14rem; min-width:0; font:inherit; padding:.55rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 a.btn { text-decoration:none; display:inline-block; }
 .waiting { margin:.35rem 0 0; }
+.from { margin:.15rem 0 0; } .from a { color:var(--accent); }
 .contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }

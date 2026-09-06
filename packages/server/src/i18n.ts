@@ -76,6 +76,9 @@ export const UI = {
   migrationOk: "清单对",
   migrationMissing: (who: string | null) => who ? `清单有漏，已让 ${who} 回去补` : "清单有漏",
   migrationPatching: (who: string) => `等 ${who} 补漏`,
+  // t-099: where a carried-in task or decision came from (pd 23:42: machine strings are code, after the human words, a
+  // link only when the link goes somewhere)
+  carriedFrom: "来自",
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,
   sinceLast: (sha: string) => `自上一版 ${sha} 以来`,
