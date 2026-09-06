@@ -33,7 +33,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor): Plan {
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
     if (t.status === "withdrawn" || t.status === "open") continue;
-    const s = evidenceSha(t.evidence);
+    const s = t.evidence_sha ?? evidenceSha(t.evidence);
     if (!s) continue;
     const inside = isAncestor(s, sha);
     if (inside !== true) continue;

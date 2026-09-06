@@ -50,7 +50,7 @@ describe("t-062 · built log ≡ served log", () => {
     const now = new Date(t + 60_000);
     const built = mapIds(board(await b.state(now), HUMAN, now));
     t = now.getTime();
-    const served = await (await fetch(`${base}/board`, { headers: hdr("qa") })).json();
+    const served = await (await fetch(`${base}/board?full=1`, { headers: hdr("qa") })).json();
     // the one thing the server adds for the admin key is the invite link; it is not derived from the log
     expect(typeof served.invite_url).toBe("string");
     delete served.invite_url;
