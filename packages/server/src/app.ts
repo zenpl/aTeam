@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
+import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -54,13 +54,26 @@ export function createApp(opts: ServerOptions) {
       }
 
       // The "Got it" button: the human acks an instruction without options.
+
+      // One click on the board: the human acks an instruction, and may say why it is not happening now.
       if (req.method === "POST" && url.pathname === "/ack") {
         if (!authed()) return html(res, 401, unauthorizedPage());
-        const of = new URLSearchParams(await readText(req)).get("id") ?? "";
-        const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
-        bus.emit("append", e);
+        const form = new URLSearchParams(await readText(req));
+        const of = form.get("id") ?? "", why = (form.get("note") ?? "").trim();
+        // an unknown or already-acked id is refused by the ack rule (409), like every other rejection
+        const events = await serialize(async () => {
+          const st = reduce(await store.read()).instructions.get(of);
+          const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
+          if (why) {
+            const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
+            const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
+            out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human }));
+          }
+          return out;
+        });
+        for (const e of events) bus.emit("append", e);
         if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
-        return json(res, 201, e);
+        return json(res, 201, { events });
       }
 
       // The human says one sentence on the board: it goes into the log as a note in their name, prefixed so the board can follow it.

@@ -6,6 +6,7 @@ import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
+import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
 
@@ -22,7 +23,7 @@ every turn
   ateam release [--json]         what passed on repo and not yet on production: the deploy list for the human
 
 say things
-  ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
+  ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
   ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
@@ -143,7 +144,9 @@ async function main(argv: string[]) {
     }
     case "tell": {
       const [to, body] = exact(rest, "to", "body");
-      return emit({ kind: "instruction", to, body,
+      const intent = str(a, "kind") as InstructionIntent | undefined;
+      if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
+      return emit({ kind: "instruction", to, body, intent,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
         options: list(a, "option"), default: str(a, "default") });
     }

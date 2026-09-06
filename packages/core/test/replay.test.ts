@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, Rejected, SAID_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -843,6 +843,52 @@ describe("t-030 · what the human said, and where it went", () => {
   });
 });
 
+describe("t-036 · instructions to the human carry a kind and a title", () => {
+  it("kind: given, or derived (options → ask, else do); refused for anyone but the human; must be a known kind", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["A", "B"] });
+    const doIt = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "部署第 4 批。合并 8c2298b 后推到 production", ack_by: c.iso(min(60)) });
+    const info = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "第 3 批已上线。t-020 等 10 项", ack_by: c.iso(min(60)), intent: "info" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    const kinds = Object.fromEntries(b.needs_human.map((n) => [n.id, n.kind]));
+    expect(kinds).toEqual({ [ask.id]: "ask", [doIt.id]: "do", [info.id]: "info" });
+    expect(b.instructions.find((i) => i.id === info.id)!.kind).toBe("info");
+    const r = await rejected(emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "做", ack_by: c.iso(min(5)), intent: "do" }));
+    expect(r.message).toMatch(/kind is for the human's board; dev just acts/);
+    expect((await rejected(emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "x", ack_by: c.iso(min(5)), intent: "urgent" as never }))).message).toMatch(/kind must be one of ask \| do \| info/);
+    // an instruction to an agent carries no kind on the board
+    const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "做", ack_by: c.iso(min(5)) });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).instructions.find((i) => i.id === plain.id)!.kind).toBeUndefined();
+  });
+
+  it("title is the first sentence when it is at most 30 characters; otherwise the whole body is detail", () => {
+    expect(splitTitle("部署第 4 批。合并 8c2298b 后推到 production")).toEqual({ title: "部署第 4 批", detail: "合并 8c2298b 后推到 production" });
+    expect(splitTitle("看板认证方式：A 私有，B 公开")).toEqual({ title: "看板认证方式", detail: "A 私有，B 公开" });
+    expect(splitTitle("第一行\n第二行")).toEqual({ title: "第一行", detail: "第二行" });
+    expect(splitTitle("只有一句没有标点")).toEqual({ title: "只有一句没有标点", detail: "" });
+    const thirty = "字".repeat(30), thirtyOne = "字".repeat(31);
+    expect(splitTitle(`${thirty}。其余`)).toEqual({ title: thirty, detail: "其余" });
+    expect(splitTitle(`${thirtyOne}。其余`)).toEqual({ title: "", detail: `${thirtyOne}。其余` });
+    expect(splitTitle(thirtyOne)).toEqual({ title: "", detail: thirtyOne });
+    expect(splitTitle("")).toEqual({ title: "", detail: "" });
+    expect(splitTitle("。开头就是句号")).toEqual({ title: "", detail: "。开头就是句号" });
+  });
+
+  it("the board carries title/detail on needs_human and instructions, and a 'not now' note as deferred", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const i = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "部署第 4 批。合并 8c2298b 后推到 production", ack_by: c.iso(min(60)) });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human[0]).toMatchObject({ kind: "do", title: "部署第 4 批", detail: "合并 8c2298b 后推到 production" });
+    await emit(store, c, { kind: "ack", actor: HUMAN, of: i.id });
+    const n = await emit(store, c, { kind: "note", actor: HUMAN, body: `${DEFER_PREFIX}明天再部署`, refs: [i.id] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toHaveLength(0);
+    expect(b.instructions[0]).toMatchObject({ status: "acked", title: "部署第 4 批", deferred: { note: n.id, body: "明天再部署", at: n.at } });
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
@@ -915,7 +961,7 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     const c = clock();
     const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Approve production deploy of 1.4.2?", ack_by: c.iso(min(120)) });
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.needs_human).toEqual([expect.objectContaining({ id: q.id, kind: "instruction" })]);
+    expect(b.needs_human).toEqual([expect.objectContaining({ id: q.id, kind: "do" })]);
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toHaveLength(0);
@@ -933,7 +979,7 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     c.tick(min(10));
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toHaveLength(1);
-    expect(b.needs_human[0]).toMatchObject({ kind: "instruction", id: q.id, from: "pm", body: "Board auth?", options: ["private", "public"], default: "private" });
+    expect(b.needs_human[0]).toMatchObject({ kind: "ask", id: q.id, from: "pm", body: "Board auth?", options: ["private", "public"], default: "private" });
     expect(b.needs_human[0].chosen).toBeUndefined();
     expect(b.overdue.map((o) => o.to)).toEqual(["backend"]);
     expect(b.seams.filter((x) => x.open).map((x) => x.id)).toEqual(["seam:A+B"]);
