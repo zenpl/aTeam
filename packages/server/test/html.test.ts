@@ -70,7 +70,7 @@ describe("GET / · read-only HTML board", () => {
     expect(html).toContain("+ also on the default branch as 7654321"); // evidence update from a note --task
     expect(html).toMatch(/<ul class="notes">.*<b>qa<\/b>.*concern: &lt;flag&gt; may be stripped by the proxy.*<b>dev<\/b>.*evidence: also on the default branch/s);
     expect(html.match(/<ul class="notes">/g)).toHaveLength(1);     // only t-1 has notes
-    expect(html).toMatch(/验收通过于 <b>repo<\/b>，由 qa/);          // verification
+    expect(html).toMatch(/验过，在 <b>仓库<\/b>，由 qa/);          // verification
     expect(html).toContain("production:health");                     // valid reading
     expect(html).toContain("production:users.count");                // stale reading, with why
     expect(html).toMatch(/已失效，原因 <code>/);
@@ -208,7 +208,7 @@ describe("POST /decide · one click acks the instruction and records the decisio
 
     const page = await (await api("/")).text();
     expect(page).not.toMatch(/action="\/decide"/);
-    expect(page).toContain("<b>选择了「B」</b>");
+    expect(page).toContain("<b>human 选择了「B」</b>");
 
     const again = await fetch(`${base}/decide`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=A` });
     expect(again.status).toBe(409);
@@ -270,7 +270,7 @@ describe("t-020 · a card page for the human: NEEDS YOU, STATUS, everything else
     const html = await (await api("/")).text();
     const rest = html.slice(html.indexOf('<details class="more">'));
     expect(rest).toContain("claim t-1 now");
-    expect(rest).toMatch(/逾期未确认[\s\S]*dev 还没有确认来自 pm 的「claim t-5 now/);
+    expect(rest).toMatch(/逾期[\s\S]*dev 还没有确认来自 pm 的「claim t-5 now/);
     expect(rest).toContain("production:deployed.sha");
     expect(rest).toContain("<code>t-3</code>");
     expect(rest).toContain("packages/server/src/html.ts");
@@ -312,6 +312,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       await zpost("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon, options: ["私有", "公开"], default: "公开" });
       await zpost("pm", { kind: "instruction", to: HUMAN, body: "请读部署说明", ack_by: soon });
       await zpost("pm", { kind: "instruction", to: "dev", body: "认领 t-1", ack_by: new Date(Date.now() - 60_000).toISOString() });
+      await zpost("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon });
       await zpost("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] });
       await zpost("dev", { kind: "task", op: "claim", task: "t-1", touches: ["api/session.ts"] });
       await zpost("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" });
@@ -323,6 +324,13 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       await zpost("pm", { kind: "task", op: "create", task: "t-4", title: "日志脱敏", criteria: ["日志里没有邮箱"] });
       await zpost("dev", { kind: "task", op: "claim", task: "t-4", touches: ["api/log.ts"] });
       await zpost("dev", { kind: "task", op: "done", task: "t-4", evidence: "提交 2345678" });
+      await zpost("pm", { kind: "task", op: "create", task: "t-5", title: "导出报表", criteria: ["能导出表格"] });
+      await zpost("dev", { kind: "task", op: "claim", task: "t-5", touches: ["api/export.ts"] });
+      await zpost("dev", { kind: "task", op: "done", task: "t-5", evidence: "提交 3456789" });
+      await zpost("qa", { kind: "task", op: "verify", task: "t-5", surface: "repo", pass: true, evidence: "测试通过" });
+      const q = await zpost("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", ack_by: soon, options: ["报表", "限流"], default: "报表" });
+      await zpost(HUMAN, { kind: "ack", of: q.id });
+      await zpost(HUMAN, { kind: "note", body: "决定：先发报表", decision: true, decides: { of: q.id, option: "报表" } });
       await zpost("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6" });
       await zpost("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, depends_on: ["production:users"] });
       await zpost("dev", { kind: "note", body: "导入了第三批", writes: ["production:users"], task: "t-1" });
@@ -331,16 +339,17 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       for (const path of ["/", "/?"]) {
         const html = await (await fetch(`${zurl}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
         expect(html).toContain('<html lang="zh">');
+        expect(html).toContain("<title>aTeam · 牌桌</title>");
         const ui = html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<code>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ");
         // the team's content, as written
-        for (const c of ["看板认证：私有还是公开？", "请读部署说明", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "等 pm 定阈值", "导入了第三批", "SameSite=Lax"]) expect(ui).toContain(c);
+        for (const c of ["看板认证：私有还是公开？", "请读部署说明", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "导入了第三批", "SameSite=Lax"]) expect(ui).toContain(c);
         // no English word left outside code/actor names/surfaces/keys
         // project terms the human uses untranslated (seam, session, surface:key) and hex values are not labels
         const words = ui.replace(/\b[0-9a-f]{7,}\b/g, "")
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key)\b/g, "")
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const z of ["需要你", "现状", "焦点", "生产环境", "进行中", "谁在线", "知道了", "默认", "刚刚", "逾期未确认", "已失效", "已过期", "被卡住", "已完成，等待验收", "还没开始"]) expect(ui).toContain(z);
+        for (const z of ["aTeam · 牌桌", "需要你", "现状", "焦点", "线上", "在途", "谁在线", "知道了", "默认", "不回复则默认：", "刚刚", "逾期", "已失效", "已过期", "被卡住", "已完成，等待验收", "已验收，尚未上生产", "（已验收：仓库）", "还没开始", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "同一份数据"]) expect(ui).toContain(z);
       }
       const anon = await (await fetch(`${zurl}/`)).text();
       expect(anon).toContain("要回答，请先打开一次");
@@ -356,7 +365,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
     const b: Board = board(state, HUMAN);
     b.instructions.push({ id: "01ASK", from: "pm", to: HUMAN, body: "部署方式 A 还是 B？", status: "acked", sent: b.now, acked: b.now, options: ["A", "B"], default: "B", chosen: { option: "B", by: "default", at: b.now } });
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain("<b>已按默认「B」执行</b>");
+    expect(html).toContain("<b>已按默认「B」执行（你仍可改）</b>");
     expect(html).not.toContain("<b>选择了");
   });
 });
