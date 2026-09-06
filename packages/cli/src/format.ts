@@ -55,7 +55,7 @@ export function board(b: Board, me: string): string {
 
   if (b.undelivered?.length) {
     out.push("", "UNDELIVERED (sent 5+ minutes ago, never pulled)");
-    for (const u of b.undelivered) out.push(`  ${u.to.padEnd(10)} ${u.count} instruction(s), oldest ${ago(u.oldest_sent)} ago${u.listening ? "" : "  可能失联"}`);
+    for (const u of b.undelivered) out.push(`  ${u.to.padEnd(10)} ${u.count} 条没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没在听"}`);
   }
 
   if (b.overdue?.length) {
@@ -111,9 +111,10 @@ export function board(b: Board, me: string): string {
   out.push("", "PRESENCE");
   for (const p of b.presence) {
     const st = p.status ?? (p.present === false ? "missing" : "listening");
-    const tail = st === "deaf" ? `  可能失联：最后一次拉取 ${p.last_pull ? `${ago(p.last_pull)} 前` : "从未"}，最后一次说话 ${ago(p.last_event!)} 前`
-      : st === "missing" ? "  (missing)" : "";
-    out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${tail}`);
+    const label = st === "listening" ? `在听  ${ago(p.last_seen!)} 前`
+      : st === "deaf" ? `没在听 ${p.last_pull ? `${ago(p.last_pull)}` : "从未拉取"}（${ago(p.last_event!)} 前还说过话）`
+      : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
+    out.push(`  ${p.actor.padEnd(10)} ${label}`);
   }
 
   return out.join("\n");

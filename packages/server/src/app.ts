@@ -181,8 +181,9 @@ export function createApp(opts: ServerOptions) {
             const last = state.presence.get(role)?.last_pull;
             const minutes = last ? Math.round((now.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
             // one card per role: "not receiving" when instructions never arrived, else "missing with work in hand"
+            // pd's three words: 在听 / 没在听 / 缺人. A role that stopped pulling with work undelivered is 没在听; one with nothing arriving at all is 缺人.
             const body = undelivered
-              ? `${role} 可能失联 ${minutes} 分钟，${undelivered.count} 条指令没送到。起一个 ${role}？`
+              ? `${role} 没在听了 ${minutes} 分钟，${undelivered.count} 条指令没送到。起一个 ${role}？`
               : `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`;
             const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
             out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs }, { human }));

@@ -164,7 +164,7 @@ export interface BoardOptions { /** How long since the last pull a node still co
 
 /** The role a service card is about, from its first words; undefined for any other instruction. */
 export function missingRoleOf(body: string): string | undefined {
-  return /^(\S+) (已经缺了|可能失联) /.exec(body)?.[1];
+  return /^(\S+) (已经缺了|没在听了|可能失联) /.exec(body)?.[1];
 }
 
 /** Is nobody listening as this role: no pull within the listen window? Never pulled counts as missing (t-047). */

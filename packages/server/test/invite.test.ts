@@ -110,7 +110,7 @@ describe("t-048 · undelivered instructions become the same card, not a second o
     expect(b.undelivered).toEqual([]); // too young to count as undelivered
     const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
     expect(cards).toHaveLength(1);
-    expect(cards[0].body).toMatch(/^qa 已经缺了 \d+ 分钟，手里有 1 条指令。起一个 qa？$/);
+    expect(cards[0].body).toMatch(/^qa 已经缺了 \d+ 分钟，手里有 1 条指令。起一个 qa？$/); // nothing undelivered yet (younger than 5 minutes): the 缺人 wording
     b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1);
     expect(b.presence.find((x: { actor: string }) => x.actor === "qa")).toMatchObject({ status: "missing", listening: false });
