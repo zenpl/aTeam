@@ -9,7 +9,8 @@ import * as fmt from "./format.js";
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
-  ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json; the rest come from ATEAM_URL/ATEAM_TOKEN (ATEAM_ME wins over the file)
+  ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json
+                                                          precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
 every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.

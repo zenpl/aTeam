@@ -24,6 +24,17 @@ describe("t-004 · ateam init --me works from env", () => {
     expect(resolveConfig({ me: "qa", url: "http://file" }, { ATEAM_ME: "human" }).url).toBe("http://file");
   });
 
+  it("t-013: the environment beats the file for me, url and token; the file fills what the env leaves unset", () => {
+    const file = { me: "qa", url: "http://file", token: "file-token" };
+    expect(resolveConfig(file, { ATEAM_ME: "dev" })).toEqual({ me: "dev", url: "http://file", token: "file-token" });
+    expect(resolveConfig(file, { ATEAM_URL: "http://env" })).toEqual({ me: "qa", url: "http://env", token: "file-token" });
+    expect(resolveConfig(file, { ATEAM_TOKEN: "env-token" })).toEqual({ me: "qa", url: "http://file", token: "env-token" });
+    expect(resolveConfig(file, { ATEAM_ME: "dev", ATEAM_URL: "http://env", ATEAM_TOKEN: "env-token" })).toEqual({ me: "dev", url: "http://env", token: "env-token" });
+    // config-only fallback, and an empty env var counts as unset
+    expect(resolveConfig(file, {})).toEqual(file);
+    expect(resolveConfig(file, { ATEAM_ME: "", ATEAM_URL: "  " })).toEqual(file);
+  });
+
   it("with neither --me nor ATEAM_ME nor config, the error names both ways to set identity", () => {
     expect(() => resolveConfig({}, { ATEAM_URL: "http://x" })).toThrow(/ateam init --me <role>.*export ATEAM_ME=<role>/);
     expect(() => resolveConfig({}, {})).toThrow(/ATEAM_ME.*ATEAM_URL/s);
