@@ -1,4 +1,4 @@
-import type { Reading } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, type Reading } from "./events.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
@@ -28,6 +28,20 @@ export interface BoardTask {
 }
 
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
+
+export type SaidStatus = "received" | "requirement" | "task" | "live";
+export interface BoardSaid {
+  id: string;
+  /** The sentence as typed, without the "human 说：" prefix. */
+  body: string;
+  at: string;
+  status: SaidStatus;
+  /** Ready to show: 已收到 / 已成为需求 / 已成为任务：<标题> / 已上线 */
+  label: string;
+  links: { requirements: string[]; tasks: { id: string; title: string; status: string }[] };
+}
+
+export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" };
 
 export interface BoardRelease {
   task: string;
@@ -78,6 +92,8 @@ export interface Board {
    * oldest done first, each with the sha its evidence names and who verified it where. The human reads this before a deploy.
    */
   release: { deployed_sha: string | null; candidates: BoardRelease[] };
+  /** What the human said on the board, newest first, each with where it went so far. */
+  said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -105,6 +121,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     in_flight: {},
     live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [] },
+    said: [],
     seams: [],
     presence: [],
   };
@@ -184,6 +201,23 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
     }
   }
+  // What the human said, and where each sentence went: a pd decision note or a task that refs it, then production.
+  const tasks = [...s.tasks.values()];
+  for (const n of s.notes) {
+    if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
+    const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
+    const linked = tasks.filter((t) => t.refs.includes(n.id));
+    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === "production" && r.pass));
+    const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
+    const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
+      : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
+    b.said.push({
+      id: n.id, body: n.body.slice(SAID_PREFIX.length).trim(), at: n.at, status, label,
+      links: { requirements, tasks: linked.map((t) => ({ id: t.id, title: t.title, status: t.status })) },
+    });
+  }
+  b.said.sort((x, y) => y.id.localeCompare(x.id));
+
   b.release.deployed_sha = b.live.deployed_sha;
   b.release.candidates.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
   for (const g of Object.values(b.in_flight)) {

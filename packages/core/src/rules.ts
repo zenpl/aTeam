@@ -14,8 +14,9 @@ export class Rejected extends Error {
 export function validate(state: State, e: NewEvent, human: string): void {
   if (!e.actor) throw new Rejected("actor", "actor is required");
 
-  // R0: you may not build on a reading that is no longer true.
+  // R0: you may not build on a reading that is no longer true, nor on an event that is not in the log.
   for (const ref of e.refs ?? []) {
+    if (!state.ids.has(ref)) throw new Rejected("ref", `${ref} is not an event in this log`);
     const rs = state.readings.get(ref);
     if (!rs) continue;
     if (!rs.valid || rs.expired) {

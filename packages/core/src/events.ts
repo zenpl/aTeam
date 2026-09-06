@@ -100,6 +100,9 @@ export const INSTRUCTION_MAX_CHARS = 280;
 export const PM_ACTOR = "pm";
 /** The identity that owns scenarios and wording (decision 07:02). It may add criteria to any task. */
 export const PD_ACTOR = "pd";
+/** A note from the human on the board starts with this; the board derives where each such sentence went. */
+export const SAID_PREFIX = "human 说：";
+export const SAID_MAX_CHARS = 500;
 export const FOCUS_KEY = "focus";
 export const TEAM_SURFACE = "team";
 

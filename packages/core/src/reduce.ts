@@ -12,6 +12,8 @@ export interface TaskState {
   criteria: string[];
   /** Who created the task (and its first criteria). */
   criteria_by: string;
+  /** What the create event built on (refs): a sentence the human said, a requirement note. */
+  refs: string[];
   /** Criteria added after creation: which index in `criteria`, by whom, when. */
   criteria_added: { index: number; by: string; at: string }[];
   created_at: string;
@@ -95,6 +97,8 @@ export interface SeamState {
 }
 
 export interface State {
+  /** Every event id in the log: a ref must name one of them. */
+  ids: Set<string>;
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
@@ -141,6 +145,7 @@ function readingKey(r: Reading): string {
 
 export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
+    ids: new Set(),
     readings: new Map(),
     latestReading: new Map(),
     shapes: new Map(),
@@ -152,6 +157,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   };
 
   for (const e of log.events) {
+    s.ids.add(e.id);
     s.presence.set(e.actor, e.at);
     if (e.writes?.length) invalidate(s, e);
     switch (e.kind) {
@@ -232,7 +238,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   switch (e.op) {
     case "create":
       s.tasks.set(e.task, {
-        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [],
+        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
       });
       return;

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
@@ -26,6 +26,7 @@ say things
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
+  ateam say <正文>                                                   human only: one sentence to the team; the board shows where it went
   ateam focus <body>                                                 the one thing that matters most right now
   ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
@@ -150,6 +151,12 @@ async function main(argv: string[]) {
       return emit({ kind: "reading", key, value: parseValue(value),
         surface: need(str(a, "surface"), "--surface"), method: str(a, "method"), assumptions: list(a, "assumes"),
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
+    }
+    case "say": {
+      const [text] = exact(rest, "正文");
+      if (cfg.me !== "human") throw new UsageError(`say is the human's: you are ${cfg.me}. Put it in a note instead.`);
+      if (text.trim().length > SAID_MAX_CHARS) throw new UsageError(`一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.trim().length}）；不够就再说一句`);
+      return emit({ kind: "note", body: `${SAID_PREFIX}${text.trim()}` });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
     case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });

@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, Rejected, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, Rejected, SAID_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -777,6 +777,68 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     expect((await release(store, c)).candidates).toEqual([]);
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "repo", pass: true });
     expect((await release(store, c)).candidates[0]).toMatchObject({ task: "D", evidence_sha: "2222222" });
+  });
+});
+
+describe("t-030 · what the human said, and where it went", () => {
+  const say = (store: MemoryStore, c: ReturnType<typeof clock>, text: string) =>
+    emit(store, c, { kind: "note", actor: HUMAN, body: `${SAID_PREFIX}${text}` });
+  const said = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).said;
+
+  it("received → requirement (a pd decision refs it) → task (a create refs it) → live (that task passes on production)", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const s1 = await say(store, c, "登录后应该回到我刚才那页");
+    let [x] = await said(store, c);
+    expect(x).toMatchObject({ id: s1.id, body: "登录后应该回到我刚才那页", at: s1.at, status: "received", label: "已收到", links: { requirements: [], tasks: [] } });
+
+    c.tick(min(2));
+    const req = await emit(store, c, { kind: "note", actor: "pd", body: "场景需求：登录回跳", decision: true, refs: [s1.id] });
+    [x] = await said(store, c);
+    expect(x).toMatchObject({ status: "requirement", label: "已成为需求", links: { requirements: [req.id] } });
+    // a non-decision note, or a non-pd decision, does not count as a requirement
+    await emit(store, c, { kind: "note", actor: "pm", body: "看到了", refs: [s1.id] });
+    await emit(store, c, { kind: "note", actor: "qa", body: "决定", decision: true, refs: [s1.id] });
+    expect((await said(store, c))[0].links.requirements).toEqual([req.id]);
+
+    c.tick(min(2));
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-40", title: "登录后回到原页", criteria: ["回跳"], refs: [s1.id] });
+    [x] = await said(store, c);
+    expect(x).toMatchObject({ status: "task", label: "已成为任务：登录后回到原页", links: { tasks: [{ id: "t-40", title: "登录后回到原页", status: "open" }] } });
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-40", touches: ["auth"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "repo", pass: true });
+    expect((await said(store, c))[0].status).toBe("task");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "production", pass: true });
+    [x] = await said(store, c);
+    expect(x).toMatchObject({ status: "live", label: "已上线：登录后回到原页" });
+  });
+
+  it("several tasks may answer one sentence; the label names them all; newest sentence first", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const s1 = await say(store, c, "牌桌要能折叠");
+    c.tick(min(1));
+    const s2 = await say(store, c, "部署要一键");
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "在途折叠", criteria: ["x"], refs: [s1.id] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "线上折叠", criteria: ["x"], refs: [s1.id] });
+    const list = await said(store, c);
+    expect(list.map((x) => x.id)).toEqual([s2.id, s1.id]);
+    expect(list[1].label).toBe("已成为任务：在途折叠、线上折叠");
+    expect(list[1].links.tasks.map((t) => t.id)).toEqual(["A", "B"]);
+    expect(list[0]).toMatchObject({ status: "received", label: "已收到" });
+    // only the human's prefixed notes are sentences; a dev note with the prefix is not
+    await emit(store, c, { kind: "note", actor: "dev", body: `${SAID_PREFIX}冒充` });
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "普通 note" });
+    expect((await said(store, c)).map((x) => x.body)).toEqual(["部署要一键", "牌桌要能折叠"]);
+  });
+
+  it("refs to a sentence that does not exist are refused by the existing rule", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const r = await rejected(emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "x", criteria: ["y"], refs: ["01M1TSDDK1VXP23K45CPR3KDH5"] }));
+    expect(r.rule).toBe("ref");
   });
 });
 
