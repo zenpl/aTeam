@@ -726,7 +726,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
-    expect(await release(store, c)).toEqual({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
+    expect(await release(store, c)).toMatchObject({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
     expect((await release(store, c)).candidates).toEqual([]);
   });
@@ -1728,5 +1728,43 @@ describe("t-077 · the slim board tells omitted from empty", () => {
     check(tf, ts);
     expect(ts.omitted.some((x) => x.startsWith("seams") || x.startsWith("readings") || x.startsWith("instructions"))).toBe(false);
     expect(ts.omitted).toContain("release.candidates"); // the key went away even though it was empty: that is still a removal
+  });
+});
+
+describe("t-083 · the board says who pushed only when a push recorded it", () => {
+  it("release --deploy's reading gives deployed_by; a hand-recorded one gives checked_by; a reading with no method gives neither", async () => {
+    const c = clock(Date.now() - min(30));
+    const cases: [string | undefined, "deployed_by" | "checked_by" | "neither"][] = [
+      ["ateam release --deploy 推到 production，由 CI 部署；含 t-1", "deployed_by"],
+      ["ateam release --deploy：production 已在此 sha", "deployed_by"],
+      ["curl https://ateam.fly.dev/health 读 sha", "checked_by"],
+      [undefined, "neither"],
+    ];
+    for (const [method, want] of cases) {
+      const store = new MemoryStore();
+      await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "abc1234", method, depends_on: ["production:deployed.sha"] });
+      const live = board(reduce(await store.read(), c.now()), HUMAN, c.now()).live;
+      expect(live.deployed_sha).toBe("abc1234");
+      expect([live.deployed_by, live.checked_by], `${method}`).toEqual(want === "deployed_by" ? ["qa", null] : want === "checked_by" ? [null, "qa"] : [null, null]);
+    }
+  });
+});
+
+describe("t-084 · the call-out address has a shape; a bad one is said, not hidden", () => {
+  it("an https webhook is accepted; an email, an http url or a sentence is refused with what it looks like; a value recorded before the shape shows as misconfigured", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: "https://hooks.example/team" });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert).toMatchObject({ status: "set", value: "https://hooks.example/team" });
+    for (const [bad, form] of [["a@b.com", "一个邮箱"], ["http://hooks.example/x", "一个 http 地址（不是 https）"], ["找我用微信", "一段文本「找我用微信」"], [42, "一个number"]] as const) {
+      const r = await rejected(emit(store, c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: bad }));
+      expect(r.rule).toBe("reading");
+      expect(r.message).toBe(`reading: 外呼只支持 https webhook，收到的是${form}；不写入`);
+    }
+    // a value written before the shape existed (replayed from an older log) is kept and called out
+    const older = new MemoryStore();
+    await older.appendRaw({ id: "01OLD", at: c.iso(-min(10)), kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: "human@example.com" } as never);
+    const b = board(reduce(await older.read(), c.now()), HUMAN, c.now());
+    expect(b.alert).toMatchObject({ status: "misconfigured", value: "human@example.com", line: "外呼地址配了但发不出去：不是 https（human@example.com）" });
   });
 });

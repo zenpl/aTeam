@@ -13,10 +13,17 @@ const NOTE_PREFIX = "外呼：";
 
 /** The declared call-out address, when its fact is valid. */
 export function webhookOf(s: State): string | null {
+  const a = webhookState(s);
+  return a.kind === "ok" ? a.url : null;
+}
+
+/** t-084: unset (silence is right), ok (an https webhook), or bad (set, but nothing we can call: said in a note, never sent to). */
+export function webhookState(s: State): { kind: "unset" } | { kind: "ok"; url: string } | { kind: "bad"; value: string } {
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
-  return typeof v === "string" && /^https:\/\//.test(v) ? v : null;
+  if (typeof v !== "string" || !v.trim()) return { kind: "unset" };
+  return /^https:\/\/\S+$/.test(v.trim()) ? { kind: "ok", url: v.trim() } : { kind: "bad", value: v.trim() };
 }
 
 /** Situations that warrant a call-out right now, with the moment each began. */
@@ -77,8 +84,18 @@ export interface AlerterDeps {
 export async function runAlerts(project: string, store: EventStore, deps: AlerterDeps): Promise<AlertPayload[]> {
   const now = deps.now?.() ?? new Date();
   const state = reduce(await store.read(), now);
-  const url = webhookOf(state);
-  if (!url) return [];
+  const hook = webhookState(state);
+  if (hook.kind === "unset") return []; // never declared: silence is the declared choice (pm 22:39)
+  if (hook.kind === "bad") {
+    // t-084: declared but uncallable — say so once per episode instead of skipping in silence
+    for (const a of due(state, deps.human, now)) {
+      const head = `${NOTE_PREFIX}${a.kind} 自 ${a.since} 未发送`;
+      if (state.notes.some((n) => n.actor === SERVICE_ACTOR && n.body.startsWith(head))) continue;
+      await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `${head}：外呼地址配了但发不出去，不是 https（${hook.value}）。换成 https webhook 才会响。${a.summary}` }, { human: deps.human, now: deps.real?.() ?? deps.now?.() });
+    }
+    return [];
+  }
+  const url = hook.url;
   const sent: AlertPayload[] = [];
   for (const a of due(state, deps.human, now)) {
     const payload: AlertPayload = { ...a, project, board_url: deps.boardUrl(project) };

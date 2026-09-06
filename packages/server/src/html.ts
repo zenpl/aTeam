@@ -240,7 +240,15 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const onProd = b.live.recent.length;
   out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
   if (sha) {
-    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${shaReading ? ` <span class="meta">· ${esc(UI.checkedBy(shaReading.by, ago(shaReading.at)))}</span>` : ""}</div>`);
+    // t-086: the board says where the sha came from, by the fields t-083 derives from the reading's method: who pushed it
+    // (their own `release --deploy` wrote the fact), who only checked which version is live, both when both are known,
+    // and neither when the fact says nothing about its source.
+    const when = shaReading ? ago(shaReading.at) : "";
+    const source = [
+      b.live.deployed_by ? UI.pushedBy(b.live.deployed_by, when) : "",
+      b.live.checked_by ? UI.checkedBy(b.live.checked_by, when) : "",
+    ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
+    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
     const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
     if (b.live.recent.length) {
       out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);

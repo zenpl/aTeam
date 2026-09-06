@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { Client, ClientError } from "./client.js";
+import { Client, ClientError, ShapeError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
-import { deploy, realGit } from "./release.js";
+import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
@@ -162,9 +162,18 @@ async function main(argv: string[]) {
     }
     case "release": {
       exact(rest);
-      const b = await client.board(true); // candidates and evidence live on the full board (t-070)
+      let b = await client.board(true); // candidates and evidence live on the full board (t-070)
       const target = str(a, "deploy");
-      if (target === undefined) { console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b)); return; }
+      if (target === undefined) {
+        // t-078: measure with git which candidates production already contains, record it when it changed, then show the three groups
+        const measured = containment(b, gitIsAncestor());
+        const fact = containmentFact(b, measured);
+        if (fact) { await emit(fact); b = await client.board(true); }
+        else if (!measured) console.error(`（没有测包含关系：${b.release.deployed_sha ? "项目没有声明 absorb.form=git-ancestor" : "生产没有 deployed.sha 事实"}）`);
+        if (measured?.unmeasured.length) console.error(`（git 判不出 ${measured.unmeasured.join("、")}：本地没有它们的证据 sha，先 git fetch 各分支）`);
+        console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
+        return;
+      }
       const outcome = await deploy(b, target, {
         git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN,
         reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
@@ -228,7 +237,7 @@ async function main(argv: string[]) {
       switch (op) {
         case "show": {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
-          console.log(fmt.task(t, seams));
+          console.log(fmt.task(t, seams, [])); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {
@@ -285,6 +294,7 @@ main(process.argv.slice(2)).catch((err) => {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
     process.exit(err.status === 409 ? 2 : 1);
   }
+  if (err instanceof ShapeError) { console.error(err.message); process.exit(2); } // t-080: a newer server, said plainly
   if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
   if (err instanceof UsageError) { console.error(`usage: ${err.message}`); process.exit(2); }
   console.error(err instanceof Error ? err.message : err);

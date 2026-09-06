@@ -4,7 +4,8 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, type Board, type PushLevel } from "@ateam/core";
+import { evidenceSha, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
 export interface DeploySetting { branch: string; by: string[] }
@@ -44,6 +45,31 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor): Plan {
     for (const seam of b.seams) if (seam.open && seam.tasks.includes(t.id)) reasons.push(`${t.id} 有未解决的接缝 ${seam.id}`);
   }
   return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included };
+}
+
+/**
+ * t-078: which candidates' code the deployed sha already contains, measured with git. Only under the git-ancestor form
+ * (project:absorb.form); any other form, or no deployed sha, is nothing to measure. Candidates git cannot place
+ * (object missing locally, no evidence sha) are neither contained nor not: the board lists them as unknown.
+ */
+export function containment(b: Board, isAncestor: IsAncestor): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; method: string } | null {
+  const sha = b.release?.deployed_sha;
+  if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
+  const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[], method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
+  for (const c of b.release.candidates ?? []) {
+    const r = c.evidence_sha ? isAncestor(c.evidence_sha, sha) : null;
+    (r === true ? out.contained : r === false ? out.not_contained : out.unmeasured).push(c.task);
+  }
+  return out;
+}
+
+/** The reading `ateam release` records when what git measured differs from the fact on the board; null when nothing changed. */
+export function containmentFact(b: Board, measured: ReturnType<typeof containment>): ClientEvent | null {
+  if (!measured) return null;
+  const current = b.readings.find((r) => r.valid && r.surface === "production" && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[] } | undefined;
+  const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
+  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained)) return null;
+  return { kind: "reading", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {

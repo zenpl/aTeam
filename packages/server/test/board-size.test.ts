@@ -53,7 +53,7 @@ describe("t-070 · GET /board is slim by default", () => {
     const slim = slimBoard(full);
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
     expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
-    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha }); // derived from tasks: the full board has it; absent, not empty (t-077)
+    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
     expect(slim.omitted).toEqual(omittedPaths(full, slim)); // computed, not written; the recursive walk itself is proven in core
     expect(slim.omitted).toContain("tasks.done[].criteria");
     expect(full.omitted).toEqual([]);
@@ -84,7 +84,15 @@ describe("t-070 · GET /board is slim by default", () => {
     app = createApp({ store: b.store, token: "k", human: "human", sha: "abc1234", alertIntervalMs: 0, clock: () => new Date(t) });
     await new Promise<void>((r) => app!.listen(0, "127.0.0.1", r));
     const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
-    const get = (p: string) => fetch(`${base}${p}`, { headers: { authorization: "Bearer k", "x-actor": "qa" } });
+    const get = (p: string, client: string | null = "2") => fetch(`${base}${p}`, { headers: { authorization: "Bearer k", "x-actor": "qa", ...(client ? { "x-ateam-client": client } : {}) } });
+    // t-080: a client that does not say it knows the slim shape (an older CLI) gets the full board, so a server upgrade never breaks it
+    const old = await (await get("/board", null)).json();
+    expect(old.shape).toBe(2);
+    expect(old.omitted).toEqual([]);
+    expect(old.tasks.done[0].criteria.length).toBe(3);
+    expect((await (await get("/board", "1")).json()).omitted).toEqual([]);
+    expect((await (await get("/task/t-000")).json()).shape).toBe(2);
+    expect((await (await get("/events")).json()).shape).toBe(2);
     const served = await (await get("/board")).text();
     expect(Buffer.byteLength(served) / Buffer.byteLength(JSON.stringify(await (await get("/board?full=1")).json()))).toBeLessThan(0.12);
     const servedFull = await (await get("/board?full=1")).json();

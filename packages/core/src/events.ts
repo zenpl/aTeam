@@ -24,6 +24,8 @@ export interface ReadingShape { regex?: string; enum?: unknown[] }
  */
 export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
   "deployed.sha": { regex: "^([0-9a-f]{7,40}|unknown)$" },
+  /** t-084: the call-out address is an https webhook, nothing else; t-050 can only POST to https. */
+  "alert.webhook": { regex: "^https://\\S+$" },
 };
 
 /** A measurement of the world at one moment. Never a constant. */
@@ -190,6 +192,20 @@ export const ABSORB_FORMS = ["git-ancestor", "named-sha"] as const;
 export type AbsorbForm = (typeof ABSORB_FORMS)[number];
 /** A seam resolution the rule wrote, not a person: "absorbed: 后者 <sha> 含前者 <sha>（<form>）". */
 export const ABSORB_PREFIX = "absorbed: ";
+/**
+ * t-080: the version of the board's shape. Bumped whenever a field is removed, renamed or left out by default (t-070's
+ * slimming was the first such change, unannounced: an older CLI crashed on it). A CLI that reads a newer shape than it
+ * knows stops with "git pull && pnpm build" instead of failing on some field. History: 1 = before t-070; 2 = slim by default.
+ */
+export const BOARD_SHAPE = 2;
+/**
+ * t-078: which candidates' code is already in production (surface production, key deployed.tasks), measured by a node
+ * with git (`ateam release`) against the deployed sha: { sha, contained: [task ids], not_contained: [task ids], method }.
+ * It depends on production:deployed.sha, so a deploy invalidates it and the board says "unknown" until someone measures again.
+ */
+export const DEPLOYED_TASKS_KEY = "deployed.tasks";
+/** t-069 / pm 22:39: the contact card exists only when this fact (surface project) is set; off by default. */
+export const ALERT_ASK_KEY = "alert.ask";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
 export const ALERT_WEBHOOK_KEY = "alert.webhook";
 /** The whole team not listening for this long is a call-out. */
