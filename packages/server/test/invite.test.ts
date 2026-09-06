@@ -164,6 +164,6 @@ describe("t-058 · a node says what it may push when it joins", () => {
     const page = await api(p.project, "/", a.body.node_key, "pm", { headers: { accept: "text/html" } });
     const html = await page.text();
     expect(html.match(/能推上线/g)).toHaveLength(1);
-    expect(html).toMatch(/<b>pm<\/b> <span class="meta">[^\n]*?<\/span> <span class="can-push">能推上线<\/span><\/li>/);
+    expect(html).toMatch(/data-role="pm"[^\n]*?<span class="can-push">能推上线<\/span><\/span>/);
   });
 });

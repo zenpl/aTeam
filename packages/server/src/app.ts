@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, unauthorizedPage } from "./html.js";
+import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { runFollowUps } from "./verifyflow.js";
 import { runAlerts } from "./alerts.js";
@@ -221,57 +221,85 @@ export function createApp(opts: ServerOptions) {
       const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };
       const emitAll = (events: unknown[]) => { for (const e of events) bus.emit("append", { project: projectId, e }); };
 
-      // One click on the board: the human acks an instruction, and may say why it is not happening now.
-      if (req.method === "POST" && path === "/ack") {
-        if (!isAdmin) return html(res, 401, unauthorizedPage());
-        const form = new URLSearchParams(await readText(req));
-        const of = form.get("id") ?? "", why = (form.get("note") ?? "").trim();
-        const events = await serialize(async () => {
+      // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
+      // run the same action right after the key is entered (docs/board.md: buttons are always clickable).
+      const ACTIONS = new Set(["/ack", "/say", "/decide"]);
+      const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
+        if (then === "/ack") {
+          // 「知道了」/「做好了」/「起好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
+          // when the instruction names a task, the note hangs on that task too. Several ids ack together (t-043).
+          const ids = form.getAll("id").filter(Boolean), of = ids[0] ?? "", why = (form.get("note") ?? "").trim();
+          const events = await serialize(async () => {
+            const st = reduce(await store.read()).instructions.get(of);
+            const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
+            for (const more of ids.slice(1)) {
+              const fresh = reduce(await store.read()).instructions.get(more);
+              if (fresh && !fresh.acked_at) out.push(await append(store, { kind: "ack", actor: human, of: more }, { human }));
+            }
+            if (why) {
+              const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
+              const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
+              out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human }));
+            }
+            return out;
+          });
+          emitAll(events);
+          return { status: 201, body: { events } };
+        }
+        if (then === "/say") {
+          // The human says one sentence: a note in their name, prefixed so the board can follow it (t-030).
+          const text = (form.get("text") ?? "").trim();
+          if (!text) return { status: 400, body: { error: "empty", message: "说点什么再点「说」" } };
+          if (text.length > SAID_MAX_CHARS) return { status: 400, body: { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` } };
+          const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
+          emitAll([note]);
+          return { status: 201, body: note };
+        }
+        if (then === "/decide") {
+          // One click: ack the instruction and record the decision, in one request.
+          const of = form.get("id") ?? "", option = form.get("option") ?? "";
           const st = reduce(await store.read()).instructions.get(of);
-          const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
-          if (why) {
-            const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
-            const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
-            out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human }));
-          }
-          return out;
-        });
-        emitAll(events);
-        if (wantsHtml) return back();
-        return json(res, 201, { events });
+          if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
+          const i = st.instruction;
+          if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
+          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
+          // Inside the write lock, look again: a click that raced another one must not half-apply.
+          const [note, ...followed] = await serialize(async () => {
+            const fresh = reduce(await store.read()).instructions.get(of)!;
+            if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human })]);
+            const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
+            return [n, ...(await runFollowUps(store, n, human))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
+          });
+          emitAll([note, ...followed]);
+          return { status: 201, body: note };
+        }
+        return { status: 404, body: { error: "not found" } };
+      };
+
+      if (req.method === "POST" && ACTIONS.has(path)) {
+        if (!isAdmin) return html(res, 401, unauthorizedPage());
+        const r = await act(path, new URLSearchParams(await readText(req)));
+        if (r.status < 300 && wantsHtml) return back();
+        return json(res, r.status, r.body);
       }
 
-      // The human says one sentence on the board.
-      if (req.method === "POST" && path === "/say") {
-        if (!isAdmin) return html(res, 401, unauthorizedPage());
-        const text = (new URLSearchParams(await readText(req)).get("text") ?? "").trim();
-        if (!text) return json(res, 400, { error: "empty", message: "说点什么再点「说」" });
-        if (text.length > SAID_MAX_CHARS) return json(res, 400, { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` });
-        const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
-        emitAll([note]);
-        if (wantsHtml) return back();
-        return json(res, 201, note);
-      }
-
-      // One click on the board: ack the instruction and record the decision, as the human, in one request.
-      if (req.method === "POST" && path === "/decide") {
-        if (!isAdmin) return html(res, 401, unauthorizedPage());
-        const form = new URLSearchParams(await readText(req));
-        const of = form.get("id") ?? "", option = form.get("option") ?? "";
-        const st = reduce(await store.read()).instructions.get(of);
-        if (!st) return json(res, 404, { error: "not found", message: `${of} is not an instruction` });
-        const i = st.instruction;
-        if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
-        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
-        const [note, ...followed] = await serialize(async () => {
-          const fresh = reduce(await store.read()).instructions.get(of)!;
-          if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human })]);
-          const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
-          return [n, ...(await runFollowUps(store, n, human))];
-        });
-        emitAll([note, ...followed]);
-        if (wantsHtml) return back();
-        return json(res, 201, note);
+      // The token page: a form posts here with `then` (the action) and its fields; without the key it asks for
+      // one; with this project's admin key it sets the cookie, performs the action, and returns to the board.
+      if (path === "/token" && (req.method === "GET" || req.method === "POST")) {
+        const form = new URLSearchParams(req.method === "POST" ? await readText(req) : url.search);
+        const fields: Record<string, string> = {};
+        for (const [k, v] of form) if (k !== "token") fields[k] = v;
+        const given = form.get("token");
+        if (given === null) return html(res, 200, tokenPage(fields, false, base));
+        const r0 = await registry.lookup(given);
+        if (!r0 || r0.project !== projectId || r0.role !== null) return html(res, 401, tokenPage(fields, true, base));
+        const secure = proto === "https";
+        const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`;
+        const then = fields.then ?? "";
+        const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
+        if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
+        res.writeHead(303, { location: `${base}/`, "set-cookie": setCookie });
+        return res.end();
       }
 
       // The API: a key of this project, and an identity. A node key is bound to its role; an admin key may speak as anyone.

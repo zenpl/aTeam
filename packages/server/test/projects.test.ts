@@ -94,13 +94,23 @@ describe("t-041 · isolation", () => {
 
   it("the board page of a project posts its forms under its own prefix, and ?token= sets a cookie for that project only", async () => {
     await post(`/p/${a.project}/events`, a.admin_key, "pm", { kind: "instruction", to: HUMAN, body: "看一眼", ack_by: later() });
+    // anonymous: the board v2 sends every button through the project's token page, carrying the action (t-034)
     const page = await (await fetch(`${base}/p/${a.project}/`, { headers: { accept: "text/html" } })).text();
-    expect(page).toContain(`action="/p/${a.project}/ack"`);
+    expect(page).toContain(`action="/p/${a.project}/token"><input type="hidden" name="then" value="/ack">`);
     const login = await fetch(`${base}/p/${a.project}/?token=${a.admin_key}`, { redirect: "manual" });
     expect(login.status).toBe(303);
     expect(login.headers.get("location")).toBe(`/p/${a.project}/`);
     const cookie = login.headers.get("set-cookie")!;
     expect(cookie.startsWith(`ateam_token_${a.project}=`)).toBe(true);
+    // with the project's cookie the forms post straight to the prefixed actions
+    const inside = await (await fetch(`${base}/p/${a.project}/`, { headers: { accept: "text/html", cookie: cookie.split(";")[0] } })).text();
+    expect(inside).toContain(`action="/p/${a.project}/ack"`);
+    // the token page of the project validates the project's own admin key, sets its cookie, runs the action, returns under the prefix
+    const gate = await fetch(`${base}/p/${a.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "从项目页说的", token: a.admin_key }).toString() });
+    expect(gate.status).toBe(303);
+    expect(gate.headers.get("location")).toBe(`/p/${a.project}/`);
+    expect(gate.headers.get("set-cookie")!.startsWith(`ateam_token_${a.project}=`)).toBe(true);
+    expect((await fetch(`${base}/p/${b.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "x", token: a.admin_key }).toString() })).status).toBe(401);
     expect((await fetch(`${base}/p/${b.project}/?token=${a.admin_key}`, { redirect: "manual" })).status).toBe(401);
     // the manuals are reachable under the prefix too, so ATEAM_URL may be the project address
     expect((await fetch(`${base}/p/${a.project}/manual/dev`)).status).toBe(200);
