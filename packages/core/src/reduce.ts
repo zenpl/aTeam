@@ -22,6 +22,8 @@ export interface TaskState {
   /** When the current owner last claimed it, and that claim event's id (t-067: what a seam is judged against; ids order the log). */
   /** t-092: where this task came from when it was carried in (the create event's `from`). */
   from?: string;
+  /** t-096: what people call it (an old number, say). Not an identifier: the id is the id. */
+  label?: string;
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
@@ -292,7 +294,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
-        from: e.from, // t-092
+        from: e.from, label: e.label, // t-092, t-096
       });
       return;
     case "seam": {
@@ -307,6 +309,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   if (!t) return;
   t.updated_at = e.at;
   switch (e.op) {
+    case "label":
+      t.label = e.label.trim() || undefined; // t-096: a display name changes freely; the id never does
+      return;
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;

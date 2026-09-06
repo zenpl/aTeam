@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
 import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -179,6 +179,11 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         throw new Rejected("obsolete", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can make ${t.id} obsolete, not ${e.actor}`);
       return;
     }
+    // t-096: a display name is text people read; it is never used to find anything, so anyone working on the task may set it.
+    case "label":
+      if (!e.label?.trim()) throw new Rejected("label", "give the name people should see (--label)");
+      if ([...e.label].length > TITLE_MAX_CHARS) throw new Rejected("label", `label is ${[...e.label].length} chars; keep it short enough to read in a list (max ${TITLE_MAX_CHARS})`);
+      return;
     case "withdraw":
       if (!e.reason?.trim()) throw new Rejected("withdraw", "say why (--reason)");
       if (t.status !== "open" && t.status !== "blocked")

@@ -92,10 +92,17 @@ export interface Note extends Base {
   decides?: { of: string; option: string };
   /** Attach to a task: `task show`, the board and GET / list it there. A body starting "evidence:" is an evidence update. */
   task?: string;
+  /**
+   * t-096: a name for people to recognise this by — the number it had where it came from ("T-07", "决策 12"). Never an
+   * identifier: every reference is by `id`, two records may carry the same label, and a label never changes an id.
+   */
+  label?: string;
 }
 
 export type TaskOp =
-  | { op: "create"; task: string; title: string; criteria: string[] }
+  | { op: "create"; task: string; title: string; criteria: string[]; /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string }
+  /** t-096: change what people see it called. The id is untouched, as always. */
+  | { op: "label"; task: string; label: string }
   | { op: "claim"; task: string; touches: string[] }
   | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
