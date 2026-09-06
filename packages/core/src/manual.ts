@@ -19,3 +19,8 @@ export function manual(role: string): string | null {
   if (!/^[a-z][a-z0-9_-]*$/.test(role) || !existsSync(file)) return null;
   return `${readFileSync(join(DIR, "common.md"), "utf8").trimEnd()}\n\n---\n\n${readFileSync(file, "utf8").trimEnd()}\n`;
 }
+
+/** The manual for an agent that has not joined yet: what this is, how to start a project, how to join. `base` fills the address. */
+export function welcome(base: string): string {
+  return readFileSync(join(DIR, "welcome.md"), "utf8").replaceAll("{{base}}", base.replace(/\/$/, ""));
+}

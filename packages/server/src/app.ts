@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -35,6 +35,17 @@ export function createApp(opts: ServerOptions) {
     try {
       const url = new URL(req.url ?? "/", "http://x");
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
+
+      // The address is the toolkit: an agent that is not a browser gets the "how to start, how to join" manual at /.
+      // A browser says text/html (and ?token= is the browser's login); anything else at / is an agent reading the manual.
+      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
+      if (req.method === "GET" && (url.pathname === "/manual" || (url.pathname === "/" && !wantsHtml))) {
+        const proto = String(req.headers["x-forwarded-proto"] ?? "").includes("https") ? "https" : "http";
+        const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
+        const text = welcome(`${proto}://${host}`);
+        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
+        return res.end(text);
+      }
 
       // The manual a joining node reads. Generic by construction, so it needs no key.
       if (req.method === "GET" && url.pathname.startsWith("/manual/")) {

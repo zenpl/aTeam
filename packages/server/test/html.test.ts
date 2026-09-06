@@ -26,7 +26,7 @@ async function post(actor: string, body: unknown) {
 }
 
 const api = (path: string, headers: Record<string, string> = {}) =>
-  fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", ...headers }, redirect: "manual" });
+  fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", accept: "text/html", ...headers }, redirect: "manual" }); // a browser; without text/html, / is the newcomer's manual (t-040)
 
 beforeAll(async () => {
   app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
@@ -92,7 +92,7 @@ describe("GET / · read-only HTML board", () => {
   });
 
   it("is public read-only by default (decision 06:23); ?token= once still becomes a cookie, which the buttons need", async () => {
-    const bare = await fetch(`${base}/`, { redirect: "manual" });
+    const bare = await fetch(`${base}/`, { headers: { accept: "text/html" }, redirect: "manual" });
     expect(bare.status).toBe(200);
     expect(await bare.text()).toContain("Cookie flags");
 
@@ -107,14 +107,14 @@ describe("GET / · read-only HTML board", () => {
     expect(cookie).toMatch(/^ateam_token=/);
     expect(cookie).toMatch(/HttpOnly/);
 
-    const withCookie = await fetch(`${base}/`, { headers: { cookie: cookie.split(";")[0] } });
+    const withCookie = await fetch(`${base}/`, { headers: { cookie: cookie.split(";")[0], accept: "text/html" } });
     expect(withCookie.status).toBe(200);
     expect(await withCookie.text()).toContain("Cookie flags");
   });
 
   it("does not need an X-Actor and leaves no trace: presence and cursors are untouched", async () => {
     const before = await (await api("/board")).json();
-    await fetch(`${base}/`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    await fetch(`${base}/`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/html" } });
     const after = await (await api("/board")).json();
     expect(after.presence.map((p: { actor: string }) => p.actor)).toEqual(before.presence.map((p: { actor: string }) => p.actor));
   });
@@ -143,7 +143,7 @@ describe("GET / with boardPublic off · the pre-decision behaviour stays one swi
   afterAll(() => new Promise<void>((r) => priv.close(() => r())));
 
   it("needs the token: bearer header, or the cookie from ?token=", async () => {
-    const bare = await fetch(`${purl}/`, { redirect: "manual" });
+    const bare = await fetch(`${purl}/`, { headers: { accept: "text/html" }, redirect: "manual" });
     expect(bare.status).toBe(401);
     expect(bare.headers.get("content-type")).toMatch(/^text\/html/);
     const bearer = await fetch(`${purl}/`, { headers: { authorization: `Bearer ${TOKEN}` } });
@@ -162,7 +162,7 @@ describe("POST /decide · one click acks the instruction and records the decisio
   });
 
   it("renders one button per option on the needs-human entry, default marked; buttons are disabled without the token", async () => {
-    const anon = await (await fetch(`${base}/`)).text();
+    const anon = await (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
     const forms = (anon.match(/<form\b[^>]*>/gi) ?? []).filter((f) => f.includes('action="/decide"'));
     expect(forms).toHaveLength(1);
     expect(anon).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
@@ -337,7 +337,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       await zpost("qa", { kind: "reading", surface: "production", key: "health", value: "ok", valid_until: new Date(Date.now() - 1000).toISOString() });
 
       for (const path of ["/", "/?"]) {
-        const html = await (await fetch(`${zurl}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
+        const html = await (await fetch(`${zurl}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/html" } })).text();
         expect(html).toContain('<html lang="zh">');
         expect(html).toContain("<title>aTeam · 牌桌</title>");
         const ui = html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<code>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ");
@@ -351,7 +351,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
         for (const z of ["aTeam · 牌桌", "需要你", "现状", "焦点", "线上", "在途", "谁在线", "知道了", "默认", "不回复则默认：", "刚刚", "逾期", "已失效", "已过期", "被卡住", "已完成，等待验收", "已验收，尚未上生产", "（已验收：仓库）", "还没开始", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "同一份数据"]) expect(ui).toContain(z);
       }
-      const anon = await (await fetch(`${zurl}/`)).text();
+      const anon = await (await fetch(`${zurl}/`, { headers: { accept: "text/html" } })).text();
       expect(anon).toContain("要回答，请先打开一次");
       const bare = await fetch(`${zurl}/decide`, { method: "POST" });
       expect(await bare.text()).toContain("这个页面需要项目 token");

@@ -18,6 +18,38 @@ afterAll(() => new Promise<void>((r) => app.close(() => r())));
 /** This project's own conventions: none of them may appear in the platform's manual (product.md, overfit list). */
 const OVERFIT = [/pnpm/i, /\bfly\b/i, /deploy/i, /production/i, /deployed\.sha/i, /github/i, /staging/i, /CLAUDE\.md/i, /sha\b/i, /git\b/i];
 
+describe("t-040 · the address is the toolkit", () => {
+  it("GET / without text/html in Accept is the newcomer's manual, with this address filled in; a browser still gets the board", async () => {
+    for (const headers of [{}, { accept: "*/*" }, { accept: "application/json" }]) {
+      const r = await fetch(`${base}/`, { headers });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+      const text = await r.text();
+      expect(text).toContain("# 这是什么，怎么加入");
+      expect(text).toContain(`curl -sS -X POST ${base}/projects`);
+      expect(text).toContain(`${base}/invite/<code>/join`);
+      expect(text).toContain(`${base}/manual/<角色>`);
+      expect(text).not.toContain("{{base}}");
+      for (const re of OVERFIT) expect(text, String(re)).not.toMatch(re);
+    }
+    const browser = await fetch(`${base}/`, { headers: { accept: "text/html,application/xhtml+xml" } });
+    expect(browser.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("GET /manual is the same manual; https is honoured behind a proxy", async () => {
+    const a = await (await fetch(`${base}/manual`)).text();
+    const b = await (await fetch(`${base}/`)).text();
+    expect(a).toBe(b);
+    const proxied = await (await fetch(`${base}/manual`, { headers: { "x-forwarded-proto": "https", "x-forwarded-host": "ateam.example" } })).text();
+    expect(proxied).toContain("https://ateam.example/projects");
+  });
+
+  it("names every step a stranger needs: new project, invite join, first node, sync/ack, role manual", async () => {
+    const text = await (await fetch(`${base}/manual`)).text();
+    for (const must of ["POST", "/projects", "admin_key", "invite_url", "/join", "agent_id", "node_key", "第一个", "pm", "events?after=", "wait=25000", '"kind":"ack"', "X-Actor", "/board", "ateam join"]) expect(text).toContain(must);
+  });
+});
+
 describe("t-039 · GET /manual/<role>", () => {
   it("serves every role it is written for as Markdown, without a key", async () => {
     expect(manualRoles()).toEqual(["dev", "frontend", "pd", "pm", "qa"]);
