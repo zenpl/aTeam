@@ -126,7 +126,7 @@ describe("GET / · read-only HTML board", () => {
     const b = await api("/board");
     expect(b.headers.get("content-type")).toBe("application/json");
     const j = await b.json();
-    expect(Object.keys(j).sort()).toEqual(["focus", "in_flight", "instructions", "live", "needs_human", "now", "overdue", "presence", "readings", "seams", "tasks"]);
+    expect(Object.keys(j).sort()).toEqual(["focus", "in_flight", "instructions", "live", "needs_human", "now", "overdue", "presence", "readings", "release", "said", "seams", "tasks"]);
     const noActor = await fetch(`${base}/board`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(noActor.status).toBe(400);
   });

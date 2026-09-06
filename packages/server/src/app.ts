@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER } from "@ateam/core";
+import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -61,6 +61,18 @@ export function createApp(opts: ServerOptions) {
         bus.emit("append", e);
         if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
         return json(res, 201, e);
+      }
+
+      // The human says one sentence on the board: it goes into the log as a note in their name, prefixed so the board can follow it.
+      if (req.method === "POST" && url.pathname === "/say") {
+        if (!authed()) return html(res, 401, unauthorizedPage());
+        const text = (new URLSearchParams(await readText(req)).get("text") ?? "").trim();
+        if (!text) return json(res, 400, { error: "empty", message: "说点什么再点「说」" });
+        if (text.length > SAID_MAX_CHARS) return json(res, 400, { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` });
+        const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
+        bus.emit("append", note);
+        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
+        return json(res, 201, note);
       }
 
       // One click on the board: ack the instruction and record the decision, as the human, in one request.

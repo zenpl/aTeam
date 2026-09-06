@@ -1,5 +1,5 @@
-import type { Reading } from "./events.js";
-import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState } from "./reduce.js";
+import { PD_ACTOR, SAID_PREFIX, type Reading } from "./events.js";
+import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
 export interface BoardTask {
@@ -17,6 +17,8 @@ export interface BoardTask {
   withdrawn?: { by: string; at: string; reason: string };
   evidence?: string;
   verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  /** Every done, verify and reopen in order, with the round each belongs to. */
+  history: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
   surfaces: { surface: string; pass: boolean }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
@@ -26,6 +28,38 @@ export interface BoardTask {
 }
 
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
+
+export type SaidStatus = "received" | "requirement" | "task" | "live";
+export interface BoardSaid {
+  id: string;
+  /** The sentence as typed, without the "human 说：" prefix. */
+  body: string;
+  at: string;
+  status: SaidStatus;
+  /** Ready to show: 已收到 / 已成为需求 / 已成为任务：<标题> / 已上线 */
+  label: string;
+  links: { requirements: string[]; tasks: { id: string; title: string; status: string }[] };
+}
+
+export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" };
+
+export interface BoardRelease {
+  task: string;
+  title: string;
+  /** First git sha named in the done evidence (7-40 hex chars); null when the evidence names none. */
+  evidence_sha: string | null;
+  /** Surface -> who verified it there, current round, passes only. */
+  verified_by: Record<string, string>;
+  /** Surfaces passed in the current round. */
+  surfaces: string[];
+  done_at: string;
+}
+
+/** The first git sha in a piece of evidence, as a whole word, so "added" or "t-001" never count. */
+export function evidenceSha(evidence: string | undefined): string | null {
+  const m = /(?:^|[^0-9a-zA-Z])([0-9a-f]{7,40})(?![0-9a-zA-Z])/.exec(evidence ?? "");
+  return m ? m[1] : null;
+}
 
 /** How many in-flight items a folded group shows before "N more". */
 export const IN_FLIGHT_SHOWN = 5;
@@ -53,6 +87,13 @@ export interface Board {
     recent: { id: string; title: string }[];
     earlier: { id: string; title: string }[];
   };
+  /**
+   * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
+   * oldest done first, each with the sha its evidence names and who verified it where. The human reads this before a deploy.
+   */
+  release: { deployed_sha: string | null; candidates: BoardRelease[] };
+  /** What the human said on the board, newest first, each with where it went so far. */
+  said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -79,6 +120,8 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    release: { deployed_sha: null, candidates: [] },
+    said: [],
     seams: [],
     presence: [],
   };
@@ -132,7 +175,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
@@ -143,11 +186,40 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       const recent = b.live.since_sha === null || currentSince === undefined || passedAt >= currentSince;
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title });
     }
+    const results = surfaceResults(t);
+    if (results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
+      const verified_by: Record<string, string> = {};
+      for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
+      const lastDone = [...t.history].reverse().find((h) => h.op === "done");
+      b.release.candidates.push({
+        task: t.id, title: t.title, evidence_sha: evidenceSha(t.evidence), verified_by,
+        surfaces: results.filter((r) => r.pass).map((r) => r.surface), done_at: lastDone?.at ?? t.updated_at,
+      });
+    }
     if (t.status !== "verified" && t.status !== "withdrawn") {
       const g = (b.in_flight[t.status] ??= { total: 0, shown: [], all: [] });
       g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
     }
   }
+  // What the human said, and where each sentence went: a pd decision note or a task that refs it, then production.
+  const tasks = [...s.tasks.values()];
+  for (const n of s.notes) {
+    if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
+    const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
+    const linked = tasks.filter((t) => t.refs.includes(n.id));
+    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === "production" && r.pass));
+    const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
+    const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
+      : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
+    b.said.push({
+      id: n.id, body: n.body.slice(SAID_PREFIX.length).trim(), at: n.at, status, label,
+      links: { requirements, tasks: linked.map((t) => ({ id: t.id, title: t.title, status: t.status })) },
+    });
+  }
+  b.said.sort((x, y) => y.id.localeCompare(x.id));
+
+  b.release.deployed_sha = b.live.deployed_sha;
+  b.release.candidates.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
   for (const g of Object.values(b.in_flight)) {
     g.total = g.all.length;
     g.shown = [...g.all].sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).slice(0, IN_FLIGHT_SHOWN);

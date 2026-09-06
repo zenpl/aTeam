@@ -84,6 +84,8 @@ export type TaskOp =
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
   | { op: "withdraw"; task: string; reason: string }
+  /** Back to working after done or failed, same owner and touches: the owner has more to change (a review, a fail). */
+  | { op: "reopen"; task: string; reason: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
   | { op: "criteria"; task: string; add: string[] }
   | { op: "seam"; tasks: [string, string]; resolution: string };
@@ -98,6 +100,9 @@ export const INSTRUCTION_MAX_CHARS = 280;
 export const PM_ACTOR = "pm";
 /** The identity that owns scenarios and wording (decision 07:02). It may add criteria to any task. */
 export const PD_ACTOR = "pd";
+/** A note from the human on the board starts with this; the board derives where each such sentence went. */
+export const SAID_PREFIX = "human 说：";
+export const SAID_MAX_CHARS = 500;
 export const FOCUS_KEY = "focus";
 export const TEAM_SURFACE = "team";
 

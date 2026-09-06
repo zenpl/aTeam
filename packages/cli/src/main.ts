@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
@@ -18,6 +18,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam board [--json]           what is true, what is open, who is here
+  ateam release [--json]         what passed on repo and not yet on production: the deploy list for the human
 
 say things
   ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
@@ -25,6 +26,7 @@ say things
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
+  ateam say <正文>                                                   human only: one sentence to the team; the board shows where it went
   ateam focus <body>                                                 the one thing that matters most right now
   ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
@@ -36,6 +38,7 @@ tasks
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
+  ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
   ateam task seam <a> <b> --resolution "..."
 
@@ -116,6 +119,12 @@ async function main(argv: string[]) {
       console.log(bool(a, "json") ? JSON.stringify(b, null, 2) : fmt.board(b, cfg.me));
       return;
     }
+    case "release": {
+      exact(rest);
+      const b = await client.board();
+      console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
+      return;
+    }
     case "log": {
       exact(rest);
       const { events } = await client.log(str(a, "after") ?? null);
@@ -142,6 +151,12 @@ async function main(argv: string[]) {
       return emit({ kind: "reading", key, value: parseValue(value),
         surface: need(str(a, "surface"), "--surface"), method: str(a, "method"), assumptions: list(a, "assumes"),
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
+    }
+    case "say": {
+      const [text] = exact(rest, "正文");
+      if (cfg.me !== "human") throw new UsageError(`say is the human's: you are ${cfg.me}. Put it in a note instead.`);
+      if (text.trim().length > SAID_MAX_CHARS) throw new UsageError(`一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.trim().length}）；不够就再说一句`);
+      return emit({ kind: "note", body: `${SAID_PREFIX}${text.trim()}` });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
     case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
@@ -173,6 +188,7 @@ async function main(argv: string[]) {
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "reopen": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "criteria": {
           const [sub, task, text] = exact(given, "add", "id", "text");
           if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);

@@ -14,8 +14,9 @@ export class Rejected extends Error {
 export function validate(state: State, e: NewEvent, human: string): void {
   if (!e.actor) throw new Rejected("actor", "actor is required");
 
-  // R0: you may not build on a reading that is no longer true.
+  // R0: you may not build on a reading that is no longer true, nor on an event that is not in the log.
   for (const ref of e.refs ?? []) {
+    if (!state.ids.has(ref)) throw new Rejected("ref", `${ref} is not an event in this log`);
     const rs = state.readings.get(ref);
     if (!rs) continue;
     if (!rs.valid || rs.expired) {
@@ -117,6 +118,14 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
   switch (e.op) {
     // R6: a task created on a false premise ends without anyone pretending to do it. Only before work starts
     // (open or blocked), only by whoever owns its scope: the criteria author, pm, or the human.
+    // R8: after done or failed the owner may take the task back to change it; what was judged stays on record.
+    case "reopen":
+      if (!e.reason?.trim()) throw new Rejected("reopen", "say why (--reason)");
+      if (t.status !== "done" && t.status !== "failed")
+        throw new Rejected("reopen", `${t.id} is ${t.status}; only a done or failed task can be reopened${t.status === "verified" ? " (verified is final: create a new task)" : ""}`);
+      if (e.actor !== t.owner && e.actor !== PM_ACTOR && e.actor !== human)
+        throw new Rejected("reopen", `only ${t.owner} (owner), ${PM_ACTOR} or ${human} can reopen ${t.id}, not ${e.actor}`);
+      return;
     // R7: criteria can grow while the task is unfinished, only from those who own its scope; the adder then owns it too.
     case "criteria": {
       const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
