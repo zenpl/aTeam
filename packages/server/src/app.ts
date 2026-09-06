@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, slimBoard, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
+import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -270,7 +270,15 @@ export function createApp(opts: ServerOptions) {
         const state = reduce(await store.read(), now());
         const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
-        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base }));
+        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base, ask: url.searchParams.get("ask") }));
+      }
+
+      // t-065: one task in full, same rules as the board (public unless the board is private).
+      if (req.method === "GET" && wantsHtml && path.startsWith("/task/")) {
+        if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
+        const state = reduce(await store.read());
+        const out = renderTask(board(state, human), state, decodeURIComponent(path.slice("/task/".length)), { sha, human, base });
+        return out ? html(res, 200, out) : html(res, 404, notFoundPage(base));
       }
 
       const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };
@@ -278,7 +286,7 @@ export function createApp(opts: ServerOptions) {
 
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
       // run the same action right after the key is entered (docs/board.md: buttons are always clickable).
-      const ACTIONS = new Set(["/ack", "/say", "/decide"]);
+      const ACTIONS = new Set(["/ack", "/say", "/decide", "/fact"]);
       const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
         if (then === "/ack") {
           // 「知道了」/「做好了」/「起好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
@@ -332,6 +340,15 @@ export function createApp(opts: ServerOptions) {
           });
           emitAll([note, ...followed]);
           return { status: 201, body: note };
+        }
+        if (then === "/fact") {
+          // t-069: the address changed from the grey line under 线上: the fact alone, in the human's name.
+          const key = form.get("key") ?? "", value = (form.get("value") ?? "").trim();
+          if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$|^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址" } };
+          const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
+          emitAll([reading]);
+          return { status: 201, body: reading };
         }
         return { status: 404, body: { error: "not found" } };
       };

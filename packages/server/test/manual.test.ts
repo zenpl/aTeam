@@ -89,6 +89,7 @@ describe("t-059 · the manual ends with what this project says the role holds", 
     // the page lists what nobody holds, in the dig layer, and nothing goes to 需要你
     const page = await (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
     expect(page).toContain('<section id="coverage"><h3>没人管的事');
+    expect(page).toMatch(/<p class="meta team">团队：职责 \d+ 项：\d+ 有人/); // pd review of t-059: the 团队 line counts coverage first
     expect(page).toContain("<li>没人管把人的话变成要求：没有角色声明</li>");
     expect(page).toContain("<li>没人管做：dev 声明了但没在场</li>");
     expect(page).toContain("<li>没人管定方向：pm 声明了但没在场</li>"); // pm holds R1 but has not pulled (writing is not listening)
