@@ -60,10 +60,15 @@ export function board(b: Board, me: string): string {
     }
   }
 
-  const openSeams = b.seams.filter((s) => !s.resolved);
+  const openSeams = b.seams.filter((s) => !s.resolved && !s.stacked);
   if (openSeams.length) {
     out.push("", "OPEN SEAMS");
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
+  }
+  const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
+  if (stacked.length) {
+    out.push("", "STACKED (informational, blocks nothing)");
+    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
   }
 
   const valid = b.readings.filter((r) => r.valid);
@@ -103,7 +108,8 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   if (!mine.length) out.push("  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
-    out.push(`  ${s.resolved ? `resolved by ${s.resolved}` : "OPEN"}  with ${other}: ${s.overlap.join(", ")}`);
+    const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : "OPEN";
+    out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
   }
   return out.join("\n");
 }

@@ -59,6 +59,11 @@ export interface SeamState {
   id: string;
   tasks: [string, string];
   overlap: string[];
+  /**
+   * Set when one side was already done before the other claimed: the later task stacks on the earlier one.
+   * Informational; it blocks nobody's verification. Cleared if both sides come back in flight.
+   */
+  stacked?: { done: string; on: string };
   resolution?: { by: string; at: string; text: string };
 }
 
@@ -194,19 +199,24 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   }
 }
 
-/** Two in-flight tasks whose declared touches intersect share a seam that someone must own. */
+/**
+ * Two in-flight tasks whose declared touches intersect share a seam that someone must own.
+ * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
+ */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
     const overlap = t.touches.filter((x) => other.touches.includes(x));
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
+    const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap });
+    if (existing) { existing.overlap = overlap; existing.stacked = stacked; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked });
   }
 }
 
+/** Seams that block verifying `task`: unresolved and not stacked. */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && x.tasks.includes(task));
 }

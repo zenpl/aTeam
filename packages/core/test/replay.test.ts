@@ -187,12 +187,61 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t1", surface: "production", pass: true }))).message).toMatch(/owner/);
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "production", pass: true }))).message).toMatch(/criteria/);
 
-    // a seam opened while the task is done blocks the next surface too
+    // a seam between two tasks that were in flight together blocks the next surface too
     const store2 = new MemoryStore();
-    await doneTask(store2, c);
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "sha endpoint", criteria: ["/health has sha"] });
     await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t2", title: "board page", criteria: ["GET / html"] });
+    await emit(store2, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
     await emit(store2, c, { kind: "task", op: "claim", actor: "frontend", task: "t2", touches: ["app.ts"] });
+    await emit(store2, c, { kind: "task", op: "done", actor: "dev", task: "t1" });
     expect((await rejected(emit(store2, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true }))).message).toMatch(/seam/);
+  });
+});
+
+describe("t-009 · a seam with a task that was done before you claimed is stacking, not a collision", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+
+  it("A claim -> A done -> B claim overlapping: verify A is accepted; the board lists the seam as stacked", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "5241517" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams).toHaveLength(1);
+    expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
+    expect(b.needs_human).toHaveLength(0);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+  });
+
+  it("A claim -> B claim overlapping -> A done: verify A is still rejected (both were in flight)", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toBeUndefined();
+    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+  });
+
+  it("a stacked seam turns back into a collision if the done task fails and is reclaimed while the other is still in flight", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "test missing" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toBeUndefined();
+    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
   });
 });
 

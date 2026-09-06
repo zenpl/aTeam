@@ -29,7 +29,8 @@ export interface Board {
   instructions: { id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue"; sent: string; delivered?: string; acked?: string }[];
   readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
   tasks: Record<string, BoardTask[]>;
-  seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string }[];
+  /** `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
+  seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string; stacked?: { done: string; on: string } }[];
   presence: { actor: string; last_seen: string; idle_s: number }[];
 }
 
@@ -77,8 +78,8 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, resolved: seam.resolution?.by });
-    if (!seam.resolution) b.needs_human.push({ kind: "open_seam", id: seam.id, summary: `${seam.tasks.join(" and ")} both touch ${seam.overlap.join(", ")}; nobody owns the seam`, since: nowIso });
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, resolved: seam.resolution?.by, stacked: seam.stacked });
+    if (!seam.resolution && !seam.stacked) b.needs_human.push({ kind: "open_seam", id: seam.id, summary: `${seam.tasks.join(" and ")} both touch ${seam.overlap.join(", ")}; nobody owns the seam`, since: nowIso });
   }
 
   for (const [actor, last] of s.presence) {
