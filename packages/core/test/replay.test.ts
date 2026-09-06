@@ -773,6 +773,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "production", pass: false, evidence: "500 on /" });
     expect((await release(store, c)).candidates.map((x) => x.task)).toEqual(["D"]); // repo pass still stands this round
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "D", reason: "修 500" });
+    expect((await release(store, c)).candidates).toEqual([]); // being changed: the old sha must not ship (qa, t-029 repo FAIL)
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "D", evidence: "2222222" });
     expect((await release(store, c)).candidates).toEqual([]);
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "repo", pass: true });

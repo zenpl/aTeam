@@ -187,7 +187,8 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title });
     }
     const results = surfaceResults(t);
-    if (results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
+    // Only a task that is done or verified can ship: a reopened one is being changed, so its old repo pass is not a candidate.
+    if ((t.status === "done" || t.status === "verified") && results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
       const verified_by: Record<string, string> = {};
       for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
       const lastDone = [...t.history].reverse().find((h) => h.op === "done");
