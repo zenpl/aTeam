@@ -443,17 +443,17 @@ describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列�
   it("「需要你」下方有输入框与「说」按钮，POST /say；无作答 cookie 时禁用并给出同样的提示", async () => {
     const anon = await (await fetch(`${base}/`)).text();
     const needs = anon.slice(anon.indexOf('id="needs-you"'), anon.indexOf('id="status"'));
-    expect(needs).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="body" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off" disabled><button type="submit" disabled>说<\/button> <span class="meta">要回答，请先打开一次/);
+    expect(needs).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off" disabled><button type="submit" disabled>说<\/button> <span class="meta">要回答，请先打开一次/);
     const authed = await (await api("/")).text();
     const needs2 = authed.slice(authed.indexOf('id="needs-you"'), authed.indexOf('id="status"'));
-    expect(needs2).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="body" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off"><button type="submit">说<\/button><\/form>/);
+    expect(needs2).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off"><button type="submit">说<\/button><\/form>/);
     expect(needs2).not.toContain("你说过的");                       // nothing said yet on this board
     expect(authed).not.toMatch(/<script\b/i);
   });
 
   it("「你说过的」列最近 5 句，其余折叠为「还有 N 句」；去向文案来自 board.said", async () => {
     const state = reduce(await new MemoryStore().read());
-    const b = board(state, HUMAN) as Board & { said?: unknown[] };
+    const b = board(state, HUMAN) as Board & { said: unknown[] };
     const at = (m: number) => new Date(Date.parse(b.now) - m * 60_000).toISOString();
     b.said = [
       { id: "S1", body: "登录页太慢", at: at(50), status: "received", label: "已收到", links: { requirements: [], tasks: [] } },
@@ -488,8 +488,42 @@ describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列�
 
   it("board 没有 said 字段（老服务器）时页面照常渲染，没有「你说过的」", async () => {
     const state = reduce(await new MemoryStore().read());
-    const html = renderBoard(board(state, HUMAN), state, { human: HUMAN });
+    const b = board(state, HUMAN) as Board & { said?: unknown };
+    delete b.said;
+    const html = renderBoard(b, state, { human: HUMAN });
     expect(html).toContain('action="/say"');
     expect(html).not.toContain("你说过的");
+  });
+});
+
+describe("t-031 · 端到端：在牌桌上说一句，然后看它变成了什么", () => {
+  it("带 cookie POST /say 后回到牌桌，「你说过的」显示原话与「已收到」；pm 建任务 --refs 它后显示「已成为任务：<标题>」", async () => {
+    const app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN });
+    await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    try {
+      const cookie = ((await fetch(`${url}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+      const say = await fetch(`${url}/say`, { method: "POST", redirect: "manual", headers: { cookie, accept: "text/html", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ text: "登录页太慢了" }).toString() });
+      expect(say.status).toBe(303);
+      expect(say.headers.get("location")).toBe("/");
+
+      let html = await (await fetch(`${url}/`, { headers: { cookie } })).text();
+      let needs = html.slice(html.indexOf('id="needs-you"'), html.indexOf('id="status"'));
+      expect(needs).toContain("<h3>你说过的</h3>");
+      expect(needs).toMatch(/<li><span class="said-body">登录页太慢了<\/span> <span class="meta"><time[^>]*>刚刚<\/time> · 已收到<\/span><\/li>/);
+      expect(needs).not.toContain("human 说：");
+
+      const b = await (await fetch(`${url}/board`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "pm" } })).json();
+      const saidId = b.said[0].id;
+      const r = await fetch(`${url}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "pm", "content-type": "application/json" },
+        body: JSON.stringify({ kind: "task", op: "create", task: "t-1", title: "登录页加缓存", criteria: ["首屏 1 秒内"], refs: [saidId] }) });
+      expect(r.status).toBe(201);
+      html = await (await fetch(`${url}/`, { headers: { cookie } })).text();
+      needs = html.slice(html.indexOf('id="needs-you"'), html.indexOf('id="status"'));
+      expect(needs).toContain("· 已成为任务：登录页加缓存</span>");
+      expect(aboveTheFold(html)).not.toContain(saidId);
+    } finally {
+      await new Promise<void>((r) => app.close(() => r()));
+    }
   });
 });

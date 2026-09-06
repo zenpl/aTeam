@@ -1,4 +1,4 @@
-import type { Board, State } from "@ateam/core";
+import type { Board, BoardSaid, State } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -42,7 +42,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     fold.push(`</div>`);
   }
   // 说一句：the human's one line to the team, and what became of the earlier ones (board.said, t-030).
-  fold.push(`<form class="say" method="post" action="/say"><input type="text" name="body" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" autocomplete="off"${disabled}><button type="submit"${disabled}>${UI.say}</button>${hint}</form>`);
+  fold.push(`<form class="say" method="post" action="/say"><input type="text" name="text" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" autocomplete="off"${disabled}><button type="submit"${disabled}>${UI.say}</button>${hint}</form>`);
   const said = saidOf(b);
   if (said.length) {
     const recent = said.slice(0, SAID_SHOWN), rest = said.slice(SAID_SHOWN);
@@ -162,28 +162,18 @@ ${d.join("\n")}
 }
 
 /** One thing the human said on the board (board.said, t-030): the line, when, and what became of it. */
-export interface Said {
-  id: string;
-  /** the line as written, without the 「human 说：」 prefix */
-  body: string;
-  at: string;
-  status: "received" | "requirement" | "task" | "live" | string;
-  /** the Chinese sentence the board already worded: 「已收到」「已成为需求」「已成为任务：<标题>」「已上线」 */
-  label?: string;
-  links?: { requirements?: string[]; tasks?: { id: string; title: string; status?: string }[] };
-}
+export type Said = Pick<BoardSaid, "id" | "body" | "at"> & Partial<Pick<BoardSaid, "status" | "label" | "links">>;
 export const SAID_SHOWN = 5;
 
 /** Newest first, as the board sends it. Tolerates a board without `said` (a server older than t-030). */
 export function saidOf(b: Board): Said[] {
-  const list = ((b as Board & { said?: Said[] }).said ?? []).slice();
-  return list.sort((x, y) => y.at.localeCompare(x.at));
+  return ((b.said as Said[] | undefined) ?? []).slice().sort((x, y) => y.at.localeCompare(x.at));
 }
 
 /** The board decides the status sentence (`label`); the page only falls back to wording a bare status key. */
 export function saidStatus(x: Said): string {
   if (x.label) return x.label;
-  const base = UI.saidStatus[x.status] ?? x.status;
+  const base = UI.saidStatus[x.status ?? "received"] ?? x.status ?? "";
   const titles = (x.links?.tasks ?? []).map((t) => t.title).filter(Boolean);
   return titles.length && (x.status === "task" || x.status === "live") ? `${base}：${titles.join("、")}` : base;
 }
