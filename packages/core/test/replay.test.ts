@@ -37,7 +37,10 @@ describe("F1/F2 · instructions have delivery, ack and an overdue state", () => 
     c.tick(min(25));
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.instructions[0].status).toBe("overdue");
-    expect(b.needs_human.map((x) => x.kind)).toContain("overdue");
+    // overdue is the team's problem, not a question for the human
+    expect(b.overdue.map((x) => x.instruction)).toEqual([order.id]);
+    expect(b.overdue[0]).toMatchObject({ to: "backend", from: "pm", age_s: min(15) / 1000 });
+    expect(b.needs_human).toHaveLength(0);
 
     // backend finally pulls: delivery is a server-side fact, not a guess
     const got = await pull(store, "backend", null, c.now());
@@ -49,6 +52,7 @@ describe("F1/F2 · instructions have delivery, ack and an overdue state", () => 
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.instructions[0].status).toBe("acked");
     expect(b.needs_human).toHaveLength(0);
+    expect(b.overdue).toHaveLength(0);
     // latency is measurable: sent → delivered
     expect(Date.parse(b.instructions[0].delivered!) - Date.parse(b.instructions[0].sent)).toBe(min(25));
   });
@@ -81,7 +85,8 @@ describe("F4 · a seam appears when two in-flight tasks touch the same surface",
     let s = reduce(await store.read(), c.now());
     expect([...s.seams.values()]).toHaveLength(1);
     expect([...s.seams.values()][0].overlap).toEqual(["auth.session_cookie"]);
-    expect(board(s, HUMAN, c.now()).needs_human.some((x) => x.kind === "open_seam")).toBe(true);
+    expect(board(s, HUMAN, c.now()).seams.some((x) => x.open)).toBe(true);
+    expect(board(s, HUMAN, c.now()).needs_human).toHaveLength(0); // the seam is the team's to own, not the human's question
 
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-login" });
     const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-login", surface: "staging", pass: true }));
@@ -212,6 +217,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams).toHaveLength(1);
     expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
+    expect(b.seams[0].open).toBe(false);
     expect(b.needs_human).toHaveLength(0);
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
@@ -226,7 +232,8 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
-    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect(b.seams[0].open).toBe(true);
+    expect(b.needs_human).toHaveLength(0); // a seam is the team's to own, never a question for the human
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
   });
 
@@ -241,7 +248,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
-    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect(b.seams[0].open).toBe(true);
   });
 });
 
@@ -388,13 +395,13 @@ describe("t-017 · a task created on a false premise is withdrawn, not worked ar
     await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "A", on: "superseded by C" });
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams.map((x) => x.id).sort()).toEqual(["seam:A+B", "seam:A+C", "seam:B+C"]);
-    expect(b.needs_human.filter((x) => x.kind === "open_seam")).toHaveLength(2);
+    expect(b.seams.filter((x) => x.open)).toHaveLength(2);
 
     await withdraw(store, c, "A", "pm", "C does the same thing");
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams.map((x) => x.id)).toEqual(["seam:B+C"]);
     expect(b.seams[0].stacked).toEqual({ done: "B", on: "C" });
-    expect(b.needs_human.filter((x) => x.kind === "open_seam")).toHaveLength(0);
+    expect(b.seams.filter((x) => x.open)).toHaveLength(0);
     // B is no longer blocked by A: verify goes through
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
     // a new claim over the same file does not seam against the withdrawn task
@@ -480,6 +487,57 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toHaveLength(0);
+  });
+
+  it("t-019: needs_human holds only questions for the human, with their options and choice", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Board auth?", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private" });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy 1.4.2", ack_by: c.iso(min(5)) });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "b", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "A", touches: ["f"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["f"] });
+    c.tick(min(10));
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toHaveLength(1);
+    expect(b.needs_human[0]).toMatchObject({ kind: "instruction", id: q.id, from: "pm", body: "Board auth?", options: ["private", "public"], default: "private" });
+    expect(b.needs_human[0].chosen).toBeUndefined();
+    expect(b.overdue.map((o) => o.to)).toEqual(["backend"]);
+    expect(b.seams.filter((x) => x.open).map((x) => x.id)).toEqual(["seam:A+B"]);
+  });
+
+  it("t-019: live says what production runs and what is verified there; in_flight groups unfinished tasks by status", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const [id, title] of [["A", "sha endpoint"], ["B", "html board"], ["C", "withdraw op"], ["D", "never started"]]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    }
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live).toEqual({ deployed_sha: null, verified_on_production: [] });
+    expect(b.in_flight).toEqual({ open: [{ id: "A", title: "sha endpoint" }, { id: "B", title: "html board" }, { id: "C", title: "withdraw op" }, { id: "D", title: "never started" }] });
+
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "1501d1cce361834f93f3b4063dadf89fb70379e0", depends_on: ["production:deployed.sha"] });
+    for (const [id, who] of [["A", "dev"], ["B", "frontend"]]) {
+      await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
+      await emit(store, c, { kind: "task", op: "done", actor: who, task: id });
+    }
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "duplicate" });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live).toEqual({ deployed_sha: "1501d1cce361834f93f3b4063dadf89fb70379e0", verified_on_production: [{ id: "A", title: "sha endpoint" }] });
+    expect(Object.keys(b.in_flight).sort()).toEqual(["working"]);
+    expect(b.in_flight.working).toEqual([{ id: "C", title: "withdraw op", owner: "dev" }]);
+    expect(JSON.parse(JSON.stringify(b))).toHaveProperty("live.deployed_sha");
+    expect(JSON.parse(JSON.stringify(b))).toHaveProperty("in_flight.working");
+
+    // a deploy that nobody has measured since: the sha is unknown again, not stale-but-shown
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "deployed", writes: ["production:deployed.sha"] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live.deployed_sha).toBeNull();
   });
 });
 

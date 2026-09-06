@@ -25,8 +25,17 @@ export interface BoardTask {
 export interface Board {
   now: string;
   focus?: { body: unknown; set_by: string; at: string };
-  /** Only things a human must act on: instructions to the human, overdue instructions, tasks awaiting verification with no eligible agent. */
-  needs_human: { kind: "instruction" | "overdue" | "open_seam"; id: string; summary: string; since: string }[];
+  /** Only what the human must answer: open instructions addressed to the human. Nothing else, ever. */
+  needs_human: {
+    kind: "instruction"; id: string; from: string; body: string; summary: string; since: string;
+    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+  }[];
+  /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
+  overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
+  /** What is true on production right now, from valid readings and production verifications. */
+  live: { deployed_sha: string | null; verified_on_production: { id: string; title: string }[] };
+  /** Every task that is not finished, grouped by status: open, working, blocked, done, failed. */
+  in_flight: Record<string, { id: string; title: string; owner?: string }[]>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue";
     sent: string; delivered?: string; acked?: string;
@@ -35,8 +44,8 @@ export interface Board {
   }[];
   readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
   tasks: Record<string, BoardTask[]>;
-  /** `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
-  seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string; stacked?: { done: string; on: string } }[];
+  /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
+  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string } }[];
   presence: { actor: string; last_seen: string; idle_s: number }[];
 }
 
@@ -45,9 +54,12 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   const b: Board = {
     now: nowIso,
     needs_human: [],
+    overdue: [],
     instructions: [],
     readings: [],
     tasks: {},
+    in_flight: {},
+    live: { deployed_sha: null, verified_on_production: [] },
     seams: [],
     presence: [],
   };
@@ -65,9 +77,13 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     if (status === "acked") continue;
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
-      b.needs_human.push({ kind: "instruction", id: i.id, summary: `${i.actor}: ${i.body}${ask}`, since: i.at });
+      b.needs_human.push({
+        kind: "instruction", id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
+        options: i.options, default: i.default,
+        chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
+      });
     }
-    else if (status === "overdue") b.needs_human.push({ kind: "overdue", id: i.id, summary: `${i.to} has not acked "${i.body}" from ${i.actor}`, since: i.ack_by });
+    else if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
   }
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
@@ -79,6 +95,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
       assumptions: r.assumptions,
     });
+    if (valid && r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string") b.live.deployed_sha = r.value;
   }
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
@@ -88,11 +105,12 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
     });
+    if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) b.live.verified_on_production.push({ id: t.id, title: t.title });
+    if (t.status !== "verified" && t.status !== "withdrawn") (b.in_flight[t.status] ??= []).push({ id: t.id, title: t.title, owner: t.owner });
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, resolved: seam.resolution?.by, stacked: seam.stacked });
-    if (!seam.resolution && !seam.stacked) b.needs_human.push({ kind: "open_seam", id: seam.id, summary: `${seam.tasks.join(" and ")} both touch ${seam.overlap.join(", ")}; nobody owns the seam`, since: nowIso });
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked, resolved: seam.resolution?.by, stacked: seam.stacked });
   }
 
   for (const [actor, last] of s.presence) {
