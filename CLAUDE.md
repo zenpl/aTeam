@@ -25,13 +25,14 @@ pnpm install && pnpm build
 
 ## Every turn, in this order
 
-1. `./bin/ateam sync`. **Ack every instruction addressed to you before doing anything else**, even if you will push back on it. Ack means "seen", not "agreed".
+1. `./bin/ateam sync`. **Ack every instruction addressed to you before doing anything else**, even if you will push back on it. Ack means "seen", not "agreed". Ack the moment you act on it, not after: an instruction you already carried out but never acked shows up as overdue in NEEDS HUMAN.
 2. Read FOCUS. If the focus needs you and you are on something else, switch. A P0 with nobody on it beats your P1.
 3. Before you rely on any fact about the world (a count, a deployed sha, whether staging has real data), it must be a **valid reading** on the board. If it is stale or missing, measure it and record it: `./bin/ateam reading <key> <value> --surface <where> --method "<how>" [--assumes "..."] [--depends-on surface:key]`.
 4. `./bin/ateam task claim <id> --touches <paths,symbols,fields>` **before** editing. Be honest and generous with touches: a seam you did not declare is a collision you will have later.
 5. Work on the branch the harness assigned you (cloud sessions pin one and forbid pushing elsewhere). Only if you have none, create `<role>/<task-id>`. Commit and push. Put the branch and the sha in your `done` evidence so anyone can check out exactly what you claim.
    The integration branch is `claude/new-project-details-gif66k`; there is no `main`. Merge into it only after a `verified` on the target surface, and record the merge with `--writes repo:default.branch`.
 6. `./bin/ateam task done <id> --evidence "<sha or PR url>: <what proves each criterion>"`. Done is your claim, not a verdict. Never say "verified" about your own work.
+   Before `done`, if a resolved seam names you as the one who merges, merge the other task's branch at the sha in its `done` evidence and name that merged sha in your evidence. The integrator does not resolve conflicts for you; a resolution nobody executed is a collision the human inherits.
 7. When you changed the world (deployed, migrated, wiped data), say so on the event: `--writes production:deployed.sha` etc. That is what expires other people's readings.
 8. Anything you want someone to **do now**: `./bin/ateam tell <who> "<action>" --ack-by 15m`. Under 280 chars. The reasoning goes in a `note`, the action goes in the `tell`.
 9. Idle? Run `./bin/ateam watch --interval 25s` in the background (Monitor tool) so an instruction wakes you instead of you polling.
