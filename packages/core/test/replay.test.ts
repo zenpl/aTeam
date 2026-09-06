@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, Rejected, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, Rejected, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -632,6 +632,81 @@ describe("t-027 · the board tells this version's changes from history, and fold
     expect(b.in_flight.blocked).toMatchObject({ total: 1 });
     expect(b.in_flight.blocked.shown.map((x) => x.id)).toEqual(["t-2"]);
     expect(b.in_flight.open.shown.every((x) => typeof x.updated_at === "string")).toBe(true);
+  });
+});
+
+describe("t-028 · the owner can reopen a done task to change it; every round stays on record", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-020", title: "牌桌卡片页", criteria: ["卡片页"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-020", touches: ["html.ts", "i18n.ts"] });
+    c.tick(min(10));
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020", evidence: "4bff806" });
+    return { store, c };
+  };
+  const task = async (store: MemoryStore, c: ReturnType<typeof clock>) => reduce(await store.read(), c.now()).tasks.get("t-020")!;
+
+  it("reopen after done: back to working with the same owner and touches; done again appends evidence", async () => {
+    const { store, c } = await setup();
+    c.tick(min(5));
+    await emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "pd 评审要改措辞" });
+    let t = await task(store, c);
+    expect(t.status).toBe("working");
+    expect(t.owner).toBe("frontend");
+    expect(t.touches).toEqual(["html.ts", "i18n.ts"]);
+    // no claim needed: done is allowed straight away
+    c.tick(min(5));
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020", evidence: "156f926" });
+    t = await task(store, c);
+    expect(t.status).toBe("done");
+    expect(t.evidence).toBe("156f926");
+    expect(t.history.map((h) => h.op === "done" ? `done:${h.evidence}` : h.op === "reopen" ? `reopen:${h.reason}` : h.op)).toEqual(["done:4bff806", "reopen:pd 评审要改措辞", "done:156f926"]);
+    expect(t.history.map((h) => h.round)).toEqual([1, 1, 2]);
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done[0].history).toHaveLength(3);
+  });
+
+  it("an existing repo pass stays on record but no longer counts: the new round must be verified again", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true, evidence: "tests green" });
+    expect((await task(store, c)).status).toBe("verified");
+    // verified is final; a failed one can be reopened
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "改" }))).message).toMatch(/t-020 is verified; only a done or failed task can be reopened \(verified is final/);
+
+    const s2 = await setup();
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: false, evidence: "missing empty state" });
+    await emit(s2.store, s2.c, { kind: "task", op: "reopen", actor: "pm", task: "t-020", reason: "qa 的失败点要修" });
+    await emit(s2.store, s2.c, { kind: "task", op: "done", actor: "frontend", task: "t-020", evidence: "fix" });
+    const t = await task(s2.store, s2.c);
+    expect(t.verifications).toHaveLength(1); // kept
+    expect(surfaceResults(t)).toEqual([]);   // but nothing counts in round 2
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true });
+    expect((await task(s2.store, s2.c)).status).toBe("verified");
+  });
+
+  it("only the owner, pm or the human may reopen; open/working/withdrawn cannot be reopened; a reason is required", async () => {
+    const { store, c } = await setup();
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "qa", task: "t-020", reason: "x" }))).message).toMatch(/only frontend \(owner\), pm or human can reopen t-020, not qa/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: " " }))).message).toMatch(/say why/);
+    await emit(store, c, { kind: "task", op: "reopen", actor: HUMAN, task: "t-020", reason: "human 要改" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "again" }))).message).toMatch(/t-020 is working; only a done or failed/);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-o", title: "o", criteria: ["x"] });
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "pm", task: "t-o", reason: "x" }))).message).toMatch(/t-o is open/);
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-o", reason: "dup" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "pm", task: "t-o", reason: "x" }))).message).toMatch(/is withdrawn/);
+  });
+
+  it("a task that reopens becomes in flight again: a seam stacked on it turns back into a collision", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-026", title: "折叠", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-026", touches: ["html.ts"] });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toEqual({ done: "t-020", on: "t-026" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "改" });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toBeUndefined();
+    expect(b.seams[0].open).toBe(true);
   });
 });
 

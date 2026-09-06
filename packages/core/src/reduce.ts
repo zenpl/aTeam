@@ -30,7 +30,14 @@ export interface TaskState {
   verifications: TaskVerification[];
   /** Notes attached with `task`, in log order. */
   notes: Note[];
+  /** The task's rounds in order: every done (with its evidence), verify and reopen. Nothing is overwritten. */
+  history: TaskHistoryEntry[];
 }
+
+export type TaskHistoryEntry =
+  | { op: "done"; by: string; at: string; round: number; evidence?: string }
+  | { op: "verify"; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string }
+  | { op: "reopen"; by: string; at: string; round: number; reason: string };
 
 export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
 
@@ -226,7 +233,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [],
-        created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
       });
       return;
     case "seam": {
@@ -248,12 +255,21 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       detectSeams(s, t);
       return;
     case "done":
-      t.status = "done"; t.evidence = e.evidence; t.round += 1; return;
+      t.status = "done"; t.evidence = e.evidence; t.round += 1;
+      t.history.push({ op: "done", by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
+      return;
+    case "reopen":
+      // same owner, same touches; the next done starts a new round, so every surface must be judged again
+      t.status = "working"; t.blocked_on = undefined;
+      t.history.push({ op: "reopen", by: e.actor, at: e.at, round: t.round, reason: e.reason });
+      detectSeams(s, t);
+      return;
     case "verify": {
       // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
       // stands, per surface); a fail with nothing passed yet is a plain failed.
       const passedBefore = surfaceResults(t).some((r) => r.pass);
       t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
+      t.history.push({ op: "verify", by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence });
       t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
     }

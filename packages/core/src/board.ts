@@ -1,5 +1,5 @@
 import type { Reading } from "./events.js";
-import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState } from "./reduce.js";
+import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
 export interface BoardTask {
@@ -17,6 +17,8 @@ export interface BoardTask {
   withdrawn?: { by: string; at: string; reason: string };
   evidence?: string;
   verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  /** Every done, verify and reopen in order, with the round each belongs to. */
+  history: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
   surfaces: { surface: string; pass: boolean }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
@@ -132,7 +134,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
