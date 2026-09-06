@@ -18,6 +18,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam board [--json]           what is true, what is open, who is here
+  ateam release [--json]         what passed on repo and not yet on production: the deploy list for the human
 
 say things
   ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
@@ -115,6 +116,12 @@ async function main(argv: string[]) {
       exact(rest);
       const b = await client.board();
       console.log(bool(a, "json") ? JSON.stringify(b, null, 2) : fmt.board(b, cfg.me));
+      return;
+    }
+    case "release": {
+      exact(rest);
+      const b = await client.board();
+      console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
       return;
     }
     case "log": {

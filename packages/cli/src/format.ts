@@ -165,3 +165,18 @@ export function isEvidenceUpdate(n: { body: string }): boolean {
 export function created(title: string, criteria: string[]): string {
   return [`  title: ${title}`, ...criteria.map((c, i) => `  ${i + 1}. ${c}`)].join("\n");
 }
+
+/** `ateam release`: what is verified on repo and not yet on production, for the deploy instruction to the human. */
+export function release(b: Board): string {
+  const r = b.release ?? { deployed_sha: b.live?.deployed_sha ?? null, candidates: [] };
+  const out: string[] = [];
+  out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
+  if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
+  out.push(`  任务      证据 sha   验收（表面：谁）              标题`);
+  for (const c of r.candidates) {
+    const who = Object.entries(c.verified_by).map(([surface, by]) => `${surface}：${by}`).join("，");
+    out.push(`  ${c.task.padEnd(9)} ${(c.evidence_sha ? c.evidence_sha.slice(0, 7) : "（证据无 sha）").padEnd(10)} ${who.padEnd(28)} ${c.title}`);
+  }
+  out.push(`  共 ${r.candidates.length} 项，按 done 先后排序。`);
+  return out.join("\n");
+}

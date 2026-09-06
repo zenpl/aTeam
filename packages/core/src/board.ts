@@ -29,6 +29,24 @@ export interface BoardTask {
 
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
 
+export interface BoardRelease {
+  task: string;
+  title: string;
+  /** First git sha named in the done evidence (7-40 hex chars); null when the evidence names none. */
+  evidence_sha: string | null;
+  /** Surface -> who verified it there, current round, passes only. */
+  verified_by: Record<string, string>;
+  /** Surfaces passed in the current round. */
+  surfaces: string[];
+  done_at: string;
+}
+
+/** The first git sha in a piece of evidence, as a whole word, so "added" or "t-001" never count. */
+export function evidenceSha(evidence: string | undefined): string | null {
+  const m = /(?:^|[^0-9a-zA-Z])([0-9a-f]{7,40})(?![0-9a-zA-Z])/.exec(evidence ?? "");
+  return m ? m[1] : null;
+}
+
 /** How many in-flight items a folded group shows before "N more". */
 export const IN_FLIGHT_SHOWN = 5;
 
@@ -55,6 +73,11 @@ export interface Board {
     recent: { id: string; title: string }[];
     earlier: { id: string; title: string }[];
   };
+  /**
+   * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
+   * oldest done first, each with the sha its evidence names and who verified it where. The human reads this before a deploy.
+   */
+  release: { deployed_sha: string | null; candidates: BoardRelease[] };
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -81,6 +104,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    release: { deployed_sha: null, candidates: [] },
     seams: [],
     presence: [],
   };
@@ -145,11 +169,23 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       const recent = b.live.since_sha === null || currentSince === undefined || passedAt >= currentSince;
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title });
     }
+    const results = surfaceResults(t);
+    if (results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
+      const verified_by: Record<string, string> = {};
+      for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
+      const lastDone = [...t.history].reverse().find((h) => h.op === "done");
+      b.release.candidates.push({
+        task: t.id, title: t.title, evidence_sha: evidenceSha(t.evidence), verified_by,
+        surfaces: results.filter((r) => r.pass).map((r) => r.surface), done_at: lastDone?.at ?? t.updated_at,
+      });
+    }
     if (t.status !== "verified" && t.status !== "withdrawn") {
       const g = (b.in_flight[t.status] ??= { total: 0, shown: [], all: [] });
       g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
     }
   }
+  b.release.deployed_sha = b.live.deployed_sha;
+  b.release.candidates.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
   for (const g of Object.values(b.in_flight)) {
     g.total = g.all.length;
     g.shown = [...g.all].sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).slice(0, IN_FLIGHT_SHOWN);

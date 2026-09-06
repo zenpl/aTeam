@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, Rejected, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, Rejected, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -707,6 +707,76 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
     expect(b.seams[0].open).toBe(true);
+  });
+});
+
+describe("t-029 · board.release lists what passed on repo and not yet on production", () => {
+  const ship = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string, title: string, evidence?: string) => {
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    c.tick(min(1));
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "tests green" });
+  };
+  const release = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).release;
+
+  it("no candidates: nothing verified on repo, or everything already on production", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
+    expect(await release(store, c)).toEqual({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
+    expect((await release(store, c)).candidates).toEqual([]);
+  });
+
+  it("candidates in done order, with evidence sha, who verified where, and the current production sha", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "1501d1cce361834f93f3b4063dadf89fb70379e0" });
+    await ship(store, c, "t-025", "criteria add", "3683577，分支 claude/backend-development-gzqbjf（06276f8 + pd 放行）");
+    await ship(store, c, "t-027", "board release split", "244368e，在 3683577 之上");
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-027", surface: "staging", pass: true });
+    const r = await release(store, c);
+    expect(r.deployed_sha).toBe("1501d1cce361834f93f3b4063dadf89fb70379e0");
+    expect(r.candidates.map((x) => x.task)).toEqual(["t-025", "t-027"]);
+    expect(r.candidates[0]).toMatchObject({ title: "criteria add", evidence_sha: "3683577", verified_by: { repo: "qa" }, surfaces: ["repo"] });
+    expect(r.candidates[1]).toMatchObject({ evidence_sha: "244368e", verified_by: { repo: "qa", staging: HUMAN }, surfaces: ["repo", "staging"] });
+    expect(r.candidates[0].done_at < r.candidates[1].done_at).toBe(true);
+    // verified on production: out of the list, and into live.verified_on_production
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "production", pass: true });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.release.candidates.map((x) => x.task)).toEqual(["t-027"]);
+    expect(b.live.verified_on_production.map((x) => x.id)).toEqual(["t-025"]);
+  });
+
+  it("evidence without a sha gives evidence_sha null; the sha must be a whole word", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await ship(store, c, "B", "no sha", "见 PR，测试全绿");
+    await ship(store, c, "C", "sha later", "PR https://github.com/x/y/pull/4 合并为 deadbeefcafe，见 t-001 与 added 一词");
+    const r = await release(store, c);
+    expect(r.candidates.map((x) => x.evidence_sha)).toEqual([null, "deadbeefcafe"]);
+    expect(evidenceSha("added defaced 1234567")).toBe("defaced"); // a 7-hex-letter word counts: the regex cannot tell, the human can
+    expect(evidenceSha("t-001 abc")).toBeNull();
+    expect(evidenceSha(undefined)).toBeNull();
+    expect(evidenceSha("01M1TSDDK1VXP23K45CPR3KDH5 then fd76455")).toBe("fd76455");
+  });
+
+  it("a reopened task leaves the list until its new round passes on repo again", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await ship(store, c, "D", "d", "1111111");
+    expect((await release(store, c)).candidates.map((x) => x.task)).toEqual(["D"]);
+    expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "D", reason: "x" }))).message).toMatch(/verified/);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "production", pass: false, evidence: "500 on /" });
+    expect((await release(store, c)).candidates.map((x) => x.task)).toEqual(["D"]); // repo pass still stands this round
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "D", reason: "修 500" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "D", evidence: "2222222" });
+    expect((await release(store, c)).candidates).toEqual([]);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "repo", pass: true });
+    expect((await release(store, c)).candidates[0]).toMatchObject({ task: "D", evidence_sha: "2222222" });
   });
 });
 
