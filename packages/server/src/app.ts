@@ -7,11 +7,14 @@ export interface ServerOptions {
   token?: string;
   human: string;
   maxWaitMs?: number;
+  /** Git commit the running image was built from; "unknown" when the build did not say. */
+  sha?: string;
 }
 
 /** One project, one log, one shared token. Identity is the X-Actor header. */
 export function createApp(opts: ServerOptions) {
   const { store, token, human } = opts;
+  const sha = opts.sha?.trim() || "unknown";
   const maxWait = opts.maxWaitMs ?? 30_000;
   const bus = new EventEmitter();
   bus.setMaxListeners(1000);
@@ -25,7 +28,7 @@ export function createApp(opts: ServerOptions) {
   return createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://x");
-      if (url.pathname === "/health") return json(res, 200, { ok: true });
+      if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
 
       if (token && req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: "unauthorized" });
       const actor = String(req.headers["x-actor"] ?? "").trim();

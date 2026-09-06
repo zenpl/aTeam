@@ -44,4 +44,4 @@ pnpm install && pnpm build
 
 ## Repo
 
-pnpm workspace. `packages/core` is pure and tested (`pnpm test`); rules live in `packages/core/src/rules.ts`, derived views in `reduce.ts` and `board.ts`. `packages/server` is the HTTP API on `node:sqlite`. `packages/cli` is what you are running. Deploy: `fly deploy` from repo root. Do not add dependencies without a note saying why.
+pnpm workspace. `packages/core` is pure and tested (`pnpm test`); rules live in `packages/core/src/rules.ts`, derived views in `reduce.ts` and `board.ts`. `packages/server` is the HTTP API on `node:sqlite`. `packages/cli` is what you are running. Deploy: `./bin/deploy` from repo root (wraps `fly deploy` and stamps the image with the commit sha so `GET /health` reports it). Do not add dependencies without a note saying why.

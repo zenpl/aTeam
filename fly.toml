@@ -1,4 +1,5 @@
-# fly launch --no-deploy --copy-config ; fly volumes create ateam_data --size 1 ; fly secrets set ATEAM_TOKEN=... ; fly deploy
+# fly launch --no-deploy --copy-config ; fly volumes create ateam_data --size 1 ; fly secrets set ATEAM_TOKEN=... ; ./bin/deploy
+# Deploy with ./bin/deploy (not bare `fly deploy`) so the image knows its commit and GET /health can report it.
 app = "ateam"
 primary_region = "sin"
 
