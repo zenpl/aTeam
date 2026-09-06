@@ -6,6 +6,7 @@ import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
+import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
@@ -36,7 +37,7 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."]
+  ateam task done <id> [--evidence "..."] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
@@ -193,7 +194,12 @@ async function main(argv: string[]) {
           return;
         }
         case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
-        case "done": return emit({ kind: "task", op, task: need(id, "<id>"), evidence: str(a, "evidence") });
+        case "done": {
+          const task = need(id, "<id>"), evidence = str(a, "evidence");
+          if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
+          else for (const w of seamWarnings(await client.board(), task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+          return emit({ kind: "task", op, task, evidence });
+        }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
           return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence") });
