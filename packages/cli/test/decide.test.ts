@@ -22,9 +22,9 @@ describe("t-011 · options on tell human, choice shown in sync and board", () =>
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2026-09-06T07:00:00.000Z", options: ["A", "B"], default: "B" });
+    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
 
-    expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 07:00]  options: A | B (default B)");
+    expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 00:00]  options: A | B (default B)");
     let b = board(reduce(await store.read()), HUMAN);
     expect(fmt.board(b, "pm")).toContain("pending   pm → human: auth: A or B?  [A | B; default B]");
     expect(fmt.board(b, "pm")).not.toContain("DECIDED");
@@ -45,8 +45,8 @@ describe("t-014 · ateam decide validates before it acks", () => {
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2026-09-06T07:00:00.000Z", options: ["A", "B"], default: "B" });
-    const plain = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "deploy now", ack_by: "2026-09-06T07:00:00.000Z" });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
+    const plain = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "deploy now", ack_by: "2099-01-01T00:00:00.000Z" });
     const emitted: NewEvent[] = [];
     const client = {
       board: async () => board(reduce(await store.read()), HUMAN),

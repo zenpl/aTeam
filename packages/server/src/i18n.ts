@@ -1,0 +1,95 @@
+/**
+ * Every UI string on GET /, in one table. Content written by agents or the human (titles, bodies,
+ * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
+ */
+export const UI = {
+  title: "aTeam",
+  refreshes: (s: number) => `每 ${s} 秒刷新`,
+  buildLabel: "服务器版本",
+  sameAs: "数据与",
+  sameAsTail: "一致",
+
+  needsYou: "需要你",
+  nothingForYou: "没有等你处理的事。",
+  askedBy: (who: string, when: string) => `${who} 提问，${when}`,
+  ifNothing: "不回复则默认：",
+  defaultTag: "默认",
+  gotIt: "知道了",
+  toAnswer: "要回答，请先打开一次",
+  toAnswerTail: "",
+
+  status: "现状",
+  focus: "焦点",
+  noFocus: "还没有设定焦点",
+  setBy: (who: string, when: string) => `${who} 设定，${when}`,
+  live: "生产环境",
+  build: "版本",
+  checked: (when: string) => `${when}确认`,
+  noDeployReading: "还没有人确认生产环境跑的是哪个版本",
+  noneOnProduction: "还没有任务在生产环境验收通过",
+  inFlight: "进行中",
+  nothingInFlight: "没有进行中的任务",
+  groups: {
+    working: "正在做",
+    blocked: "被卡住",
+    done: "已完成，等待验收",
+    verifiedElsewhere: "已验收，尚未上生产",
+    open: "还没开始",
+    failed: "验收未通过，待修",
+  } as Record<string, string>,
+  onSurface: (s: string) => `（已验收：${s}）`,
+  who: "谁在线",
+  nobody: "还没有人",
+
+  more: "其余：团队自己的状态（session 之间的指令、带编号的任务、seam、读数）",
+  overdue: "逾期未确认",
+  overdueLine: (to: string, body: string, from: string) => `${to} 还没有确认来自 ${from} 的「${body}」`,
+  due: (when: string) => `期限 ${when}`,
+  none: "无",
+  agentInstructions: "session 之间的开放指令",
+  th: { status: "状态", fromTo: "发出 → 接收", body: "内容", sent: "发出", delivered: "送达" },
+  notPulled: "尚未拉取",
+  decided: "已决定",
+  decidedByDefault: (option: string) => `已按默认「${option}」执行`,
+  chosen: (option: string) => `选择了「${option}」`,
+  tasks: "任务",
+  taskStatus: {
+    open: "未开始", working: "进行中", blocked: "被卡住", done: "已完成待验收",
+    failed: "验收未通过", verified: "已验收", withdrawn: "已撤回",
+  } as Record<string, string>,
+  criteriaBy: (who: string, when: string) => `验收标准由 ${who} 制定，${when}创建`,
+  touches: "涉及",
+  evidence: "证据",
+  verifiedOn: "验收通过于",
+  failedOn: "验收未通过于",
+  by: "由",
+  withdrawnBy: (who: string, when: string) => `${who} 于${when}撤回`,
+  decisionTag: "决策",
+  seams: "seam",
+  openCount: (n: number) => `${n} 条未解决`,
+  seamOpen: "未解决",
+  seamStacked: "堆叠",
+  seamResolvedBy: (who: string) => `${who} 已解决`,
+  bothTouch: "都涉及",
+  readings: "读数",
+  readingCount: (v: number, s: number) => `${v} 条有效，${s} 条失效`,
+  valid: "有效",
+  stale: "失效",
+  rth: { key: "surface:key", value: "值", by: "测量者", when: "时间", notes: "备注" },
+  assumes: "假设",
+  supersededBy: "已被取代",
+  invalidatedBy: "已失效，原因",
+  expired: "已过期",
+  instrStatus: { pending: "待送达", delivered: "已送达", acked: "已确认", overdue: "逾期" } as Record<string, string>,
+
+  unauthorized: "这个页面需要项目 token。请打开一次",
+  unauthorizedTail: "，之后会保存在 cookie 里。",
+
+  /** Relative time, in words. */
+  ago(sec: number): string {
+    if (sec < 60) return "刚刚";
+    if (sec < 5400) return `${Math.round(sec / 60)} 分钟前`;
+    if (sec < 172800) return `${Math.round(sec / 3600)} 小时前`;
+    return `${Math.round(sec / 86400)} 天前`;
+  },
+};
