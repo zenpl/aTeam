@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
-import { resolveConfig, initFields, type Config } from "./config.js";
+import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
@@ -14,6 +14,7 @@ import { decide } from "./decide.js";
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
+  ateam join --me <role> [--url <server>] [--token <t>]   become a node: writes .ateam/config.json, syncs once, prints the role's manual (init is an alias)
   ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json
                                                           precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
@@ -89,12 +90,18 @@ async function main(argv: string[]) {
   const [cmd, ...rest] = a._;
   if (!cmd || cmd === "help" || bool(a, "help")) { console.log(HELP); return; }
 
-  if (cmd === "init") {
+  if (cmd === "init" || cmd === "join") {
+    exact(rest);
     const fields = initFields({ url: str(a, "url"), me: str(a, "me"), token: str(a, "token") }, process.env);
     mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
     writeFileSync(configFile(), JSON.stringify(fields, null, 2) + "\n");
     const eff = resolveConfig(fields, process.env);
     console.log(`configured as "${eff.me}" against ${eff.url} (wrote ${Object.keys(fields).join(", ")} to .ateam/config.json). Add .ateam/ to .gitignore.`);
+    // join: one sync (delivery is recorded, your presence begins), then the manual for the role
+    const client = new Client(eff);
+    await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
+    console.log("");
+    console.log(joinOutput(eff.me, await client.manual(eff.me)));
     return;
   }
 

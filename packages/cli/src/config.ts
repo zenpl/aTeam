@@ -29,3 +29,12 @@ export function initFields(flags: { url?: string; me?: string; token?: string },
   if (!out.url && !blank(env.ATEAM_URL)) throw new Error("init: pass --url <server> or set ATEAM_URL");
   return out;
 }
+
+/** What `ateam join` prints after the manual: where the project's own file is, if the checkout has one. */
+export const JOIN_FOOTER = "项目档案见 docs/self.md（若仓库有）";
+
+/** The join screen: the manual for the role (or a note that the server has none), then the footer, always last. */
+export function joinOutput(role: string, manual: string | null): string {
+  const body = manual ?? `服务器没有 ${role} 这个角色的说明书；项目档案会说这个角色是什么。`;
+  return `${body.trimEnd()}\n\n${JOIN_FOOTER}`;
+}

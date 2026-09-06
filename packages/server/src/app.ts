@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
+import { append, pull, reduce, board, manual, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -35,6 +35,14 @@ export function createApp(opts: ServerOptions) {
     try {
       const url = new URL(req.url ?? "/", "http://x");
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
+
+      // The manual a joining node reads. Generic by construction, so it needs no key.
+      if (req.method === "GET" && url.pathname.startsWith("/manual/")) {
+        const text = manual(decodeURIComponent(url.pathname.slice("/manual/".length)));
+        if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
+        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
+        return res.end(text);
+      }
 
       // The human's page. Same data as /board, no identity needed. Reading is public unless boardPublic is off;
       // the decision buttons POST as the human and always need the token. Browsers cannot send the Bearer header,
