@@ -12,17 +12,18 @@ export const REFRESH_SECONDS = 30;
 
 const STATUS_ORDER = ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"] as const;
 
-export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string }
+export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; /** URL prefix of this project's pages, e.g. /p/<id>; empty for the default project */ base?: string }
 
 export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): string {
   const refresh = Math.max(REFRESH_SECONDS, opts.refresh ?? REFRESH_SECONDS);
   const human = opts.human ?? "human";
+  const base = opts.base ?? "";
   const now = Date.parse(b.now);
   const ago = (iso: string) => UI.ago(Math.max(0, Math.round((now - Date.parse(iso)) / 1000)));
   const t = (iso: string) => `<time datetime="${esc(iso)}" title="${esc(iso)}">${esc(ago(iso))}</time>`;
   const canDecide = opts.canDecide !== false;
   const disabled = canDecide ? "" : " disabled";
-  const hint = canDecide ? "" : ` <span class="meta">${UI.toAnswer} <code>/?token=…</code>${UI.toAnswerTail}</span>`;
+  const hint = canDecide ? "" : ` <span class="meta">${UI.toAnswer} <code>${base}/?token=…</code>${UI.toAnswerTail}</span>`;
   const why = (r: Board["readings"][number]) => !r.why ? "" : r.why.startsWith("superseded by") ? `${UI.supersededBy} <code>${esc(r.why.slice(14))}</code>` : r.why.startsWith("invalidated by") ? `${UI.invalidatedBy} <code>${esc(r.why.slice(15))}</code>` : UI.expired;
 
   // ---------- above the fold ----------
@@ -35,9 +36,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     fold.push(`<div class="ask"><p class="q">${esc(i.body)}</p><p class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}${i.options?.length && i.default ? ` · ${UI.ifNothing}<b>${esc(i.default)}</b>` : ""}</p>`);
     if (i.options?.length) {
       const buttons = i.options.map((o) => `<button type="submit" name="option" value="${esc(o)}"${o === i.default ? ' class="default"' : ""}${disabled}>${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join(" ");
-      fold.push(`<form class="decide" method="post" action="/decide"><input type="hidden" name="id" value="${esc(i.id)}">${buttons}${hint}</form>`);
+      fold.push(`<form class="decide" method="post" action="${base}/decide"><input type="hidden" name="id" value="${esc(i.id)}">${buttons}${hint}</form>`);
     } else {
-      fold.push(`<form class="decide" method="post" action="/ack"><input type="hidden" name="id" value="${esc(i.id)}"><button type="submit"${disabled}>${UI.gotIt}</button>${hint}</form>`);
+      fold.push(`<form class="decide" method="post" action="${base}/ack"><input type="hidden" name="id" value="${esc(i.id)}"><button type="submit"${disabled}>${UI.gotIt}</button>${hint}</form>`);
     }
     fold.push(`</div>`);
   }
