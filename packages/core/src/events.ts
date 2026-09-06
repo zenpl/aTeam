@@ -235,6 +235,19 @@ export const BOARD_SHAPE = 2;
  * It depends on production:deployed.sha, so a deploy invalidates it and the board says "unknown" until someone measures again.
  */
 export const DEPLOYED_TASKS_KEY = "deployed.tasks";
+/**
+ * t-092 (S9/M4): the importer says in the log that it is finished — a note whose body starts with this — and the service
+ * counts what actually landed and asks the human to check it. The event is the trigger; nothing out of band.
+ */
+export const IMPORT_DONE_PREFIX = "导入完成：";
+/** The check card, pd's wording (UC-S9「核对卡的措辞与交互」). The counts come from the log, never from the importer. */
+export const MIGRATION_ASK_TITLE = "搬过来了，对吗？";
+export const MIGRATION_OK = "对";
+export const MIGRATION_MISSING = "有漏";
+export const MIGRATION_OPTIONS = [MIGRATION_OK, MIGRATION_MISSING];
+/** What the first node is told to do once the human answered (M7 does the old channel itself). */
+export const MIGRATION_FINISH = "human 说清单对：去旧渠道留最后一条「这里只读」，并记一条事实「迁移完成」。";
+export const MIGRATION_PATCH = "human 说有漏：回去核对旧单据再补，补完再发一条「导入完成：…」，我会重新问他。";
 /** t-069 / pm 22:39: the contact card exists only when this fact (surface project) is set; off by default. */
 export const ALERT_ASK_KEY = "alert.ask";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */

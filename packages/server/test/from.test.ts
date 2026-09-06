@@ -56,3 +56,29 @@ describe("t-089 · an imported reading over the API", () => {
     expect(row).toMatchObject({ valid: false, why: "搬进来的数字：在这里没有测过，谁用谁重测" });
   });
 });
+
+describe("t-092 · the check card over the API", () => {
+  it("a note saying the import is done makes the service ask the human, with counts it took from the log", async () => {
+    await post("pm", { kind: "task", op: "create", task: "m-1", title: "旧任务", criteria: ["旧判据"], from: "pm/单据#1" });
+    await post("dev", { kind: "task", op: "claim", task: "m-1", touches: ["m-1"] });
+    await post("pm", { kind: "note", body: "现行决定", decision: true, from: "pm/台账#1" });
+    await post("pm", { kind: "reading", surface: "production", key: "users.count", value: 12, from: "pm/进度板", measured_at: new Date(Date.now() - 60_000).toISOString() });
+    const done = await post("pm", { kind: "note", body: "导入完成：搬完了" });
+    expect(done.status).toBe(201);
+    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
+    expect(card).toBeTruthy();
+    // this file's earlier test imported a reading too, so the fact count comes from the board, not from a number typed here
+    const facts = b.readings.filter((r: { why?: string }) => r.why === "搬进来的数字：在这里没有测过，谁用谁重测").length;
+    expect(card.body).toBe(`搬过来了，对吗？在途 1 件事、1 条现行决定、${facts} 个数字（都标了要重测）、0 个等你答的问题。旧的那边一条没删。`);
+    expect(facts).toBeGreaterThan(0);
+    expect(card.options).toEqual(["对", "有漏"]);
+    // answering it sends the importer one instruction
+    const r = await fetch(`${base}/decide`, { method: "POST", headers: { authorization: "Bearer k", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
+    expect(r.status).toBe(201);
+    const events = await log() as unknown as { kind: string; to?: string; body?: string }[];
+    const told = events.filter((e) => e.kind === "instruction" && e.to === "pm" && e.body?.startsWith("human 说清单对"));
+    expect(told).toHaveLength(1);
+    expect(told[0].body).toContain("迁移完成");
+  });
+});

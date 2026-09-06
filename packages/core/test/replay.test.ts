@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, appendFrom, pull, reduce, board, slimBoard, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1930,5 +1930,65 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
     const still = await card(own.store, own.c, own.notice.id);
     expect(still.i.stale).toBeUndefined();
     expect(still.b.overdue.map((o) => o.instruction)).toContain(own.notice.id);
+  });
+});
+
+describe("t-092 · the service counts what an import landed and asks the human to check it", () => {
+  const imported = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
+    // two in-flight tasks, one finished (not counted), a decision and the one it superseded, two facts, one question
+    for (const [id, from] of [["t-1", "pm/单据#1"], ["t-2", "pm/单据#2"], ["t-3", "pm/单据#3"]]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `旧标题 ${id}`, criteria: ["旧判据"], from });
+      await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    }
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-3", evidence: "来自 pm/单据#3" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-3", surface: "repo", pass: true }); // verified: not in flight
+    const old = await emit(store, c, { kind: "note", actor: "pm", body: "旧决定：A", decision: true, from: "pm/台账#1" });
+    await emit(store, c, { kind: "note", actor: "pm", body: "现行决定：B", decision: true, supersedes: old.id, from: "pm/台账#2" });
+    for (const [key, from] of [["users.count", "pm/进度板"], ["deployed.sha", "pm/发布页"]]) {
+      await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key, value: key === "users.count" ? 1200 : "abc1234", from, measured_at: c.iso(-min(20)) });
+    }
+    await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "旧问题：上 A 还是 B？", options: ["A", "B"], ack_by: c.iso(min(60)), from: "pm/广播#9" });
+  };
+
+  it("counts in-flight tasks, standing decisions, imported facts and unanswered questions — from the log, not from what the importer says", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await imported(store, c);
+    expect(importCounts(reduce(await store.read(), c.now()))).toEqual({ tasks: 2, decisions: 1, readings: 2, asks: 1 });
+    // the importer says it is done, and claims other numbers: the service uses its own
+    const done = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：我数的是 9 件事、9 条决定" });
+    const out = await runFollowUps(store, done, HUMAN, c.now());
+    expect(out).toHaveLength(1);
+    const card = out[0] as { kind: string; to: string; intent: string; options: string[]; body: string; refs: string[] };
+    expect(card).toMatchObject({ kind: "instruction", actor: "ateam", to: HUMAN, intent: "ask", options: ["对", "有漏"], refs: [done.id] });
+    expect(card.body).toBe("搬过来了，对吗？在途 2 件事、1 条现行决定、2 个数字（都标了要重测）、1 个等你答的问题。旧的那边一条没删。");
+    expect(card.default).toBeUndefined(); // no default: the human answers this one
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((x) => x.id)).toContain((out[0] as { id: string }).id);
+    // saying it again does not ask again
+    const again = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：又跑了一次" });
+    expect(await runFollowUps(store, again, HUMAN, c.now())).toEqual([]);
+  });
+
+  it("对 and 有漏 each send the importer one instruction, and the events stay", async () => {
+    for (const [option, body] of [["对", "human 说清单对"], ["有漏", "human 说有漏"]] as const) {
+      const store = new MemoryStore();
+      const c = clock(Date.now() - min(60));
+      await imported(store, c);
+      const done = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：搬完了" });
+      const [card] = await runFollowUps(store, done, HUMAN, c.now());
+      const decision = await emit(store, c, { kind: "note", actor: HUMAN, body: `decision: ${option}`, decision: true, decides: { of: (card as { id: string }).id, option }, refs: [(card as { id: string }).id] });
+      const out = await runFollowUps(store, decision, HUMAN, c.now());
+      expect(out).toHaveLength(1);
+      const told = out[0] as { to: string; body: string; refs: string[] };
+      expect(told.to).toBe("pm"); // the one who said it was done
+      expect(told.body.startsWith(body)).toBe(true);
+      if (option === "对") expect(told.body).toContain("这里只读");
+      else expect(told.body).toContain("回去核对旧单据再补");
+      expect(told.refs).toEqual([(card as { id: string }).id, decision.id]);
+      // the card leaves 需要你 once answered, and nothing was edited
+      const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+      expect(b.needs_human.map((x) => x.id)).not.toContain((card as { id: string }).id);
+    }
   });
 });

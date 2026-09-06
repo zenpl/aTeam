@@ -20,6 +20,8 @@ export interface TaskState {
   updated_at: string;
   owner?: string;
   /** When the current owner last claimed it, and that claim event's id (t-067: what a seam is judged against; ids order the log). */
+  /** t-092: where this task came from when it was carried in (the create event's `from`). */
+  from?: string;
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
@@ -290,6 +292,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        from: e.from, // t-092
       });
       return;
     case "seam": {

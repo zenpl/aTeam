@@ -291,6 +291,21 @@ export function noticeStaleness(s: State, i: Instruction): NoticeStaleness | nul
   return null;
 }
 
+/**
+ * t-092: what an import actually put in this log, counted from the events that carry `from` — never from what the
+ * importer claimed. In-flight tasks, decisions that still stand, imported facts, questions the human has not answered.
+ */
+export interface ImportCounts { tasks: number; decisions: number; readings: number; asks: number }
+export function importCounts(s: State): ImportCounts {
+  const superseded = new Set(s.notes.filter((n) => n.supersedes).map((n) => n.supersedes!));
+  return {
+    tasks: [...s.tasks.values()].filter((t) => t.from && !["verified", "withdrawn", "obsolete"].includes(t.status)).length,
+    decisions: s.notes.filter((n) => n.from && n.decision && !superseded.has(n.id)).length,
+    readings: [...s.readings.values()].filter((r) => r.reading.from).length,
+    asks: [...s.instructions.values()].filter((st) => st.instruction.from && !st.acked_at && !st.chosen).length,
+  };
+}
+
 /** The push level a role declared when it joined; "none" when the fact is missing, stale, or says something else. */
 export function pushLevelOf(s: State, role: string): PushLevel {
   const id = s.latestReading.get(`${NODE_SURFACE}:${capabilityKey(role)}`);
