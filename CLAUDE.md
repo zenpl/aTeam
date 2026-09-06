@@ -18,6 +18,7 @@ Read `docs/design.md` once; `docs/sources/field-report.md` is why it exists. You
 
 ```sh
 pnpm install && pnpm build
+./bin/ateam init --me <role>   # pm | dev | qa. Persists your identity in .ateam/; url and token come from the env
 ./bin/ateam sync        # everything since you last looked; instructions for you are marked
 ./bin/ateam board       # focus, needs-human, tasks, seams, readings, presence
 ```
