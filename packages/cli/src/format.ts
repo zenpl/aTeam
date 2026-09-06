@@ -65,7 +65,7 @@ export function board(b: Board, me: string): string {
     for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 
-  const open = b.instructions.filter((i) => i.status !== "acked");
+  const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn");
   if (open.length) {
     out.push("", "OPEN INSTRUCTIONS");
     for (const i of open) {
