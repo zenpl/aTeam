@@ -1,5 +1,5 @@
 import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
-import { lastSeen } from "./reduce.js";
+import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -30,6 +30,8 @@ export interface BoardTask {
   history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
   surfaces: { surface: string; pass: boolean }[];
+  /** t-076: surfaces whose pass was later overturned by a fail, with who, when and why. */
+  overturned?: { surface: string; by: string; at: string; evidence?: string; passed_by: string }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
   /** Notes attached with --task, in log order. */
@@ -158,7 +160,7 @@ export interface Board {
   }[];
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
-  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean }[];
+  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string } }[];
   /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
@@ -442,7 +444,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       era, summary,
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
-      surfaces: surfaceResults(t),
+      surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
     });
@@ -493,7 +495,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined });
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed });
   }
 
   // who is not receiving: pending (never pulled) instructions older than 5 minutes, by recipient
@@ -547,7 +549,7 @@ export function slimBoard(b: Board): Board {
     tasks[status] = list.map((t) => ({
       id: t.id, title: t.title, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
-      surfaces: t.surfaces, verified_on: t.verified_on, era: t.era, summary: t.summary,
+      surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
   }
   const decided = b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED);
@@ -557,7 +559,7 @@ export function slimBoard(b: Board): Board {
   const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));
   const seams = b.seams
     .filter((x) => x.open || ((x.resolved || x.stacked) && !x.tasks.every((id) => final.has(id))))
-    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner }));
+    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed }));
   const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
   const readings = b.readings.filter((r) => r.valid || stale.includes(r));
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]

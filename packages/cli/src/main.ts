@@ -6,7 +6,7 @@ import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamErrors, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { deploy, realGit } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -244,9 +244,16 @@ async function main(argv: string[]) {
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else {
             const b = await client.board();
-            const errors = seamErrors(b, task, evidence);
-            if (errors.length) throw new UsageError(errors.join("\n"));
+            const check = seamCheck(b, task, evidence, gitIsAncestor());
+            if (check.errors.length) throw new UsageError(check.errors.join("\n"));
+            for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
+            // t-074: a fallback is never silent — what could not be verified goes on record next to the done
+            if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
+            // t-073: seams this done settles by itself: recorded right after, with the basis
+            for (const e of check.absorbs) await emit(e);
+            return;
           }
           return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
         }

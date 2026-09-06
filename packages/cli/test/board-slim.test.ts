@@ -61,6 +61,8 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     const slim = slimBoard(full);
     const text = fmt.task(boardTask(slim, "t-a")!, slim.seams);
     expect(text).toContain("criteria   (not in the default board; ateam task show t-a has them)");
+    expect(text).toContain("touches    (not in the default board; ateam task show t-a has them)"); // never "—": that would say there are none
+    expect(text).not.toMatch(/^touches\s+—$/m);
     expect(text).toContain("evidence   sha 1234567; (not in the default board; ateam task show t-a has it)");
     expect(text).toContain("verifications\n  ✓ repo");
     expect(text).toContain("notes\n  (not in the default board; ateam task show t-a has them)");

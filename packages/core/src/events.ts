@@ -180,6 +180,16 @@ export const CONTACT_ASK = "你不在时怎么找你？给个邮箱或 webhook�
 export const CONTACT_FILL = "填写";
 export const CONTACT_SKIP = "先不要";
 export const CONTACT_OPTIONS = [CONTACT_FILL, CONTACT_SKIP];
+/**
+ * t-073: how this project tells that the later side of a seam absorbed the earlier one (fact project:absorb.form).
+ * "git-ancestor": the later side's evidence sha contains the earlier's (the doer's CLI checks git and records it);
+ * "named-sha": the later side's evidence names the earlier side's sha (judged from the log alone). Unset: nobody judges.
+ */
+export const ABSORB_FORM_KEY = "absorb.form";
+export const ABSORB_FORMS = ["git-ancestor", "named-sha"] as const;
+export type AbsorbForm = (typeof ABSORB_FORMS)[number];
+/** A seam resolution the rule wrote, not a person: "absorbed: 后者 <sha> 含前者 <sha>（<form>）". */
+export const ABSORB_PREFIX = "absorbed: ";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
 export const ALERT_WEBHOOK_KEY = "alert.webhook";
 /** The whole team not listening for this long is a call-out. */
