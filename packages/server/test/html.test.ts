@@ -994,3 +994,72 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
     } finally { await v.stop(); }
   });
 });
+
+describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
+  const migrate = async (v: ReturnType<typeof server>) => {
+    // one in-flight task, one decision, one fact and one open question, each carrying where it came from (t-088/t-089)
+    await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "jira://PROJ-1" });
+    await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+    await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, from: "jira://PROJ-2" });
+    await v.post("dev", { kind: "reading", surface: "staging", key: "users", value: 128, measured_at: new Date(Date.now() - 86_400_000).toISOString(), from: "jira://PROJ-3" });
+    await v.post("dev", { kind: "instruction", to: HUMAN, body: "旧队伍等你答的问题", ack_by: soon(), from: "jira://PROJ-4" });
+    // the importer says so in the log, and claims numbers of its own; the service counts what actually landed
+    return v.post("dev", { kind: "note", body: "导入完成：我搬了 99 件任务、88 条决定", from: "jira://done-1" });
+  };
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say"); // the card, if it is still being asked; the dig layer keeps the answered one
+    const i = needs.indexOf("搬过来了，对吗？");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  it("renders as 问你 with pd's title, the service's counts in the open, 对 primary and 有漏 plain", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await migrate(v);
+      const html = await v.page();
+      const c = card(html);
+      expect(c).toContain('data-kind="ask"');
+      expect(c).toContain('<span class="kind">问你</span>');
+      expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
+      // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
+      expect(c).toContain('<p class="body">在途 1 件事、1 条现行决定、1 个数字（都标了要重测）、1 个等你答的问题。旧的那边一条没删。</p>');
+      expect(c).not.toContain("99");
+      expect(c).not.toContain("88");
+      expect(c).not.toContain("<details");
+      expect(c).toContain('<button class="btn primary" type="submit" name="option" value="对">对</button>');
+      expect(c).toContain('<button class="btn" type="submit" name="option" value="有漏">有漏</button>');
+      expect(c).not.toContain("默认"); // no default: the card waits for a real answer
+    } finally { await v.stop(); }
+  });
+
+  it("「对」 leaves 你刚定了：清单对 and no card; 「有漏」 leaves 清单有漏 and 现在 says who is patching", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const note = await migrate(v);
+      const id = JSON.parse(await (await v.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+      const cookie = await v.cookie();
+      expect((await v.form("/decide", { id, option: "对" }, { cookie, accept: "text/html" })).status).toBe(303);
+      let html = await v.page({ cookie });
+      expect(card(html)).toBe("");
+      expect(html).toContain('<p class="recent">你刚定了：<b>清单对</b>');
+      expect(html).not.toContain('class="meta patching"');
+
+      // a second migration that the human says is incomplete
+      const w = server();
+      await w.start();
+      try {
+        await migrate(w);
+        const id2 = JSON.parse(await (await w.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+        const c2 = await w.cookie();
+        expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(303);
+        const h2 = await w.page({ cookie: c2 });
+        expect(card(h2)).toBe("");
+        expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏</b>');
+        expect(h2).toContain('<p class="meta patching">等 dev 补漏</p>');
+      } finally { await w.stop(); }
+      expect(note).toBeTruthy();
+    } finally { await v.stop(); }
+  });
+});

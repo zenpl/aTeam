@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -18,6 +18,17 @@ const JUST_MS = 60 * 60_000;
 
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null }
+
+/** The migration check card (t-095): the service's own 「搬过来了，对吗？」, whose numbers it counted itself (t-092). */
+export function isMigrationCard(i: { body: string }): boolean {
+  return i.body.startsWith(MIGRATION_ASK_TITLE);
+}
+
+/** Who is still patching a migration the human said was incomplete; null when nobody is (t-095). */
+export function patchingRole(b: Board): string | null {
+  const i = b.instructions.find((x) => x.from === SERVICE_ACTOR && x.body === MIGRATION_PATCH && x.status !== "acked");
+  return i ? i.to : null;
+}
 
 /** The contact card (t-069): the instruction whose body is the S0 second question. */
 export function isContactCard(i: { body: string }): boolean {
@@ -188,6 +199,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
         out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      } else if (isMigrationCard(i)) {
+        // t-095: the counts are the question; they are read, not folded away behind 「细节」.
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else {
         out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p>`);
@@ -201,7 +216,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
         if (invite) out.push(inviteLine(invite));
       } else if (kind === "ask") {
-        const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
+        // t-095: the migration card has no default; 「对」 is the primary button because it is the answer that lets the
+        // importer finish, and the human is told nothing happens to the old channel until they answer.
+        const primary = (o: string) => o === i.default || (isMigrationCard(i) && o === MIGRATION_OK);
+        const buttons = i.options!.map((o) => `<button class="btn${primary(o) ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
@@ -230,7 +248,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const { title } = cardTitle(just.i);
     const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
-    const what = isContactCard(just.i) && just.i.chosen
+    const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing)}</b>`
+      : isContactCard(just.i) && just.i.chosen
       ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
@@ -249,6 +268,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   // ---------- 现在 ----------
   out.push(`<section class="now" id="now"><h2>${UI.now}</h2>`);
   out.push(`<div class="focus"><span class="label">${UI.focus}</span>${b.focus ? `<p class="focus-text">${esc(str(b.focus.body))}</p><span class="meta">${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}</span>` : `<p class="focus-text quiet">${UI.noFocus}</p>`}</div>`);
+
+  // t-095: the human said the migration was incomplete; the importer is patching it. One line, no button.
+  const patching = patchingRole(b);
+  if (patching) out.push(`<p class="meta patching">${esc(UI.migrationPatching(patching))}</p>`);
 
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
   const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");

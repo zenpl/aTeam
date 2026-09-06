@@ -1,8 +1,8 @@
 import { append, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
-import { projectRoles } from "./board.js";
+import { projectRoles, importCounts } from "./board.js";
 import { Rejected } from "./rules.js";
-import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, type Event, type NewEvent } from "./events.js";
+import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -30,6 +30,23 @@ const head = (text: string, n: number) => { const cs = [...text.trim()]; return 
  * - the human's choice on that ask: a verify by the human on that surface; 不过 then earns the owner a fail notice.
  */
 export function followUps(s: State, e: Event, human: string, now: Date): NewEvent[] {
+  // t-092 (S9/M4): the importer says in the log that it is done; the service counts what landed and asks the human to check it
+  if (e.kind === "note" && e.body.startsWith(IMPORT_DONE_PREFIX)) {
+    const already = [...s.instructions.values()].some((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(MIGRATION_ASK_TITLE) && !st.chosen);
+    if (already) return []; // one card at a time: saying it twice does not ask twice
+    const c = importCounts(s);
+    const body = `${MIGRATION_ASK_TITLE}在途 ${c.tasks} 件事、${c.decisions} 条现行决定、${c.readings} 个数字（都标了要重测）、${c.asks} 个等你答的问题。旧的那边一条没删。`;
+    return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: MIGRATION_OPTIONS, body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: [e.id] }];
+  }
+  // t-092: the human answered the card — tell the importer what to do next (M7 touches the old channel itself)
+  if (e.kind === "note" && e.decides) {
+    const st0 = s.instructions.get(e.decides.of);
+    const i0 = st0?.instruction;
+    if (i0 && i0.actor === SERVICE_ACTOR && i0.body.startsWith(MIGRATION_ASK_TITLE) && st0!.chosen?.note === e.id) {
+      const importer = s.notes.find((n) => n.id === (i0.refs?.[0] ?? ""))?.actor;
+      if (importer) return [{ kind: "instruction", actor: SERVICE_ACTOR, to: importer, body: e.decides.option === MIGRATION_OK ? MIGRATION_FINISH : MIGRATION_PATCH, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: [i0.id, e.id] }];
+    }
+  }
   if (e.kind === "task" && e.op === "verify" && !e.pass) {
     const t = s.tasks.get(e.task);
     if (!t?.owner || t.owner === e.actor) return [];

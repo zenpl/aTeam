@@ -72,6 +72,10 @@ export const UI = {
   waitingDeploy: (n: number) => `${n} 件验过了，等一次上线。`,
   waitingAlsoUnknown: (n: number) => `另有 ${n} 件不知道上没上。`,
   waitingUnknown: (why: string) => `不知道有多少件在等上线：${why}`,
+  // t-095 (S9/M4): the migration check card's result lines; the card itself is worded by the service (t-092)
+  migrationOk: "清单对",
+  migrationMissing: "清单有漏",
+  migrationPatching: (who: string) => `等 ${who} 补漏`,
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,
   sinceLast: (sha: string) => `自上一版 ${sha} 以来`,

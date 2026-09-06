@@ -32,6 +32,9 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
     // it never leaks to another surface (staging:users.count is not production:users.count).
     case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      // t-089 (M4): a reading carried in from somewhere else says when it was measured there; without that it is a number
+      // with no time and nobody can tell what it is worth. It lands expired either way — whoever needs it measures again.
+      if (e.from && !e.measured_at) throw new Rejected("reading", "搬进来的事实必须带 measured_at（它在原处是什么时候测的）；缺 measured_at，不写入");
       if (e.measured_at !== undefined) {
         const m = Date.parse(e.measured_at);
         if (Number.isNaN(m)) throw new Rejected("reading", `measured_at ${JSON.stringify(e.measured_at)} is not a time`);

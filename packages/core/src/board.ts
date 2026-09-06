@@ -158,6 +158,8 @@ export interface Board {
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
+    /** t-087: set when a service notice stopped being true, with why and who took over. */
+    stale?: NoticeStaleness;
     /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
     withdrawn?: { by: string; at: string; reason: string; seen: boolean };
     sent: string; delivered?: string; acked?: string;
@@ -250,23 +252,58 @@ export interface BoardOptions { /** How long since the last pull a node still co
  * (a newer round) or the task is no longer waiting, the instruction is true no more and leaves the lists by itself.
  */
 export function serviceNoticeStale(s: State, i: Instruction): boolean {
+  return !!noticeStaleness(s, i);
+}
+
+/** Why a service notice is no longer true, in the data (t-087), so every surface reads the reason instead of inventing one. */
+export interface NoticeStaleness {
+  /** redone: a newer round; taken_over: someone else claimed it; moved_on: the task is no longer waiting for this. */
+  reason: "redone" | "taken_over" | "moved_on";
+  task: string;
+  /** taken_over: who took it and the claim event that says so. */
+  by?: string;
+  claim?: string;
+}
+
+export function noticeStaleness(s: State, i: Instruction): NoticeStaleness | null {
   const ref = i.refs?.[0];
-  if (!ref) return false;
+  if (!ref) return null;
   if (i.body.includes(FAIL_NOTICE)) {
     for (const t of s.tasks.values()) {
       const v = t.verifications.find((x) => x.id === ref);
-      if (v) return t.round !== v.round;
+      if (!v) continue;
+      if (t.round !== v.round) return { reason: "redone", task: t.id };
+      // t-087: another role took the task over in this same round — the one who was asked to fix it is not on it any more
+      if (t.owner && t.owner !== i.to && t.claimed_id && t.claimed_id > v.id) return { reason: "taken_over", task: t.id, by: t.owner, claim: t.claimed_id };
+      return null;
     }
-    return false;
+    return null;
   }
   if (i.body.includes(VERIFY_ASK)) {
     for (const t of s.tasks.values()) {
       const d = t.history.find((h) => h.op === "done" && h.id === ref);
-      if (d) return t.round !== d.round || t.status !== "done";
+      if (!d) continue;
+      if (t.round !== d.round) return { reason: "redone", task: t.id };
+      return t.status !== "done" ? { reason: "moved_on", task: t.id } : null;
     }
-    return false;
+    return null;
   }
-  return false;
+  return null;
+}
+
+/**
+ * t-092: what an import actually put in this log, counted from the events that carry `from` — never from what the
+ * importer claimed. In-flight tasks, decisions that still stand, imported facts, questions the human has not answered.
+ */
+export interface ImportCounts { tasks: number; decisions: number; readings: number; asks: number }
+export function importCounts(s: State): ImportCounts {
+  const superseded = new Set(s.notes.filter((n) => n.supersedes).map((n) => n.supersedes!));
+  return {
+    tasks: [...s.tasks.values()].filter((t) => t.from && !["verified", "withdrawn", "obsolete"].includes(t.status)).length,
+    decisions: s.notes.filter((n) => n.from && n.decision && !superseded.has(n.id)).length,
+    readings: [...s.readings.values()].filter((r) => r.reading.from).length,
+    asks: [...s.instructions.values()].filter((st) => st.instruction.from && !st.acked_at && !st.chosen).length,
+  };
 }
 
 /** The push level a role declared when it joined; "none" when the fact is missing, stale, or says something else. */
@@ -417,7 +454,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
       kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
-      options: i.options, default: i.default, withdrawn: st.withdrawn,
+      options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
     if (status === "acked" || status === "withdrawn") continue;
@@ -446,7 +483,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     b.readings.push({
       id: r.id, key: r.key, surface: r.surface, value: r.value, at: r.at, by: r.actor, valid,
       measured_at: measured, recorded_after_s: recordedAfter, late: validFor !== undefined && recordedAfter * 1000 > validFor / 2, valid_until: r.valid_until,
-      why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
+      why: valid ? undefined : rs.imported_why ?? (rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired"),
       assumptions: r.assumptions,
     });
   }

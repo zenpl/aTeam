@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -436,9 +436,13 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "POST" && path === "/events") {
         const body = (await readJson(req)) as NewEvent;
         const ne = { ...body, actor } as NewEvent;
-        const [e, ...followed] = await serialize(async () => { const x = await append(store, ne, { human, now: real() }); return [x, ...(await runFollowUps(store, x, human, real()))]; });
-        emitAll([e, ...followed]);
-        return json(res, 201, e);
+        // t-088: an event that carries `from` is written once; a repeat returns the first one, and says so
+        const [{ event: e, created }, ...followed] = await serialize(async () => {
+          const x = await appendFrom(store, ne, { human, now: real() });
+          return [x, ...(x.created ? await runFollowUps(store, x.event, human, real()) : []).map((event) => ({ event, created: true }))];
+        });
+        emitAll([e, ...followed.map((x) => x.event)]);
+        return json(res, created ? 201 : 200, { ...e, created });
       }
 
       return json(res, 404, { error: "not found" });

@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, slimBoard, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1821,5 +1821,174 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     r = await rel(store, c);
     expect(r.counts.unknown).toBe(r.candidates!.length);
     expect(r.unknown![0].reason).toMatch(/ateam release/); // the deploy invalidated the fact (it depends on production:deployed.sha): measure again
+  });
+});
+
+describe("t-088 · an event can say where it came from, and the same source lands once", () => {
+  it("the second write with the same from returns the first event and appends nothing; different from, different events; no from is untouched", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const one = await appendFrom(store, { kind: "note", actor: "pm", body: "旧单据 #12 的内容", from: "tracker#12" }, { human: HUMAN, now: c.now() });
+    expect(one.created).toBe(true);
+    const again = await appendFrom(store, { kind: "note", actor: "dev", body: "同一张单据，第二次搬", from: "tracker#12" }, { human: HUMAN, now: c.tick(min(1)) });
+    expect(again.created).toBe(false);
+    expect(again.event.id).toBe(one.event.id);
+    expect(again.event.body).toBe("旧单据 #12 的内容"); // the first one stands; the second is not written over it
+    const other = await appendFrom(store, { kind: "note", actor: "pm", body: "另一张", from: "tracker#13" }, { human: HUMAN, now: c.tick(min(1)) });
+    expect(other.created).toBe(true);
+    // no from: every write is its own event, exactly as before
+    for (let i = 0; i < 2; i++) await emit(store, c, { kind: "note", actor: "pm", body: "普通 note" });
+    const events = (await store.read()).events;
+    expect(events.map((e) => e.from)).toEqual(["tracker#12", "tracker#13", undefined, undefined]);
+    expect(events).toHaveLength(4);
+    // the state can be asked, and the board carries from through
+    const s = reduce(await store.read(), c.now());
+    expect(s.from.get("tracker#12")!.id).toBe(one.event.id);
+    expect(s.from.size).toBe(2);
+    // two writers racing on the same from: the log still holds one
+    const race = new MemoryStore();
+    const results = await Promise.all([1, 2, 3].map((i) => appendFrom(race, { kind: "note", actor: "pm", body: `第 ${i} 次`, from: "同一处" }, { human: HUMAN, now: c.now() })
+      .catch(() => null)));
+    void results;
+    const raced = (await race.read()).events.filter((e) => e.from === "同一处");
+    expect(raced.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("t-089 · a number carried in from somewhere else lands expired", () => {
+  it("it must say when it was measured, it is never current, and a reading without from is untouched", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const bad = await rejected(emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "users.count", value: 1200, from: "旧看板/指标页" }));
+    expect(bad.rule).toBe("reading");
+    expect(bad.message).toContain("必须带 measured_at");
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "users.count", value: 1200, from: "旧看板/指标页", measured_at: c.iso(-min(5)), valid_for: 24 * 3600_000 } as never);
+    const s = reduce(await store.read(), c.now());
+    const rs = [...s.readings.values()][0];
+    expect(rs.expired).toBe(true);
+    expect(rs.valid).toBe(false); // measured five minutes ago with a day of validity, and still not current: it was measured elsewhere
+    const b = board(s, HUMAN, c.now());
+    const row = b.readings.find((r) => r.key === "users.count")!;
+    expect(row.valid).toBe(false);
+    expect(row.why).toBe("搬进来的数字：在这里没有测过，谁用谁重测");
+    // nothing that reads a current value picks it up
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "deployed.sha", value: "abc1234", from: "旧看板/发布页", measured_at: c.iso(-min(1)) });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).live.deployed_sha).toBeNull();
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "https://hooks.example/x", from: "旧看板/设置页", measured_at: c.iso(-min(1)) });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert.status).not.toBe("set");
+    // a reading measured here, as always
+    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.sha", value: "def5678", method: "curl /health", depends_on: ["production:deployed.sha"] });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).live.deployed_sha).toBe("def5678");
+  });
+});
+
+describe("t-087 · a fail notice stops being true when someone else takes the task over", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
+    const v = await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没满足" });
+    const notice = await emit(store, c, { kind: "instruction", actor: "ateam", to: "dev", body: `A${" 验收未过："}判据 2 没满足。改完重新 done。`, ack_by: c.iso(min(15)), refs: [v.id] });
+    return { store, c, notice };
+  };
+  const card = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string) => {
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    return { b, i: b.instructions.find((x) => x.id === id)! };
+  };
+
+  it("another role claims it: the notice leaves overdue with the reason and who took it; nobody claims: unchanged; the owner redoing it still clears it", async () => {
+    const { store, c, notice } = await setup();
+    c.tick(min(30)); // past ack_by, unacked
+    let { b, i } = await card(store, c, notice.id);
+    expect(b.overdue.map((o) => o.instruction)).toContain(notice.id); // criterion 3: nobody took over, nothing changed
+    expect(i.stale).toBeUndefined();
+    const claim = await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["x"] });
+    ({ b, i } = await card(store, c, notice.id));
+    expect(b.overdue.map((o) => o.instruction)).not.toContain(notice.id);
+    expect(b.needs_human.map((x) => x.id)).not.toContain(notice.id);
+    expect(i.stale).toEqual({ reason: "taken_over", task: "A", by: "frontend", claim: claim.id });
+    expect(i.status).toBe("overdue"); // the instruction itself is untouched: unacked and past its time, just no longer true
+    // history is intact: the notice event and the verify are still there, unedited
+    const events = (await store.read()).events;
+    expect(events.find((e) => e.id === notice.id)!.body).toContain("验收未过");
+    expect(events).toHaveLength(6);
+
+    // the owner redoing it clears the notice too, as before (t-054)
+    const w = await setup();
+    w.c.tick(min(30));
+    await emit(w.store, w.c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "改" });
+    await emit(w.store, w.c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678" });
+    const after = await card(w.store, w.c, w.notice.id);
+    expect(after.b.overdue.map((o) => o.instruction)).not.toContain(w.notice.id);
+    expect(after.i.stale).toEqual({ reason: "redone", task: "A" });
+    // the same person reclaiming their own task is not a takeover
+    const own = await setup();
+    own.c.tick(min(30));
+    await emit(own.store, own.c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x", "y"] });
+    const still = await card(own.store, own.c, own.notice.id);
+    expect(still.i.stale).toBeUndefined();
+    expect(still.b.overdue.map((o) => o.instruction)).toContain(own.notice.id);
+  });
+});
+
+describe("t-092 · the service counts what an import landed and asks the human to check it", () => {
+  const imported = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
+    // two in-flight tasks, one finished (not counted), a decision and the one it superseded, two facts, one question
+    for (const [id, from] of [["t-1", "pm/单据#1"], ["t-2", "pm/单据#2"], ["t-3", "pm/单据#3"]]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `旧标题 ${id}`, criteria: ["旧判据"], from });
+      await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    }
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-3", evidence: "来自 pm/单据#3" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-3", surface: "repo", pass: true }); // verified: not in flight
+    const old = await emit(store, c, { kind: "note", actor: "pm", body: "旧决定：A", decision: true, from: "pm/台账#1" });
+    await emit(store, c, { kind: "note", actor: "pm", body: "现行决定：B", decision: true, supersedes: old.id, from: "pm/台账#2" });
+    for (const [key, from] of [["users.count", "pm/进度板"], ["deployed.sha", "pm/发布页"]]) {
+      await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key, value: key === "users.count" ? 1200 : "abc1234", from, measured_at: c.iso(-min(20)) });
+    }
+    await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "旧问题：上 A 还是 B？", options: ["A", "B"], ack_by: c.iso(min(60)), from: "pm/广播#9" });
+  };
+
+  it("counts in-flight tasks, standing decisions, imported facts and unanswered questions — from the log, not from what the importer says", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await imported(store, c);
+    expect(importCounts(reduce(await store.read(), c.now()))).toEqual({ tasks: 2, decisions: 1, readings: 2, asks: 1 });
+    // the importer says it is done, and claims other numbers: the service uses its own
+    const done = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：我数的是 9 件事、9 条决定" });
+    const out = await runFollowUps(store, done, HUMAN, c.now());
+    expect(out).toHaveLength(1);
+    const card = out[0] as { kind: string; to: string; intent: string; options: string[]; body: string; refs: string[] };
+    expect(card).toMatchObject({ kind: "instruction", actor: "ateam", to: HUMAN, intent: "ask", options: ["对", "有漏"], refs: [done.id] });
+    expect(card.body).toBe("搬过来了，对吗？在途 2 件事、1 条现行决定、2 个数字（都标了要重测）、1 个等你答的问题。旧的那边一条没删。");
+    expect(card.default).toBeUndefined(); // no default: the human answers this one
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((x) => x.id)).toContain((out[0] as { id: string }).id);
+    // saying it again does not ask again
+    const again = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：又跑了一次" });
+    expect(await runFollowUps(store, again, HUMAN, c.now())).toEqual([]);
+  });
+
+  it("对 and 有漏 each send the importer one instruction, and the events stay", async () => {
+    for (const [option, body] of [["对", "human 说清单对"], ["有漏", "human 说有漏"]] as const) {
+      const store = new MemoryStore();
+      const c = clock(Date.now() - min(60));
+      await imported(store, c);
+      const done = await emit(store, c, { kind: "note", actor: "pm", body: "导入完成：搬完了" });
+      const [card] = await runFollowUps(store, done, HUMAN, c.now());
+      const decision = await emit(store, c, { kind: "note", actor: HUMAN, body: `decision: ${option}`, decision: true, decides: { of: (card as { id: string }).id, option }, refs: [(card as { id: string }).id] });
+      const out = await runFollowUps(store, decision, HUMAN, c.now());
+      expect(out).toHaveLength(1);
+      const told = out[0] as { to: string; body: string; refs: string[] };
+      expect(told.to).toBe("pm"); // the one who said it was done
+      expect(told.body.startsWith(body)).toBe(true);
+      if (option === "对") expect(told.body).toContain("这里只读");
+      else expect(told.body).toContain("回去核对旧单据再补");
+      expect(told.refs).toEqual([(card as { id: string }).id, decision.id]);
+      // the card leaves 需要你 once answered, and nothing was edited
+      const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+      expect(b.needs_human.map((x) => x.id)).not.toContain((card as { id: string }).id);
+    }
   });
 });

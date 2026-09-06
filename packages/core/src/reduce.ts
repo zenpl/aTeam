@@ -20,6 +20,8 @@ export interface TaskState {
   updated_at: string;
   owner?: string;
   /** When the current owner last claimed it, and that claim event's id (t-067: what a seam is judged against; ids order the log). */
+  /** t-092: where this task came from when it was carried in (the create event's `from`). */
+  from?: string;
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
@@ -86,6 +88,8 @@ export interface ReadingState {
   superseded_by?: string;
   /** set at board time when valid_until has passed */
   expired?: boolean;
+  /** t-089: why an imported reading is not current, for the board to show instead of each renderer inventing a phrase. */
+  imported_why?: string;
 }
 
 export interface InstructionState {
@@ -131,6 +135,8 @@ export interface SeamState {
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
+  from: Map<string, Event>;
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
@@ -178,6 +184,7 @@ function readingKey(r: Reading): string {
 export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     ids: new Set(),
+    from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
     shapes: new Map(),
@@ -190,6 +197,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   for (const e of log.events) {
     s.ids.add(e.id);
+    if (e.from && !s.from.has(e.from)) s.from.set(e.from, e);
     const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
     s.presence.set(e.actor, pe);
@@ -242,6 +250,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   }
   for (const rs of s.readings.values()) {
     if (rs.reading.valid_until && rs.reading.valid_until < nowIso) rs.expired = true;
+    if (rs.reading.from) { rs.expired = true; rs.valid = false; rs.imported_why = "搬进来的数字：在这里没有测过，谁用谁重测"; } // t-089
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   if (focusId) s.focus = s.readings.get(focusId)!.reading;
@@ -283,6 +292,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        from: e.from, // t-092
       });
       return;
     case "seam": {
