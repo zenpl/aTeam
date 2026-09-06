@@ -53,6 +53,11 @@ export function board(b: Board, me: string): string {
     for (const n of b.needs_human) out.push(`  ${n.summary}  (${n.id})`);
   }
 
+  if (b.undelivered?.length) {
+    out.push("", "UNDELIVERED (sent 5+ minutes ago, never pulled)");
+    for (const u of b.undelivered) out.push(`  ${u.to.padEnd(10)} ${u.count} instruction(s), oldest ${ago(u.oldest_sent)} ago${u.listening ? "" : "  可能失联"}`);
+  }
+
   if (b.overdue?.length) {
     out.push("", "OVERDUE");
     for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);

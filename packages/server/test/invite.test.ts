@@ -98,6 +98,25 @@ describe("t-042 · POST /invite/<code>/join", () => {
   });
 });
 
+describe("t-048 · undelivered instructions become the same card, not a second one", () => {
+  it("a role that never pulled with an old pending instruction: one 可能失联 card; still one after an overdue one appears", async () => {
+    const p = await newProject("没送到");
+    const pm = await join(code(p.invite_url), { agent_id: "pm-1" });
+    // an instruction to qa sent 6 minutes ago: append with a past 'at' is not possible through the API, so use an overdue-and-pending one
+    // (pending: qa never pulled). The service card exists because of overdue (t-042); undelivered needs 5 minutes of age.
+    const past = new Date(Date.now() - 1000).toISOString();
+    await api(p.project, "/events", pm.body.node_key, "pm", { method: "POST", body: JSON.stringify({ kind: "instruction", to: "qa", body: "验一下", ack_by: past }) });
+    let b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    expect(b.undelivered).toEqual([]); // too young to count as undelivered
+    const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
+    expect(cards).toHaveLength(1);
+    expect(cards[0].body).toMatch(/^qa 已经缺了 \d+ 分钟，手里有 1 条指令。起一个 qa？$/);
+    b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1);
+    expect(b.presence.find((x: { actor: string }) => x.actor === "qa")).toMatchObject({ status: "missing", listening: false });
+  });
+});
+
 describe("t-042 · a quiet role with work in its hands becomes a card for the human", () => {
   it("one card per absence; it leaves needs_human when the role is back, without an ack", async () => {
     const p = await newProject("缺人");

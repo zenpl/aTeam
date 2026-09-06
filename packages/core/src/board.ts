@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -93,6 +93,8 @@ export interface Board {
     kind: InstructionIntent; id: string; from: string; body: string; title: string; detail: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
+  /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
+  undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
   overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
   /**
@@ -162,7 +164,7 @@ export interface BoardOptions { /** How long since the last pull a node still co
 
 /** The role a service card is about, from its first words; undefined for any other instruction. */
 export function missingRoleOf(body: string): string | undefined {
-  return /^(\S+) 已经缺了 /.exec(body)?.[1];
+  return /^(\S+) (已经缺了|可能失联) /.exec(body)?.[1];
 }
 
 /** Is nobody listening as this role: no pull within the listen window? Never pulled counts as missing (t-047). */
@@ -187,6 +189,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const b: Board = {
     now: nowIso,
     needs_human: [],
+    undelivered: [],
     overdue: [],
     instructions: [],
     readings: [],
@@ -309,6 +312,18 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
 
   for (const seam of s.seams.values()) {
     b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined });
+  }
+
+  // who is not receiving: pending (never pulled) instructions older than 5 minutes, by recipient
+  const pendingBy = new Map<string, string[]>();
+  for (const st of s.instructions.values()) {
+    const i = st.instruction;
+    if (st.delivered_at || st.acked_at || i.to === human) continue;
+    if (now.getTime() - Date.parse(i.at) < UNDELIVERED_AFTER_MS) continue;
+    (pendingBy.get(i.to) ?? pendingBy.set(i.to, []).get(i.to)!).push(i.at);
+  }
+  for (const [to, sent] of [...pendingBy].sort()) {
+    b.undelivered.push({ to, count: sent.length, oldest_sent: sent.sort()[0], listening: !isMissing(s, to, now, listenWindow) });
   }
 
   const seen = new Set<string>();

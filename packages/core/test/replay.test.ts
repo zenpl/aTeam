@@ -987,6 +987,34 @@ describe("t-047 · listening and speaking are two different things", () => {
   });
 });
 
+describe("t-048 · the board says who is not receiving", () => {
+  it("pending instructions older than 5 minutes count per recipient; a pull clears them; the human's own are not counted", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const a = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "一", ack_by: c.iso(min(60)) });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "给人的", ack_by: c.iso(min(60)) });
+    c.tick(min(2));
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "二", ack_by: c.iso(min(60)) });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "qa", body: "三", ack_by: c.iso(min(60)) });
+    c.tick(min(4)); // "一" is 6 minutes old, the others 4
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered).toEqual([{ to: "dev", count: 1, oldest_sent: a.at, listening: false }]);
+    c.tick(min(2)); // now all three
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.map((u) => [u.to, u.count])).toEqual([["dev", 2], ["qa", 1]]);
+    await pull(store, "dev", null, c.now());
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.map((u) => [u.to, u.count, u.listening])).toEqual([["qa", 1, false]]);
+    // a listening recipient with something still unpulled (it pulled before the instruction) shows listening: true
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "四", ack_by: c.iso(min(60)) });
+    c.tick(min(4));
+    await pull(store, "dev", (await store.read()).events.at(-2)!.id, c.now()); // pulls up to before 四? no: 四 is the last event, so this pull consumes it
+    c.tick(min(2));
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.find((u) => u.to === "dev")).toBeUndefined();
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
