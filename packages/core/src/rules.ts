@@ -82,6 +82,11 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
 
   switch (e.op) {
     case "claim":
+      // open or failed: anyone may take it. working: only its owner, to widen what it touches.
+      if (t.status === "working" && t.owner === e.actor) {
+        if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
+        return;
+      }
       if (t.status !== "open" && t.status !== "failed")
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");

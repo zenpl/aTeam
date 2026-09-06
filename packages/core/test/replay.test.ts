@@ -245,6 +245,51 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
   });
 });
 
+describe("t-010 · touches overlap by path, and the owner can widen a claim", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("main.ts#init overlaps main.ts; packages/cli overlaps packages/cli/src/main.ts; unrelated paths do not", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const id of ["A", "B", "C", "D"]) await create(store, c, id);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/cli/src/main.ts#init"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/cli/src/main.ts"] });
+    let s = await seams(store, c);
+    expect(s.map((x) => x.id)).toEqual(["seam:A+B"]);
+    expect(s[0].overlap.sort()).toEqual(["packages/cli/src/main.ts", "packages/cli/src/main.ts#init"]);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "C", touches: ["packages/cli"] });
+    s = await seams(store, c);
+    expect(s.map((x) => x.id).sort()).toEqual(["seam:A+B", "seam:A+C", "seam:B+C"]);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "pm", task: "D", touches: ["packages/client", "packages/clix/src/main.ts", "packages/server/src/main.tsx", "GET /health"] });
+    expect((await seams(store, c)).some((x) => x.tasks.includes("D"))).toBe(false);
+  });
+
+  it("the owner may claim again to widen touches; the union is kept and a seam a fresh claim would raise appears", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/core/src/rules.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/server/src/app.ts"] });
+    expect(await seams(store, c)).toHaveLength(0);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/server/src/app.ts#health"] });
+    const st = reduce(await store.read(), c.now());
+    expect(st.tasks.get("A")!.touches).toEqual(["packages/core/src/rules.ts", "packages/server/src/app.ts#health"]);
+    expect(st.tasks.get("A")!.status).toBe("working");
+    expect(st.tasks.get("A")!.owner).toBe("dev");
+    expect((await seams(store, c)).map((x) => x.id)).toEqual(["seam:A+B"]);
+
+    // still nobody else's to claim
+    const r = await rejected(emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "A", touches: ["x"] }));
+    expect(r.rule).toBe("claim");
+    expect(r.message).toMatch(/owner dev/);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();

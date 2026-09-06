@@ -80,6 +80,25 @@ export interface State {
   focus?: Reading;
 }
 
+/**
+ * Do two declared touches overlap? Exact match; a `#symbol` suffix overlaps its file; a directory prefix overlaps
+ * everything under it. Unrelated paths (or non-path touches like `GET /health`) only overlap when equal.
+ */
+export function touchesOverlap(a: string, b: string): boolean {
+  const pa = a.split("#")[0].replace(/\/+$/, "");
+  const pb = b.split("#")[0].replace(/\/+$/, "");
+  if (pa === pb) return true;
+  return pa.startsWith(pb + "/") || pb.startsWith(pa + "/");
+}
+
+/** The touches of either task that overlap something the other declared. */
+export function overlapOf(a: string[], b: string[]): string[] {
+  const out = new Set<string>();
+  for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
+  for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
+  return [...out];
+}
+
 export function seamId(a: string, b: string): string {
   return "seam:" + [a, b].sort().join("+");
 }
@@ -179,7 +198,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   if (!t) return;
   switch (e.op) {
     case "claim":
-      t.owner = e.actor; t.touches = e.touches; t.status = "working";
+      // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
+      t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      t.owner = e.actor; t.status = "working";
       detectSeams(s, t);
       return;
     case "done":
@@ -206,7 +227,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
-    const overlap = t.touches.filter((x) => other.touches.includes(x));
+    const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
     const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
