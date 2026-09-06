@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -35,6 +35,25 @@ export function createApp(opts: ServerOptions) {
     try {
       const url = new URL(req.url ?? "/", "http://x");
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
+
+      // The address is the toolkit: an agent that is not a browser gets the "how to start, how to join" manual at /.
+      // A browser says text/html (and ?token= is the browser's login); anything else at / is an agent reading the manual.
+      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
+      if (req.method === "GET" && (url.pathname === "/manual" || (url.pathname === "/" && !wantsHtml))) {
+        const proto = String(req.headers["x-forwarded-proto"] ?? "").includes("https") ? "https" : "http";
+        const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
+        const text = welcome(`${proto}://${host}`);
+        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
+        return res.end(text);
+      }
+
+      // The manual a joining node reads. Generic by construction, so it needs no key.
+      if (req.method === "GET" && url.pathname.startsWith("/manual/")) {
+        const text = manual(decodeURIComponent(url.pathname.slice("/manual/".length)));
+        if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
+        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
+        return res.end(text);
+      }
 
       // The human's page. Same data as /board, no identity needed. Reading is public unless boardPublic is off;
       // the decision buttons POST as the human and always need the token. Browsers cannot send the Bearer header,
@@ -107,12 +126,10 @@ export function createApp(opts: ServerOptions) {
         }
         return { status: 404, body: { error: "not found" } };
       };
-      const wantsHtml = () => String(req.headers.accept ?? "").includes("text/html");
-
       if (req.method === "POST" && ACTIONS.has(url.pathname)) {
         if (!authed()) return html(res, 401, unauthorizedPage());
         const r = await act(url.pathname, new URLSearchParams(await readText(req)));
-        if (r.status < 300 && wantsHtml()) { res.writeHead(303, { location: "/" }); return res.end(); }
+        if (r.status < 300 && wantsHtml) { res.writeHead(303, { location: "/" }); return res.end(); }
         return json(res, r.status, r.body);
       }
 

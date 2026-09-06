@@ -22,8 +22,9 @@ function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
     if (r.status !== 201) throw new Error(`append ${r.status}: ${JSON.stringify(j)}`);
     return j;
   };
-  const api = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", ...headers }, redirect: "manual" });
-  const page = async (headers: Record<string, string> = {}) => (await fetch(`${base}/`, { headers })).text();
+  // t-040: GET / is the board only for a browser (Accept: text/html); anything else gets the newcomer's manual.
+  const api = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", accept: "text/html,application/json", ...headers }, redirect: "manual" });
+  const page = async (headers: Record<string, string> = {}) => (await fetch(`${base}/`, { headers: { accept: "text/html", ...headers } })).text();
   const authedPage = () => page({ authorization: `Bearer ${TOKEN}` });
   const cookie = async () => ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
   const form = (path: string, fields: Record<string, string>, headers: Record<string, string> = {}) =>
@@ -342,16 +343,18 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
 
 describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () => {
   it("public by default; boardPublic off needs the token for GET /; ?token= sets the cookie", async () => {
-    const anon = await fetch(`${w.base}/`, { redirect: "manual" });
+    const anon = await fetch(`${w.base}/`, { redirect: "manual", headers: { accept: "text/html" } });
     expect(anon.status).toBe(200);
+    const curl = await fetch(`${w.base}/`, { redirect: "manual" });                       // t-040: a non-browser gets the manual
+    expect(curl.headers.get("content-type")).toMatch(/^text\/markdown/);
     const once = await fetch(`${w.base}/?token=${TOKEN}`, { redirect: "manual" });
     expect(once.status).toBe(303);
     expect(once.headers.get("set-cookie")).toMatch(/^ateam_token=.*HttpOnly/);
     const p = server({ boardPublic: false });
     await p.start();
     try {
-      expect((await fetch(`${p.base}/`, { redirect: "manual" })).status).toBe(401);
-      expect((await fetch(`${p.base}/`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+      expect((await fetch(`${p.base}/`, { redirect: "manual", headers: { accept: "text/html" } })).status).toBe(401);
+      expect((await fetch(`${p.base}/`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/html" } })).status).toBe(200);
     } finally { await p.stop(); }
     const h = await fetch(`${w.base}/health`);
     expect(await h.json()).toEqual({ ok: true, sha: "abc1234" });

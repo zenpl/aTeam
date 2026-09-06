@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -886,6 +886,19 @@ describe("t-036 · instructions to the human carry a kind and a title", () => {
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toHaveLength(0);
     expect(b.instructions[0]).toMatchObject({ status: "acked", title: "部署第 4 批", deferred: { note: n.id, body: "明天再部署", at: n.at } });
+  });
+});
+
+describe("t-039 · the manual is a resource of the platform, per role", () => {
+  it("exists for the default roles, is common core plus role part, and refuses anything that is not a role name", () => {
+    expect(manualRoles()).toEqual(["dev", "frontend", "pd", "pm", "qa"]);
+    const dev = manual("dev")!;
+    expect(dev.startsWith("# 说明书 · 通用核心")).toBe(true);
+    expect(dev).toContain("\n---\n\n# 角色 · dev");
+    expect(manual("writer")).toBeNull();
+    expect(manual("../common")).toBeNull();
+    expect(manual("dev.md")).toBeNull();
+    expect(manual("")).toBeNull();
   });
 });
 

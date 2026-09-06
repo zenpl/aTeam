@@ -34,5 +34,12 @@ export class Client {
     return this.call("GET", `/events?${q}`);
   }
   board(): Promise<Board> { return this.call("GET", "/board"); }
+  /** The manual for a role, as Markdown; null when the server has none for it. */
+  async manual(role: string): Promise<string | null> {
+    const res = await fetch(this.cfg.url.replace(/\/$/, "") + `/manual/${encodeURIComponent(role)}`, { headers: this.headers() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ClientError(res.status, { error: res.statusText });
+    return res.text();
+  }
   log(after: string | null): Promise<{ events: Event[] }> { return this.call("GET", `/log${after ? `?after=${after}` : ""}`); }
 }
