@@ -124,3 +124,22 @@ describe("t-064 · sync shows a withdrawal, and warns when I had already seen th
     expect(later).toContain("⇐ 你已看过的这条被撤回了（01I），不要照着做");
   });
 });
+
+describe("t-083 · the LIVE line says who and how long ago, in pd's words", () => {
+  it("推的 for a push, 核对 (no 的) for a measurement, both with a relative time; neither when the source is unsaid", async () => {
+    const store = new MemoryStore();
+    let t = Date.parse("2026-09-06T06:00:00Z");
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    const line = async (method: string | undefined, value: string) => {
+      await emit({ kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value, method, depends_on: ["production:deployed.sha"] });
+      const b = board(reduce(await store.read(), new Date(t + 300_000)), HUMAN, new Date(t + 300_000));
+      return fmt.board(b, "dev").split("\n").find((l) => l.startsWith("LIVE"))!;
+    };
+    expect(await line("ateam release --deploy 推到 production", "aaaaaaa")).toContain("(qa 5m前推的)");
+    expect(await line("curl /health 读 sha", "bbbbbbb")).toContain("(qa 5m前核对)");
+    expect(await line("curl /health 读 sha", "ccccccc")).not.toContain("核对的"); // pd 22:47: 核对 carries no 的
+    const unsaid = await line(undefined, "ddddddd");
+    expect(unsaid).toContain("ddddddd");
+    expect(unsaid).not.toMatch(/推的|核对/);
+  });
+});

@@ -1746,6 +1746,7 @@ describe("t-083 · the board says who pushed only when a push recorded it", () =
       const live = board(reduce(await store.read(), c.now()), HUMAN, c.now()).live;
       expect(live.deployed_sha).toBe("abc1234");
       expect([live.deployed_by, live.checked_by], `${method}`).toEqual(want === "deployed_by" ? ["qa", null] : want === "checked_by" ? [null, "qa"] : [null, null]);
+      expect(live.at, `${method}`).toBe((await store.read()).events[0].at); // when it was recorded, for "how long ago"
     }
   });
 });
