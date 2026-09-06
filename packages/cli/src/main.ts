@@ -5,6 +5,7 @@ import { parse, str, list, bool, duration, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
+import { sync, watch, type CursorStore } from "./loop.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -19,6 +20,8 @@ every turn
 
 say things
   ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
+  ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
+  ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
   ateam focus <body>                                                 the one thing that matters most right now
@@ -36,7 +39,7 @@ tasks
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
 
   ateam log [--after <id>]       raw events
-  ateam watch [--interval 20s]   loop sync; exits 0 when an instruction for you arrives (for Monitor)
+  ateam watch [--interval 20s]   loop sync, printing what arrives; exits 0 when an instruction for you arrives (for Monitor)
 `;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
@@ -48,13 +51,11 @@ function loadConfig(): Config {
 }
 
 function cursorFile(me: string) { return join(process.cwd(), ".ateam", `cursor.${me}`); }
-function readCursor(me: string): string | null {
-  const f = cursorFile(me);
-  return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null;
-}
-function writeCursor(me: string, c: string | null) {
-  mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
-  writeFileSync(cursorFile(me), c ?? "");
+function fileCursor(me: string): CursorStore {
+  return {
+    read() { const f = cursorFile(me); return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null; },
+    write(c) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(cursorFile(me), c ?? ""); },
+  };
 }
 
 function parseValue(s: string): unknown {
@@ -71,18 +72,6 @@ function common(a: Args): { refs?: string[]; writes?: string[] } {
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`missing ${what}`);
   return v;
-}
-
-async function sync(client: Client, cfg: Config, waitMs: number, quiet: boolean): Promise<number> {
-  const after = readCursor(cfg.me);
-  const r = await client.pull(after, waitMs);
-  writeCursor(cfg.me, r.cursor);
-  if (!quiet) {
-    if (!r.events.length) console.log(after ? "nothing new" : "log is empty");
-    for (const e of r.events) console.log(fmt.event(e, cfg.me));
-    if (r.for_me.length) console.log(`\n${r.for_me.length} instruction(s) for you. Ack each with: ateam ack <id>`);
-  }
-  return r.for_me.length;
 }
 
 async function main(argv: string[]) {
@@ -108,15 +97,12 @@ async function main(argv: string[]) {
 
   switch (cmd) {
     case "sync": {
-      await sync(client, cfg, str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet"));
+      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log);
       return;
     }
     case "watch": {
-      const interval = duration(str(a, "interval") ?? "20s");
-      for (;;) {
-        const n = await sync(client, cfg, Math.min(interval, 30_000), true);
-        if (n > 0) { await sync(client, cfg, 0, false).catch(() => {}); console.log("\ninstruction received"); return; }
-      }
+      await watch(client, cfg.me, fileCursor(cfg.me), duration(str(a, "interval") ?? "20s"), console.log);
+      return;
     }
     case "ack": return emit({ kind: "ack", of: need(rest[0], "<id>") });
     case "board": {
@@ -132,7 +118,17 @@ async function main(argv: string[]) {
     case "tell": {
       const [to, ...body] = rest;
       return emit({ kind: "instruction", to: need(to, "<to>"), body: need(body.join(" "), "<body>"),
-        ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString() });
+        ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
+        options: list(a, "option"), default: str(a, "default") });
+    }
+    case "decide": {
+      const [id, ...option] = rest;
+      const of = need(id, "<id>"), choice = need(option.join(" "), "<option>");
+      const b = await client.board();
+      const i = b.instructions.find((x) => x.id === of);
+      if (!i) throw new Error(`no instruction "${of}" in the log`);
+      if (i.status !== "acked") await emit({ kind: "ack", of });
+      return emit({ kind: "note", body: `decision: ${i.body} -> ${choice}`, decision: true, decides: { of, option: choice } });
     }
     case "reading": {
       const [key, ...value] = rest;

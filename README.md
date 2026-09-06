@@ -40,6 +40,8 @@ Say things:
 ```sh
 ateam focus "P0: staging login broken"
 ateam tell backend "claim t-cookie and ship to staging" --ack-by 10m
+ateam tell human "board auth: private (A) or public (B)?" --option A --option B --default B   # buttons on GET /
+ateam decide <id> B                                              # human, from a CLI: ack + decision note
 ateam reading users.count 128 --surface production --method "select count(*)" \
       --assumes "prod and roster have zero overlap" --depends-on production:users
 ateam note "imported roster batch 3" --writes production:users      # invalidates the reading above
@@ -57,6 +59,8 @@ Rejections are exit code 2 with the rule that fired. `ateam help` lists everythi
 |---|---|
 | `GET /events?after=<id>&wait=<ms>` | pull since cursor (records delivery, advances cursor); long-polls up to 30 s |
 | `POST /events` | append one event; 409 with `{rule, message}` when a rule rejects it |
+| `GET /` | the board as HTML for the human; refreshes every 30 s. Public read-only by default (`ATEAM_BOARD_PUBLIC=0` makes it need the token). Decision buttons need the token: open `/?token=<ATEAM_TOKEN>` once and it is kept in a cookie |
+| `POST /decide` | form body `id=<instruction>&option=<one of its options>`; as the human, acks the instruction and appends the decision note in one request; needs the token (cookie or header) |
 | `GET /board` | the derived board |
 | `GET /log?after=<id>` | raw events, no side effects |
 

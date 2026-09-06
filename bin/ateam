@@ -2,4 +2,9 @@
 # Thin wrapper so any session can run ./bin/ateam from the repo root after `pnpm build`.
 # Node's fetch ignores HTTPS_PROXY unless told to; cloud sessions only reach the internet through that proxy.
 export NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY-1}"
-exec node --no-warnings "$(dirname "$0")/../packages/cli/bin/ateam.js" "$@"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ ! -f "$root/packages/cli/dist/main.js" ]; then
+  echo "ateam is not built yet. Run from the repo root:  pnpm install && pnpm build" >&2
+  exit 1
+fi
+exec node --no-warnings "$root/packages/cli/bin/ateam.js" "$@"

@@ -51,6 +51,13 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (e.body.length > INSTRUCTION_MAX_CHARS)
         throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
       if (!e.ack_by) throw new Rejected("instruction", "ack_by is required");
+      if (e.options !== undefined || e.default !== undefined) {
+        if (e.to !== human) throw new Rejected("instruction", `options are for the human; ${e.to} acts, the human decides`);
+        const opts = (e.options ?? []).map((o) => o.trim());
+        if (opts.length < 2 || opts.some((o) => !o)) throw new Rejected("instruction", "give at least two non-empty options");
+        if (new Set(opts).size !== opts.length) throw new Rejected("instruction", "options must be distinct");
+        if (e.default !== undefined && !opts.includes(e.default)) throw new Rejected("instruction", `default "${e.default}" is not one of the options`);
+      }
       return;
 
     case "ack": {
@@ -66,6 +73,17 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (!e.body?.trim()) throw new Rejected("note", "body is required");
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
         throw new Rejected("note", `${e.supersedes} is not a note`);
+      // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
+      if (e.decides) {
+        const st = state.instructions.get(e.decides.of);
+        if (!st) throw new Rejected("decide", `${e.decides.of} is not an instruction`);
+        const i = st.instruction;
+        if (!i.options?.length) throw new Rejected("decide", `${i.id} carries no options`);
+        if (!i.options.includes(e.decides.option)) throw new Rejected("decide", `"${e.decides.option}" is not one of: ${i.options.join(" | ")}`);
+        if (i.to !== e.actor && e.actor !== human) throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
+        if (st.chosen) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
+        if (!e.decision) throw new Rejected("decide", "a choice is a decision; set decision: true");
+      }
       return;
 
     case "task":

@@ -434,3 +434,46 @@ describe("decisions", () => {
     expect(reduce(await store.read(), c.now()).notes).toHaveLength(2);
   });
 });
+
+describe("t-011 · instructions to the human carry options; a click is ack + decision in one go", () => {
+  it("options are for the human only, must be distinct, and the default must be one of them", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const ask = { kind: "instruction", actor: "pm", to: HUMAN, body: "board auth: private (A) or public (B)?", ack_by: c.iso(min(30)) } as const;
+    expect((await rejected(emit(store, c, { ...ask, to: "dev", options: ["A", "B"] }))).rule).toBe("instruction");
+    expect((await rejected(emit(store, c, { ...ask, options: ["A"] }))).rule).toBe("instruction");
+    expect((await rejected(emit(store, c, { ...ask, options: ["A", "A"] }))).rule).toBe("instruction");
+    expect((await rejected(emit(store, c, { ...ask, options: ["A", "B"], default: "C" }))).rule).toBe("instruction");
+    const ok = await emit(store, c, { ...ask, options: ["A", "B"], default: "B" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.instructions[0]).toMatchObject({ id: ok.id, options: ["A", "B"], default: "B", status: "pending" });
+    expect(b.needs_human[0].summary).toContain("[A | B; default B]");
+  });
+
+  it("a decision names one of the options, once, by the human; the board then shows the choice and needs-human clears", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "board auth: private (A) or public (B)?", ack_by: c.iso(min(30)), options: ["A", "B"], default: "B" });
+    const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "claim t-1", ack_by: c.iso(min(30)) });
+    const decide = (actor: string, of: string, option: string, decision = true): NewEvent =>
+      ({ kind: "note", actor, body: `decision: ${option}`, decision, decides: { of, option } });
+
+    expect((await rejected(emit(store, c, decide(HUMAN, ask.id, "C")))).rule).toBe("decide");
+    expect((await rejected(emit(store, c, decide("dev", ask.id, "B")))).rule).toBe("decide");
+    expect((await rejected(emit(store, c, decide(HUMAN, plain.id, "B")))).rule).toBe("decide");
+    expect((await rejected(emit(store, c, decide(HUMAN, ask.id, "B", false)))).rule).toBe("decide");
+
+    // what the board's click does: ack, then the decision note
+    c.tick(min(5));
+    await emit(store, c, { kind: "ack", actor: HUMAN, of: ask.id });
+    const note = await emit(store, c, decide(HUMAN, ask.id, "B"));
+    expect((await rejected(emit(store, c, decide(HUMAN, ask.id, "A")))).message).toContain("already decided");
+
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(ask.id)!.chosen).toEqual({ option: "B", by: HUMAN, at: note.at, note: note.id });
+    const b = board(s, HUMAN, c.now());
+    expect(b.instructions.find((i) => i.id === ask.id)).toMatchObject({ status: "acked", chosen: { option: "B", by: HUMAN } });
+    expect(b.needs_human.map((n) => n.id)).not.toContain(ask.id);
+    expect(s.notes.filter((n) => n.decision).map((n) => n.id)).toEqual([note.id]);
+  });
+});
