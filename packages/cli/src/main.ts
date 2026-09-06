@@ -9,6 +9,7 @@ import { trace, isSha } from "./trace.js";
 import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { deploy, realGit } from "./release.js";
+import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
@@ -24,6 +25,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam board [--json]           what is true, what is open, who is here
+  ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
   ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
@@ -93,6 +95,12 @@ async function main(argv: string[]) {
   const a = parse(argv);
   const [cmd, ...rest] = a._;
   if (!cmd || cmd === "help" || bool(a, "help")) { console.log(HELP); return; }
+
+  if (cmd === "fixture") {
+    exact(rest);
+    console.log(await fixtureText({ start: str(a, "start"), stepMs: str(a, "step") !== undefined ? duration(str(a, "step")!) : undefined }));
+    return;
+  }
 
   if (cmd === "init" || cmd === "join") {
     exact(rest);

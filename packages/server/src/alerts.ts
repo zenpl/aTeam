@@ -66,6 +66,8 @@ export function due(s: State, human: string, now: Date): Alert[] {
 export interface AlerterDeps {
   fetch: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number }>;
   now?: () => Date;
+  /** The clock that stamps the note (t-063: a test offset moves `now`, never what is written). Default the real one. */
+  real?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   human: string;
   boardUrl: (project: string) => string;
@@ -91,7 +93,7 @@ export async function runAlerts(project: string, store: EventStore, deps: Alerte
     await append(store, {
       kind: "note", actor: SERVICE_ACTOR,
       body: `${NOTE_PREFIX}${a.kind} 自 ${a.since} ${ok ? "已发到" : `发送失败（三次，最后状态 ${status}）`} ${url}。${a.summary}`,
-    }, { human: deps.human, now: deps.now?.() });
+    }, { human: deps.human, now: deps.real?.() ?? deps.now?.() }); // stamped with the real clock (t-063): a test offset never writes a time
     if (ok) sent.push(payload);
   }
   return sent;

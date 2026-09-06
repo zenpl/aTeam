@@ -16,6 +16,8 @@ export interface EventStore {
 export interface AppendOptions {
   human: string;
   now?: Date;
+  /** How to mint the id; default the process-monotonic ulid. */
+  mint?: (ms: number) => string;
 }
 
 /** Validate against the current state, then append. The one write path. */
@@ -24,7 +26,7 @@ export async function append(store: EventStore, ne: NewEvent, opts: AppendOption
   const log = await store.read();
   const state = reduce(log, now);
   validate(state, ne, opts.human, now);
-  const e = { ...ne, id: ulid(now.getTime()), at: now.toISOString() } as Event;
+  const e = { ...ne, id: (opts.mint ?? ulid)(now.getTime()), at: now.toISOString() } as Event;
   await store.appendRaw(e);
   return e;
 }

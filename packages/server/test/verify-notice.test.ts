@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, pull, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, type Event, type State } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { followUps } from "../src/verifyflow.js";
+import { followUps } from "@ateam/core";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
