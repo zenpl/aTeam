@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR } from "./events.js";
 import { type State, openSeamsFor, passedOn } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -110,8 +110,18 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
   }
   const t = state.tasks.get(e.task);
   if (!t) throw new Rejected("task", `${e.task} does not exist`);
+  if (t.status === "withdrawn") throw new Rejected(e.op, `${t.id} is withdrawn (${t.withdrawn?.reason ?? ""}); ids are forever, create a new task`);
 
   switch (e.op) {
+    // R6: a task created on a false premise ends without anyone pretending to do it. Only before work starts
+    // (open or blocked), only by whoever owns its scope: the criteria author, pm, or the human.
+    case "withdraw":
+      if (!e.reason?.trim()) throw new Rejected("withdraw", "say why (--reason)");
+      if (t.status !== "open" && t.status !== "blocked")
+        throw new Rejected("withdraw", `${t.id} is ${t.status}; only an open or blocked task can be withdrawn`);
+      if (e.actor !== t.criteria_by && e.actor !== PM_ACTOR && e.actor !== human)
+        throw new Rejected("withdraw", `only ${t.criteria_by} (criteria author), ${PM_ACTOR} or ${human} can withdraw ${t.id}, not ${e.actor}`);
+      return;
     case "claim":
       // open or failed: anyone may take it. working: only its owner, to widen what it touches.
       if (t.status === "working" && t.owner === e.actor) {

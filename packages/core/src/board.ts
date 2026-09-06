@@ -12,6 +12,7 @@ export interface BoardTask {
   owner?: string;
   touches: string[];
   blocked_on?: string;
+  withdrawn?: { by: string; at: string; reason: string };
   evidence?: string;
   verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
@@ -85,7 +86,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, evidence: t.evidence, verifications: t.verifications,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
