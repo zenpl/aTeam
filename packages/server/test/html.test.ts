@@ -208,7 +208,7 @@ describe("POST /decide · one click acks the instruction and records the decisio
 
     const page = await (await api("/")).text();
     expect(page).not.toMatch(/action="\/decide"/);
-    expect(page).toContain("<b>选择了「B」</b>");
+    expect(page).toContain("<b>human 选择了「B」</b>");
 
     const again = await fetch(`${base}/decide`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=A` });
     expect(again.status).toBe(409);
@@ -252,9 +252,9 @@ describe("t-020 · a card page for the human: NEEDS YOU, STATUS, everything else
     expect(fold).toContain("Cookie flags");                          // verified on production → live
     expect(fold).toContain("Card page for the human（frontend）");    // being worked on
     expect(fold).toContain("Watch survives errors");                 // done, waiting for a check
-    expect(fold).toMatch(/在做[\s\S]*Card page/);
-    expect(fold).toMatch(/做完了，等验[\s\S]*Watch survives/);
-    expect(fold).toMatch(/卡住[\s\S]*Env beats config file（dev）/);
+    expect(fold).toMatch(/正在做[\s\S]*Card page/);
+    expect(fold).toMatch(/已完成，等待验收[\s\S]*Watch survives/);
+    expect(fold).toMatch(/被卡住[\s\S]*Env beats config file（dev）/);
     expect(fold).not.toContain("premise was wrong");                 // a blocked_on reason stays below the fold
     for (const p of ["pm", "dev", "qa", "frontend"]) expect(fold).toContain(p);
     expect(fold).toContain("刚刚");
@@ -312,6 +312,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       await zpost("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon, options: ["私有", "公开"], default: "公开" });
       await zpost("pm", { kind: "instruction", to: HUMAN, body: "请读部署说明", ack_by: soon });
       await zpost("pm", { kind: "instruction", to: "dev", body: "认领 t-1", ack_by: new Date(Date.now() - 60_000).toISOString() });
+      await zpost("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon });
       await zpost("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] });
       await zpost("dev", { kind: "task", op: "claim", task: "t-1", touches: ["api/session.ts"] });
       await zpost("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" });
@@ -338,6 +339,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
       for (const path of ["/", "/?"]) {
         const html = await (await fetch(`${zurl}${path}`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
         expect(html).toContain('<html lang="zh">');
+        expect(html).toContain("<title>aTeam · 牌桌</title>");
         const ui = html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<code>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ");
         // the team's content, as written
         for (const c of ["看板认证：私有还是公开？", "请读部署说明", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "导入了第三批", "SameSite=Lax"]) expect(ui).toContain(c);
@@ -347,7 +349,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key)\b/g, "")
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const z of ["aTeam · 牌桌", "需要你", "现在", "焦点", "线上", "在途", "谁在", "知道了", "默认", "不点的话按", "刚刚", "逾期", "已失效", "已过期", "卡住", "做完了，等验", "验过了，还没上线（在仓库）", "没开始", "接缝", "事实", "已定", "选择了「报表」", "仓库", "同一份数据"]) expect(ui).toContain(z);
+        for (const z of ["aTeam · 牌桌", "需要你", "现状", "焦点", "线上", "在途", "谁在线", "知道了", "默认", "不回复则默认：", "刚刚", "逾期", "已失效", "已过期", "被卡住", "已完成，等待验收", "已验收，尚未上生产", "（已验收：仓库）", "还没开始", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "同一份数据"]) expect(ui).toContain(z);
       }
       const anon = await (await fetch(`${zurl}/`)).text();
       expect(anon).toContain("要回答，请先打开一次");

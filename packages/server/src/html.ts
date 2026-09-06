@@ -77,7 +77,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const decided = b.instructions.filter((i) => i.chosen);
   if (decided.length) {
     d.push(`<h3>${UI.decided}</h3><ul>`);
-    for (const i of decided.slice(-5)) d.push(`<li>${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(i.chosen!.option))}</b> <span class="meta">${i.chosen!.by === "default" ? "" : `${esc(i.chosen!.by)}，`}${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`);
+    for (const i of decided.slice(-5)) d.push(`<li>${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(i.chosen!.by, i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`);
     d.push(`</ul>`);
   }
   d.push(`</section>`);
@@ -150,7 +150,7 @@ ${d.join("\n")}
 export function inFlightOf(b: Board): { label: string; items: string[] }[] {
   const title = (t: { title: string; owner?: string }) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`;
   const g = (k: string) => (b.in_flight[k] ?? []).map(title);
-  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`);
+  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
   return [
     { label: UI.groups.working, items: g("working") },
     { label: UI.groups.blocked, items: g("blocked") },
@@ -172,7 +172,7 @@ function page(body: string, m: { now: string; refresh: number; sha?: string }): 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="${m.refresh}">
-<title>${UI.title}</title>
+<title>${UI.header}</title>
 <style>
 :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafaf7; --muted: #6b6b6b; --line: #e3e3de; --card: #ffffff; --accent: #2f6fed; --warn: #b45309; --bad: #b91c1c; --good: #15803d; }
 @media (prefers-color-scheme: dark) { :root { --fg: #ececec; --bg: #141414; --muted: #9a9a9a; --line: #2c2c2c; --card: #1d1d1d; --accent: #7aa2ff; --warn: #f59e0b; --bad: #f87171; --good: #4ade80; } }
