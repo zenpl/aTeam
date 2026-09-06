@@ -24,6 +24,16 @@ export function isContactCard(i: { body: string }): boolean {
   return i.body === CONTACT_ASK;
 }
 
+/**
+ * The call-out feature is off unless a project fact turns it on (pm 22:39, after the human's 「外呼地址先不做」):
+ * a valid project:alert.ask, or an address already recorded as project:alert.webhook. Off means no card, no grey
+ * line, no reopen path; turning it on later is one fact, not a release.
+ */
+export const CONTACT_ASK_KEY = "alert.ask";
+export function contactEnabled(b: Board): boolean {
+  return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
+}
+
 /** The address the call-outs use, when the fact is valid. */
 export function contactOf(b: Board): string | null {
   const r = b.readings.find((r) => r.valid && r.surface === PROJECT_SURFACE && r.key === ALERT_WEBHOOK_KEY);
@@ -125,7 +135,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const out: string[] = [];
 
   // ---------- 需要你 ----------
-  const asks = b.needs_human.filter((n) => !n.chosen);
+  const contactOn = contactEnabled(b);
+  const asks = b.needs_human.filter((n) => !n.chosen && (contactOn || !isContactCard(n)));
   const invite = inviteUrl(b);
   const roles = rolesOf(b);
   const contact = contactOf(b);
@@ -137,7 +148,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(CONTACT_SKIP)}">${UI.contactSkip}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
     return form(action, "actions contact", fields, `${input}${save}${skip}`);
   };
-  const reopen = opts.ask === "alert" && !asks.some(isContactCard);
+  const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);
   if (asks.length || reopen) {
     out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + (reopen ? 1 : 0)}</span></h2>`);
     if (reopen) {
@@ -232,7 +243,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
   // t-069: while the contact card is not on screen, one grey line says where the call-outs go; clicking it reopens the card.
-  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line"><a href="${esc(base)}/?ask=alert">${esc(contact ? UI.contactTo(contact) : UI.contactNone)}</a></p>`);
+  if (contactOn && !asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line"><a href="${esc(base)}/?ask=alert">${esc(contact ? UI.contactTo(contact) : UI.contactNone)}</a></p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);

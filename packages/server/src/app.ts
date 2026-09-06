@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, slimBoard, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage } from "./html.js";
+import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -344,6 +344,8 @@ export function createApp(opts: ServerOptions) {
         if (then === "/fact") {
           // t-069: the address changed from the grey line under 线上: the fact alone, in the human's name.
           const key = form.get("key") ?? "", value = (form.get("value") ?? "").trim();
+          // The feature is fact-gated (pm 22:39): with it off there is no entrance, so no route either.
+          if (!contactEnabled(board(reduce(await store.read(), now()), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
           if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$|^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址" } };
           const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
