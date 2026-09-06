@@ -175,6 +175,11 @@ export const VERIFIER_ROLES = ["qa"];
 /** Body prefixes of the instructions the service writes on behalf of the verification flow. */
 export const FAIL_NOTICE = " 验收未过：";
 export const VERIFY_ASK = " 做完了，验不验得过？";
+/** S0's second card (t-069, pd 21:07): how to reach the human when they are away. Optional; 先不要 skips it for good. */
+export const CONTACT_ASK = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+export const CONTACT_FILL = "填写";
+export const CONTACT_SKIP = "先不要";
+export const CONTACT_OPTIONS = [CONTACT_FILL, CONTACT_SKIP];
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
 export const ALERT_WEBHOOK_KEY = "alert.webhook";
 /** The whole team not listening for this long is a call-out. */

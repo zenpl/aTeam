@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -240,6 +240,14 @@ export function pushLevelOf(s: State, role: string): PushLevel {
   return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
 }
 
+/** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
+export function contactAskAnswered(s: State, i: Instruction): boolean {
+  if (i.body !== CONTACT_ASK) return false;
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  return !!r && r.valid && !r.expired && typeof r.reading.value === "string" && !!r.reading.value.trim();
+}
+
 /** The role a service card is about, from its first words; undefined for any other instruction. */
 export function missingRoleOf(body: string): string | undefined {
   return /^(\S+) (已经缺了|没在听了|可能失联) /.exec(body)?.[1];
@@ -361,6 +369,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
+    if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
