@@ -33,6 +33,11 @@ export function event(e: Event, me: string): string {
   return `${t} ${who} ${JSON.stringify(e)}`;
 }
 
+/** " at a, b" when the board carries the overlap; nothing when the slim board dropped it (t-075). */
+function at(overlap: string[] | undefined): string {
+  return overlap?.length ? ` at ${overlap.join(", ")}` : "";
+}
+
 export function board(b: Board, me: string): string {
   const out: string[] = [];
   const now = Date.parse(b.now);
@@ -100,8 +105,9 @@ export function board(b: Board, me: string): string {
   const sameOwner = b.seams.filter((s) => !s.resolved && !s.stacked && s.same_owner);
   if (stacked.length || sameOwner.length) {
     out.push("", "STACKED (informational, blocks nothing)");
-    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
-    for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner at ${s.overlap.join(", ")}: sequential work, land them in order`);
+    // The slim board (t-070) carries these seams without their overlap: say nothing about it rather than "at :" (t-075).
+    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first)${at(s.overlap)}: merge ${s.stacked!.done} first`);
+    for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner${at(s.overlap)}: sequential work, land them in order`);
   }
 
   const valid = b.readings.filter((r) => r.valid);
@@ -143,7 +149,11 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   out.push(`${t.id}  ${t.title}`);
   out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}${t.obsolete ? `  已被 ${t.obsolete.decision} 取代（${t.obsolete.by} ${hhmm(t.obsolete.at)}${t.obsolete.reason ? `：${t.obsolete.reason}` : ""}）` : ""}`);
   out.push(`owner      ${t.owner ?? "—"}`);
-  if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
+  // The default board (t-070) drops criteria, evidence, notes and verdict detail but keeps era/summary/surfaces; a server
+  // older than this CLI has none of those either way.
+  const slim = !t.criteria && !t.evidence && !t.notes && !t.verifications && (t.era !== undefined || t.summary !== undefined || t.surfaces !== undefined);
+  if (slim) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
+  else if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {
     out.push(`criteria   (by ${t.criteria_by})`);
     if (!t.criteria.length) out.push("  (none)");
@@ -154,11 +164,13 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   }
   out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
   if (t.shows) out.push(`shows      ${t.shows}`);
-  out.push(`evidence   ${t.evidence ?? "—"}`);
+  if (slim) out.push(`evidence   ${t.evidence_sha ? `sha ${t.evidence_sha.slice(0, 7)}; ` : ""}(not in the default board; ateam task show ${t.id} has it)`);
+  else out.push(`evidence   ${t.evidence ?? "—"}`);
   const notes = t.notes ?? [];
   for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);
   out.push("verifications");
-  if (!verifications.length) out.push("  (none)");
+  if (slim) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join("  ") || "(none)"}`);
+  else if (!verifications.length) out.push("  (none)");
   for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
   if (t.history?.length) {
     out.push("history");
@@ -175,10 +187,11 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
     const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
-    out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
+    out.push(`  ${state}  with ${other}${s.overlap?.length ? `: ${s.overlap.join(", ")}` : ""}`);
   }
   out.push("notes");
-  if (!notes.length) out.push("  (none)");
+  if (slim) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
+  else if (!notes.length) out.push("  (none)");
   for (const n of notes) out.push(`  ${hhmm(n.at)} ${n.actor.padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
   return out.join("\n");
 }
