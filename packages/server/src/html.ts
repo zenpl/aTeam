@@ -332,12 +332,18 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
-  if (b.allocation?.summary) d.push(`<p class="meta team">${UI.team}：${esc(b.allocation.summary)}</p>`); // t-061: the summary only; the fact carries the details
   d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
 
-  // t-059: responsibilities nobody holds right now, one sentence each; never above the fold, never a card
+  // 团队 (pd T12/T13, default A): one row in the dig layer — the allocation summary, then each responsibility nobody
+  // holds right now, one sentence each without the fact's internal words. Never above the fold, never a card.
   const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
-  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(c.line)}</li>`).join("")}</ul></section>`);
+  const gapLine = (line: string) => line.replace(/（能力事实[^）]*）/g, "").trim();
+  if (b.allocation?.summary || gaps.length) {
+    d.push(`<section id="team"><h3>${UI.team}${gaps.length ? ` <span class="meta">${esc(UI.gaps(gaps.length))}</span>` : ""}</h3>`);
+    if (b.allocation?.summary) d.push(`<p class="meta team">${esc(b.allocation.summary)}</p>`);
+    d.push(gaps.length ? `<ul class="plain">${gaps.map((c) => `<li>${esc(gapLine(c.line))}</li>`).join("")}</ul>` : `<p class="quiet">${UI.allHeld}</p>`);
+    d.push(`</section>`);
+  }
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
   d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(i.to, i.body, i.from))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);

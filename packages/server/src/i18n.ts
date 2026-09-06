@@ -72,8 +72,9 @@ export const UI = {
   moreItems: (n: number) => `还有 ${n} 件`,
   who: "谁在",
   nobody: "还没有人",
-  coverage: "没人管的事",
   team: "团队",
+  gaps: (n: number) => `${n} 件没人管`,
+  allHeld: "职责都有人管",
   canPushProduction: "能推上线",
 
   // 其余
