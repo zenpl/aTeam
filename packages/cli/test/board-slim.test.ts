@@ -106,7 +106,7 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     };
     let checked = 0;
     for (const t of Object.values(full.tasks).flat()) {
-      const fullText = fmt.task(t, full.seams), slimText = fmt.task(boardTask(slim, t.id)!, slim.seams, slim.omitted);
+      const fullText = fmt.task(t, full.seams, full.omitted), slimText = fmt.task(boardTask(slim, t.id)!, slim.seams, slim.omitted);
       for (const name of sections) {
         const f = section(fullText, name), sl = section(slimText, name);
         if (!hasContent(f)) continue;

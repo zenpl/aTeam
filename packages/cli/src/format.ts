@@ -144,7 +144,8 @@ export function board(b: Board, me: string): string {
 }
 
 /** `ateam task show <id>`: everything the log knows about one task. */
-export function task(t: BoardTask, seams: Board["seams"], omitted: string[] = []): string {
+/** `omitted` is required (t-077, qa 22:19): every caller says what its board left out; a full task or full board passes []. */
+export function task(t: BoardTask, seams: Board["seams"], omitted: string[]): string {
   const out: string[] = [];
   // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
   const touches = t.touches ?? [];

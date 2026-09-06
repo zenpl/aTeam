@@ -228,7 +228,7 @@ async function main(argv: string[]) {
       switch (op) {
         case "show": {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
-          console.log(fmt.task(t, seams));
+          console.log(fmt.task(t, seams, [])); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {

@@ -26,7 +26,7 @@ describe("t-003 · ateam task show", () => {
     const b = board(reduce(await store.read()), HUMAN);
     const t = boardTask(b, "t-001")!;
     expect(t.status).toBe("done");
-    const text = fmt.task(t, b.seams);
+    const text = fmt.task(t, b.seams, b.omitted);
     expect(text).toContain("t-001  Server reports which commit is deployed");
     expect(text).toContain("status     done");
     expect(text).toContain("owner      dev");
@@ -44,20 +44,20 @@ describe("t-003 · ateam task show", () => {
     const { store, emit } = await fixture();
     await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-002", touches: ["packages/server/src/app.ts"] });
     let b = board(reduce(await store.read()), HUMAN);
-    expect(fmt.task(boardTask(b, "t-001")!, b.seams)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-002: packages/server/src/app.ts");
-    expect(fmt.task(boardTask(b, "t-002")!, b.seams)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-001: packages/server/src/app.ts");
+    expect(fmt.task(boardTask(b, "t-001")!, b.seams, b.omitted)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-002: packages/server/src/app.ts");
+    expect(fmt.task(boardTask(b, "t-002")!, b.seams, b.omitted)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-001: packages/server/src/app.ts");
 
     await emit({ kind: "task", op: "seam", actor: "pm", tasks: ["t-001", "t-002"], resolution: "frontend adds routes below /health only" });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-001", surface: "repo", pass: true, evidence: "ran dist locally" });
     await emit({ kind: "task", op: "done", actor: "frontend", task: "t-002" });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-002", surface: "production", pass: false, evidence: "GET / is still json" });
     b = board(reduce(await store.read()), HUMAN);
-    const text = fmt.task(boardTask(b, "t-001")!, b.seams);
+    const text = fmt.task(boardTask(b, "t-001")!, b.seams, b.omitted);
     expect(text).toContain("status     verified");
     expect(text).toContain("✓ pass  repo  by qa");
     expect(text).toContain(": ran dist locally");
     expect(text).toContain("resolved by pm  with t-002: packages/server/src/app.ts");
-    const failed = fmt.task(boardTask(b, "t-002")!, b.seams);
+    const failed = fmt.task(boardTask(b, "t-002")!, b.seams, b.omitted);
     expect(failed).toContain("status     failed");
     expect(failed).toContain("✗ fail  production  by qa");
     expect(failed).toContain("evidence   —");
@@ -88,11 +88,11 @@ describe("t-018 · task show lists attached notes and evidence updates", () => {
     await emit({ kind: "note", actor: "dev", body: "evidence: fd76455 is now on the default branch too", task: "t-001" });
     await emit({ kind: "note", actor: "pm", body: "not attached" });
     const b = board(reduce(await store.read()), HUMAN);
-    const text = fmt.task(boardTask(b, "t-001")!, b.seams);
+    const text = fmt.task(boardTask(b, "t-001")!, b.seams, b.omitted);
     expect(text).toContain("evidence   fd76455: /health returns sha locally\n  + fd76455 is now on the default branch too  (dev 06:06)\nverifications");
     expect(text).toContain("notes\n  06:05 qa        concern: sha in evidence is not on the default branch\n  06:06 dev       evidence: fd76455 is now on the default branch too");
     expect(text).not.toContain("not attached");
-    expect(fmt.task(boardTask(b, "t-002")!, b.seams)).toContain("notes\n  (none)");
+    expect(fmt.task(boardTask(b, "t-002")!, b.seams, b.omitted)).toContain("notes\n  (none)");
     const ev = await emit({ kind: "note", actor: "qa", body: "one more", task: "t-002" });
     expect(fmt.event(ev, "pm")).toContain("note [t-002] one more");
   });
