@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -162,6 +162,8 @@ export interface Board {
   roles: string[];
   /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
   coverage: BoardCoverage[];
+  /** t-069: how to reach the human when away. set: the fact exists (however it got there); skipped: 先不要 and no fact; else unanswered. */
+  alert: { status: "unanswered" | "set" | "skipped"; value?: string; source?: "given" };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
   allocation: { warnings: AllocationWarning[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
@@ -238,6 +240,16 @@ export function pushLevelOf(s: State, role: string): PushLevel {
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   const push = v && typeof v === "object" && !Array.isArray(v) ? (v as { push?: unknown }).push : undefined;
   return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
+}
+
+/** t-069: the state of "how to reach the human": the fact, or the card's answer, or neither. */
+export function alertContact(s: State): Board["alert"] {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  if (typeof v === "string" && v.trim()) return { status: "set", value: v.trim(), source: "given" };
+  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && st.chosen?.option === CONTACT_SKIP);
+  return { status: skipped ? "skipped" : "unanswered" };
 }
 
 /** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
@@ -349,6 +361,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     roles: projectRoles(s),
     coverage: [],
     allocation: { warnings: [], summary: "" },
+    alert: { status: "unanswered" },
   };
 
   if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
@@ -505,6 +518,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   b.coverage = coverage(s, now, listenWindow);
+  b.alert = alertContact(s);
   b.allocation.warnings = allocation(s, now, human);
   b.allocation.summary = allocationSummary(b.allocation.warnings);
   for (const actor of [...s.presence.keys()].sort()) {
