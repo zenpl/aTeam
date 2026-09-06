@@ -50,7 +50,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   fold.push(`<section id="status" class="card"><h2>${UI.status}</h2>`);
   fold.push(`<dl>`);
   fold.push(`<dt>${UI.focus}</dt><dd>${b.focus ? `${esc(str(b.focus.body))} <span class="meta">（${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}）</span>` : `<span class="empty">${UI.noFocus}</span>`}</dd>`);
-  fold.push(`<dt>${UI.live}</dt><dd>${sha ? `${UI.build} <code>${esc(sha)}</code>${shaReading ? ` <span class="meta">（${esc(UI.checked(ago(shaReading.at)))}）</span>` : ""}` : `<span class="empty">${UI.noDeployReading}</span>`}${b.live.verified_on_production.length ? `<ul class="plain">${b.live.verified_on_production.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>` : `<div class="meta">${UI.noneOnProduction}</div>`}</dd>`);
+  fold.push(`<dt>${UI.live}</dt><dd>${sha ? `${UI.build} <code>${esc(sha)}</code>${shaReading ? ` <span class="meta">（${esc(UI.checked(ago(shaReading.at)))}）</span>` : ""}` : `<span class="empty">${UI.noDeployReading}</span>`}${b.live.verified_on_production.length ? `<ul class="plain">${b.live.verified_on_production.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>` : `<div class="meta">${UI.noneOnProduction}</div>`}</dd>`);
   fold.push(`<dt>${UI.inFlight}</dt><dd>${flight.some((g) => g.items.length) ? flight.filter((g) => g.items.length).map((g) => `<div class="group"><span class="label">${esc(g.label)}</span><ul class="plain">${g.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("") : `<span class="empty">${UI.nothingInFlight}</span>`}</dd>`);
   fold.push(`<dt>${UI.who}</dt><dd>${b.presence.length ? `<ul class="presence">${b.presence.map((p) => `<li class="${p.present ? "here" : "away"}"><b>${esc(p.actor)}</b> <span class="meta">${p.last_seen ? t(p.last_seen) : "—"}</span></li>`).join("")}</ul>` : `<span class="empty">${UI.nobody}</span>`}</dd>`);
   fold.push(`</dl></section>`);
@@ -104,7 +104,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
           return `<li>${esc(c)}${added ? ` <span class="meta">+ ${esc(added.by)} · ${esc(ago(added.at))}</span>` : ""}</li>`;
         }).join("")}</ol>`);
         if (st.touches.length) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-        if (st.evidence) d.push(`<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
+        if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
+        if (st.evidence) d.push(st.shows ? `<details class="meta"><summary>${UI.evidence}</summary>${esc(st.evidence)}</details>` : `<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
         for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
         for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
         if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
@@ -154,7 +155,7 @@ ${d.join("\n")}
 export function inFlightOf(b: Board): { label: string; items: string[] }[] {
   const title = (t: { title: string; owner?: string }) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`;
   const g = (k: string) => (b.in_flight[k]?.all ?? []).map(title);
-  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
+  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.shows ?? t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
   return [
     { label: UI.groups.working, items: g("working") },
     { label: UI.groups.blocked, items: g("blocked") },

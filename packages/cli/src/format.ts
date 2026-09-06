@@ -18,8 +18,8 @@ export function event(e: Event, me: string): string {
       switch (e.op) {
         case "create": return `${t} ${who} task ${e.task} created: ${e.title}`;
         case "claim": return `${t} ${who} task ${e.task} claimed, touches ${e.touches.join(", ")}`;
-        case "done": return `${t} ${who} task ${e.task} done${e.evidence ? `: ${e.evidence}` : ""}`;
-        case "verify": return `${t} ${who} task ${e.task} ${e.pass ? "VERIFIED" : "FAILED"} on ${e.surface}${e.evidence ? `: ${e.evidence}` : ""}`;
+        case "done": return `${t} ${who} task ${e.task} done${e.shows ? ` — ${e.shows}` : ""}${e.evidence ? `: ${e.evidence}` : ""}`;
+        case "verify": return `${t} ${who} task ${e.task} ${e.pass ? "VERIFIED" : "FAILED"} on ${e.surface}${e.shows ? ` — ${e.shows}` : ""}${e.evidence ? `: ${e.evidence}` : ""}`;
         case "block": return `${t} ${who} task ${e.task} blocked on ${e.on}`;
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
         case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
@@ -45,7 +45,7 @@ export function board(b: Board, me: string): string {
     const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${b.live.deployed_by ? ` (${b.live.deployed_by === "human" ? "human 推的" : `${b.live.deployed_by} 推的`})` : ""}` : "sha unknown"}`;
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
-    out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.id).join(", ") || "—"}${earlier}` : live);
+    out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.shows ? `${t.id} ${t.shows}` : t.id).join(", ") || "—"}${earlier}` : live);
   }
 
   if (b.needs_human.length) {
@@ -142,6 +142,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
     });
   }
   out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
+  if (t.shows) out.push(`shows      ${t.shows}`);
   out.push(`evidence   ${t.evidence ?? "—"}`);
   const notes = t.notes ?? [];
   for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);

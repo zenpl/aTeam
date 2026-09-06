@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { MemoryStore } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, renderBoard } from "../src/html.js";
-import { reduce, board, type Board } from "@ateam/core";
+import { reduce, board, append, type Board } from "@ateam/core";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -367,5 +367,31 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
     const html = renderBoard(b, state, { human: HUMAN });
     expect(html).toContain("<b>已按默认「B」执行（你仍可改）</b>");
     expect(html).not.toContain("<b>选择了");
+  });
+});
+
+describe("t-056 · the page shows the owner's sentence, and folds the evidence under it", () => {
+  it("live and verified rows prefer shows over the title; a task without shows reads as before", async () => {
+    const store = new MemoryStore();
+    const log = [
+      { kind: "reading", actor: HUMAN, surface: "production", key: "deployed.sha", value: "abc1234", depends_on: ["production:deployed.sha"] },
+      { kind: "task", op: "create", actor: "pm", task: "A", title: "牌桌显示 sha", criteria: ["works"] },
+      { kind: "task", op: "create", actor: "pm", task: "B", title: "限流", criteria: ["works"] },
+      { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["A"] },
+      { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["B"] },
+      { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234: <ul> 全绿", shows: "线上牌桌第一行是部署 sha" },
+      { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234: 全绿" },
+      { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true },
+      { kind: "task", op: "verify", actor: "qa", task: "B", surface: "staging", pass: true },
+    ];
+    for (const e of log) await append(store, e as never, { human: HUMAN });
+    const state = reduce(await store.read());
+    const html = renderBoard(board(state, HUMAN), state, { sha: "abc1234", canDecide: true, human: HUMAN, base: "" });
+    expect(html).toContain("<li>线上牌桌第一行是部署 sha</li>"); // live row: shows, not the title
+    expect(html).toContain("限流（已验收：staging）"); // verified elsewhere, no shows: title as before
+    const at = html.indexOf("<div>线上牌桌第一行是部署 sha</div>"); // in the task's details: shows first
+    expect(at).toBeGreaterThan(0);
+    expect(html.slice(at).replace(/\s+/g, " ")).toContain("<div>线上牌桌第一行是部署 sha</div> <details class=\"meta\"><summary>证据</summary>abc1234: &lt;ul&gt; 全绿</details>"); // then the evidence, folded
+    expect(html).toContain("<div class=\"meta\">证据：abc1234: 全绿</div>"); // no shows: evidence as before
   });
 });

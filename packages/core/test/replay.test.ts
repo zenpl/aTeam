@@ -1289,3 +1289,32 @@ describe("t-018 · notes attach to a task", () => {
     ]);
   });
 });
+
+describe("t-056 · evidence has a layer for the owner: shows", () => {
+  it("done and a passing verify may say what a person can now see; the board and live rows prefer it, and it is one sentence", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    for (const id of ["A", "B"]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    }
+    const long = "字".repeat(121);
+    expect((await rejected(emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "sha1", shows: long }))).rule).toBe("done");
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234: 测试全绿", shows: "牌桌上多了一行「线上」" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234: 测试全绿" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done.map((t) => [t.id, t.shows, t.evidence])).toEqual([["A", "牌桌上多了一行「线上」", "abc1234: 测试全绿"], ["B", undefined, "abc1234: 测试全绿"]]);
+
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, shows: long }))).rule).toBe("verify");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true, shows: "线上打开牌桌，第一行是部署 sha" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "production", pass: true });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    // a passing verify that said it replaces the owner's sentence; a task nobody described keeps its title on the live rows
+    expect(b.tasks.verified.map((t) => t.shows)).toEqual(["线上打开牌桌，第一行是部署 sha", undefined]);
+    expect(b.live.verified_on_production).toEqual([{ id: "A", title: "题 A", shows: "线上打开牌桌，第一行是部署 sha" }, { id: "B", title: "题 B", shows: undefined }]);
+    expect(b.live.recent.map((x) => x.shows ?? x.title)).toEqual(["线上打开牌桌，第一行是部署 sha", "题 B"]);
+    // a failing verify never speaks for the owner
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "staging", pass: false, shows: "不该显示" });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.shows).toBe("线上打开牌桌，第一行是部署 sha");
+  });
+});

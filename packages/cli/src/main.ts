@@ -41,8 +41,8 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
-  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
+  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
@@ -228,11 +228,11 @@ async function main(argv: string[]) {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else for (const w of seamWarnings(await client.board(), task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-          return emit({ kind: "task", op, task, evidence });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
-          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence") });
+          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });

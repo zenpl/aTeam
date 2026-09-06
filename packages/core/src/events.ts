@@ -82,8 +82,8 @@ export interface Note extends Base {
 export type TaskOp =
   | { op: "create"; task: string; title: string; criteria: string[] }
   | { op: "claim"; task: string; touches: string[] }
-  | { op: "done"; task: string; evidence?: string }
-  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string }
+  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string }
+  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
@@ -120,6 +120,13 @@ export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
 /** An instruction still not pulled this long after it was sent counts as undelivered on the board (t-048). */
 export const UNDELIVERED_AFTER_MS = 5 * 60_000;
+/** `shows` on done/verify: one sentence for the owner, at most this long. */
+export const SHOWS_MAX_CHARS = 120;
+/** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
+export const VERIFIER_ROLES = ["qa"];
+/** Body prefixes of the instructions the service writes on behalf of the verification flow. */
+export const FAIL_NOTICE = " 验收未过：";
+export const VERIFY_ASK = " 做完了，验不验得过？";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
 export const ALERT_WEBHOOK_KEY = "alert.webhook";
 /** The whole team not listening for this long is a call-out. */

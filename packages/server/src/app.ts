@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
+import { runFollowUps } from "./verifyflow.js";
 import { runAlerts } from "./alerts.js";
 
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
@@ -261,12 +262,13 @@ export function createApp(opts: ServerOptions) {
         const i = st.instruction;
         if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
         if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
-        const note = await serialize(async () => {
+        const [note, ...followed] = await serialize(async () => {
           const fresh = reduce(await store.read()).instructions.get(of)!;
           if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human })]);
-          return append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
+          const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
+          return [n, ...(await runFollowUps(store, n, human))];
         });
-        emitAll([note]);
+        emitAll([note, ...followed]);
         if (wantsHtml) return back();
         return json(res, 201, note);
       }
@@ -306,8 +308,8 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "POST" && path === "/events") {
         const body = (await readJson(req)) as NewEvent;
         const ne = { ...body, actor } as NewEvent;
-        const e = await serialize(() => append(store, ne, { human }));
-        emitAll([e]);
+        const [e, ...followed] = await serialize(async () => { const x = await append(store, ne, { human }); return [x, ...(await runFollowUps(store, x, human))]; });
+        emitAll([e, ...followed]);
         return json(res, 201, e);
       }
 
