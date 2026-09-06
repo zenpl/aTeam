@@ -63,7 +63,7 @@ describe("t-052 · ateam release --deploy", () => {
     await w.ship("t-2", B, false); // done, not verified
     const git = fakeGit();
     expect(await deploy(await w.b(), C, w.deps(git))).toBe("refused");
-    expect(w.log.join("\n")).toMatch(/不推 ccccccc：\n {2}- t-2 的证据 bbbbbbb 在这个 sha 里，但还没在 repo 验过（done）/);
+    expect(w.log.join("\n")).toMatch(/REFUSED \(deploy-unverified\): 不推 ccccccc[^\n]*\n {2}- t-2（done[^\n]*证据 bbbbbbb 在这个 sha 里/); // t-093 reworded the refusal and named its rule
     expect(git.pushes).toEqual([]);
     expect((await w.b()).live.deployed_sha).toBeNull();
     const p = plan(await w.b(), B, git.isAncestor);
@@ -177,5 +177,65 @@ describe("t-078 · ateam release measures containment with git and shows three g
     await other.emit({ kind: "reading", actor: "pm", key: "absorb.form", surface: "project", value: "named-sha" });
     await other.emit({ kind: "reading", actor: "pm", key: "deployed.sha", surface: "production", value: B, method: "m", depends_on: ["production:deployed.sha"] });
     expect(containment(await other.b(), fakeGit().isAncestor)).toBeNull();
+  });
+});
+
+describe("t-093 · the deploy entry refuses a sha that adds unverified work", () => {
+  const world93 = async () => {
+    const w = await world();
+    await w.emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: { push: "production" } });
+    return w;
+  };
+  /** ship(id, sha, how): verified | done (repo-verified, not the whole task) | failed */
+  const ship = async (w: Awaited<ReturnType<typeof world93>>, id: string, sha: string, how: "verified" | "done" | "failed") => {
+    await w.emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
+    await w.emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    await w.emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha.slice(0, 7)} 完成` });
+    if (how === "verified") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+    if (how === "failed") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: false, evidence: "差一条" });
+  };
+
+  it("all verified: it pushes; one done-but-unverified or failed: refused, naming the rule, the tasks and the sha-vs-branch trap", async () => {
+    const w = await world93();
+    await ship(w, "t-1", A, "verified");
+    const git = fakeGit();
+    expect(await deploy(await w.b(), A, w.deps(git))).toBe("pushed");
+    expect(git.pushes).toEqual([`${A}->production`]);
+    // B adds a task nobody verified
+    await ship(w, "t-2", B, "done");
+    const git2 = fakeGit();
+    expect(await deploy(await w.b(), B, w.deps(git2))).toBe("refused");
+    expect(git2.pushes).toEqual([]);
+    const said = w.log.join("\n");
+    expect(said).toContain("REFUSED (deploy-unverified)");
+    expect(said).toContain("t-2");
+    expect(said).toContain("推的是这个 sha，不是分支名");
+    expect(said).toContain('--anyway "<为什么现在必须推>"');
+    // a failed one is refused the same way
+    const f = await world93();
+    await ship(f, "t-9", A, "failed");
+    expect(await deploy(await f.b(), A, f.deps(fakeGit()))).toBe("refused");
+    expect(f.log.join("\n")).toContain("REFUSED (deploy-unverified)");
+  });
+
+  it("--anyway with a reason pushes and writes what was skipped and why; what is already live is not this push's problem", async () => {
+    const w = await world93();
+    await ship(w, "t-1", A, "verified");
+    await ship(w, "t-2", B, "done");
+    const git = fakeGit();
+    const deps = { ...w.deps(git), anyway: "生产在报错，这一版含修复，t-2 明早补验" };
+    expect(await deploy(await w.b(), B, deps)).toBe("pushed");
+    expect(git.pushes).toEqual([`${B}->production`]);
+    const notes = (await w.store.read()).events.filter((e) => e.kind === "note").map((e) => (e as { body: string }).body);
+    const trace = notes.find((n) => n.startsWith("越过未验收推生产"))!;
+    expect(trace).toContain("pm 推 bbbbbbb");
+    expect(trace).toContain("跳过 t-2");
+    expect(trace).toContain("理由：生产在报错，这一版含修复，t-2 明早补验");
+    // now production runs B: pushing C, which adds nothing unverified, is fine even though t-2 is still unverified
+    await w.emit({ kind: "reading", actor: "pm", key: "deployed.sha", surface: "production", value: B, method: "ateam release --deploy 推到 production", depends_on: ["production:deployed.sha"] });
+    await ship(w, "t-3", C, "verified");
+    const git3 = fakeGit();
+    expect(await deploy(await w.b(), C, w.deps(git3))).toBe("pushed");
+    expect(git3.pushes).toEqual([`${C}->production`]);
   });
 });
