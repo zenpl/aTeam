@@ -1,0 +1,125 @@
+<title>牌桌 v2 样稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+:root {
+  --paper:#F6F7F4; --card:#FFFFFF; --ink:#1B1F1D; --muted:#5F6663; --line:#DCE0DB; --soft:#ECEFEA;
+  --accent:#0F6E63; --accent-ink:#FFFFFF; --alert:#B42318; --warn:#B7791F; --good:#2F7D4F;
+  --serif:"Noto Serif SC","Songti SC","SimSun",serif; --sans:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper:#141715; --card:#1C201E; --ink:#E8EAE6; --muted:#9AA29D; --line:#2B302D; --soft:#232826;
+  --accent:#4FB3A5; --accent-ink:#0E1512; --alert:#F08A7E; --warn:#E2B15C; --good:#7CC493;
+} }
+:root[data-theme="dark"] {
+  --paper:#141715; --card:#1C201E; --ink:#E8EAE6; --muted:#9AA29D; --line:#2B302D; --soft:#232826;
+  --accent:#4FB3A5; --accent-ink:#0E1512; --alert:#F08A7E; --warn:#E2B15C; --good:#7CC493;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.7 var(--sans); }
+main { max-width:52rem; margin:0 auto; padding:1.5rem 1.25rem 4rem; display:flex; flex-direction:column; gap:1.25rem; }
+header { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; }
+header h1 { margin:0; font:600 1.05rem/1.4 var(--sans); letter-spacing:.04em; }
+header .meta { font-size:.8rem; }
+.meta { color:var(--muted); font-size:.82rem; }
+h2 { margin:0 0 .75rem; font:600 .95rem/1.4 var(--sans); letter-spacing:.06em; color:var(--ink); display:flex; align-items:center; gap:.5rem; }
+h2::after { content:""; flex:1; height:1px; background:var(--line); }
+.count { font-variant-numeric:tabular-nums; color:var(--accent-ink); background:var(--alert); border-radius:999px; padding:0 .55em; font-size:.8rem; line-height:1.6; }
+/* 需要你 */
+.needs { display:flex; flex-direction:column; gap:.75rem; }
+.needs.empty h2::after { display:none; }
+.needs.empty { flex-direction:row; align-items:baseline; gap:.75rem; }
+.needs.empty h2 { margin:0; color:var(--muted); }
+.quiet { margin:0; color:var(--muted); }
+.ask { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--alert); border-radius:8px; padding:1rem 1.25rem 1.1rem; }
+.ask-top { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; }
+.kind { font-size:.78rem; letter-spacing:.08em; color:var(--alert); font-weight:600; }
+.q { margin:.35rem 0 .85rem; font:500 1.2rem/1.65 var(--serif); text-wrap:balance; max-width:38em; }
+.actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+.btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.detail { margin:-.4rem 0 .8rem; } .detail summary { cursor:pointer; color:var(--muted); font-size:.85rem; } .detail p { margin:.25rem 0 0; color:var(--muted); font-size:.9rem; max-width:40em; }
+.hint { margin-left:.5rem; color:var(--muted); font-size:.85rem; }
+.recent { margin:-.25rem 0 0; padding-left:1.25rem; color:var(--muted); font-size:.85rem; }
+.recent b { color:var(--ink); }
+/* 说一句 */
+.say form { display:flex; gap:.5rem; }
+.say input { flex:1; font:inherit; padding:.6rem .9rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
+.say input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.say .meta { margin:.35rem 0 0 .25rem; }
+/* 现在 */
+.now { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1.1rem 1.25rem 1.25rem; display:flex; flex-direction:column; gap:1rem; }
+.focus { display:grid; grid-template-columns:4.5em 1fr; gap:.15rem .75rem; align-items:baseline; padding-bottom:1rem; border-bottom:1px solid var(--line); }
+.focus .meta { grid-column:2; }
+.focus-text { margin:0; font:500 1.05rem/1.7 var(--serif); }
+.label { color:var(--muted); font-size:.82rem; letter-spacing:.06em; padding-top:.2rem; }
+.row { display:grid; grid-template-columns:4.5em 1fr; gap:.75rem; align-items:start; }
+.val { min-width:0; }
+.line { display:flex; flex-wrap:wrap; gap:.5rem; align-items:baseline; }
+.sha { font:.85rem var(--mono); background:var(--soft); padding:.1em .4em; border-radius:4px; }
+.ok { color:var(--good); font-weight:500; }
+.more-list summary, .grp summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
+.more-list { margin-top:.25rem; }
+ul.plain { margin:.25rem 0 0; padding-left:1.1rem; color:var(--muted); font-size:.9rem; }
+.chips { display:flex; flex-wrap:wrap; gap:.4rem .6rem; }
+.chip { font-size:.85rem; padding:.15em .65em; border-radius:999px; background:var(--soft); color:var(--ink); font-variant-numeric:tabular-nums; }
+.chip b { font-weight:600; }
+.chip.warn { background:color-mix(in srgb, var(--warn) 16%, transparent); color:var(--warn); }
+.grp { margin-top:.6rem; }
+.grp-h { font-size:.85rem; color:var(--muted); letter-spacing:.04em; }
+ul.tasks { list-style:none; margin:.25rem 0 0; padding:0; display:flex; flex-direction:column; gap:.2rem; }
+ul.tasks li { display:grid; grid-template-columns:auto 1fr auto; gap:.2rem .6rem; align-items:baseline; }
+.dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--accent); display:inline-block; position:relative; top:-.05rem; }
+li.warn .dot { background:var(--warn); }
+.ttl { min-width:0; overflow-wrap:anywhere; }
+.who { font-size:.8rem; color:var(--muted); background:var(--soft); padding:0 .5em; border-radius:999px; }
+.why { grid-column:2 / -1; color:var(--warn); font-size:.85rem; }
+.who-chip { display:inline-flex; align-items:center; gap:.4rem; font-size:.9rem; }
+.who-chip i { width:.55rem; height:.55rem; border-radius:50%; background:var(--good); }
+.who-chip.away { color:var(--muted); } .who-chip.away i { background:var(--line); }
+.who-chip .meta { font-size:.78rem; }
+/* 其余 */
+.rest { border-top:1px solid var(--line); padding-top:.75rem; }
+.rest summary { cursor:pointer; color:var(--muted); font-size:.9rem; }
+footer { color:var(--muted); font-size:.8rem; display:flex; gap:1rem; }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+@media (max-width:540px) { .row, .focus { grid-template-columns:1fr; } .focus .meta { grid-column:1; } }
+</style>
+<main>
+<header><h1>aTeam · 牌桌</h1><span class="meta">样稿 · 数据取自 2026-09-06 07:28Z 的日志 · 每 30 秒刷新</span></header>
+<section class="needs">
+<h2>需要你 <span class="count">1</span></h2>
+<article class="ask">
+  <div class="ask-top"><span class="kind">请你做</span><span class="meta">pm · 13 分钟前</span></div>
+  <p class="q">部署第 3 批</p><details class="detail"><summary>细节</summary><p>把 claude/frontend-j8z8jj@80ecd1a（与 dev 分支头相同）和 claude/pm-role-s3ryk7@42586d4（CLAUDE.md）合进集成分支，推到 production。内容：人可读中文牌桌（t-020/t-021）及 t-014～t-019、t-022～t-024，均已在 repo 验过。之后请在牌桌上点一次按钮。</p></details>
+  <div class="actions"><button class="btn primary">做好了</button><button class="btn">先不做</button></div>
+</article>
+</section>
+<p class="recent">你刚定了：产品问题：场景做的顺序 → <b>A</b> <span class="meta">5 分钟前</span></p>
+<section class="say">
+<form><input type="text" placeholder="跟团队说一句：想要什么、什么坏了" aria-label="跟团队说一句"><button class="btn primary" type="button">说</button></form>
+<p class="meta">你说过的会出现在这里，并显示它变成了什么：已收到 → 已成为需求 → 已成为任务。</p>
+</section>
+<section class="now">
+<h2>现在</h2>
+<div class="focus"><span class="label">焦点</span><p class="focus-text">S1 开工：牌桌对人可读。GET / 首屏只有「需要你」（给 human 的问题，带按钮）和「现在」（焦点、线上、在途、谁在），界面全中文，其余折叠。t-019 已验待部署；t-020/t-021 frontend 在做，done 前经 pd 评审。先于一切上线。</p><span class="meta">pd 设的，24 分钟前</span></div>
+<div class="row">
+  <span class="label">线上</span>
+  <div class="val">
+    <div class="line"><code class="sha">ede0f06</code> <span class="ok">在生产上验过 8 件</span> <span class="meta">· qa 40 分钟前核对</span></div>
+    <details class="more-list"><summary>这一版带来了什么</summary><ul class="plain"><li>Server reports which commit is deployed</li><li>Read-only HTML board at GET /</li><li>ateam task show &lt;id&gt;, and criteria in board --json</li><li>A task verified on one surface can be verified on another</li><li>Reading keys can declare a value shape</li><li>A seam does not block verifying a task that was done before the other task claimed</li><li>Instructions to human carry options; the HTML board renders them as buttons</li><li>HTML board is public read-only (human decision B)</li></ul></details>
+  </div>
+</div>
+<div class="row">
+  <span class="label">在途</span>
+  <div class="val"><div class="chips"><span class="chip "><b>1</b> 在做</span><span class="chip warn"><b>1</b> 卡住</span><span class="chip "><b>3</b> 做完了，等验</span><span class="chip "><b>1</b> 没开始</span><span class="chip"><b>18</b> 验过了，还没上线</span></div><div class="grp"><div class="grp-h">在做</div><ul class="tasks"><li class=""><span class="dot"></span><span class="ttl">S2：牌桌上「说一句」——输入框与「你说过的」列表</span><span class="who">frontend</span></li></ul></div><div class="grp"><div class="grp-h">卡住</div><ul class="tasks"><li class="warn"><span class="dot"></span><span class="ttl">ATEAM_ME in the environment beats .ateam/config.json</span><span class="who">dev</span></li></ul></div><details class="grp"><summary class="grp-h">做完了，等验 <span class="meta">3 件</span></summary><ul class="tasks"><li class=""><span class="dot"></span><span class="ttl">S1：牌桌只列这一版带来的变化，历史折叠</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">S3：board 暴露待上线清单（在仓库验过、尚未在生产验过的任务及其证据 sha）</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">S2：「说一句」的数据侧——human 的话进日志，牌桌能推导它的去向</span><span class="who">dev</span></li></ul></details><details class="grp"><summary class="grp-h">没开始 <span class="meta">1 件</span></summary><ul class="tasks"><li class=""><span class="dot"></span><span class="ttl">S5：ateam trace &lt;任务|sha&gt; 从上线的改动回溯到需求、决策、验证</span></li></ul></details><details class="grp"><summary class="grp-h">验过了，还没上线 <span class="meta">18 件</span></summary><ul class="tasks"><li class=""><span class="dot"></span><span class="ttl">Identity persists across calls: ateam init --me works from env</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">CLAUDE.md branch protocol matches the cloud harness</span><span class="who">pm</span></li><li class=""><span class="dot"></span><span class="ttl">ateam watch prints the instruction it woke on</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">Seam detection matches touches by path prefix; owner can widen a claim</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">ateam decide validates the option before it acks</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">ateam watch survives transient fetch errors</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">CLAUDE.md: a &#x27;later merges earlier&#x27; seam resolution is executed before done</span><span class="who">pm</span></li><li class=""><span class="dot"></span><span class="ttl">task withdraw: a terminal status for tasks created on a false premise</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">Notes attach to a task; task show and the HTML board list them</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">board.needs_human holds only what the human must answer; seams and overdue go elsewhere</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">GET / is a card page for the human: NEEDS YOU, STATUS, details behind a toggle</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">GET / interface is in Chinese</span><span class="who">frontend</span></li><li class=""><span class="dot"></span><span class="ttl">带默认项的 human 指令超时后自动按默认执行 X 执行</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">CLI 拒绝多余的位置参数，不再悄悄拼进标题</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">reading 形状按 surface:key 声明，deployed.sha 允许 unknown</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">task criteria add：判据作者可给已建任务追加判据</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">S1：board 暴露本版变化与折叠计数（t-026 的 core 部分）</span><span class="who">dev</span></li><li class=""><span class="dot"></span><span class="ttl">task reopen：done 后 owner 可重新打开以修改</span><span class="who">dev</span></li></ul></details></div>
+</div>
+<div class="row"><span class="label">谁在</span><div class="val chips"><span class="who-chip"><i></i>dev<span class="meta">刚刚</span></span><span class="who-chip"><i></i>frontend<span class="meta">2 分钟前</span></span><span class="who-chip"><i></i>human<span class="meta">5 分钟前</span></span><span class="who-chip"><i></i>pd<span class="meta">6 分钟前</span></span><span class="who-chip"><i></i>pm<span class="meta">刚刚</span></span><span class="who-chip"><i></i>qa<span class="meta">1 分钟前</span></span></div></div>
+</section>
+<details class="rest">
+<summary>其余：团队自己的状态 <span class="meta">session 之间的指令 1 · 逾期 0 · 接缝 0 条未解决 · 事实 4 条有效</span></summary>
+<p class="meta">样稿里不展开；内容与现在的折叠区相同，只是每段标题用产品语言，表格改成列表。</p>
+</details>
+<footer><span>服务器版本 <code class="sha">ede0f06</code></span><span>与 GET /board 同一份数据</span></footer>
+</main>
