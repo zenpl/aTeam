@@ -45,7 +45,7 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
   it("board: stacked and same-owner seams read without their overlap; every default-board line is a full-board line or a shorter form of one", async () => {
     const full = await fixture();
     const slim = slimBoard(full);
-    expect(slim.seams.some((s) => s.stacked && !s.overlap.length)).toBe(true);
+    expect(slim.seams.some((s) => s.stacked && s.overlap === undefined)).toBe(true); // t-077: omitted, not empty
     const fullText = fmt.board(full, "dev"), slimText = fmt.board(slim, "dev");
     expect(fullText).toContain("t-b stacks on t-a (done first) at src/io.ts: merge t-a first");
     expect(slimText).toContain("t-b stacks on t-a (done first): merge t-a first");
@@ -67,7 +67,7 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
   it("task show on a default-board task says where the rest is instead of printing empty values", async () => {
     const full = await fixture();
     const slim = slimBoard(full);
-    const text = fmt.task(boardTask(slim, "t-a")!, slim.seams);
+    const text = fmt.task(boardTask(slim, "t-a")!, slim.seams, slim.omitted);
     expect(text).toContain("criteria   (not in the default board; ateam task show t-a has them)");
     expect(text).toContain("touches    (not in the default board; ateam task show t-a has them)"); // never "—": that would say there are none
     expect(text).not.toMatch(/^touches\s+—$/m);
@@ -78,7 +78,8 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     expect(text).toContain("  (the default board lists only seams still in play; ateam task show t-a has all of them)");
     for (const re of RESIDUE) expect(text, String(re)).not.toMatch(re);
     // the full task reads as before
-    const fullText = fmt.task(boardTask(full, "t-a")!, full.seams);
+    const fullText = fmt.task(boardTask(full, "t-a")!, full.seams, full.omitted);
+    expect(full.omitted).toEqual([]);
     expect(fullText).toContain("  1. 能用");
     expect(fullText).toContain("evidence   提交 1234567：两条都过");
     expect(fullText).toContain("with t-b: src/io.ts");
@@ -98,14 +99,14 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     // the dropped seam: the full board has it, the default board has nothing for t-e, and says so
     expect(full.seams.some((x) => x.tasks.includes("t-e"))).toBe(true);
     expect(slim.seams.some((x) => x.tasks.includes("t-e"))).toBe(false);
-    expect(section(fmt.task(boardTask(slim, "t-e")!, slim.seams), "seams")).toBe("seams\n  (not in the default board; ateam task show t-e has them)");
+    expect(section(fmt.task(boardTask(slim, "t-e")!, slim.seams, slim.omitted), "seams")).toBe("seams\n  (not in the default board; ateam task show t-e has them)");
     const hasContent = (f: string) => {
       const lines = f.split("\n");
       return lines.length > 1 ? !/\(none\)/.test(lines[1]) : /^\S+\s{2,}\S/.test(f) && !/\s(—|\(not reported)/.test(f);
     };
     let checked = 0;
     for (const t of Object.values(full.tasks).flat()) {
-      const fullText = fmt.task(t, full.seams), slimText = fmt.task(boardTask(slim, t.id)!, slim.seams);
+      const fullText = fmt.task(t, full.seams), slimText = fmt.task(boardTask(slim, t.id)!, slim.seams, slim.omitted);
       for (const name of sections) {
         const f = section(fullText, name), sl = section(slimText, name);
         if (!hasContent(f)) continue;

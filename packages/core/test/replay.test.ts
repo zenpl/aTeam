@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, slimBoard, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1660,5 +1660,39 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
     const { store: s2, c: c2 } = await setup();
     await emit(s2, c2, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", pass: false, evidence: "线上没看到" });
     expect(reduce(await s2.read(), c2.now()).tasks.get("A")!.status).toBe("done");
+  });
+});
+
+describe("t-077 · the slim board tells omitted from empty", () => {
+  it("an omitted field is absent, an empty one is sent, and omitted lists the paths; the full board omits nothing", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] }); // open: no surfaces, no owner
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题 B", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["x"] }); // stacked on A
+    const full = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(full.omitted).toEqual([]);
+    expect(full.seams[0].overlap).toEqual(["x"]);
+    expect(full.release.candidates).toEqual([]);
+    const slim = slimBoard(full);
+    const a = slim.tasks.done[0], b = slim.tasks.working[0];
+    // omitted: absent
+    for (const k of ["criteria", "evidence", "notes", "verifications", "history", "touches", "created_at"]) expect(k in a, k).toBe(false);
+    expect("overlap" in slim.seams[0]).toBe(false);
+    expect("candidates" in slim.release).toBe(false);
+    expect("shown" in slim.in_flight.working).toBe(false);
+    // really empty: sent as empty
+    expect(a.surfaces).toEqual([]);
+    expect(a.verified_on).toEqual([]);
+    expect(b.evidence_sha).toBeUndefined(); // no evidence at all: undefined on the full board too
+    expect(full.tasks.working[0].evidence_sha).toBeUndefined();
+    expect(slim.needs_human).toEqual([]);
+    expect(JSON.parse(JSON.stringify(slim)).tasks.done[0]).not.toHaveProperty("criteria");
+    expect(slim.omitted).toContain("tasks[].criteria");
+    expect(slim.omitted).toContain("seams[!open].overlap");
+    expect(slim.omitted).toContain("release.candidates");
+    expect(slim.omitted.length).toBeGreaterThanOrEqual(12);
   });
 });

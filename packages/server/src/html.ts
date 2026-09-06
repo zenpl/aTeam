@@ -440,7 +440,7 @@ type Seam = Board["seams"][number];
 
 function seamLine(x: Seam, base: string): string {
   const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}"><code>${esc(id)}</code></a>`;
-  return `<li><span class="tag${x.open ? " warn" : ""}">${x.open ? UI.seamOpen : x.resolved ? esc(UI.seamResolvedBy(x.resolved)) : UI.seamStacked}</span> ${link(x.tasks[0])} + ${link(x.tasks[1])} ${UI.bothTouch} ${x.overlap.map((o) => `<code>${esc(o)}</code>`).join(", ")}</li>`;
+  return `<li><span class="tag${x.open ? " warn" : ""}">${x.open ? UI.seamOpen : x.resolved ? esc(UI.seamResolvedBy(x.resolved)) : UI.seamStacked}</span> ${link(x.tasks[0])} + ${link(x.tasks[1])} ${UI.bothTouch} ${(x.overlap ?? []).map((o) => `<code>${esc(o)}</code>`).join(", ")}</li>`;
 }
 
 /**

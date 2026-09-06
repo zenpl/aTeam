@@ -53,7 +53,9 @@ describe("t-070 · GET /board is slim by default", () => {
     const slim = slimBoard(full);
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
     expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
-    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, candidates: [] }); // derived from tasks: the full board has it
+    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha }); // derived from tasks: the full board has it; absent, not empty (t-077)
+    expect(slim.omitted.length).toBeGreaterThan(10);
+    expect(full.omitted).toEqual([]);
     // what stays: every task with the fields the board and CLI read
     const tasks = Object.values(slim.tasks).flat();
     expect(tasks).toHaveLength(40);
@@ -69,9 +71,10 @@ describe("t-070 · GET /board is slim by default", () => {
     expect(slim.instructions.filter((i) => i.status !== "acked").length).toBe(full.instructions.filter((i) => i.status !== "acked").length);
     for (const k of ["undelivered", "overdue", "presence", "roles", "coverage", "allocation", "live", "said", "focus", "now", "alert"] as (keyof Board)[]) expect(slim[k]).toEqual(full[k]);
     expect(slim.needs_human.map((c) => [c.id, c.summary, c.title])).toEqual(full.needs_human.map((c) => [c.id, c.summary, c.title]));
+    expect(slim.needs_human.every((c) => !("detail" in c))).toBe(true);
     expect(Object.values(slim.in_flight).map((g) => [g.total, g.all.length])).toEqual(Object.values(full.in_flight).map((g) => [g.total, g.all.length]));
     expect(slim.seams.filter((x) => x.open)).toEqual(full.seams.filter((x) => x.open)); // open seams in full
-    expect(slim.seams.every((x) => x.open || x.overlap.length === 0)).toBe(true);
+    expect(slim.seams.every((x) => x.open || x.overlap === undefined)).toBe(true);
     expect(slim.seams.some((x) => !x.open && !x.resolved && !x.stacked)).toBe(false); // one-owner sequences left out
     expect(slim.readings.filter((r) => r.valid)).toEqual(full.readings.filter((r) => r.valid));
 
@@ -88,6 +91,8 @@ describe("t-070 · GET /board is slim by default", () => {
     delete servedFull.invite_url;
     expect(servedFull).toEqual(expected);
     expect(JSON.parse(served).tasks.done[0].criteria).toBeUndefined();
+    expect(JSON.parse(served).omitted).toContain("tasks[].criteria");
+    expect(servedFull.omitted).toEqual([]);
     expect(servedFull.tasks.done[0].criteria.length).toBe(3);
   }, 30_000); // building ~600 events through append is quadratic; a real server pays this once per event, not per test
 });

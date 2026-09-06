@@ -100,7 +100,7 @@ export function board(b: Board, me: string): string {
   const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
     out.push("", "SEAMS (open: nobody owns these; they block verify)");
-    for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
+    for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${(s.overlap ?? []).join(", ")}`);
   }
   const absorbed = b.seams.filter((s) => s.absorbed);
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked && !s.absorbed);
@@ -144,7 +144,7 @@ export function board(b: Board, me: string): string {
 }
 
 /** `ateam task show <id>`: everything the log knows about one task. */
-export function task(t: BoardTask, seams: Board["seams"]): string {
+export function task(t: BoardTask, seams: Board["seams"], omitted: string[] = []): string {
   const out: string[] = [];
   // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
   const touches = t.touches ?? [];
@@ -152,10 +152,12 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   out.push(`${t.id}  ${t.title}`);
   out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}${t.obsolete ? `  已被 ${t.obsolete.decision} 取代（${t.obsolete.by} ${hhmm(t.obsolete.at)}${t.obsolete.reason ? `：${t.obsolete.reason}` : ""}）` : ""}`);
   out.push(`owner      ${t.owner ?? "—"}`);
-  // The default board (t-070) drops criteria, evidence, notes and verdict detail but keeps era/summary/surfaces; a server
-  // older than this CLI has none of those either way.
-  const slim = !t.criteria && !t.evidence && !t.notes && !t.verifications && (t.era !== undefined || t.summary !== undefined || t.surfaces !== undefined);
-  if (slim) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
+  // The default board (t-070) leaves fields out and says which in board.omitted (t-077): an absent field is "not sent",
+  // never "empty". A server older than this CLI sends neither the fields nor the list.
+  const left = (field: string) => omitted.includes(`tasks[].${field}`);
+  const slim = left("criteria");
+  const seamsCut = omitted.includes("seams[both sides final]");
+  if (left("criteria")) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
   else if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {
     out.push(`criteria   (by ${t.criteria_by})`);
@@ -165,15 +167,15 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
       out.push(`  ${i + 1}. ${c}${added ? `  (added by ${added.by} ${hhmm(added.at)})` : ""}`);
     });
   }
-  out.push(`touches    ${touches.length ? touches.join(", ") : slim ? `(not in the default board; ateam task show ${t.id} has them)` : "—"}`);
+  out.push(`touches    ${left("touches") ? `(not in the default board; ateam task show ${t.id} has them)` : touches.length ? touches.join(", ") : "—"}`);
   if (t.shows) out.push(`shows      ${t.shows}`);
-  if (slim) out.push(`evidence   ${t.evidence_sha ? `sha ${t.evidence_sha.slice(0, 7)}; ` : ""}(not in the default board; ateam task show ${t.id} has it)`);
+  if (left("evidence")) out.push(`evidence   ${t.evidence_sha ? `sha ${t.evidence_sha.slice(0, 7)}; ` : ""}(not in the default board; ateam task show ${t.id} has it)`);
   else out.push(`evidence   ${t.evidence ?? "—"}`);
   const notes = t.notes ?? [];
   for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);
   for (const o of t.overturned ?? []) out.push(`overturned ${o.surface} 验过（${o.passed_by}），后被 ${o.by} 推翻 ${hhmm(o.at)}${o.evidence ? `：${o.evidence}` : ""}`);
   out.push("verifications");
-  if (slim) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join("  ") || "(none)"}`);
+  if (left("verifications")) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join("  ") || "(none)"}`);
   else if (!verifications.length) out.push("  (none)");
   for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
   if (t.history?.length) {
@@ -188,15 +190,15 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   const mine = seams.filter((s) => s.tasks.includes(t.id));
   out.push("seams");
   // The default board keeps only the seams still in play (t-070): an empty list there is not "no seams" (t-075 round 2).
-  if (!mine.length) out.push(slim ? `  (not in the default board; ateam task show ${t.id} has them)` : "  (none)");
+  if (!mine.length) out.push(seamsCut ? `  (not in the default board; ateam task show ${t.id} has them)` : "  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
     const state = s.absorbed ? `absorbed: ${s.absorbed.basis}` : s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
     out.push(`  ${state}  with ${other}${s.overlap?.length ? `: ${s.overlap.join(", ")}` : ""}`);
   }
-  if (slim && mine.length) out.push(`  (the default board lists only seams still in play; ateam task show ${t.id} has all of them)`);
+  if (seamsCut && mine.length) out.push(`  (the default board lists only seams still in play; ateam task show ${t.id} has all of them)`);
   out.push("notes");
-  if (slim) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
+  if (left("notes")) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
   else if (!notes.length) out.push("  (none)");
   for (const n of notes) out.push(`  ${hhmm(n.at)} ${n.actor.padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
   return out.join("\n");
@@ -218,6 +220,7 @@ export function release(b: Board): string {
   const r = b.release ?? { deployed_sha: b.live?.deployed_sha ?? null, candidates: [] };
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
+  if (!r.candidates) { out.push("  （默认板省略了待上线清单：用 ateam release 或 board --full）"); return out.join("\n"); }
   if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
   out.push(`  任务      证据 sha   验收（表面：谁）              标题`);
   for (const c of r.candidates) {
