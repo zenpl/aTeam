@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
@@ -129,7 +129,44 @@ export interface Board {
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
   seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string } }[];
-  presence: { actor: string; last_seen: string; idle_s: number }[];
+  /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
+  presence: BoardPresence[];
+  /** The project's declared roles, in assignment order. */
+  roles: string[];
+  /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
+  invite_url?: string;
+}
+
+export interface BoardPresence {
+  actor: string;
+  /** The role this row is (same as actor for roles; undefined for an actor outside the role set, e.g. the human). */
+  role?: string;
+  present: boolean;
+  last_seen: string | null;
+  idle_s: number | null;
+  /** Present: since when we have heard from it continuously (approximated by last_seen); missing: since last_seen, or null if never seen. */
+  since: string | null;
+}
+
+/** The role a service card is about, from its first words; undefined for any other instruction. */
+export function missingRoleOf(body: string): string | undefined {
+  return /^(\S+) 已经缺了 /.exec(body)?.[1];
+}
+
+/** Has this role gone quiet for longer than the presence window? Never seen counts as missing. */
+export function isMissing(s: State, role: string, now: Date): boolean {
+  const last = s.presence.get(role);
+  return !last || now.getTime() - Date.parse(last) > PRESENCE_WINDOW_MS;
+}
+
+/** The project's roles: the latest valid `project:roles` reading, else the default five. */
+export function projectRoles(s: State): string[] {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  if (Array.isArray(v) && v.every((x) => typeof x === "string") && v.length) return v as string[];
+  if (typeof v === "string" && v.trim()) return v.split(",").map((x) => x.trim()).filter(Boolean);
+  return DEFAULT_ROLES;
 }
 
 export function board(s: State, human: string, now: Date = new Date()): Board {
@@ -147,6 +184,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     said: [],
     seams: [],
     presence: [],
+    roles: projectRoles(s),
   };
 
   if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
@@ -165,6 +203,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     });
     if (status === "acked") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
+    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now)) continue; // the role is back
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
@@ -259,10 +298,18 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked, resolved: seam.resolution?.by, stacked: seam.stacked });
   }
 
-  for (const [actor, last] of s.presence) {
-    b.presence.push({ actor, last_seen: last, idle_s: Math.max(0, Math.round((now.getTime() - Date.parse(last)) / 1000)) });
+  const seen = new Set<string>();
+  const row = (actor: string, role: string | undefined): BoardPresence => {
+    const last = s.presence.get(actor) ?? null;
+    const idle = last ? Math.max(0, Math.round((now.getTime() - Date.parse(last)) / 1000)) : null;
+    const present = idle !== null && idle * 1000 <= PRESENCE_WINDOW_MS;
+    return { actor, role, present, last_seen: last, idle_s: idle, since: last };
+  };
+  for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
+  for (const actor of [...s.presence.keys()].sort()) {
+    if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
+    b.presence.push(row(actor, undefined));
   }
-  b.presence.sort((a, b) => a.actor.localeCompare(b.actor));
   return b;
 }
 

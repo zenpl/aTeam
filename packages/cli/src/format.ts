@@ -102,7 +102,7 @@ export function board(b: Board, me: string): string {
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
 
   out.push("", "PRESENCE");
-  for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${ago(p.last_seen)} ago`);
+  for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${p.present === false ? "  (missing)" : ""}`);
 
   return out.join("\n");
 }
