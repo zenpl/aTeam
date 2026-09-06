@@ -84,6 +84,14 @@ export interface InstructionState {
   chosen?: { option: string; by: string; at: string; note?: string };
 }
 
+export interface Presence { last_pull: string | null; last_event: string | null }
+
+/** The later of the two: the old single "last seen". */
+export function lastSeen(p: Presence | undefined): string | null {
+  if (!p) return null;
+  return [p.last_pull, p.last_event].filter((x): x is string => !!x).sort().pop() ?? null;
+}
+
 export interface SeamState {
   id: string;
   tasks: [string, string];
@@ -110,8 +118,8 @@ export interface State {
   tasks: Map<string, TaskState>;
   seams: Map<string, SeamState>;
   notes: Note[];
-  /** actor -> last time we heard from them (event or cursor) */
-  presence: Map<string, string>;
+  /** actor -> when they last pulled (their cursor moved: they are listening) and when they last spoke (an event). */
+  presence: Map<string, Presence>;
   focus?: Reading;
 }
 
@@ -160,7 +168,9 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   for (const e of log.events) {
     s.ids.add(e.id);
-    s.presence.set(e.actor, e.at);
+    const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
+    if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
+    s.presence.set(e.actor, pe);
     if (e.writes?.length) invalidate(s, e);
     switch (e.kind) {
       case "reading": applyReading(s, e); break;
@@ -186,8 +196,9 @@ export function reduce(log: Log, now: Date = new Date()): State {
     if (st && !st.delivered_at) st.delivered_at = d.at;
   }
   for (const c of log.cursors) {
-    const prev = s.presence.get(c.actor);
-    if (!prev || prev < c.at) s.presence.set(c.actor, c.at);
+    const pc = s.presence.get(c.actor) ?? { last_pull: null, last_event: null };
+    if (!pc.last_pull || pc.last_pull < c.at) pc.last_pull = c.at;
+    s.presence.set(c.actor, pc);
   }
 
   const nowIso = now.toISOString();

@@ -104,7 +104,12 @@ export function board(b: Board, me: string): string {
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
 
   out.push("", "PRESENCE");
-  for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${p.present === false ? "  (missing)" : ""}`);
+  for (const p of b.presence) {
+    const st = p.status ?? (p.present === false ? "missing" : "listening");
+    const tail = st === "deaf" ? `  可能失联：最后一次拉取 ${p.last_pull ? `${ago(p.last_pull)} 前` : "从未"}，最后一次说话 ${ago(p.last_event!)} 前`
+      : st === "missing" ? "  (missing)" : "";
+    out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${tail}`);
+  }
 
   return out.join("\n");
 }

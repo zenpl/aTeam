@@ -116,6 +116,8 @@ export const PROJECT_SURFACE = "project";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
+/** A node whose last pull is older than this is not listening: instructions to it are not arriving (t-047). */
+export const LISTEN_WINDOW_MS = 5 * 60_000;
 /** A note from the human on the board starts with this; the board derives where each such sentence went. */
 export const SAID_PREFIX = "human 说：";
 export const SAID_MAX_CHARS = 500;

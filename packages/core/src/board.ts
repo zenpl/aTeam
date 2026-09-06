@@ -1,4 +1,5 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { lastSeen } from "./reduce.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
@@ -141,22 +142,33 @@ export interface BoardPresence {
   actor: string;
   /** The role this row is (same as actor for roles; undefined for an actor outside the role set, e.g. the human). */
   role?: string;
+  /** listening: pulled within the listen window. deaf: spoke recently but is not pulling, so instructions do not reach it. missing: neither. */
+  status: "listening" | "deaf" | "missing";
+  /** Same as listening: only a node that pulls counts as here (t-047). */
   present: boolean;
+  listening: boolean;
+  last_pull: string | null;
+  last_event: string | null;
+  idle_pull_s: number | null;
+  idle_event_s: number | null;
+  /** The later of last_pull and last_event. */
   last_seen: string | null;
   idle_s: number | null;
-  /** Present: since when we have heard from it continuously (approximated by last_seen); missing: since last_seen, or null if never seen. */
+  /** Missing or deaf since its last pull (null if it never pulled); listening since its last pull. */
   since: string | null;
 }
+
+export interface BoardOptions { /** How long since the last pull a node still counts as listening; default 5 minutes. */ listenWindowMs?: number }
 
 /** The role a service card is about, from its first words; undefined for any other instruction. */
 export function missingRoleOf(body: string): string | undefined {
   return /^(\S+) 已经缺了 /.exec(body)?.[1];
 }
 
-/** Has this role gone quiet for longer than the presence window? Never seen counts as missing. */
-export function isMissing(s: State, role: string, now: Date): boolean {
-  const last = s.presence.get(role);
-  return !last || now.getTime() - Date.parse(last) > PRESENCE_WINDOW_MS;
+/** Is nobody listening as this role: no pull within the listen window? Never pulled counts as missing (t-047). */
+export function isMissing(s: State, role: string, now: Date, listenWindowMs = LISTEN_WINDOW_MS): boolean {
+  const last = s.presence.get(role)?.last_pull;
+  return !last || now.getTime() - Date.parse(last) > listenWindowMs;
 }
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
@@ -169,7 +181,8 @@ export function projectRoles(s: State): string[] {
   return DEFAULT_ROLES;
 }
 
-export function board(s: State, human: string, now: Date = new Date()): Board {
+export function board(s: State, human: string, now: Date = new Date(), opts: BoardOptions = {}): Board {
+  const listenWindow = opts.listenWindowMs ?? LISTEN_WINDOW_MS;
   const nowIso = now.toISOString();
   const b: Board = {
     now: nowIso,
@@ -203,7 +216,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     });
     if (status === "acked") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
-    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now)) continue; // the role is back
+    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
@@ -300,10 +313,14 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
 
   const seen = new Set<string>();
   const row = (actor: string, role: string | undefined): BoardPresence => {
-    const last = s.presence.get(actor) ?? null;
-    const idle = last ? Math.max(0, Math.round((now.getTime() - Date.parse(last)) / 1000)) : null;
-    const present = idle !== null && idle * 1000 <= PRESENCE_WINDOW_MS;
-    return { actor, role, present, last_seen: last, idle_s: idle, since: last };
+    const p = s.presence.get(actor);
+    const idleOf = (iso: string | null) => (iso ? Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 1000)) : null);
+    const last_pull = p?.last_pull ?? null, last_event = p?.last_event ?? null, last = lastSeen(p);
+    const idle_pull_s = idleOf(last_pull), idle_event_s = idleOf(last_event);
+    const listening = idle_pull_s !== null && idle_pull_s * 1000 <= listenWindow;
+    const spoke = idle_event_s !== null && idle_event_s * 1000 <= PRESENCE_WINDOW_MS;
+    const status = listening ? "listening" : spoke ? "deaf" : "missing";
+    return { actor, role, status, present: listening, listening, last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   for (const actor of [...s.presence.keys()].sort()) {

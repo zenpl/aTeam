@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -951,6 +951,42 @@ describe("t-045 · a seam between two tasks of one owner is sequential work, not
   });
 });
 
+describe("t-047 · listening and speaking are two different things", () => {
+  it("a node that only emits is deaf: its instructions are not arriving; a pull makes it listen; both old is missing", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "note", actor: "dev", body: "在干活" });
+    let p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p).toMatchObject({ status: "deaf", listening: false, present: false, last_event: c.iso(), last_pull: null });
+    expect(isMissing(reduce(await store.read(), c.now()), "dev", c.now())).toBe(true);
+    c.tick(min(2));
+    await pull(store, "dev", null, c.now());
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p).toMatchObject({ status: "listening", listening: true, present: true, last_pull: c.iso(), idle_pull_s: 0, idle_event_s: 120, since: c.iso() });
+    expect(isMissing(reduce(await store.read(), c.now()), "dev", c.now())).toBe(false);
+    c.tick(min(6));
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p.status).toBe("deaf");   // spoke 8 minutes ago, pulled 6 minutes ago: not listening any more, not yet missing
+    c.tick(min(3));
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p.status).toBe("missing");
+    expect(p.since).toBe(c.iso(-min(9)));
+  });
+
+  it("the service card about a missing role is judged by listening: a node that keeps emitting without pulling still gets one", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await emit(store, c, { kind: "note", actor: "dev", body: "我在，但没在听" });
+    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 已经缺了 5 分钟，手里有 1 条指令。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening
+    await pull(store, "dev", null, c.now());
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toEqual([]);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
@@ -1095,17 +1131,21 @@ describe("S8 · presence is an environment property", () => {
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     // the declared roles come first (default five), then anyone else heard from; within the window is present (t-042)
     expect(b.presence.map((p) => p.actor)).toEqual(["pd", "pm", "dev", "frontend", "qa", "backend"]);
-    expect(b.presence.find((p) => p.actor === "backend")).toEqual({ actor: "backend", role: undefined, present: true, last_seen: c.iso(-min(7)), idle_s: 420, since: c.iso(-min(7)) });
-    expect(b.presence.find((p) => p.actor === "pm")).toMatchObject({ role: "pm", present: true, last_seen: c.iso(-min(10)), idle_s: 600 });
-    expect(b.presence.find((p) => p.actor === "dev")).toEqual({ actor: "dev", role: "dev", present: false, last_seen: null, idle_s: null, since: null });
+    // t-047: pulling is listening; speaking without pulling is deaf; neither is missing
+    expect(b.presence.find((p) => p.actor === "backend")).toMatchObject({ actor: "backend", role: undefined, status: "missing", present: false, listening: false, last_pull: c.iso(-min(7)), last_event: null, idle_pull_s: 420, idle_event_s: null, last_seen: c.iso(-min(7)), idle_s: 420, since: c.iso(-min(7)) }); // pulled 7 minutes ago, never spoke: past the 5-minute listen window
+    expect(b.presence.find((p) => p.actor === "pm")).toMatchObject({ role: "pm", status: "deaf", present: false, last_pull: null, last_event: c.iso(-min(10)), idle_event_s: 600, last_seen: c.iso(-min(10)) });
+    expect(b.presence.find((p) => p.actor === "dev")).toMatchObject({ actor: "dev", role: "dev", status: "missing", present: false, last_seen: null, idle_s: null, since: null });
+    // backend pulled 7 minutes ago: not listening by the 5-minute default, listening with a 10-minute window
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now(), { listenWindowMs: min(10) }).presence.find((p) => p.actor === "backend")).toMatchObject({ status: "listening", present: true });
     c.tick(min(1));
-    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.actor === "pm")!.present).toBe(false); // 11 minutes: missing
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.actor === "pm")!.status).toBe("missing"); // 11 minutes without a word or a pull
   });
 
   it("t-042: the role set is a fact of the project; a missing role's service card leaves needs_human when the role is back", async () => {
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await pull(store, "pm", null, c.now());
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.roles).toEqual(["pm", "dev"]);
     expect(b.presence.map((p) => [p.actor, p.present])).toEqual([["pm", true], ["dev", false]]);
