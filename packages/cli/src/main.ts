@@ -5,6 +5,7 @@ import { parse, str, list, bool, duration, exact, UsageError, type Args } from "
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
+import { trace, isSha } from "./trace.js";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
 
@@ -44,6 +45,7 @@ tasks
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
 
+  ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
   ateam log [--after <id>]       raw events
   ateam watch [--interval 20s]   loop sync, printing what arrives; exits 0 when an instruction for you arrives (for Monitor)
 `;
@@ -123,6 +125,14 @@ async function main(argv: string[]) {
       exact(rest);
       const b = await client.board();
       console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
+      return;
+    }
+    case "trace": {
+      const [target] = exact(rest, "task-id | sha");
+      const { events } = await client.log(null);
+      const lines = trace(events, target);
+      if (!lines) throw new Error(isSha(target) ? `没有任务的完成证据里含 sha ${target}` : `日志里没有任务 ${target}（要按 sha 回溯请给 7–40 位十六进制）`);
+      console.log(lines.join("\n"));
       return;
     }
     case "log": {
