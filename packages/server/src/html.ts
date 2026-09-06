@@ -152,7 +152,7 @@ ${d.join("\n")}
 /** In flight, as titles, from board.in_flight plus tasks verified somewhere other than production. */
 export function inFlightOf(b: Board): { label: string; items: string[] }[] {
   const title = (t: { title: string; owner?: string }) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`;
-  const g = (k: string) => (b.in_flight[k] ?? []).map(title);
+  const g = (k: string) => (b.in_flight[k]?.all ?? []).map(title);
   const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
   return [
     { label: UI.groups.working, items: g("working") },

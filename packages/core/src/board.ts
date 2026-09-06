@@ -25,6 +25,11 @@ export interface BoardTask {
   notes: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
 }
 
+export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
+
+/** How many in-flight items a folded group shows before "N more". */
+export const IN_FLIGHT_SHOWN = 5;
+
 /** What every session reads first. Derived; nobody moves cards. */
 export interface Board {
   now: string;
@@ -36,10 +41,20 @@ export interface Board {
   }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
   overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
-  /** What is true on production right now, from valid readings and production verifications. */
-  live: { deployed_sha: string | null; verified_on_production: { id: string; title: string }[] };
-  /** Every task that is not finished, grouped by status: open, working, blocked, done, failed. */
-  in_flight: Record<string, { id: string; title: string; owner?: string }[]>;
+  /**
+   * What is true on production right now, from valid readings and production verifications.
+   * `since_sha` is the previous deployed sha (null before the second deploy); `recent` are the tasks verified on
+   * production since the current sha was recorded, `earlier` the rest. With no previous deploy, everything is recent.
+   */
+  live: {
+    deployed_sha: string | null;
+    since_sha: string | null;
+    verified_on_production: { id: string; title: string }[];
+    recent: { id: string; title: string }[];
+    earlier: { id: string; title: string }[];
+  };
+  /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
+  in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue";
     sent: string; delivered?: string; acked?: string;
@@ -63,7 +78,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, verified_on_production: [] },
+    live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     seams: [],
     presence: [],
   };
@@ -100,8 +115,19 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
       assumptions: r.assumptions,
     });
-    if (valid && r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string") b.live.deployed_sha = r.value;
   }
+  // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
+  const deploys = [...s.readings.values()].map((x) => x.reading)
+    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .sort(byId((r) => r.id));
+  const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
+  if (current) {
+    b.live.deployed_sha = current.value as string;
+    const previous = [...deploys].reverse().find((r) => r.value !== current.value);
+    b.live.since_sha = previous ? (previous.value as string) : null;
+  }
+  // when the current sha was first recorded (the same sha re-measured later does not move the line)
+  const currentSince = current ? deploys.find((r) => r.value === current.value)!.at : undefined;
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
@@ -111,8 +137,20 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
     });
-    if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) b.live.verified_on_production.push({ id: t.id, title: t.title });
-    if (t.status !== "verified" && t.status !== "withdrawn") (b.in_flight[t.status] ??= []).push({ id: t.id, title: t.title, owner: t.owner });
+    if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
+      b.live.verified_on_production.push({ id: t.id, title: t.title });
+      const passedAt = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass).map((v) => v.at).sort().pop()!;
+      const recent = b.live.since_sha === null || currentSince === undefined || passedAt >= currentSince;
+      (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title });
+    }
+    if (t.status !== "verified" && t.status !== "withdrawn") {
+      const g = (b.in_flight[t.status] ??= { total: 0, shown: [], all: [] });
+      g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
+    }
+  }
+  for (const g of Object.values(b.in_flight)) {
+    g.total = g.all.length;
+    g.shown = [...g.all].sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).slice(0, IN_FLIGHT_SHOWN);
   }
 
   for (const seam of s.seams.values()) {

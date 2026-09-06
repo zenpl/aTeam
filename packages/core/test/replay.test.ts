@@ -566,6 +566,75 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
   });
 });
 
+describe("t-027 · the board tells this version's changes from history, and folds long in-flight lists", () => {
+  const deploy = (store: MemoryStore, c: ReturnType<typeof clock>, sha: string) =>
+    emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: sha });
+  const passOnProd = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string, title: string) => {
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
+  };
+  const live = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).live;
+
+  it("with no previous deploy everything verified on production is recent and since_sha is null", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await passOnProd(store, c, "A", "sha endpoint");
+    c.tick(min(5));
+    await deploy(store, c, "aaaaaaa");
+    c.tick(min(5));
+    await passOnProd(store, c, "B", "per-surface verify");
+    const l = await live(store, c);
+    expect(l).toMatchObject({ deployed_sha: "aaaaaaa", since_sha: null, earlier: [] });
+    expect(l.recent.map((x) => x.id)).toEqual(["A", "B"]);
+    expect(l.verified_on_production.map((x) => x.id)).toEqual(["A", "B"]);
+  });
+
+  it("after a second deploy, recent is what passed on production since the new sha was recorded; earlier is the rest", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await deploy(store, c, "aaaaaaa");
+    c.tick(min(5));
+    await passOnProd(store, c, "A", "sha endpoint");
+    await passOnProd(store, c, "B", "per-surface verify");
+    c.tick(min(5));
+    await deploy(store, c, "bbbbbbb");
+    c.tick(min(1));
+    await deploy(store, c, "bbbbbbb"); // qa re-measures the same sha: the line does not move
+    c.tick(min(5));
+    await passOnProd(store, c, "C", "withdraw op");
+    const l = await live(store, c);
+    expect(l.deployed_sha).toBe("bbbbbbb");
+    expect(l.since_sha).toBe("aaaaaaa");
+    expect(l.recent.map((x) => x.id)).toEqual(["C"]);
+    expect(l.earlier.map((x) => x.id)).toEqual(["A", "B"]);
+    expect(l.earlier.map((x) => x.title)).toEqual(["sha endpoint", "per-surface verify"]);
+    // a third deploy: C becomes history too
+    c.tick(min(5));
+    await deploy(store, c, "ccccccc");
+    const l3 = await live(store, c);
+    expect(l3).toMatchObject({ deployed_sha: "ccccccc", since_sha: "bbbbbbb", recent: [] });
+    expect(l3.earlier.map((x) => x.id)).toEqual(["A", "B", "C"]);
+  });
+
+  it("in_flight groups carry total and the 5 most recently touched; the full list stays", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (let i = 1; i <= 7; i++) { c.tick(min(1)); await emit(store, c, { kind: "task", op: "create", actor: "pm", task: `t-${i}`, title: `task ${i}`, criteria: ["x"] }); }
+    c.tick(min(1));
+    await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "t-2", on: "waiting" }); // touched last, but leaves the open group
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-1", add: ["more"] });   // t-1 is now the most recent open task
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.in_flight.open.total).toBe(6);
+    expect(b.in_flight.open.all.map((x) => x.id)).toEqual(["t-1", "t-3", "t-4", "t-5", "t-6", "t-7"]);
+    expect(b.in_flight.open.shown.map((x) => x.id)).toEqual(["t-1", "t-7", "t-6", "t-5", "t-4"]);
+    expect(b.in_flight.blocked).toMatchObject({ total: 1 });
+    expect(b.in_flight.blocked.shown.map((x) => x.id)).toEqual(["t-2"]);
+    expect(b.in_flight.open.shown.every((x) => typeof x.updated_at === "string")).toBe(true);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
@@ -669,8 +738,10 @@ describe("F11 · the human board is derived, never moved by hand", () => {
       await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
     }
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.live).toEqual({ deployed_sha: null, verified_on_production: [] });
-    expect(b.in_flight).toEqual({ open: [{ id: "A", title: "sha endpoint" }, { id: "B", title: "html board" }, { id: "C", title: "withdraw op" }, { id: "D", title: "never started" }] });
+    expect(b.live).toMatchObject({ deployed_sha: null, verified_on_production: [] });
+    expect(Object.keys(b.in_flight)).toEqual(["open"]);
+    expect(b.in_flight.open.total).toBe(4);
+    expect(b.in_flight.open.all.map((x) => [x.id, x.title])).toEqual([["A", "sha endpoint"], ["B", "html board"], ["C", "withdraw op"], ["D", "never started"]]);
 
     await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "1501d1cce361834f93f3b4063dadf89fb70379e0", depends_on: ["production:deployed.sha"] });
     for (const [id, who] of [["A", "dev"], ["B", "frontend"]]) {
@@ -683,9 +754,10 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "duplicate" });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.live).toEqual({ deployed_sha: "1501d1cce361834f93f3b4063dadf89fb70379e0", verified_on_production: [{ id: "A", title: "sha endpoint" }] });
+    expect(b.live).toMatchObject({ deployed_sha: "1501d1cce361834f93f3b4063dadf89fb70379e0", verified_on_production: [{ id: "A", title: "sha endpoint" }] });
     expect(Object.keys(b.in_flight).sort()).toEqual(["working"]);
-    expect(b.in_flight.working).toEqual([{ id: "C", title: "withdraw op", owner: "dev" }]);
+    expect(b.in_flight.working.all).toMatchObject([{ id: "C", title: "withdraw op", owner: "dev" }]);
+    expect(b.in_flight.working.shown).toHaveLength(1);
     expect(JSON.parse(JSON.stringify(b))).toHaveProperty("live.deployed_sha");
     expect(JSON.parse(JSON.stringify(b))).toHaveProperty("in_flight.working");
 

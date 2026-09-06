@@ -42,7 +42,9 @@ export function board(b: Board, me: string): string {
 
   if (b.live) {
     const live = `LIVE       production ${b.live.deployed_sha ? b.live.deployed_sha.slice(0, 7) : "sha unknown"}`;
-    out.push(b.live.verified_on_production.length ? `${live} · verified there: ${b.live.verified_on_production.map((t) => t.id).join(", ")}` : live);
+    const recent = b.live.recent ?? b.live.verified_on_production;
+    const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
+    out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.id).join(", ") || "—"}${earlier}` : live);
   }
 
   if (b.needs_human.length) {

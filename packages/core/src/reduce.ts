@@ -15,6 +15,8 @@ export interface TaskState {
   /** Criteria added after creation: which index in `criteria`, by whom, when. */
   criteria_added: { index: number; by: string; at: string }[];
   created_at: string;
+  /** Time of the last task event that touched it: what "most recent" means on the board. */
+  updated_at: string;
   owner?: string;
   touches: string[];
   status: TaskStatus;
@@ -224,7 +226,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [],
-        created_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
       });
       return;
     case "seam": {
@@ -237,6 +239,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   }
   const t = s.tasks.get(e.task);
   if (!t) return;
+  t.updated_at = e.at;
   switch (e.op) {
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
