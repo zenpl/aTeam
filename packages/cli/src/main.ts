@@ -34,6 +34,7 @@ tasks
   ateam task done <id> [--evidence "..."]
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
+  ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
   ateam task seam <a> <b> --resolution "..."
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
@@ -160,6 +161,7 @@ async function main(argv: string[]) {
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
+        case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "seam": return emit({ kind: "task", op, tasks: [need(id, "<a>"), need(more[0], "<b>")], resolution: str(a, "resolution") ?? "" });
         default: throw new Error(`unknown task op "${op}"`);
       }

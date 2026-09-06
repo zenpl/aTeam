@@ -76,6 +76,8 @@ export type TaskOp =
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
+  /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
+  | { op: "withdraw"; task: string; reason: string }
   | { op: "seam"; tasks: [string, string]; resolution: string };
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
@@ -84,6 +86,8 @@ export type Event = Reading | Instruction | Ack | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
+/** The identity that owns task scope (decision 01M1TM…: identities are pm, dev, qa, human). It may withdraw any task. */
+export const PM_ACTOR = "pm";
 export const FOCUS_KEY = "focus";
 export const TEAM_SURFACE = "team";
 

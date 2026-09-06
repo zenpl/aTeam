@@ -329,6 +329,81 @@ describe("t-008 · a reading key can declare what values it takes", () => {
   });
 });
 
+describe("t-017 · a task created on a false premise is withdrawn, not worked around", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, by = "pm") =>
+    emit(store, c, { kind: "task", op: "create", actor: by, task: id, title: id, criteria: ["works"] });
+  const withdraw = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, actor: string, reason = "premise was a measurement error") =>
+    emit(store, c, { kind: "task", op: "withdraw", actor, task: id, reason });
+
+  it("accepted from the criteria author while open or blocked; terminal, with the reason kept", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "t-013");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-013", touches: ["config.ts"] });
+    await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "t-013", on: "withdrawn: no cancel op exists" });
+    await withdraw(store, c, "t-013", "pm");
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.blocked ?? []).toHaveLength(0);
+    expect(b.tasks.open ?? []).toHaveLength(0);
+    expect(b.tasks.working ?? []).toHaveLength(0);
+    expect(b.tasks.withdrawn.map((t) => t.id)).toEqual(["t-013"]);
+    expect(b.tasks.withdrawn[0].withdrawn).toMatchObject({ by: "pm", reason: "premise was a measurement error" });
+    // ids are forever: nothing can happen to it again, and it cannot be re-created
+    expect((await rejected(emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-013", touches: ["x"] }))).message).toMatch(/is withdrawn/);
+    expect((await rejected(withdraw(store, c, "t-013", "pm"))).message).toMatch(/is withdrawn/);
+    expect((await rejected(create(store, c, "t-013"))).message).toMatch(/already exists/);
+    // the human may withdraw anything open, and an author who is not pm may withdraw their own
+    await create(store, c, "t-a", "qa");
+    await withdraw(store, c, "t-a", "qa");
+    await create(store, c, "t-b", "qa");
+    await withdraw(store, c, "t-b", HUMAN);
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.withdrawn.map((t) => t.id)).toEqual(["t-013", "t-a", "t-b"]);
+  });
+
+  it("rejected while working, done or verified, and from anyone but the author, pm or the human", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "t1", "qa");
+    expect((await rejected(withdraw(store, c, "t1", "dev"))).message).toMatch(/only qa \(criteria author\), pm or human can withdraw t1, not dev/);
+    expect((await rejected(withdraw(store, c, "t1", "frontend"))).message).toMatch(/not frontend/);
+    expect((await rejected(withdraw(store, c, "t1", "pm", "  "))).message).toMatch(/say why/);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["a"] });
+    expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is working; only an open or blocked task/);
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1" });
+    expect((await rejected(withdraw(store, c, "t1", HUMAN))).message).toMatch(/t1 is done/);
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", pass: true });
+    expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is verified/);
+    expect(reduce(await store.read(), c.now()).tasks.get("t1")!.status).toBe("verified");
+  });
+
+  it("its seams disappear from the open and stacked lists, and nothing seams against it afterwards", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const id of ["A", "B", "C", "D"]) await create(store, c, id);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });   // collision A+B
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "C", touches: ["cli/main.ts"] });         // C stacks on B, collides with A
+    await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "A", on: "superseded by C" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.map((x) => x.id).sort()).toEqual(["seam:A+B", "seam:A+C", "seam:B+C"]);
+    expect(b.needs_human.filter((x) => x.kind === "open_seam")).toHaveLength(2);
+
+    await withdraw(store, c, "A", "pm", "C does the same thing");
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.map((x) => x.id)).toEqual(["seam:B+C"]);
+    expect(b.seams[0].stacked).toEqual({ done: "B", on: "C" });
+    expect(b.needs_human.filter((x) => x.kind === "open_seam")).toHaveLength(0);
+    // B is no longer blocked by A: verify goes through
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    // a new claim over the same file does not seam against the withdrawn task
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "D", touches: ["cli/main.ts"] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.some((x) => x.tasks.includes("A"))).toBe(false);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();

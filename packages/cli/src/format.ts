@@ -22,6 +22,7 @@ export function event(e: Event, me: string): string {
         case "verify": return `${t} ${who} task ${e.task} ${e.pass ? "VERIFIED" : "FAILED"} on ${e.surface}${e.evidence ? `: ${e.evidence}` : ""}`;
         case "block": return `${t} ${who} task ${e.task} blocked on ${e.on}`;
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
+        case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
         case "seam": return `${t} ${who} seam ${e.tasks.join("+")} resolved: ${e.resolution}`;
       }
   }
@@ -60,10 +61,10 @@ export function board(b: Board, me: string): string {
   }
 
   out.push("", "TASKS");
-  for (const status of ["blocked", "working", "done", "failed", "open", "verified"]) {
+  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"]) {
     for (const t of b.tasks[status] ?? []) {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
-      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : results ? `  ${results}` : "";
+      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : results ? `  ${results}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
     }
   }
@@ -98,7 +99,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   const touches = t.touches ?? [];
   const verifications = t.verifications ?? [];
   out.push(`${t.id}  ${t.title}`);
-  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}`);
+  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}`);
   out.push(`owner      ${t.owner ?? "—"}`);
   if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {

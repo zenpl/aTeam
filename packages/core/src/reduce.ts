@@ -3,7 +3,7 @@ import {
   FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
 } from "./events.js";
 
-export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed";
+export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn";
 
 export interface TaskState {
   id: string;
@@ -15,6 +15,8 @@ export interface TaskState {
   touches: string[];
   status: TaskStatus;
   blocked_on?: string;
+  /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
+  withdrawn?: { by: string; at: string; reason: string };
   evidence?: string;
   /** How many times the owner has said done. Verifications belong to the round they were made in. */
   round: number;
@@ -228,6 +230,12 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "blocked"; t.blocked_on = e.on; return;
     case "unblock":
       t.status = t.owner ? "working" : "open"; t.blocked_on = undefined; return;
+    case "withdraw":
+      t.status = "withdrawn"; t.blocked_on = undefined;
+      t.withdrawn = { by: e.actor, at: e.at, reason: e.reason };
+      // a withdrawn task touches nothing any more: its seams go with it
+      for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
+      return;
   }
 }
 
@@ -237,7 +245,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
-    if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
+    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
