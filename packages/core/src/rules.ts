@@ -1,9 +1,40 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
-import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+import { type State, type TaskState, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+import { projectRoles } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
   return [...s.instructions.values()].some((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(MIGRATION_ASK_TITLE) && st.chosen?.option === MIGRATION_OK && st.chosen.by !== DEFAULT_DECIDER);
+}
+
+/**
+ * t-101 (M4：拒绝要带出路)。谁能验这件事？由下面 `case "verify"` 里同一套分离规则算出来，不另存一份名单——
+ * 名单与它描述的规则分开维护必然漂移（同 omitted 的教训）。候选是项目声明的角色（`project:roles`），human 不在其中：
+ * human 什么都能验，把他算进去就永远不会出现「一个都没有」，而那正是最该说清楚的一种。
+ */
+export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
+  const authors = criteriaAuthors(t);
+  const passers = surface ? new Set(t.verifications.filter((v) => v.round === t.round && v.surface === surface && v.pass).map((v) => v.by)) : new Set<string>();
+  const eligible: string[] = [];
+  const blocked: { role: string; why: string }[] = [];
+  for (const role of projectRoles(s)) {
+    if (role === human) continue;
+    const why: string[] = [];
+    if (role === t.owner) why.push("是 owner");                              // the owner cannot verify their own task
+    if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
+    if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // t-076: the passer cannot overturn their own pass
+    if (why.length) blocked.push({ role, why: why.join("、") });
+    else eligible.push(role);
+  }
+  return { eligible, blocked };
+}
+
+/** The way out, appended to every rejection that says who may *not* verify: who may. */
+export function whoCanVerify(s: State, t: TaskState, surface: string | undefined, human: string): string {
+  const { eligible, blocked } = verifierEligibility(s, t, surface, human);
+  if (eligible.length) return `。可以由谁来落：${eligible.join("、")}`;
+  const why = blocked.length ? blocked.map((b) => `${b.role} ${b.why}`).join("；") : `${JSON.stringify(projectRoles(s))} 里除了 ${human} 没有别人`;
+  return `。本项目没有合格的第三方：${why}。出路只有两条：让 ${human} 亲自判，或者请 pm 把一个新角色加进 project:roles`;
 }
 
 export class Rejected extends Error {
@@ -227,12 +258,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (passedOn(t, e.surface)) {
         if (e.pass) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
         const passer = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface && v.pass).map((v) => v.by).pop();
-        if (passer === e.actor) throw new Rejected("verify", `${e.actor} passed ${t.id} on ${e.surface}; the one who passed it cannot overturn it, someone else must`);
+        if (passer === e.actor) throw new Rejected("verify", `${e.actor} passed ${t.id} on ${e.surface}; the one who passed it cannot overturn it, someone else must${whoCanVerify(state, t, e.surface, human)}`);
         if (!e.evidence?.trim()) throw new Rejected("verify", `overturning a pass on ${e.surface} needs --evidence: what was found that the pass missed`);
       }
-      if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
+      if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot verify their own task${whoCanVerify(state, t, e.surface, human)}`);
       if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
-        throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");
+        throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}`);
       const seams = openSeamsFor(state, t.id);
       if (seams.length)
         throw new Rejected("verify", `unresolved seam ${seams.map((s) => s.id + " [" + s.overlap.join(",") + "]").join(", ")}`);

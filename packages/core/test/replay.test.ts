@@ -2095,3 +2095,76 @@ describe("t-097 / t-098 · the invitation goes back at once; the old channel wai
     expect(rs.expired).toBe(true); // it came from the old place, so it follows t-089 like everything else carried in
   });
 });
+
+/**
+ * t-101 (M4：拒绝要带出路)。今晚 t-088 是活样本：qa 被拒后只知道自己不行，靠 dev 和 pd 各推演一遍才找出唯一合格的 frontend。
+ * 拒绝要自己说出「可以由谁来落」，而且这份名单由规则算出来，不另存一份。
+ */
+describe("t-101 · a refused verify says who can do it instead", () => {
+  const roles = async (store: MemoryStore, c: ReturnType<typeof clock>, list: string[]) =>
+    emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: list });
+
+  const world = async (list: string[]) => {
+    const store = new MemoryStore();
+    const c = clock();
+    await roles(store, c, list);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234 全绿" });
+    return { store, c };
+  };
+
+  it("several qualify: the owner is refused and told the other three by name", async () => {
+    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(r.rule).toBe("verify");                                   // 判据 4：拒绝仍要说出规则名
+    expect(r.message).toMatch(/owner cannot verify their own task/);
+    expect(r.message).toContain("可以由谁来落：pd、frontend、qa");     // dev 是 owner，pm 写了判据
+    // 判据 2：名单是算出来的。pm 补一条判据，pd 就该从名单里消失，没人去改任何清单
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
+    const r2 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(r2.message).toContain("可以由谁来落：frontend、qa");
+  });
+
+  it("the criteria author is refused with the same list; a project that renamed its roles gets its own names back", async () => {
+    const { store, c } = await world(["pm", "dev", "ux", "sre"]);
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", pass: true }));
+    expect(r.message).toMatch(/whoever wrote the criteria cannot judge them met/);
+    expect(r.message).toContain("可以由谁来落：ux、sre");             // 名单来自 project:roles，不是写死的五个
+  });
+
+  it("exactly one qualifies: t-088 的活样本——判过 pass 的人来推翻，被拒后直接被告知只剩 frontend", async () => {
+    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "漏了一条" }));
+    expect(r.message).toMatch(/the one who passed it cannot overturn it/);
+    expect(r.message).toContain("可以由谁来落：frontend");
+    // 另一个表面上 qa 没判过 pass，那里它自己就合格，名单是按表面算的
+    const r2 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "production", pass: true }));
+    expect(r2.message).toContain("可以由谁来落：frontend、qa");
+  });
+
+  it("nobody qualifies: it says so and why, and never prints an empty list", async () => {
+    const { store, c } = await world(["pm", "dev"]);
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(r.message).toContain("本项目没有合格的第三方：pm 写了判据；dev 是 owner");
+    expect(r.message).toContain(`让 ${HUMAN} 亲自判`);
+    expect(r.message).toContain("project:roles");
+    expect(r.message).not.toMatch(/可以由谁来落/);
+    expect(r.message).not.toMatch(/：\s*。/);                          // 判据 3：不印空列表
+    // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
+    expect(r.message).not.toMatch(/可以由谁来落：[^。]*human/);
+  });
+
+  it("the way out is only on the rejections that another identity can resolve, not on the ones that need different evidence", async () => {
+    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
+    const dup = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }));
+    expect(dup.message).toMatch(/a pass does not override a pass/);
+    expect(dup.message).not.toMatch(/可以由谁来落/);                    // 出路是 --fail，已经写在那句里了
+    const noEvidence = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false }));
+    expect(noEvidence.message).toMatch(/needs --evidence/);
+    expect(noEvidence.message).not.toMatch(/可以由谁来落/);
+  });
+});
