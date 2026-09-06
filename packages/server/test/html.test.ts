@@ -724,7 +724,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       await v.post("pm", { kind: "task", op: "seam", tasks: ["t-2", "t-3"], resolution: "frontend 合 dev" });
       html = await v.page();
       rest = html.slice(html.indexOf('<details class="rest"'));
-      expect(rest).toMatch(/<section id="seams"><h3>接缝 <span class="meta">0 条未解决<\/span><\/h3>\n<p class="quiet">无<\/p>\n<p class="meta">另有 1 条已解决或叠放，在各任务页里<\/p>/);
+      expect(rest).toMatch(/<section id="seams"><h3>接缝 <span class="meta">0 条未解决<\/span><\/h3>\n<p class="quiet">无<\/p>\n<p class="meta">另有 1 条已解决或先后落地，见各任务页<\/p>/);
       expect(rest).not.toContain("都涉及");
       // the seam is on both task pages
       const t2 = await (await fetch(`${v.base}/task/t-2`, { headers: { accept: "text/html" } })).text();

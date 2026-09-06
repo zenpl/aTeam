@@ -73,8 +73,8 @@ export const UI = {
   who: "谁在",
   nobody: "还没有人",
   team: "团队",
-  gaps: (n: number) => `${n} 件没人管`,
-  allHeld: "职责都有人管",
+  coverage: "没人管的事",
+  held: (n: number, m: number) => `职责 ${n} 项：${m} 有人`,
   canPushProduction: "能推上线",
 
   // 其余
@@ -109,7 +109,7 @@ export const UI = {
   openCount: (n: number) => `${n} 条未解决`,
   seamOpen: "未解决",
   olderStale: (n: number) => `另有 ${n} 条更早的已失效`,
-  seamsElsewhere: (n: number) => `另有 ${n} 条已解决或叠放，在各任务页里`,
+  seamsElsewhere: (n: number) => `另有 ${n} 条已解决或先后落地，见各任务页`,
   // 任务页 (t-065)
   taskPage: "任务",
   backToBoard: "← 回牌桌",
@@ -120,7 +120,7 @@ export const UI = {
   forAgents: "给 agent 看的",
   seamWith: "与",
   taskSeams: "接缝",
-  seamStacked: "叠放",
+  seamStacked: "先后落地，不冲突",
   seamResolvedBy: (who: string) => `${who} 已解决`,
   bothTouch: "都涉及",
   readings: "事实",

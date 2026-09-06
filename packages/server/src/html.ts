@@ -334,16 +334,13 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const report = latestReport(s, b);
   d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
 
-  // 团队 (pd T12/T13, default A): one row in the dig layer — the allocation summary, then each responsibility nobody
-  // holds right now, one sentence each without the fact's internal words. Never above the fold, never a card.
-  const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
-  const gapLine = (line: string) => line.replace(/（能力事实[^）]*）/g, "").trim();
-  if (b.allocation?.summary || gaps.length) {
-    d.push(`<section id="team"><h3>${UI.team}${gaps.length ? ` <span class="meta">${esc(UI.gaps(gaps.length))}</span>` : ""}</h3>`);
-    if (b.allocation?.summary) d.push(`<p class="meta team">${esc(b.allocation.summary)}</p>`);
-    d.push(gaps.length ? `<ul class="plain">${gaps.map((c) => `<li>${esc(gapLine(c.line))}</li>`).join("")}</ul>` : `<p class="quiet">${UI.allHeld}</p>`);
-    d.push(`</section>`);
-  }
+  // 团队 (pd review 21:06 of t-059): one line — how many responsibilities are held, then the allocation summary;
+  // 没人管的事 stays its own section, one sentence per gap, without the fact's internal words. Never above the fold.
+  const cov = b.coverage ?? [];
+  const gaps = cov.filter((c) => c.status !== "held");
+  const teamLine = [cov.length ? UI.held(cov.length, cov.length - gaps.length) : "", b.allocation?.summary ?? ""].filter(Boolean).join(" · ");
+  if (teamLine) d.push(`<p class="meta team">${UI.team}：${esc(teamLine)}</p>`);
+  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(c.line.replace(/（能力事实[^）]*）/g, "").trim())}</li>`).join("")}</ul></section>`);
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
   d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(i.to, i.body, i.from))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
