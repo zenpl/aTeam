@@ -33,7 +33,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor): Plan {
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
     if (t.status === "withdrawn" || t.status === "open") continue;
-    const s = evidenceSha(t.evidence);
+    const s = t.evidence_sha ?? evidenceSha(t.evidence);
     if (!s) continue;
     const inside = isAncestor(s, sha);
     if (inside !== true) continue;
@@ -72,6 +72,17 @@ export function realGit(cwd: string, token: string | undefined): Git {
     push: (sha, branch) => { const r = run(["push", remote(), `${sha}:refs/heads/${branch}`]); if (r.status !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/x-access-token:[^@]+@/g, "x-access-token:***@")); },
     resolve: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{commit}`]); return r.status === 0 ? r.stdout.trim() : null; },
   };
+}
+
+/**
+ * The lines of a git failure that say why (t-072): the "! [rejected]" / "error:" / "fatal:" / "remote: error" ones, at most
+ * three, since git puts its hints after them and the note is one line for a person. None of those: the last three lines.
+ */
+export const GIT_REASON_LINES = 3;
+export function gitReason(stderr: string): string {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const why = lines.filter((l) => /^(! \[|error:|fatal:|remote: error)/.test(l));
+  return (why.length ? why.slice(0, GIT_REASON_LINES) : lines.slice(-GIT_REASON_LINES)).join(" ");
 }
 
 export interface DeployDeps {
@@ -113,7 +124,7 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
     deps.git.push(sha, setting.branch);
   } catch (err) {
     const why = (err as Error).message;
-    await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${why.split("\n").slice(-3).join(" ")}`);
+    await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${gitReason(why)}`);
     deps.print(`推送失败：${why}`);
     return "failed";
   }

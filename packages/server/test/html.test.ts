@@ -208,7 +208,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const cookie = right.headers.get("set-cookie") ?? "";
     expect(cookie).toMatch(/^ateam_token=/);
     expect(cookie).toMatch(/HttpOnly/);
-    const b = await (await w.api("/board")).json();
+    const b = await (await w.api("/board?full=1")).json();
     expect(b.instructions.find((i: { id: string }) => i.id === ask.id)).toMatchObject({ status: "acked", chosen: { option: "公开", by: HUMAN } });
 
     // now with the cookie the page shows 你刚定了 and the card is gone
@@ -227,7 +227,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const events = (await (await w.api("/log")).json()).events.slice(before);
     expect(events.map((e: { kind: string; actor: string }) => [e.kind, e.actor])).toEqual([["ack", HUMAN], ["note", HUMAN]]);
     expect(events[1]).toMatchObject({ body: "先不做：点了「先不做」，没写原因", refs: [doIt.id] });
-    const bd = await (await w.api("/board")).json();
+    const bd = await (await w.api("/board?full=1")).json();
     expect(bd.instructions.find((i: { id: string }) => i.id === doIt.id).deferred).toMatchObject({ body: "点了「先不做」，没写原因" });
 
     const ack = await w.form("/ack", { id: tell.id }, { cookie, accept: "text/html" });
@@ -405,9 +405,9 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     } finally { await p.stop(); }
     const h = await fetch(`${w.base}/health`);
     expect(await h.json()).toEqual({ ok: true, sha: "abc1234" });
-    const b = await (await w.api("/board")).json();
+    const b = await (await w.api("/board?full=1")).json();
     expect(Object.keys(b)).toContain("said");
-    expect((await fetch(`${w.base}/board`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(400);
+    expect((await fetch(`${w.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(400);
   });
 
   it("说一句 end to end: with the cookie, say → 303 → 已收到; a task --refs it → 已成为任务：<标题>; the input box sits between 需要你 and 现在", async () => {
@@ -422,7 +422,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       expect(html).toMatch(/<section class="say" id="say">\n<form class="" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了"/);
       expect(s).toContain('<button class="btn" type="submit">说</button>');
       expect(s).toMatch(/<li><span class="said-body">登录页太慢了<\/span> <span class="meta"><time[^>]*>刚刚<\/time> · 已收到<\/span><\/li>/);
-      const b = await (await v.api("/board")).json();
+      const b = await (await v.api("/board?full=1")).json();
       await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录页加缓存", criteria: ["首屏 1 秒内"], refs: [b.said[0].id] });
       html = await v.page({ cookie });
       expect(section(html, "say", "now")).toContain("· 已成为任务：登录页加缓存</span>");
@@ -504,7 +504,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       const html = await v.authedPage();
       expect(html).toContain("自上一版 ede0f06 以来");
       expect(html).not.toContain("自上一版 085624d");
-      expect(previousSha(await (await v.api("/board")).json())).toBe("ede0f06");
+      expect(previousSha(await (await v.api("/board?full=1")).json())).toBe("ede0f06");
     } finally { await v.stop(); }
   });
 
@@ -624,7 +624,7 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
       const e = await v.post("pm", { kind: "instruction", to: "qa", body: "验 t-4", ack_by: soon() });
       const r4 = await fetch(`${v.base}/ack`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${d.id}&id=${e.id}` });
       expect(r4.status).toBe(201);
-      const bd = await (await v.api("/board")).json();
+      const bd = await (await v.api("/board?full=1")).json();
       for (const id of [a.id, c.id, d.id, e.id]) expect(bd.instructions.find((i: { id: string }) => i.id === id).status).toBe("acked");
     } finally { await v.stop(); }
   });
@@ -650,7 +650,7 @@ describe("协作报告不上首屏；挖层一行「最近一份协作报告」�
       await v.post("pm", { kind: "reading", surface: "repo", key: "url", value: "https://example.org/team/project" });
       html = await v.authedPage();
       expect(html).toContain('<a href="https://example.org/team/project/blob/1a2b3c4/docs/collab/2026-09-06-1635.md">2026-09-06 16:35Z</a>');
-      const b = await (await v.api("/board")).json();
+      const b = await (await v.api("/board?full=1")).json();
       const st = reduce(await new MemoryStore().read());
       expect(latestReport({ ...st, notes: [{ id: "n", actor: "pm", at: b.now, kind: "note", body: "docs/collab/2026-09-07-0900.md" }] } as unknown as typeof st, b)).toMatchObject({ path: "docs/collab/2026-09-07-0900.md", when: "2026-09-07 09:00Z", href: "https://example.org/team/project/blob/HEAD/docs/collab/2026-09-07-0900.md" });
     } finally { await v.stop(); }

@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { MemoryStore, append, reduce, board, type NewEvent, type Board } from "@ateam/core";
-import { deploy, deploySetting, plan, type Git } from "../src/release.js";
+import { deploy, deploySetting, plan, gitReason, type Git } from "../src/release.js";
 
 const HUMAN = "human";
 const A = "aaaaaaa" + "1".repeat(33), B = "bbbbbbb" + "1".repeat(33), C = "ccccccc" + "1".repeat(33); // 40-char shas
@@ -131,5 +131,20 @@ describe("t-058 · release --deploy checks what the pusher said it may push", ()
     const git = fakeGit();
     expect(await deploy(await w.b(), A, w.deps(git))).toBe("pushed");
     expect(git.pushes).toEqual([`${A}->production`]);
+  });
+});
+
+describe("qa 21:22 · the failure note carries git's reason, not its hints", () => {
+  it("picks the rejected/error/fatal lines; falls back to the last three", () => {
+    const stderr = "To github.com:x/y.git\n ! [rejected]        a57793b -> production (non-fast-forward)\nerror: failed to push some refs to 'github.com:x/y.git'\nhint: Updates were rejected because the tip of your current branch is behind\nhint: its remote counterpart. If you want to integrate the remote changes, use 'git pull'\nhint: before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.";
+    expect(gitReason(stderr)).toBe("! [rejected]        a57793b -> production (non-fast-forward) error: failed to push some refs to 'github.com:x/y.git'");
+    expect(gitReason("a\nb\nc\nd")).toBe("b c d");
+    // the other three qa saw on a real git (21:31): bad credentials, a repository that is not there, no network
+    expect(gitReason("fatal: unable to access 'https://github.com/x/y.git/': The requested URL returned error: 403")).toBe("fatal: unable to access 'https://github.com/x/y.git/': The requested URL returned error: 403");
+    expect(gitReason("fatal: '/nonexistent/repo.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.")).toBe("fatal: '/nonexistent/repo.git' does not appear to be a git repository fatal: Could not read from remote repository.");
+    expect(gitReason("fatal: unable to access 'https://github.com/x/y.git/': CONNECT tunnel failed, response 403")).toBe("fatal: unable to access 'https://github.com/x/y.git/': CONNECT tunnel failed, response 403");
+    // branch protection says four things; the note keeps the first three (criterion 1: at most three lines)
+    const protectedBranch = "remote: error: GH006: Protected branch update failed for refs/heads/production.\nremote: error: Required status check \"ci\" is expected.\nTo github.com:x/y.git\n ! [remote rejected] c029f47 -> production (protected branch hook declined)\nerror: failed to push some refs to 'github.com:x/y.git'";
+    expect(gitReason(protectedBranch)).toBe("remote: error: GH006: Protected branch update failed for refs/heads/production. remote: error: Required status check \"ci\" is expected. ! [remote rejected] c029f47 -> production (protected branch hook declined)");
   });
 });

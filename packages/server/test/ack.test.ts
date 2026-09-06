@@ -15,7 +15,7 @@ const ack = (fields: Record<string, string>, headers: Record<string, string> = a
   fetch(`${base}/ack`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(fields), redirect: "manual" });
 const post = async (actor: string, body: unknown) =>
   (await fetch(`${base}/events`, { method: "POST", headers: { ...auth, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
-const boardJson = async () => (await fetch(`${base}/board`, { headers: { ...auth, "x-actor": "qa" } })).json();
+const boardJson = async () => (await fetch(`${base}/board?full=1`, { headers: { ...auth, "x-actor": "qa" } })).json();
 const later = () => new Date(Date.now() + 3_600_000).toISOString();
 
 beforeAll(async () => {

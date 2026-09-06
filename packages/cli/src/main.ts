@@ -25,7 +25,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
-  ateam board [--json]           what is true, what is open, who is here
+  ateam board [--json] [--full]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
   ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
@@ -156,13 +156,13 @@ async function main(argv: string[]) {
     case "untell": return emit({ kind: "untell", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
     case "board": {
       exact(rest);
-      const b = await client.board();
+      const b = await client.board(bool(a, "full"));
       console.log(bool(a, "json") ? JSON.stringify(b, null, 2) : fmt.board(b, cfg.me));
       return;
     }
     case "release": {
       exact(rest);
-      const b = await client.board();
+      const b = await client.board(true); // candidates and evidence live on the full board (t-070)
       const target = str(a, "deploy");
       if (target === undefined) { console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b)); return; }
       const outcome = await deploy(b, target, {
@@ -227,10 +227,8 @@ async function main(argv: string[]) {
       if (op !== "create" && op !== "seam" && op !== "criteria") exact(given, "id"); // every other task op takes the id and nothing else
       switch (op) {
         case "show": {
-          const b = await client.board();
-          const t = boardTask(b, need(id, "<id>"));
-          if (!t) throw new Error(`no task "${id}" in the log`);
-          console.log(fmt.task(t, b.seams));
+          const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
+          console.log(fmt.task(t, seams));
           return;
         }
         case "create": {

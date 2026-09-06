@@ -28,7 +28,7 @@ export function seamErrors(b: Board, id: string, evidence: string | undefined): 
   for (const seam of b.seams) {
     if (seam.resolved || !seam.stacked || seam.stacked.on !== id) continue;
     const other = boardTask(b, seam.stacked.done);
-    const theirs = other ? evidenceSha(other.evidence) : null;
+    const theirs = other ? other.evidence_sha ?? evidenceSha(other.evidence) : null;
     if (!theirs) continue;
     const text = evidence ?? "";
     const named = text.includes(theirs) || (theirs.length >= 7 && text.includes(theirs.slice(0, 7))) || /[0-9a-f]{7,40}/g.test(text) && [...text.matchAll(/[0-9a-f]{7,40}/g)].some((m) => theirs.startsWith(m[0]) || m[0].startsWith(theirs));
@@ -47,7 +47,7 @@ export function seamWarnings(b: Board, id: string, evidence: string | undefined,
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);
     if (!other || (other.status !== "done" && other.status !== "verified")) continue;
-    const theirs = evidenceSha(other.evidence);
+    const theirs = other.evidence_sha ?? evidenceSha(other.evidence);
     if (!theirs || theirs === mine) continue;
     const contained = isAncestor(theirs, mine);
     if (contained === false) out.push(`${seam.id} 的解决方案要求你先合并 ${theirs}（${otherId} 的证据），当前证据 ${mine} 不含它`);

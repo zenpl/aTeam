@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, slimBoard, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -389,7 +389,7 @@ export function createApp(opts: ServerOptions) {
         await remind();
         const b = board(reduce(await store.read(), now()), human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
-        return json(res, 200, b);
+        return json(res, 200, url.searchParams.get("full") ? b : slimBoard(b)); // t-070: the whole thing only on request
       }
 
       if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });

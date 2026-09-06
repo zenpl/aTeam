@@ -8,29 +8,32 @@ export interface BoardTask {
   id: string;
   title: string;
   status: string;
-  criteria: string[];
-  criteria_by: string;
+  /** Absent on the slim board (t-070): GET /task/<id> has them. */
+  criteria?: string[];
+  criteria_by?: string;
   /** Criteria added after creation: index into `criteria`, by whom, when. */
-  criteria_added: { index: number; by: string; at: string }[];
-  created_at: string;
+  criteria_added?: { index: number; by: string; at: string }[];
+  created_at?: string;
   owner?: string;
-  touches: string[];
+  touches?: string[];
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
   obsolete?: { by: string; at: string; decision: string; reason?: string };
   evidence?: string;
+  /** The sha in the evidence, if any: what release and the seam check need without the text (t-070). */
+  evidence_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
   shows?: string;
-  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
   /** Every done, verify and reopen in order, with the round each belongs to. */
-  history: TaskHistoryEntry[];
+  history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
   surfaces: { surface: string; pass: boolean }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
   /** Notes attached with --task, in log order. */
-  notes: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
+  notes?: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
   /**
    * t-068: which layer of the page the task belongs to. this_version: brought by the current deploy or still in flight
    * (criteria and evidence inlined); earlier: verified on production before the current sha, or ended before it
@@ -438,7 +441,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     (b.tasks[t.status] ??= []).push({
       era, summary,
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
@@ -529,6 +532,42 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
 }
 
 /** Find one task on the board by id, whatever its status. */
+/** How many decided instructions the slim board keeps (what the CLI and the page show). */
+export const SLIM_DECIDED = 5;
+
+/**
+ * t-070: the board as GET /board and `ateam board` return it by default: what the page and the CLI actually read, and no
+ * text that grows with the log. Tasks keep title, status, owner, layer, summary, surfaces and the evidence sha; criteria,
+ * evidence, notes, verifications and history are GET /task/<id>'s. Acked instructions go, except the last few decided.
+ * `?full=1` / `--full` return the whole thing.
+ */
+export function slimBoard(b: Board): Board {
+  const tasks: Board["tasks"] = {};
+  for (const [status, list] of Object.entries(b.tasks)) {
+    tasks[status] = list.map((t) => ({
+      id: t.id, title: t.title, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
+      evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
+      surfaces: t.surfaces, verified_on: t.verified_on, era: t.era, summary: t.summary,
+    }));
+  }
+  const decided = b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED);
+  const instructions = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && !i.chosen || (i.options?.length && !i.chosen) || decided.includes(i));
+  // seams: open ones in full (someone must own them); resolved and stacked ones as ids and flags while a side can still be
+  // done (the seam check needs them); once both sides are final they are history, and GET /task/<id> still has them
+  const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));
+  const seams = b.seams
+    .filter((x) => x.open || ((x.resolved || x.stacked) && !x.tasks.every((id) => final.has(id))))
+    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner }));
+  const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
+  const readings = b.readings.filter((r) => r.valid || stale.includes(r));
+  // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]
+  const needs_human = b.needs_human.map((c) => ({ ...c, detail: "" }));
+  const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, shown: [], all: g.all }]));
+  // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, candidates: [] };
+  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release };
+}
+
 export function boardTask(b: Board, id: string): BoardTask | undefined {
   for (const list of Object.values(b.tasks)) for (const t of list) if (t.id === id) return t;
   return undefined;
