@@ -73,3 +73,24 @@ describe("t-039 · GET /manual/<role>", () => {
     for (const bad of ["writer", "human", "dev.md", "", "%2e%2e%2fcommon"]) expect((await fetch(`${base}/manual/${bad}`)).status, bad).toBe(404);
   });
 });
+
+describe("t-059 · the manual ends with what this project says the role holds", () => {
+  it("default packing for a plain role list; the project's own {role: [ids]} when declared; a role with nothing says so", async () => {
+    const post = (actor: string, body: unknown) => fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    let text = await (await fetch(`${base}/manual/qa`)).text();
+    expect(text).toContain("## 你在这个项目里持有的职责\n\n- R6 验收\n");
+    text = await (await fetch(`${base}/manual/pm`)).text();
+    expect(text).toContain("- R1 定方向\n- R3 定验收标准\n- R4 拆分派活\n- R8 接缝与集成\n- R11 改进工具\n- R13 协作报告");
+    expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4", "R6"], dev: ["R5"], qa: [] } })).status).toBe(201);
+    text = await (await fetch(`${base}/manual/pm`)).text();
+    expect(text.endsWith("## 你在这个项目里持有的职责\n\n- R1 定方向\n- R4 拆分派活\n- R6 验收\n")).toBe(true);
+    text = await (await fetch(`${base}/manual/qa`)).text();
+    expect(text).toContain("这个项目没有为 qa 声明任何职责");
+    // the page lists what nobody holds, in the dig layer, and nothing goes to 需要你
+    const page = await (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
+    expect(page).toContain('<section id="coverage"><h3>没人管的事');
+    expect(page).toContain("<li>没人管把人的话变成要求：没有角色声明</li>");
+    expect(page).toContain("<li>没人管做：dev 声明了但没在场</li>");
+    expect(page).toContain("<li>没人管定方向：pm 声明了但没在场</li>"); // pm holds R1 but has not pulled (writing is not listening)
+  });
+});

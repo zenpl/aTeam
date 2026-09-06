@@ -122,6 +122,39 @@ export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
 /** An instruction still not pulled this long after it was sent counts as undelivered on the board (t-048). */
 export const UNDELIVERED_AFTER_MS = 5 * 60_000;
+/**
+ * The responsibilities of docs/responsibilities.md (pd): the unit a project packs into roles. `holder` says who holds one
+ * when no role declares it: a role (so an undeclared one is a gap), everyone, the service, the owner, or nobody by design.
+ */
+export interface Responsibility { id: string; name: string; holder: "role" | "everyone" | "service" | "owner" | "none" }
+export const RESPONSIBILITIES: Responsibility[] = [
+  { id: "R1", name: "定方向", holder: "role" },
+  { id: "R2", name: "把人的话变成要求", holder: "role" },
+  { id: "R3", name: "定验收标准", holder: "role" },
+  { id: "R4", name: "拆分派活", holder: "role" },
+  { id: "R5", name: "做", holder: "role" },
+  { id: "R6", name: "验收", holder: "role" },
+  { id: "R7", name: "测量世界", holder: "everyone" },
+  { id: "R8", name: "接缝与集成", holder: "role" },
+  { id: "R9", name: "上线", holder: "role" },
+  { id: "R10", name: "决策台账", holder: "everyone" },
+  { id: "R11", name: "改进工具", holder: "role" },
+  { id: "R12", name: "看着跑起来的东西说哪里不对", holder: "role" },
+  { id: "R13", name: "协作报告", holder: "role" },
+  { id: "R14", name: "看门", holder: "service" },
+  { id: "R15", name: "拍板", holder: "owner" },
+  { id: "R16", name: "上岗与交接", holder: "service" },
+  { id: "R17", name: "对外接口", holder: "none" },
+  { id: "R18", name: "钥匙与边界", holder: "service" },
+];
+/** The default packing (responsibilities.md, 打包 · 默认五角色): what a role holds when the project declares only role names. */
+export const DEFAULT_RESPONSIBILITIES: Record<string, string[]> = {
+  pd: ["R2", "R12"],
+  pm: ["R1", "R3", "R4", "R8", "R11", "R13"],
+  dev: ["R5", "R9", "R11"],
+  frontend: ["R5", "R9"],
+  qa: ["R6"],
+};
 /** What a node may push, declared when it joins (t-058): nothing, its own branch, the integration branch, or production. */
 export const PUSH_LEVELS = ["none", "own-branch", "integration", "production"] as const;
 export type PushLevel = (typeof PUSH_LEVELS)[number];

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { runFollowUps } from "./verifyflow.js";
@@ -88,9 +88,13 @@ export function createApp(opts: ServerOptions) {
       // Global: the newcomer's manual, and the role manuals. Generic by construction, so they need no key.
       if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
       if (req.method === "GET" && path.startsWith("/manual/")) {
-        const text = manual(decodeURIComponent(path.slice("/manual/".length)));
+        const role = decodeURIComponent(path.slice("/manual/".length));
+        const text = manual(role);
         if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
-        return markdown(res, text);
+        // t-059: the project's own packing at the end, when the project exists
+        const known = await registry.get(projectId);
+        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read())) : null;
+        return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
       // A new project: one board, one log, one key. The key is in this response and nowhere else.
@@ -144,7 +148,7 @@ export function createApp(opts: ServerOptions) {
               out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human }));
             }
             for (const e of out) bus.emit("append", { project: owner.id, e });
-            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ?? "", first, created } };
+            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, roleResponsibilities(state)[role] ?? []) : "", first, created } };
           });
           return json(res, result.status, result.body);
         }
