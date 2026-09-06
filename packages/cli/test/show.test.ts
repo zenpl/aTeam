@@ -97,3 +97,17 @@ describe("t-018 · task show lists attached notes and evidence updates", () => {
     expect(fmt.event(ev, "pm")).toContain("note [t-002] one more");
   });
 });
+
+describe("t-057 · task show and the board say what superseded an obsolete task", () => {
+  it("status line names the decision; the board lists it under obsolete", async () => {
+    const { store, emit } = await fixture();
+    const d = await emit({ kind: "note", actor: "pd", body: "决策：health 改走 /", decision: true });
+    await emit({ kind: "task", op: "obsolete", actor: "pm", task: "t-001", decision: d.id, reason: "端点换了" });
+    const b = board(reduce(await store.read()), HUMAN);
+    const t = boardTask(b, "t-001")!;
+    expect(t.status).toBe("obsolete");
+    expect(fmt.task(t, b.seams)).toContain(`status     obsolete  已被 ${d.id} 取代（pm `);
+    expect(fmt.task(t, b.seams)).toContain("：端点换了）");
+    expect(fmt.board(b)).toContain(`obsolete  t-001          Server reports which commit is deployed  @dev  已被 ${d.id} 取代`);
+  });
+});

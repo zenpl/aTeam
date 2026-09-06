@@ -125,6 +125,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
   const t = state.tasks.get(e.task);
   if (!t) throw new Rejected("task", `${e.task} does not exist`);
   if (t.status === "withdrawn") throw new Rejected(e.op, `${t.id} is withdrawn (${t.withdrawn?.reason ?? ""}); ids are forever, create a new task`);
+  if (t.status === "obsolete") throw new Rejected(e.op, `${t.id} is obsolete (superseded by ${t.obsolete?.decision}); ids are forever, create a new task`);
 
   switch (e.op) {
     // R6: a task created on a false premise ends without anyone pretending to do it. Only before work starts
@@ -145,6 +146,20 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
+      return;
+    }
+    // R6b: finished work that a later decision made moot ends as obsolete, pointing at the decision. Verified is final either way.
+    case "obsolete": {
+      if (!e.decision?.trim()) throw new Rejected("obsolete", "name the decision note that took its place (--by <note id>)");
+      const d = state.notes.find((n) => n.id === e.decision);
+      if (!d) throw new Rejected("obsolete", `${e.decision} is not a note in this log`);
+      if (!d.decision) throw new Rejected("obsolete", `${e.decision} is a note, not a decision (note --decision)`);
+      if (t.status === "verified") throw new Rejected("obsolete", `${t.id} is verified; verified is final: create a new task that undoes it`);
+      if (t.status !== "done" && t.status !== "failed")
+        throw new Rejected("obsolete", `${t.id} is ${t.status}; only a done or failed task becomes obsolete. ${t.status === "working" ? "Its owner is on it: wait for done, or have them release it, then" : "For a task nobody finished,"} use task withdraw`);
+      const authors = criteriaAuthors(t);
+      if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
+        throw new Rejected("obsolete", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can make ${t.id} obsolete, not ${e.actor}`);
       return;
     }
     case "withdraw":

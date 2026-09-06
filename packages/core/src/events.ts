@@ -88,6 +88,8 @@ export type TaskOp =
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
   | { op: "withdraw"; task: string; reason: string }
+  /** Terminal: a product decision made the finished work moot. Only done or failed; by the criteria authors, pm, pd or the human. */
+  | { op: "obsolete"; task: string; /** the decision note that took its place */ decision: string; reason?: string }
   /** Back to working after done or failed, same owner and touches: the owner has more to change (a review, a fail). */
   | { op: "reopen"; task: string; reason: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */

@@ -16,6 +16,8 @@ export interface BoardTask {
   touches: string[];
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
+  /** Set once a decision superseded the finished task (t-057). */
+  obsolete?: { by: string; at: string; decision: string; reason?: string };
   evidence?: string;
   /** One sentence for the owner, above the evidence (t-056). */
   shows?: string;
@@ -300,7 +302,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
@@ -322,7 +324,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         surfaces: results.filter((r) => r.pass).map((r) => r.surface), done_at: lastDone?.at ?? t.updated_at,
       });
     }
-    if (t.status !== "verified" && t.status !== "withdrawn") {
+    if (t.status !== "verified" && t.status !== "withdrawn" && t.status !== "obsolete") {
       const g = (b.in_flight[t.status] ??= { total: 0, shown: [], all: [] });
       g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
     }

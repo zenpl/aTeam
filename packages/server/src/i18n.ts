@@ -56,7 +56,7 @@ export const UI = {
   tasks: "任务",
   taskStatus: {
     open: "没开始", working: "在做", blocked: "卡住", done: "做完",
-    failed: "验收未过", verified: "验过", withdrawn: "已撤回",
+    failed: "验收未过", verified: "验过", withdrawn: "已撤回", obsolete: "已取代",
   } as Record<string, string>,
   criteriaBy: (who: string, when: string) => `验收标准由 ${who} 制定，${when}创建`,
   touches: "涉及",
@@ -65,6 +65,7 @@ export const UI = {
   failedOn: "验收未过，在",
   by: "由",
   withdrawnBy: (who: string, when: string) => `${who} 于${when}撤回`,
+  obsoleteBy: (decision: string, who: string, when: string) => `已被决策 ${decision} 取代（${who} 于${when}）`,
   decisionTag: "决策",
   seams: "接缝",
   openCount: (n: number) => `${n} 条未解决`,

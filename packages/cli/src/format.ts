@@ -23,6 +23,7 @@ export function event(e: Event, me: string): string {
         case "block": return `${t} ${who} task ${e.task} blocked on ${e.on}`;
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
         case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
+        case "obsolete": return `${t} ${who} task ${e.task} OBSOLETE, superseded by ${e.decision}${e.reason ? `: ${e.reason}` : ""}`;
         case "criteria": return `${t} ${who} task ${e.task} criteria added: ${e.add.join(" | ")}`;
         case "reopen": return `${t} ${who} task ${e.task} REOPENED: ${e.reason}`;
         case "seam": return `${t} ${who} seam ${e.tasks.join("+")} resolved: ${e.resolution}`;
@@ -81,10 +82,10 @@ export function board(b: Board, me: string): string {
   }
 
   out.push("", "TASKS");
-  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"]) {
+  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     for (const t of b.tasks[status] ?? []) {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
-      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : results ? `  ${results}` : "";
+      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : status === "obsolete" ? `  已被 ${t.obsolete?.decision ?? "?"} 取代` : results ? `  ${results}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
     }
   }
@@ -130,7 +131,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   const touches = t.touches ?? [];
   const verifications = t.verifications ?? [];
   out.push(`${t.id}  ${t.title}`);
-  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}`);
+  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}${t.obsolete ? `  已被 ${t.obsolete.decision} 取代（${t.obsolete.by} ${hhmm(t.obsolete.at)}${t.obsolete.reason ? `：${t.obsolete.reason}` : ""}）` : ""}`);
   out.push(`owner      ${t.owner ?? "—"}`);
   if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {

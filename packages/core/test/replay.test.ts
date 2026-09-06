@@ -1318,3 +1318,67 @@ describe("t-056 · evidence has a layer for the owner: shows", () => {
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.shows).toBe("线上打开牌桌，第一行是部署 sha");
   });
 });
+
+describe("t-057 · finished work a decision made moot ends as obsolete", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const decision = await emit(store, c, { kind: "note", actor: "pd", body: "决策：按钮改为永远可点", decision: true });
+    const plain = await emit(store, c, { kind: "note", actor: "pd", body: "只是想法" });
+    for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    for (const id of ["A", "B", "C", "E"]) await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["packages/server/src/html.ts"] });
+    for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "不对" }); // B: failed
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "D", touches: ["packages/server/src/html.ts"] }); // D stacks on every dev task: a seam each
+    return { store, c, decision, plain };
+  };
+  const obsolete = (store: MemoryStore, c: ReturnType<typeof clock>, task: string, actor: string, decision: string, reason?: string) =>
+    emit(store, c, { kind: "task", op: "obsolete", actor, task, decision, reason });
+
+  it("done and failed become obsolete, pointing at a decision note; the id stays, further ops are rejected, seams go", async () => {
+    const { store, c, decision, plain } = await setup();
+    expect([...reduce(await store.read(), c.now()).seams.values()].filter((s) => s.tasks.includes("A")).length).toBeGreaterThan(0);
+    expect((await rejected(obsolete(store, c, "A", "pm", plain.id))).message).toMatch(/not a decision/);
+    expect((await rejected(obsolete(store, c, "A", "pm", "01NOPE"))).message).toMatch(/not a note/);
+    await obsolete(store, c, "A", "pm", decision.id, "按钮方案变了");
+    await obsolete(store, c, "B", "pd", decision.id);
+    const s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("A")).toMatchObject({ status: "obsolete", obsolete: { by: "pm", decision: decision.id, reason: "按钮方案变了" }, evidence: "abc1234" });
+    expect(s.tasks.get("B")).toMatchObject({ status: "obsolete", obsolete: { by: "pd", decision: decision.id } });
+    expect(s.tasks.get("B")!.verifications).toHaveLength(1); // what was judged stays on record
+    expect([...s.seams.values()].some((x) => x.tasks.includes("A") || x.tasks.includes("B"))).toBe(false);
+    const b = board(s, HUMAN, c.now());
+    expect(b.tasks.obsolete.map((t) => t.id)).toEqual(["A", "B"]);
+    expect(b.tasks.obsolete[0].obsolete).toMatchObject({ decision: decision.id });
+    expect(Object.values(b.in_flight).flatMap((g) => g.all.map((t) => t.id))).not.toContain("A");
+    expect(b.release.candidates.map((x) => x.task)).not.toContain("A");
+    expect(b.seams.filter((x) => x.tasks.includes("A") || x.tasks.includes("B"))).toEqual([]);
+    for (const e of [
+      { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] },
+      { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再来" },
+      { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true },
+      { kind: "task", op: "obsolete", actor: "pm", task: "A", decision: decision.id },
+    ] as const) expect((await rejected(emit(store, c, e as never))).message).toMatch(/is obsolete/);
+  });
+
+  it("verified is final; open and blocked are for withdraw; working waits; only the scope owners may say it", async () => {
+    const { store, c, decision } = await setup();
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "C", surface: "repo", pass: true });
+    expect((await rejected(obsolete(store, c, "C", "pm", decision.id))).message).toMatch(/verified is final/);
+    const e = await rejected(obsolete(store, c, "E", "pm", decision.id)); // working
+    expect(e.rule).toBe("obsolete");
+    expect(e.message).toMatch(/is working/);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "F", title: "题 F", criteria: ["works"] });
+    expect((await rejected(obsolete(store, c, "F", "pm", decision.id))).message).toMatch(/is open.*task withdraw/);
+    expect((await rejected(obsolete(store, c, "A", "dev", decision.id))).message).toMatch(/only pm .*not dev/);
+    expect((await rejected(obsolete(store, c, "A", "qa", decision.id))).message).toMatch(/not qa/);
+    await obsolete(store, c, "A", HUMAN, decision.id);
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("obsolete");
+    // a criteria author who is not pm may do it too
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "G", title: "题 G", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "G", touches: ["g"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "G" });
+    await obsolete(store, c, "G", "qa", decision.id);
+    expect(reduce(await store.read(), c.now()).tasks.get("G")!.status).toBe("obsolete");
+  });
+});

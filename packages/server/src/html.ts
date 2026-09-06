@@ -10,7 +10,7 @@ import { UI } from "./i18n.js";
  */
 export const REFRESH_SECONDS = 30;
 
-const STATUS_ORDER = ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"] as const;
+const STATUS_ORDER = ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"] as const;
 
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; /** URL prefix of this project's pages, e.g. /p/<id>; empty for the default project */ base?: string }
 
@@ -109,6 +109,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
         for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
         if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
+        if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
         if (st.notes.length) {
           d.push(`<ul class="notes">`);
           for (const n of st.notes) d.push(`<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag acked">${UI.decisionTag}</span>` : ""}：${esc(n.body)}</li>`);

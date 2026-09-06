@@ -45,6 +45,7 @@ tasks
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
+  ateam task obsolete <id> --by <decision note id> [--reason "..."]   terminal; a done/failed task a decision made moot, by the criteria author, pm, pd or human
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
   ateam task seam <a> <b> --resolution "..."
@@ -237,6 +238,7 @@ async function main(argv: string[]) {
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "obsolete": return emit({ kind: "task", op, task: need(id, "<id>"), decision: str(a, "by") ?? "", reason: str(a, "reason") });
         case "reopen": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "criteria": {
           const [sub, task, text] = exact(given, "add", "id", "text");
