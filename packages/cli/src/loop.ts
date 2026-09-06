@@ -19,6 +19,10 @@ export interface WatchOptions {
   /** Delays between retries after a transient failure, in ms. Each is capped at the interval. */
   backoffMs?: number[];
   sleep?: (ms: number) => Promise<void>;
+  /** Stop after the first pull that brings an instruction (the pre-t-046 behaviour, for old Monitor setups). */
+  once?: boolean;
+  /** Ends the watch from outside (tests, shutdown). */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
@@ -52,15 +56,18 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
 }
 
 /**
- * Loop until an instruction for `me` arrives. Every pull that brought events is printed as sync would
- * print it (empty pulls stay silent), so nothing is consumed unseen; the wake-up pull is printed before
- * "instruction received". Nothing is pulled twice, so a following `sync` says "nothing new".
+ * Keep listening. Every pull that brought events is printed as sync would print it (empty pulls stay silent),
+ * so nothing is consumed unseen; a pull that brings an instruction for `me` is followed by "instruction received"
+ * and the loop goes on (t-046): a node that stops listening after one instruction is deaf until someone notices.
+ * `once` returns after that first instruction instead. Nothing is pulled twice, so a following `sync` says "nothing new".
  */
 export async function watch(client: Puller, me: string, cursor: CursorStore, intervalMs: number, print: Print, opts: WatchOptions = {}): Promise<PullResult> {
   const backoff = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
   const sleep = opts.sleep ?? realSleep;
   let failures = 0;
+  let last: PullResult = { events: [], for_me: [], cursor: cursor.read() };
   for (;;) {
+    if (opts.signal?.aborted) return last;
     const after = cursor.read();
     let r: PullResult;
     try {
@@ -76,10 +83,11 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
       continue;
     }
     failures = 0;
+    last = r;
     if (r.events.length) for (const line of report(r, me, after)) print(line);
     if (r.for_me.length) {
       print("\ninstruction received");
-      return r;
+      if (opts.once) return r;
     }
   }
 }

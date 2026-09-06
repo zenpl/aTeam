@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, pull, reduce, board, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -902,6 +902,119 @@ describe("t-039 · the manual is a resource of the platform, per role", () => {
   });
 });
 
+describe("t-045 · a seam between two tasks of one owner is sequential work, not a collision", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("same owner: the seam is recorded and visible, but blocks neither verify", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["reduce.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["reduce.ts"] });
+    const s = await seams(store, c);
+    expect(s).toHaveLength(1);
+    expect(s[0]).toMatchObject({ id: "seam:A+B", same_owner: true, open: false });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    const st = reduce(await store.read(), c.now());
+    expect(st.tasks.get("A")!.status).toBe("verified");
+    expect(st.tasks.get("B")!.status).toBe("verified");
+  });
+
+  it("different owners still collide; a reopened task keeps its owner so the seam stays same-owner", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B"); await create(store, c, "C");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", open: true });
+    expect((await seams(store, c))[0].same_owner).toBeUndefined();
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    // C is dev's too; A fails and dev reopens it: A+C stays same-owner and never blocks
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "B 合并 A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "x" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "修" });
+    const s = await seams(store, c);
+    expect(s.find((x) => x.id === "seam:A+C")).toMatchObject({ same_owner: true, open: false });
+    expect(s.find((x) => x.id === "seam:B+C")).toMatchObject({ open: true });
+    // a failed task taken over by someone else turns the seam into a collision
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "y" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["app.ts"] });
+    expect((await seams(store, c)).find((x) => x.id === "seam:A+C")).toMatchObject({ open: true });
+  });
+});
+
+describe("t-047 · listening and speaking are two different things", () => {
+  it("a node that only emits is deaf: its instructions are not arriving; a pull makes it listen; both old is missing", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "note", actor: "dev", body: "在干活" });
+    let p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p).toMatchObject({ status: "deaf", listening: false, present: false, last_event: c.iso(), last_pull: null });
+    expect(isMissing(reduce(await store.read(), c.now()), "dev", c.now())).toBe(true);
+    c.tick(min(2));
+    await pull(store, "dev", null, c.now());
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p).toMatchObject({ status: "listening", listening: true, present: true, last_pull: c.iso(), idle_pull_s: 0, idle_event_s: 120, since: c.iso() });
+    expect(isMissing(reduce(await store.read(), c.now()), "dev", c.now())).toBe(false);
+    c.tick(min(6));
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p.status).toBe("deaf");   // spoke 8 minutes ago, pulled 6 minutes ago: not listening any more, not yet missing
+    c.tick(min(3));
+    p = board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((x) => x.actor === "dev")!;
+    expect(p.status).toBe("missing");
+    expect(p.since).toBe(c.iso(-min(9)));
+  });
+
+  it("the service card about a missing role is judged by listening: a node that keeps emitting without pulling still gets one", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await emit(store, c, { kind: "note", actor: "dev", body: "我在，但没在听" });
+    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 已经缺了 5 分钟，手里有 1 条指令。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening
+    await pull(store, "dev", null, c.now());
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toEqual([]);
+  });
+});
+
+describe("t-048 · the board says who is not receiving", () => {
+  it("pending instructions older than 5 minutes count per recipient; a pull clears them; the human's own are not counted", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const a = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "一", ack_by: c.iso(min(60)) });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "给人的", ack_by: c.iso(min(60)) });
+    c.tick(min(2));
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "二", ack_by: c.iso(min(60)) });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "qa", body: "三", ack_by: c.iso(min(60)) });
+    c.tick(min(4)); // "一" is 6 minutes old, the others 4
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered).toEqual([{ to: "dev", count: 1, oldest_sent: a.at, listening: false }]);
+    c.tick(min(2)); // now all three
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.map((u) => [u.to, u.count])).toEqual([["dev", 2], ["qa", 1]]);
+    await pull(store, "dev", null, c.now());
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.map((u) => [u.to, u.count, u.listening])).toEqual([["qa", 1, false]]);
+    // a listening recipient with something still unpulled (it pulled before the instruction) shows listening: true
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "四", ack_by: c.iso(min(60)) });
+    c.tick(min(4));
+    await pull(store, "dev", (await store.read()).events.at(-2)!.id, c.now()); // pulls up to before 四? no: 四 is the last event, so this pull consumes it
+    c.tick(min(2));
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.undelivered.find((u) => u.to === "dev")).toBeUndefined();
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
@@ -1046,17 +1159,21 @@ describe("S8 · presence is an environment property", () => {
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     // the declared roles come first (default five), then anyone else heard from; within the window is present (t-042)
     expect(b.presence.map((p) => p.actor)).toEqual(["pd", "pm", "dev", "frontend", "qa", "backend"]);
-    expect(b.presence.find((p) => p.actor === "backend")).toEqual({ actor: "backend", role: undefined, present: true, last_seen: c.iso(-min(7)), idle_s: 420, since: c.iso(-min(7)) });
-    expect(b.presence.find((p) => p.actor === "pm")).toMatchObject({ role: "pm", present: true, last_seen: c.iso(-min(10)), idle_s: 600 });
-    expect(b.presence.find((p) => p.actor === "dev")).toEqual({ actor: "dev", role: "dev", present: false, last_seen: null, idle_s: null, since: null });
+    // t-047: pulling is listening; speaking without pulling is deaf; neither is missing
+    expect(b.presence.find((p) => p.actor === "backend")).toMatchObject({ actor: "backend", role: undefined, status: "missing", present: false, listening: false, last_pull: c.iso(-min(7)), last_event: null, idle_pull_s: 420, idle_event_s: null, last_seen: c.iso(-min(7)), idle_s: 420, since: c.iso(-min(7)) }); // pulled 7 minutes ago, never spoke: past the 5-minute listen window
+    expect(b.presence.find((p) => p.actor === "pm")).toMatchObject({ role: "pm", status: "deaf", present: false, last_pull: null, last_event: c.iso(-min(10)), idle_event_s: 600, last_seen: c.iso(-min(10)) });
+    expect(b.presence.find((p) => p.actor === "dev")).toMatchObject({ actor: "dev", role: "dev", status: "missing", present: false, last_seen: null, idle_s: null, since: null });
+    // backend pulled 7 minutes ago: not listening by the 5-minute default, listening with a 10-minute window
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now(), { listenWindowMs: min(10) }).presence.find((p) => p.actor === "backend")).toMatchObject({ status: "listening", present: true });
     c.tick(min(1));
-    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.actor === "pm")!.present).toBe(false); // 11 minutes: missing
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.actor === "pm")!.status).toBe("missing"); // 11 minutes without a word or a pull
   });
 
   it("t-042: the role set is a fact of the project; a missing role's service card leaves needs_human when the role is back", async () => {
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await pull(store, "pm", null, c.now());
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.roles).toEqual(["pm", "dev"]);
     expect(b.presence.map((p) => [p.actor, p.present])).toEqual([["pm", true], ["dev", false]]);

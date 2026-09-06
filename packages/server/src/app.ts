@@ -117,6 +117,8 @@ export function createApp(opts: ServerOptions) {
               if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
             }
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
+            // joining is the first pull: the node is listening as of now (its own sync starts from its local cursor)
+            await pstore.setCursor({ actor: role, last_event_id: null, at: new Date().toISOString() });
             const caps = Array.isArray(body.capabilities) ? body.capabilities.filter((c): c is string => typeof c === "string" && !!c.trim()) : [];
             const out: unknown[] = [];
             if (caps.length) out.push(await append(pstore, { kind: "reading", actor: role, surface: "node", key: `${role}:能力`, value: caps, method: "节点加入时自报" }, { human }));
@@ -151,21 +153,24 @@ export function createApp(opts: ServerOptions) {
           const state = reduce(await store.read());
           const now = new Date();
           const out: unknown[] = [];
+          const b = board(state, human, now);
           for (const role of projectRoles(state)) {
             if (!isMissing(state, role, now)) continue;
             const overdue = [...state.instructions.values()].filter((st) => st.instruction.to === role && !st.acked_at && st.overdue);
-            if (!overdue.length) continue;
+            const undelivered = b.undelivered.find((u) => u.to === role);
+            if (!overdue.length && !undelivered) continue;
             const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
             if (cards.some((st) => !st.acked_at)) continue;
             const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
             if (lastAck && now.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
-            const last = state.presence.get(role);
+            const last = state.presence.get(role)?.last_pull;
             const minutes = last ? Math.round((now.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
-            out.push(await append(store, {
-              kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do",
-              body: `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`,
-              ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: overdue.map((st) => st.instruction.id),
-            }, { human }));
+            // one card per role: "not receiving" when instructions never arrived, else "missing with work in hand"
+            const body = undelivered
+              ? `${role} 可能失联 ${minutes} 分钟，${undelivered.count} 条指令没送到。起一个 ${role}？`
+              : `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`;
+            const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
+            out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs }, { human }));
           }
           return out;
         });

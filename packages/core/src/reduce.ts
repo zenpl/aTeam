@@ -84,6 +84,14 @@ export interface InstructionState {
   chosen?: { option: string; by: string; at: string; note?: string };
 }
 
+export interface Presence { last_pull: string | null; last_event: string | null }
+
+/** The later of the two: the old single "last seen". */
+export function lastSeen(p: Presence | undefined): string | null {
+  if (!p) return null;
+  return [p.last_pull, p.last_event].filter((x): x is string => !!x).sort().pop() ?? null;
+}
+
 export interface SeamState {
   id: string;
   tasks: [string, string];
@@ -93,6 +101,8 @@ export interface SeamState {
    * Informational; it blocks nobody's verification. Cleared if both sides come back in flight.
    */
   stacked?: { done: string; on: string };
+  /** Both sides belong to the same owner: sequential work by one hand, visible but never a collision (t-045). */
+  same_owner?: boolean;
   resolution?: { by: string; at: string; text: string };
 }
 
@@ -108,8 +118,8 @@ export interface State {
   tasks: Map<string, TaskState>;
   seams: Map<string, SeamState>;
   notes: Note[];
-  /** actor -> last time we heard from them (event or cursor) */
-  presence: Map<string, string>;
+  /** actor -> when they last pulled (their cursor moved: they are listening) and when they last spoke (an event). */
+  presence: Map<string, Presence>;
   focus?: Reading;
 }
 
@@ -158,7 +168,9 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   for (const e of log.events) {
     s.ids.add(e.id);
-    s.presence.set(e.actor, e.at);
+    const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
+    if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
+    s.presence.set(e.actor, pe);
     if (e.writes?.length) invalidate(s, e);
     switch (e.kind) {
       case "reading": applyReading(s, e); break;
@@ -184,8 +196,9 @@ export function reduce(log: Log, now: Date = new Date()): State {
     if (st && !st.delivered_at) st.delivered_at = d.at;
   }
   for (const c of log.cursors) {
-    const prev = s.presence.get(c.actor);
-    if (!prev || prev < c.at) s.presence.set(c.actor, c.at);
+    const pc = s.presence.get(c.actor) ?? { last_pull: null, last_event: null };
+    if (!pc.last_pull || pc.last_pull < c.at) pc.last_pull = c.at;
+    s.presence.set(c.actor, pc);
   }
 
   const nowIso = now.toISOString();
@@ -306,13 +319,14 @@ function detectSeams(s: State, t: TaskState) {
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
     const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
+    const same_owner = !!t.owner && t.owner === other.owner;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.stacked = stacked; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked });
+    if (existing) { existing.overlap = overlap; existing.stacked = stacked; existing.same_owner = same_owner; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked, same_owner });
   }
 }
 
-/** Seams that block verifying `task`: unresolved and not stacked. */
+/** Seams that block verifying `task`: unresolved, not stacked, and between two different owners. */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && x.tasks.includes(task));
 }

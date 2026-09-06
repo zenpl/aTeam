@@ -53,6 +53,11 @@ export function board(b: Board, me: string): string {
     for (const n of b.needs_human) out.push(`  ${n.summary}  (${n.id})`);
   }
 
+  if (b.undelivered?.length) {
+    out.push("", "UNDELIVERED (sent 5+ minutes ago, never pulled)");
+    for (const u of b.undelivered) out.push(`  ${u.to.padEnd(10)} ${u.count} instruction(s), oldest ${ago(u.oldest_sent)} ago${u.listening ? "" : "  可能失联"}`);
+  }
+
   if (b.overdue?.length) {
     out.push("", "OVERDUE");
     for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
@@ -90,9 +95,11 @@ export function board(b: Board, me: string): string {
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
   }
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
-  if (stacked.length) {
+  const sameOwner = b.seams.filter((s) => !s.resolved && !s.stacked && s.same_owner);
+  if (stacked.length || sameOwner.length) {
     out.push("", "STACKED (informational, blocks nothing)");
     for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
+    for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner at ${s.overlap.join(", ")}: sequential work, land them in order`);
   }
 
   const valid = b.readings.filter((r) => r.valid);
@@ -102,7 +109,12 @@ export function board(b: Board, me: string): string {
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
 
   out.push("", "PRESENCE");
-  for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${p.present === false ? "  (missing)" : ""}`);
+  for (const p of b.presence) {
+    const st = p.status ?? (p.present === false ? "missing" : "listening");
+    const tail = st === "deaf" ? `  可能失联：最后一次拉取 ${p.last_pull ? `${ago(p.last_pull)} 前` : "从未"}，最后一次说话 ${ago(p.last_event!)} 前`
+      : st === "missing" ? "  (missing)" : "";
+    out.push(`  ${p.actor.padEnd(10)} ${p.last_seen ? `${ago(p.last_seen)} ago` : "never seen"}${tail}`);
+  }
 
   return out.join("\n");
 }
@@ -146,7 +158,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   if (!mine.length) out.push("  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
-    const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : "OPEN";
+    const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
     out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
   }
   out.push("notes");

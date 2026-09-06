@@ -1,4 +1,4 @@
-import type { Board, BoardSaid, State } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -238,9 +238,9 @@ export function inviteUrl(b: Board): string | null {
   return x.invite_url ?? x.project?.invite_url ?? null;
 }
 
-/** The role a missing-role instruction is about (t-042 will name it in a field; until then the sentence itself says). */
+/** The role a service card is about: 「<角色> 已经缺了…」(t-042) or 「<角色> 可能失联…」(t-048), as core reads it; a field wins when present. */
 export function missingRole(i: { body: string; role?: string; about?: { role?: string } }): string | null {
-  return i.role ?? i.about?.role ?? /^(\S+) 已经缺了 \d+ 分钟/.exec(i.body.trim())?.[1] ?? null;
+  return i.role ?? i.about?.role ?? missingRoleOf(i.body.trim()) ?? null;
 }
 
 interface RoleRow { role: string; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[] }
