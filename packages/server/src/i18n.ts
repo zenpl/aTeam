@@ -31,6 +31,9 @@ export const UI = {
   copied: "已复制",
   missing: (min: number) => `缺人 ${min} 分钟`,
   missingNever: "缺人",
+  deaf: (min: number) => `没在听 ${min} 分钟`,
+  deafNever: "没在听",
+  undelivered: (n: number) => `${n} 条没送到`,
   missingCard: (role: string, min: number, count: number) => `${role} 已经缺了 ${min} 分钟，手里有 ${count} 条指令。起一个 ${role}？`,
   started: "起好了",
 

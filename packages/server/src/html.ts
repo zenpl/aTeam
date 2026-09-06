@@ -202,8 +202,14 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   } else out.push(`<span class="quiet">${UI.nothingInFlight}</span>`);
   out.push(`</div></div>`);
 
+  const whoLabel = (r: RoleRow) => {
+    const state = r.status === "listening" ? (r.last_seen ? t(r.last_seen) : "")
+      : r.status === "deaf" ? esc(r.minutes === null ? UI.deafNever : UI.deaf(r.minutes))
+      : esc(r.minutes === null ? UI.missingNever : UI.missing(r.minutes));
+    return r.undelivered ? `${state} · ${esc(UI.undelivered(r.undelivered))}` : state;
+  };
   const whoChips = roles.length
-    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}"><i></i>${esc(r.role)}<span class="meta">${r.present ? (r.last_seen ? t(r.last_seen) : "") : esc(r.minutes === null ? UI.missingNever : UI.missing(r.minutes))}</span></span>`).join("")
+    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(r.role)}<span class="meta">${whoLabel(r)}</span></span>`).join("")
     : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
   out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
   out.push(`</section>`);
@@ -243,19 +249,21 @@ export function missingRole(i: { body: string; role?: string; about?: { role?: s
   return i.role ?? i.about?.role ?? missingRoleOf(i.body.trim()) ?? null;
 }
 
-interface RoleRow { role: string; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[] }
+interface RoleRow { role: string; status: "listening" | "deaf" | "missing"; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[]; undelivered: number }
 
 /**
- * 谁在 by role (t-042): one presence row per declared role. Returns [] on a board without role rows, so the
- * page falls back to plain presence. `minutes` is how long the role has been missing (null when never seen);
- * `overdue` lists the ids of instructions waiting on a missing role.
+ * 谁在 by role (t-042/t-047/t-048): one presence row per declared role. listening = here; deaf = spoke but is not
+ * pulling, so nothing reaches it; missing = neither. `minutes` since the last pull (null when it never pulled);
+ * `undelivered` counts instructions sent to the role that nobody has pulled.
  */
 export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
   return b.presence.filter((p) => p.role !== undefined).map((p) => {
+    const status = p.status ?? (p.present ? "listening" : "missing");
     const since = p.since ?? (p.present ? p.last_seen : null);
     const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : null;
-    const overdue = p.present ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
-    return { role: p.role!, present: p.present, last_seen: p.last_seen, since: p.since, minutes, overdue };
+    const overdue = status === "listening" ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
+    const undelivered = (b.undelivered ?? []).find((u) => u.to === p.role)?.count ?? 0;
+    return { role: p.role!, status, present: status === "listening", last_seen: p.last_seen, since: p.since, minutes, overdue, undelivered };
   });
 }
 
