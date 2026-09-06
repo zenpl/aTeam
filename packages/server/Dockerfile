@@ -10,8 +10,10 @@ COPY packages ./packages
 RUN pnpm --filter @ateam/core --filter @ateam/server run build
 
 FROM node:22-alpine
+# Set by bin/deploy (`--build-arg GIT_SHA=$(git rev-parse HEAD)`). A build without it still succeeds and reports "unknown".
+ARG GIT_SHA=unknown
 WORKDIR /app
-ENV NODE_ENV=production NODE_OPTIONS=--no-warnings PORT=8080 ATEAM_DB=/data/ateam.db
+ENV NODE_ENV=production NODE_OPTIONS=--no-warnings PORT=8080 ATEAM_DB=/data/ateam.db ATEAM_SHA=${GIT_SHA}
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/core ./packages/core
 COPY --from=build /app/packages/server ./packages/server

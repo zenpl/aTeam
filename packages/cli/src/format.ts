@@ -1,4 +1,4 @@
-import type { Event, Board } from "@ateam/core";
+import { describeShape, type Event, type Board, type BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -8,11 +8,12 @@ export function event(e: Event, me: string): string {
   switch (e.kind) {
     case "instruction": {
       const mark = e.to === me ? "  ⇐ FOR YOU, ack it: ateam ack " + e.id : "";
-      return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${mark}`;
+      const ask = e.options?.length ? `  options: ${e.options.join(" | ")}${e.default ? ` (default ${e.default})` : ""}` : "";
+      return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${ask}${mark}`;
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
-    case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
-    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
+    case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
+    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
       switch (e.op) {
         case "create": return `${t} ${who} task ${e.task} created: ${e.title}`;
@@ -47,22 +48,35 @@ export function board(b: Board, me: string): string {
     out.push("", "OPEN INSTRUCTIONS");
     for (const i of open) {
       const you = i.to === me ? "  ⇐ YOU" : "";
-      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
+      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
     }
+  }
+
+  const decided = b.instructions.filter((i) => i.chosen);
+  if (decided.length) {
+    out.push("", "DECIDED");
+    for (const i of decided.slice(-5)) out.push(`  ${i.from} → ${i.to}: ${i.body}  ⇒ ${i.chosen!.option}  (${i.chosen!.by}, ${ago(i.chosen!.at)} ago)  ${i.id}`);
   }
 
   out.push("", "TASKS");
   for (const status of ["blocked", "working", "done", "failed", "open", "verified"]) {
     for (const t of b.tasks[status] ?? []) {
-      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "verified" ? ` ✓ ${t.verified_on?.join(",")}` : "";
+      const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
+      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : results ? `  ${results}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
     }
   }
 
-  const openSeams = b.seams.filter((s) => !s.resolved);
+  const openSeams = b.seams.filter((s) => !s.resolved && !s.stacked);
   if (openSeams.length) {
     out.push("", "OPEN SEAMS");
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
+  }
+  const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
+  if (stacked.length) {
+    out.push("", "STACKED (informational, blocks nothing)");
+    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
   }
 
   const valid = b.readings.filter((r) => r.valid);
@@ -74,5 +88,36 @@ export function board(b: Board, me: string): string {
   out.push("", "PRESENCE");
   for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${ago(p.last_seen)} ago`);
 
+  return out.join("\n");
+}
+
+/** `ateam task show <id>`: everything the log knows about one task. */
+export function task(t: BoardTask, seams: Board["seams"]): string {
+  const out: string[] = [];
+  // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
+  const touches = t.touches ?? [];
+  const verifications = t.verifications ?? [];
+  out.push(`${t.id}  ${t.title}`);
+  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}`);
+  out.push(`owner      ${t.owner ?? "—"}`);
+  if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
+  else {
+    out.push(`criteria   (by ${t.criteria_by})`);
+    if (!t.criteria.length) out.push("  (none)");
+    t.criteria.forEach((c, i) => out.push(`  ${i + 1}. ${c}`));
+  }
+  out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
+  out.push(`evidence   ${t.evidence ?? "—"}`);
+  out.push("verifications");
+  if (!verifications.length) out.push("  (none)");
+  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
+  const mine = seams.filter((s) => s.tasks.includes(t.id));
+  out.push("seams");
+  if (!mine.length) out.push("  (none)");
+  for (const s of mine) {
+    const other = s.tasks.find((x) => x !== t.id);
+    const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : "OPEN";
+    out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
+  }
   return out.join("\n");
 }

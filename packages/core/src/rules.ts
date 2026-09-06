@@ -1,5 +1,5 @@
-import { type Event, type NewEvent, INSTRUCTION_MAX_CHARS } from "./events.js";
-import { type State, openSeamsFor } from "./reduce.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS } from "./events.js";
+import { type State, openSeamsFor, passedOn } from "./reduce.js";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -27,9 +27,21 @@ export function validate(state: State, e: NewEvent, human: string): void {
   }
 
   switch (e.kind) {
-    case "reading":
+    // R0b: a key that declared a shape only takes values of that shape. The declaration itself is made once.
+    case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      const declared = state.shapes.get(e.key);
+      if (e.shape) {
+        if (e.shape.regex === undefined && !e.shape.enum?.length) throw new Rejected("reading", "a shape needs a regex or a non-empty enum");
+        if (e.shape.regex !== undefined) try { new RegExp(e.shape.regex); } catch { throw new Rejected("reading", `shape regex ${JSON.stringify(e.shape.regex)} does not compile`); }
+        if (declared && !sameShape(declared, e.shape))
+          throw new Rejected("reading", `${e.key} already has shape ${describeShape(declared)}; a shape is declared once`);
+      }
+      const shape = e.shape ?? declared;
+      if (shape && !matchesShape(shape, e.value))
+        throw new Rejected("reading", `${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
       return;
+    }
 
     // R1: an instruction is short, has one recipient, and a deadline to be acked.
     case "instruction":
@@ -39,6 +51,13 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (e.body.length > INSTRUCTION_MAX_CHARS)
         throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
       if (!e.ack_by) throw new Rejected("instruction", "ack_by is required");
+      if (e.options !== undefined || e.default !== undefined) {
+        if (e.to !== human) throw new Rejected("instruction", `options are for the human; ${e.to} acts, the human decides`);
+        const opts = (e.options ?? []).map((o) => o.trim());
+        if (opts.length < 2 || opts.some((o) => !o)) throw new Rejected("instruction", "give at least two non-empty options");
+        if (new Set(opts).size !== opts.length) throw new Rejected("instruction", "options must be distinct");
+        if (e.default !== undefined && !opts.includes(e.default)) throw new Rejected("instruction", `default "${e.default}" is not one of the options`);
+      }
       return;
 
     case "ack": {
@@ -54,6 +73,17 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (!e.body?.trim()) throw new Rejected("note", "body is required");
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
         throw new Rejected("note", `${e.supersedes} is not a note`);
+      // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
+      if (e.decides) {
+        const st = state.instructions.get(e.decides.of);
+        if (!st) throw new Rejected("decide", `${e.decides.of} is not an instruction`);
+        const i = st.instruction;
+        if (!i.options?.length) throw new Rejected("decide", `${i.id} carries no options`);
+        if (!i.options.includes(e.decides.option)) throw new Rejected("decide", `"${e.decides.option}" is not one of: ${i.options.join(" | ")}`);
+        if (i.to !== e.actor && e.actor !== human) throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
+        if (st.chosen) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
+        if (!e.decision) throw new Rejected("decide", "a choice is a decision; set decision: true");
+      }
       return;
 
     case "task":
@@ -82,6 +112,11 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
 
   switch (e.op) {
     case "claim":
+      // open or failed: anyone may take it. working: only its owner, to widen what it touches.
+      if (t.status === "working" && t.owner === e.actor) {
+        if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
+        return;
+      }
       if (t.status !== "open" && t.status !== "failed")
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
@@ -91,12 +126,15 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (t.status !== "working") throw new Rejected("done", `${t.id} is ${t.status}`);
       return;
     // R2: done is a claim; verified is another identity's act, on a named surface, with no open seam.
+    // Verified on one surface is not verified on another: a verified task may be verified again on a new surface.
     case "verify": {
-      if (t.status !== "done") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
+      if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
+      if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
+      if (passedOn(t, e.surface))
+        throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; verify on a surface it has not passed on`);
       if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
       if (e.actor === t.criteria_by && e.actor !== human)
         throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");
-      if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
       const seams = openSeamsFor(state, t.id);
       if (seams.length)
         throw new Rejected("verify", `unresolved seam ${seams.map((s) => s.id + " [" + s.overlap.join(",") + "]").join(", ")}`);
@@ -109,4 +147,21 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (t.status !== "blocked") throw new Rejected("unblock", `${t.id} is not blocked`);
       return;
   }
+}
+
+export function matchesShape(shape: ReadingShape, value: unknown): boolean {
+  if (shape.regex !== undefined && !new RegExp(shape.regex).test(typeof value === "string" ? value : JSON.stringify(value))) return false;
+  if (shape.enum?.length && !shape.enum.some((v) => JSON.stringify(v) === JSON.stringify(value))) return false;
+  return true;
+}
+
+export function describeShape(shape: ReadingShape): string {
+  const parts: string[] = [];
+  if (shape.regex !== undefined) parts.push(`/${shape.regex}/`);
+  if (shape.enum?.length) parts.push(`one of ${shape.enum.map((v) => JSON.stringify(v)).join(" | ")}`);
+  return parts.join(" and ");
+}
+
+function sameShape(a: ReadingShape, b: ReadingShape): boolean {
+  return a.regex === b.regex && JSON.stringify(a.enum ?? null) === JSON.stringify(b.enum ?? null);
 }
