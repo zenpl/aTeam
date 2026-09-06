@@ -1,5 +1,5 @@
 import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
-import { lastSeen } from "./reduce.js";
+import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -30,6 +30,8 @@ export interface BoardTask {
   history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
   surfaces: { surface: string; pass: boolean }[];
+  /** t-076: surfaces whose pass was later overturned by a fail, with who, when and why. */
+  overturned?: { surface: string; by: string; at: string; evidence?: string; passed_by: string }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
   /** Notes attached with --task, in log order. */
@@ -442,7 +444,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       era, summary,
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
-      surfaces: surfaceResults(t),
+      surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
     });
@@ -547,7 +549,7 @@ export function slimBoard(b: Board): Board {
     tasks[status] = list.map((t) => ({
       id: t.id, title: t.title, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
-      surfaces: t.surfaces, verified_on: t.verified_on, era: t.era, summary: t.summary,
+      surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
   }
   const decided = b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED);

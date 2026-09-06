@@ -66,6 +66,18 @@ export function passedOn(t: TaskState, surface: string): boolean {
   return t.verifications.some((v) => v.round === t.round && v.surface === surface && v.pass);
 }
 
+/** t-076: surfaces where a pass in the current round was later overturned by a fail: who, when, why. */
+export function overturnedOn(t: TaskState): { surface: string; by: string; at: string; evidence?: string; passed_by: string }[] {
+  const out: { surface: string; by: string; at: string; evidence?: string; passed_by: string }[] = [];
+  for (const surface of new Set(t.verifications.filter((v) => v.round === t.round).map((v) => v.surface))) {
+    const vs = t.verifications.filter((v) => v.round === t.round && v.surface === surface);
+    const lastPass = [...vs].reverse().find((v) => v.pass);
+    const last = vs[vs.length - 1];
+    if (lastPass && last && !last.pass && vs.indexOf(last) > vs.indexOf(lastPass)) out.push({ surface, by: last.by, at: last.at, evidence: last.evidence, passed_by: lastPass.by });
+  }
+  return out;
+}
+
 export interface ReadingState {
   reading: Reading;
   /** false when a later write hit one of depends_on, or when superseded by a newer reading of the same surface:key. */

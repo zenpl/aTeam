@@ -204,8 +204,14 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("verify", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
       if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
-      if (passedOn(t, e.surface))
-        throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; verify on a surface it has not passed on`);
+      // t-076: a pass on a surface is final for passes; a fail may overturn it, by someone who is neither the owner, a criteria
+      // author, nor the one who passed it. Evidence that is merely misworded is not this path: that is an evidence: note.
+      if (passedOn(t, e.surface)) {
+        if (e.pass) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
+        const passer = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface && v.pass).map((v) => v.by).pop();
+        if (passer === e.actor) throw new Rejected("verify", `${e.actor} passed ${t.id} on ${e.surface}; the one who passed it cannot overturn it, someone else must`);
+        if (!e.evidence?.trim()) throw new Rejected("verify", `overturning a pass on ${e.surface} needs --evidence: what was found that the pass missed`);
+      }
       if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
       if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
         throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");

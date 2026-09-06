@@ -1614,3 +1614,51 @@ describe("t-073 · both sides done and the later absorbed the earlier: the seam 
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
   });
 });
+
+describe("t-076 · a verified task whose evidence is overturned: a fail by a third party overrides the pass", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234 全绿" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
+    return { store, c };
+  };
+  it("owner, criteria author and the one who passed it are refused; a pass never overrides a pass; a third party's fail with evidence overturns, status goes to done, history stays", async () => {
+    const { store, c } = await setup();
+    const before = (await store.read()).events.map((e) => JSON.stringify(e));
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/owner cannot verify/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/wrote the criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/the one who passed it cannot overturn it/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }))).message).toMatch(/a pass does not override a pass/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false }))).message).toMatch(/needs --evidence/);
+    const o = await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false, evidence: "证据说含 c3cfeee，git 说不含" });
+    const s = reduce(await store.read(), c.now());
+    const t = s.tasks.get("A")!;
+    expect(t.status).toBe("done"); // not working: nobody reopened it
+    expect(t.round).toBe(1);
+    expect(t.verifications.map((v) => [v.surface, v.pass, v.by])).toEqual([["repo", true, "qa"], ["repo", false, "frontend"]]); // both kept, in time order
+    expect(surfaceResults(t)).toEqual([{ surface: "repo", pass: false }]);
+    expect(t.history.map((h) => h.op)).toEqual(["done", "verify", "verify"]);
+    // no event was rewritten
+    const after = (await store.read()).events.map((e) => JSON.stringify(e));
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toHaveLength(before.length + 1);
+    // the board says it out loud
+    const b = board(s, HUMAN, c.now());
+    const bt = b.tasks.done.find((x) => x.id === "A")!;
+    expect(bt.overturned).toEqual([{ surface: "repo", by: "frontend", at: o.at, evidence: "证据说含 c3cfeee，git 说不含", passed_by: "qa" }]);
+    expect(bt.verified_on).toEqual([]);
+    // the owner fixes it and someone verifies again on the same surface: allowed, since the latest result there is a fail
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补合并" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678 真合了" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+    // the human may overturn too, but not their own pass
+    const { store: s2, c: c2 } = await setup();
+    await emit(s2, c2, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", pass: false, evidence: "线上没看到" });
+    expect(reduce(await s2.read(), c2.now()).tasks.get("A")!.status).toBe("done");
+  });
+});
