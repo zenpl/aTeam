@@ -1,5 +1,5 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR } from "./events.js";
-import { type State, openSeamsFor, passedOn, DEFAULT_DECIDER } from "./reduce.js";
+import { type State, openSeamsFor, passedOn, shapeFor, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -27,19 +27,20 @@ export function validate(state: State, e: NewEvent, human: string): void {
   }
 
   switch (e.kind) {
-    // R0b: a key that declared a shape only takes values of that shape. The declaration itself is made once.
+    // R0b: a surface:key that declared a shape only takes values of that shape. The declaration is made once per surface:key;
+    // it never leaks to another surface (staging:users.count is not production:users.count).
     case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
-      const declared = state.shapes.get(e.key);
+      const declared = shapeFor(state, e.surface, e.key);
       if (e.shape) {
         if (e.shape.regex === undefined && !e.shape.enum?.length) throw new Rejected("reading", "a shape needs a regex or a non-empty enum");
         if (e.shape.regex !== undefined) try { new RegExp(e.shape.regex); } catch { throw new Rejected("reading", `shape regex ${JSON.stringify(e.shape.regex)} does not compile`); }
         if (declared && !sameShape(declared, e.shape))
-          throw new Rejected("reading", `${e.key} already has shape ${describeShape(declared)}; a shape is declared once`);
+          throw new Rejected("reading", `${e.surface}:${e.key} already has shape ${describeShape(declared)}; a shape is declared once`);
       }
       const shape = e.shape ?? declared;
       if (shape && !matchesShape(shape, e.value))
-        throw new Rejected("reading", `${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
+        throw new Rejected("reading", `${e.surface}:${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
       return;
     }
 

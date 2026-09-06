@@ -305,10 +305,12 @@ describe("t-008 · a reading key can declare what values it takes", () => {
     await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "fd76455" });
     const r = await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "01M1TNREK0TD5ZFJXK18XVNTWF" }));
     expect(r.rule).toBe("reading");
-    expect(r.message).toMatch(/deployed\.sha/);
-    expect(r.message).toMatch(/\^\[0-9a-f\]\{7,40\}\$/);
-    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknown" }))).message).toMatch(/does not match shape/);
-    expect(reduce(await store.read(), c.now()).readings.size).toBe(2);
+    expect(r.message).toMatch(/production:deployed\.sha/);
+    expect(r.message).toMatch(/\[0-9a-f\]\{7,40\}/);
+    // t-024: "unknown" is what /health says when the image carries no sha; recording that is a true reading
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknown" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknow" }))).message).toMatch(/does not match shape/);
+    expect(reduce(await store.read(), c.now()).readings.size).toBe(3);
   });
 
   it("an undeclared key takes anything, as before", async () => {
@@ -320,19 +322,46 @@ describe("t-008 · a reading key can declare what values it takes", () => {
     expect(reduce(await store.read(), c.now()).readings.size).toBe(3);
   });
 
-  it("a shape is declared once, on a reading; later readings must match it; a different declaration is rejected", async () => {
+  it("a shape is declared once, on a reading, per surface:key; later readings there must match it; a different declaration is rejected", async () => {
     const store = new MemoryStore();
     const c = clock();
     // the declaring reading is itself checked
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "C", shape: { enum: ["A", "B"] } }))).message).toMatch(/auth\.mode = "C" does not match shape one of "A" \| "B"/);
     await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "B", shape: { enum: ["A", "B"] } });
-    await emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "A" });
-    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "public" }))).message).toMatch(/auth\.mode = "public" does not match shape/);
+    await emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "production", value: "A" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "production", value: "public" }))).message).toMatch(/production:auth\.mode = "public" does not match shape/);
     // same declaration again is fine; a different one is not
     await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B"] } });
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B", "C"] } }))).message).toMatch(/already has shape/);
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 1, shape: { regex: "(" } }))).message).toMatch(/does not compile/);
-    expect(reduce(await store.read(), c.now()).shapes.get("auth.mode")).toEqual({ enum: ["A", "B"] });
+    expect(reduce(await store.read(), c.now()).shapes.get("production:auth.mode")).toEqual({ enum: ["A", "B"] });
+  });
+
+  it("t-024: a shape belongs to one surface:key; another surface takes anything until it declares its own", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 128, shape: { regex: "^[0-9]+$" } });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: "many" }))).message).toMatch(/production:users\.count = "many"/);
+    // staging does not inherit production's shape
+    await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: "many" });
+    // staging may declare a different one for itself; production's stays
+    await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: "few", shape: { enum: ["few", "many"] } });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: 3 }))).message).toMatch(/staging:users\.count = 3 does not match shape one of "few" \| "many"/);
+    await emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 129 });
+    const st = reduce(await store.read(), c.now());
+    expect(st.shapes.get("production:users.count")).toEqual({ regex: "^[0-9]+$" });
+    expect(st.shapes.get("staging:users.count")).toEqual({ enum: ["few", "many"] });
+    expect(st.shapes.has("users.count")).toBe(false);
+  });
+
+  it("t-024: deployed.sha takes a sha or 'unknown' on any surface, and an event id on none; a surface cannot loosen it", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "unknown" });
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "abc1234" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "01M1TQGSB6MGNYGE0HYZAP15RG" }))).message).toMatch(/staging:deployed\.sha .* does not match shape/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "01M1TQGSB6MGNYGE0HYZAP15RG" }))).message).toMatch(/production:deployed\.sha/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "anything", shape: { regex: ".*" } }))).message).toMatch(/already has shape/);
   });
 });
 

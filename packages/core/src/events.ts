@@ -17,9 +17,13 @@ export interface Base {
 /** What values a reading key may take. A regex is matched against the value as a string; an enum by JSON equality. */
 export interface ReadingShape { regex?: string; enum?: unknown[] }
 
-/** Shapes every log starts with. `deployed.sha` is a git sha, never an event id or "unknown". */
+/**
+ * Shapes every log starts with, by key, on every surface (a declaration for one `surface:key` is checked against them).
+ * `deployed.sha` is a git sha or the literal "unknown" that GET /health reports when the image was built without one;
+ * never an event id.
+ */
 export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
-  "deployed.sha": { regex: "^[0-9a-f]{7,40}$" },
+  "deployed.sha": { regex: "^([0-9a-f]{7,40}|unknown)$" },
 };
 
 /** A measurement of the world at one moment. Never a constant. */
@@ -36,7 +40,7 @@ export interface Reading extends Base {
   depends_on?: string[];
   /** ISO timestamp after which the reading is expired. */
   valid_until?: string;
-  /** Declares, once per key, what values this key may take. Later readings of the key that do not match are rejected. */
+  /** Declares, once per surface:key, what values it may take. Later readings of that surface:key that do not match are rejected. */
   shape?: ReadingShape;
 }
 

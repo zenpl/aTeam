@@ -80,7 +80,7 @@ export interface State {
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
-  /** key -> declared value shape (defaults plus the first reading that declared one) */
+  /** surface:key -> the shape its first declaring reading gave it. Defaults (by key) live in DEFAULT_SHAPES; see shapeFor. */
   shapes: Map<string, ReadingShape>;
   instructions: Map<string, InstructionState>;
   tasks: Map<string, TaskState>;
@@ -125,7 +125,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     readings: new Map(),
     latestReading: new Map(),
-    shapes: new Map(Object.entries(DEFAULT_SHAPES)),
+    shapes: new Map(),
     instructions: new Map(),
     tasks: new Map(),
     seams: new Map(),
@@ -193,9 +193,14 @@ function invalidate(s: State, e: Event) {
   }
 }
 
+/** The shape a reading on `surface:key` must match: what that surface:key declared, else the key's default, else none. */
+export function shapeFor(s: State, surface: string, key: string): ReadingShape | undefined {
+  return s.shapes.get(`${surface}:${key}`) ?? DEFAULT_SHAPES[key];
+}
+
 function applyReading(s: State, r: Reading) {
-  if (r.shape && !s.shapes.has(r.key)) s.shapes.set(r.key, r.shape);
   const key = readingKey(r);
+  if (r.shape && !s.shapes.has(key)) s.shapes.set(key, r.shape);
   const prevId = s.latestReading.get(key);
   if (prevId) {
     const prev = s.readings.get(prevId)!;
