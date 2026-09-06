@@ -464,3 +464,103 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     expect(tokenPage({ then: "/decide", id: "x", option: '<"&>' })).toContain('<input type="hidden" name="option" value="&lt;&quot;&amp;&gt;">');
   });
 });
+
+describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色的谁在、缺人卡（UC-S0 / UC-S7）", () => {
+  const fresh = async () => {
+    const state = reduce(await new MemoryStore().read());
+    return { state, b: board(state, HUMAN) as Board & { invite_url?: string; presence: (Board["presence"][number] & { role?: string; present?: boolean; since?: string })[] } };
+  };
+  const minutesAgo = (b: Board, m: number) => new Date(Date.parse(b.now) - m * 60_000).toISOString();
+
+  it("新项目：只有一张「问你」卡「这个项目是什么？说一句。」，无按钮，提示在下面说一句；卡下一行邀请链接带复制按钮", async () => {
+    const { state, b } = await fresh();
+    b.focus = { body: "等 human 说这个项目是什么", set_by: "pm", at: b.now };
+    b.needs_human.push({ kind: "ask", id: "01ASK", from: "pm", body: "这个项目是什么？说一句。", title: "这个项目是什么", detail: "说一句。", summary: "", since: b.now } as Board["needs_human"][number]);
+    b.invite_url = "https://ateam.fly.dev/invite/abc123";
+    const html = renderBoard(b, state, { human: HUMAN });
+    const needs = section(html, "needs-you", "say");
+    expect(html.match(/<article class="ask"/g)).toHaveLength(1);
+    expect(needs).toContain('<span class="kind">问你</span>');
+    expect(needs).toContain('<p class="q">这个项目是什么？说一句。</p>');
+    expect(needs).not.toContain("细节");
+    expect(needs).toContain('<p class="hint answer">在下面「说一句」就是回答。</p>');
+    expect(needs).not.toMatch(/<button class="btn[^"]*" type="submit"/);       // no answer buttons: the 说一句 box is the answer
+    expect(needs).toContain('<p class="invite">要更多 agent，把这个链接给它们：<input class="invite-url" type="text" readonly value="https://ateam.fly.dev/invite/abc123" aria-label="邀请链接"><button class="btn copy" type="button" data-copy="https://ateam.fly.dev/invite/abc123">复制</button></p>');
+    expect((html.match(/<script\b/g) ?? []).length).toBe(1);                   // only the copy button's script, only when a link is shown
+    expect(html).toContain("navigator.clipboard.writeText");
+    expect((html.match(/class="btn primary"/g) ?? []).length).toBe(0);
+    expect(html).toContain('<span class="count">1</span>');
+    // without an invite link: no line, no script
+    delete b.invite_url;
+    const plain = renderBoard(b, state, { human: HUMAN });
+    expect(plain).not.toContain('class="invite"');
+    expect(plain).not.toMatch(/<script\b/);
+  });
+
+  it("谁在按角色：在的绿点 + 多久前，缺的灰 + 「缺人 N 分钟」；老 board 没有角色字段时照旧按 actor", async () => {
+    const { state, b } = await fresh();
+    b.presence = [
+      { actor: "pm", role: "pm", present: true, last_seen: minutesAgo(b, 2), idle_s: 120 },
+      { actor: "dev", role: "dev", present: true, last_seen: minutesAgo(b, 0.2), idle_s: 12 },
+      { actor: "", role: "qa", present: false, last_seen: minutesAgo(b, 12), since: minutesAgo(b, 12), idle_s: 720 },
+      { actor: "", role: "pd", present: false, last_seen: "", since: minutesAgo(b, 45), idle_s: 0 },
+    ];
+    const html = renderBoard(b, state, { human: HUMAN });
+    const who = html.slice(html.indexOf('<span class="label">谁在</span>'), html.indexOf("</section>", html.indexOf('<span class="label">谁在</span>')));
+    expect(who).toMatch(/<span class="who-chip" data-role="pm"><i><\/i>pm<span class="meta"><time[^>]*>2 分钟前<\/time><\/span><\/span>/);
+    expect(who).toMatch(/<span class="who-chip" data-role="dev"><i><\/i>dev<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
+    expect(who).toContain('<span class="who-chip away" data-role="qa"><i></i>qa<span class="meta">缺人 12 分钟</span></span>');
+    expect(who).toContain('<span class="who-chip away" data-role="pd"><i></i>pd<span class="meta">缺人 45 分钟</span></span>');
+    expect(html).not.toContain('<span class="count">');                         // nobody is waiting on the human: no card, no red
+
+    const old = (await fresh()).b;
+    old.presence = [{ actor: "frontend", last_seen: minutesAgo(old, 1), idle_s: 60 }];
+    expect(renderBoard(old, state, { human: HUMAN })).toMatch(/<span class="who-chip"><i><\/i>frontend<span class="meta"><time[^>]*>1 分钟前<\/time>/);
+  });
+
+  it("缺人卡：某角色缺人且手里有逾期指令 → 「请你做」卡「qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？」，「起好了」把这些指令一并 ack", async () => {
+    const { state, b } = await fresh();
+    b.presence = [
+      { actor: "pm", role: "pm", present: true, last_seen: b.now, idle_s: 0 },
+      { actor: "", role: "qa", present: false, last_seen: "", since: minutesAgo(b, 20), idle_s: 0 },
+      { actor: "", role: "pd", present: false, last_seen: "", since: minutesAgo(b, 5), idle_s: 0 },   // missing, but nothing waits on pd
+    ];
+    b.overdue.push(
+      { instruction: "01OVER1", to: "qa", from: "pm", body: "验 t-1", ack_by: minutesAgo(b, 15), age_s: 900 },
+      { instruction: "01OVER2", to: "qa", from: "pm", body: "验 t-2", ack_by: minutesAgo(b, 3), age_s: 180 },
+      { instruction: "01OVER3", to: "dev", from: "pm", body: "修 t-3", ack_by: minutesAgo(b, 3), age_s: 180 },
+    );
+    b.invite_url = "https://ateam.fly.dev/invite/abc123";
+    const html = renderBoard(b, state, { human: HUMAN });
+    expect(html.match(/<article class="ask"/g)).toHaveLength(1);
+    const card = html.slice(html.indexOf('<article class="ask" data-kind="do" data-role="qa">'), html.indexOf("</article>"));
+    expect(card).toContain('<span class="kind">请你做</span><span class="meta">缺人 20 分钟</span>');
+    expect(card).toContain('<p class="q">qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？</p>');
+    expect(card).toMatch(/<form class="actions" method="post" action="\/ack"><input type="hidden" name="id" value="01OVER1"><input type="hidden" name="id" value="01OVER2"><button class="btn primary" type="submit">起好了<\/button><span class="hint">要更多 agent，把这个链接给它们：<code>https:\/\/ateam\.fly\.dev\/invite\/abc123<\/code><\/span><\/form>/);
+    expect(html).toContain('<span class="count">1</span>');
+    expect((html.match(/class="btn primary"/g) ?? []).length).toBe(1);
+    const anon = renderBoard(b, state, { human: HUMAN, canDecide: false });
+    expect(anon).toContain('<form class="actions" method="post" action="/token"><input type="hidden" name="then" value="/ack"><input type="hidden" name="id" value="01OVER1"><input type="hidden" name="id" value="01OVER2">');
+
+    // the server acks every id in one request
+    const v = server();
+    await v.start();
+    try {
+      const a = await v.post("pm", { kind: "instruction", to: "qa", body: "验 t-1", ack_by: soon() });
+      const c = await v.post("pm", { kind: "instruction", to: "qa", body: "验 t-2", ack_by: soon() });
+      const cookie = await v.cookie();
+      const r = await v.form("/ack", { id: a.id }, { cookie });
+      expect(r.status).toBe(201);
+      const r2 = await fetch(`${v.base}/ack`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${a.id}&id=${c.id}` });
+      expect(r2.status).toBe(409);                                              // the first id is already acked: the ack rule refuses, nothing else is written
+      const r3 = await fetch(`${v.base}/ack`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${c.id}` });
+      expect(r3.status).toBe(201);
+      const d = await v.post("pm", { kind: "instruction", to: "qa", body: "验 t-3", ack_by: soon() });
+      const e = await v.post("pm", { kind: "instruction", to: "qa", body: "验 t-4", ack_by: soon() });
+      const r4 = await fetch(`${v.base}/ack`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${d.id}&id=${e.id}` });
+      expect(r4.status).toBe(201);
+      const bd = await (await v.api("/board")).json();
+      for (const id of [a.id, c.id, d.id, e.id]) expect(bd.instructions.find((i: { id: string }) => i.id === id).status).toBe("acked");
+    } finally { await v.stop(); }
+  });
+});

@@ -98,16 +98,32 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
 
   // ---------- 需要你 ----------
   const asks = b.needs_human.filter((n) => !n.chosen);
-  if (asks.length) {
-    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length}</span></h2>`);
+  const invite = inviteUrl(b);
+  const roles = rolesOf(b);
+  const missing = roles.filter((r) => !r.present && r.overdue.length);
+  if (asks.length || missing.length) {
+    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + missing.length}</span></h2>`);
+    // UC-S7: a role that is missing while instructions pile up on it becomes a 请你做 card; 起好了 acks those instructions.
+    for (const r of missing) {
+      const ids = r.overdue.map((o) => `<input type="hidden" name="id" value="${esc(o)}">`).join("");
+      out.push(`<article class="ask" data-kind="do" data-role="${esc(r.role)}"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.missing(r.minutes))}</span></div>`);
+      out.push(`<p class="q">${esc(UI.missingCard(r.role, r.minutes, r.overdue.length))}</p>`);
+      out.push(form("/ack", "actions", ids, `<button class="btn primary" type="submit">${UI.started}</button>${invite ? `<span class="hint">${UI.inviteLine}<code>${esc(invite)}</code></span>` : ""}`));
+      out.push(`</article>`);
+    }
     for (const i of asks) {
       const kind = cardKind(i);
-      const { title, detail } = cardTitle(i);
+      // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
+      const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
       out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
       out.push(`<p class="q">${esc(title)}</p>`);
       if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
       const id = `<input type="hidden" name="id" value="${esc(i.id)}">`;
-      if (kind === "ask") {
+      if (kind === "ask" && !i.options?.length) {
+        // A question with no options is answered in the 说一句 box (UC-S0: 「这个项目是什么？说一句。」).
+        out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
+        if (invite) out.push(inviteLine(invite));
+      } else if (kind === "ask") {
         const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
       } else if (kind === "do") {
@@ -179,13 +195,16 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   } else out.push(`<span class="quiet">${UI.nothingInFlight}</span>`);
   out.push(`</div></div>`);
 
-  out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${b.presence.length ? b.presence.map((p) => `<span class="who-chip${p.idle_s > 600 ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${t(p.last_seen)}</span></span>`).join("") : `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
+  const whoChips = roles.length
+    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}"><i></i>${esc(r.role)}<span class="meta">${r.present ? (r.last_seen ? t(r.last_seen) : "") : esc(UI.missing(r.minutes))}</span></span>`).join("")
+    : b.presence.map((p) => `<span class="who-chip${p.idle_s > 600 ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${t(p.last_seen)}</span></span>`).join("");
+  out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
   out.push(`</section>`);
 
   // ---------- 其余 ----------
   out.push(renderRest(b, s, human, t, ago));
 
-  return page(out.join("\n"), { now: b.now, refresh, sha: opts.sha });
+  return page(out.join("\n") + (out.some((x) => x.includes('class="btn copy"')) ? "\n" + COPY_SCRIPT : ""), { now: b.now, refresh, sha: opts.sha });
 }
 
 /**
@@ -203,6 +222,36 @@ export function previousSha(b: Board): string | null {
   const value = prev ? (prev.value as string) : fallback;
   return value && value !== current ? value.slice(0, 7) : null;
 }
+
+/** The invite link, once the board carries one (t-041): board.invite_url, or board.project.invite_url. */
+export function inviteUrl(b: Board): string | null {
+  const x = b as Board & { invite_url?: string; project?: { invite_url?: string } };
+  return x.invite_url ?? x.project?.invite_url ?? null;
+}
+
+interface RoleRow { role: string; present: boolean; last_seen?: string; since?: string; minutes: number; overdue: string[] }
+
+/**
+ * 谁在 by role (t-042): presence entries that carry role/present/since. Returns [] on a board without them,
+ * so the page falls back to plain presence. `overdue` lists the ids of instructions waiting on a missing role.
+ */
+export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
+  const rows = (b.presence as (Board["presence"][number] & { role?: string; present?: boolean; since?: string })[])
+    .filter((p) => p.role !== undefined && p.present !== undefined);
+  return rows.map((p) => {
+    const since = p.since ?? p.last_seen;
+    const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : 0;
+    const overdue = p.present ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
+    return { role: p.role!, present: !!p.present, last_seen: p.last_seen, since: p.since, minutes, overdue };
+  });
+}
+
+function inviteLine(url: string): string {
+  return `<p class="invite">${UI.inviteLine}<input class="invite-url" type="text" readonly value="${esc(url)}" aria-label="邀请链接"><button class="btn copy" type="button" data-copy="${esc(url)}">${UI.copy}</button></p>`;
+}
+
+/** The only script on the page: the copy button. Without it the link is still a selectable readonly box. */
+const COPY_SCRIPT = `<script>document.addEventListener("click",function(e){var b=e.target.closest("button.copy");if(!b||!navigator.clipboard)return;navigator.clipboard.writeText(b.getAttribute("data-copy")).then(function(){b.textContent="${UI.copied}";});});</script>`;
 
 interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
 
@@ -356,6 +405,10 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .detail { margin:-.4rem 0 .8rem; } .detail summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
 .detail p { margin:.25rem 0 0; color:var(--muted); font-size:.9rem; max-width:40em; white-space:pre-wrap; }
 .hint { margin-left:.5rem; color:var(--muted); font-size:.85rem; }
+.hint.answer { margin:0 0 .5rem; }
+.invite { display:flex; flex-wrap:wrap; gap:.4rem .5rem; align-items:center; margin:.6rem 0 0; color:var(--muted); font-size:.85rem; }
+.invite input { flex:1 1 14rem; min-width:0; font:.85rem var(--mono); padding:.35rem .6rem; border:1px solid var(--line); border-radius:6px; background:var(--soft); color:var(--ink); }
+.btn.copy { padding:.35rem .8rem; font-size:.85rem; }
 .recent { margin:-.25rem 0 0; padding-left:1.25rem; color:var(--muted); font-size:.85rem; } .recent b { color:var(--ink); }
 .say form { display:flex; gap:.5rem; }
 .say input { flex:1; min-width:0; font:inherit; padding:.6rem .9rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }

@@ -25,6 +25,14 @@ export const UI = {
   youJustDid: "你刚点了：",
   notNowWhy: "点了「先不做」，没写原因",
 
+  answerBelow: "在下面「说一句」就是回答。",
+  inviteLine: "要更多 agent，把这个链接给它们：",
+  copy: "复制",
+  copied: "已复制",
+  missing: (min: number) => `缺人 ${min} 分钟`,
+  missingCard: (role: string, min: number, count: number) => `${role} 已经缺了 ${min} 分钟，手里有 ${count} 条指令。起一个 ${role}？`,
+  started: "起好了",
+
   // 说一句
   say: "说",
   sayPlaceholder: "跟团队说一句：想要什么、什么坏了",

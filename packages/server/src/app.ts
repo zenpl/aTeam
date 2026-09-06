@@ -60,10 +60,15 @@ export function createApp(opts: ServerOptions) {
         if (then === "/ack") {
           // 「知道了」/「做好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
           // when the instruction names a task, the note hangs on that task too.
-          const of = form.get("id") ?? "", why = (form.get("note") ?? "").trim();
+          // Several ids at once come from the missing-role card (t-043): 起好了 acks everything waiting on that role.
+          const ids = form.getAll("id").filter(Boolean), of = ids[0] ?? "", why = (form.get("note") ?? "").trim();
           const events = await serialize(async () => {
             const st = reduce(await store.read()).instructions.get(of);
             const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
+            for (const more of ids.slice(1)) {
+              const fresh = reduce(await store.read()).instructions.get(more);
+              if (fresh && !fresh.acked_at) out.push(await append(store, { kind: "ack", actor: human, of: more }, { human }));
+            }
             if (why) {
               const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
               const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
