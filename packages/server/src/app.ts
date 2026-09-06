@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
-import { renderBoard, unauthorizedPage } from "./html.js";
+import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
+import { UI } from "./i18n.js";
 
 const COOKIE = "ateam_token";
 
@@ -53,47 +54,83 @@ export function createApp(opts: ServerOptions) {
         return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed(), human }));
       }
 
-      // The "Got it" button: the human acks an instruction without options.
-      if (req.method === "POST" && url.pathname === "/ack") {
+      // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
+      // run the same action right after the token is entered (docs/board.md: buttons are always clickable).
+      const ACTIONS = new Set(["/ack", "/defer", "/say", "/decide"]);
+      const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
+        if (then === "/ack") {
+          // 「知道了」/「做好了」: ack.
+          const of = form.get("id") ?? "";
+          const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
+          bus.emit("append", e);
+          return { status: 201, body: e };
+        }
+        if (then === "/defer") {
+          // 「先不做」: ack, plus a note saying so, so the team knows it was seen and put off.
+          const of = form.get("id") ?? "";
+          const st = reduce(await store.read()).instructions.get(of);
+          if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
+          const note = await serialize(async () => {
+            const fresh = reduce(await store.read()).instructions.get(of)!;
+            if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
+            return append(store, { kind: "note", actor: human, body: UI.deferredNote(st.instruction.body), refs: [of] }, { human });
+          });
+          bus.emit("append", note);
+          return { status: 201, body: note };
+        }
+        if (then === "/say") {
+          // The human says one sentence: a note in their name, prefixed so the board can follow it (t-030).
+          const text = (form.get("text") ?? "").trim();
+          if (!text) return { status: 400, body: { error: "empty", message: "说点什么再点「说」" } };
+          if (text.length > SAID_MAX_CHARS) return { status: 400, body: { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` } };
+          const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
+          bus.emit("append", note);
+          return { status: 201, body: note };
+        }
+        if (then === "/decide") {
+          // One click: ack the instruction and record the decision, in one request.
+          const of = form.get("id") ?? "", option = form.get("option") ?? "";
+          const st = reduce(await store.read()).instructions.get(of);
+          if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
+          const i = st.instruction;
+          if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
+          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
+          // Inside the write lock, look again: a click that raced another one must not half-apply.
+          const note = await serialize(async () => {
+            const fresh = reduce(await store.read()).instructions.get(of)!;
+            if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
+            return append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
+          });
+          bus.emit("append", note);
+          return { status: 201, body: note };
+        }
+        return { status: 404, body: { error: "not found" } };
+      };
+      const wantsHtml = () => String(req.headers.accept ?? "").includes("text/html");
+
+      if (req.method === "POST" && ACTIONS.has(url.pathname)) {
         if (!authed()) return html(res, 401, unauthorizedPage());
-        const of = new URLSearchParams(await readText(req)).get("id") ?? "";
-        const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
-        bus.emit("append", e);
-        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
-        return json(res, 201, e);
+        const r = await act(url.pathname, new URLSearchParams(await readText(req)));
+        if (r.status < 300 && wantsHtml()) { res.writeHead(303, { location: "/" }); return res.end(); }
+        return json(res, r.status, r.body);
       }
 
-      // The human says one sentence on the board: it goes into the log as a note in their name, prefixed so the board can follow it.
-      if (req.method === "POST" && url.pathname === "/say") {
-        if (!authed()) return html(res, 401, unauthorizedPage());
-        const text = (new URLSearchParams(await readText(req)).get("text") ?? "").trim();
-        if (!text) return json(res, 400, { error: "empty", message: "说点什么再点「说」" });
-        if (text.length > SAID_MAX_CHARS) return json(res, 400, { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` });
-        const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
-        bus.emit("append", note);
-        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
-        return json(res, 201, note);
-      }
-
-      // One click on the board: ack the instruction and record the decision, as the human, in one request.
-      if (req.method === "POST" && url.pathname === "/decide") {
-        if (!authed()) return html(res, 401, unauthorizedPage());
-        const form = new URLSearchParams(await readText(req));
-        const of = form.get("id") ?? "", option = form.get("option") ?? "";
-        const st = reduce(await store.read()).instructions.get(of);
-        if (!st) return json(res, 404, { error: "not found", message: `${of} is not an instruction` });
-        const i = st.instruction;
-        if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
-        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
-        // Inside the write lock, look again: a click that raced another one must not half-apply.
-        const note = await serialize(async () => {
-          const fresh = reduce(await store.read()).instructions.get(of)!;
-          if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
-          return append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
-        });
-        bus.emit("append", note);
-        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
-        return json(res, 201, note);
+      // The token page: a form posts here with `then` (the action) and its fields; without the token it asks for
+      // one; with the right token it sets the cookie and performs the action, then returns to the board.
+      if (url.pathname === "/token" && (req.method === "GET" || req.method === "POST")) {
+        const form = new URLSearchParams(req.method === "POST" ? await readText(req) : url.search);
+        const fields: Record<string, string> = {};
+        for (const [k, v] of form) if (k !== "token") fields[k] = v;
+        const given = form.get("token");
+        if (given === null) return html(res, 200, tokenPage(fields));
+        if (token && given !== token) return html(res, 401, tokenPage(fields, true));
+        const secure = String(req.headers["x-forwarded-proto"] ?? "").includes("https");
+        const setCookie = `${COOKIE}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`;
+        const then = fields.then ?? "";
+        const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
+        if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
+        res.writeHead(303, { location: "/", "set-cookie": setCookie });
+        return res.end();
       }
 
       if (token && req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: "unauthorized" });
