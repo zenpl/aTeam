@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -936,5 +936,58 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对", () => {
     b.live.checked_by = "qa"; // the same version pushed by one and checked by another
     const html = renderBoard(b, state, { human: HUMAN });
     expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对</span>');
+  });
+});
+
+describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", () => {
+  const verified = async (v: ReturnType<typeof server>, id: string, title: string, sha: string) => {
+    await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+    await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+    await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}: 全绿` });
+    await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "测试通过" });
+  };
+  const setup = async (v: ReturnType<typeof server>) => {
+    await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111", method: "读 /health" });
+    await verified(v, "t-1", "登录修复", "1111111");
+    await verified(v, "t-2", "导出报表", "2222222");
+  };
+  const line = (html: string) => /<p class="meta waiting">([\s\S]*?)<\/p>/.exec(html)?.[1] ?? "";
+
+  it("says how many are verified and waiting; says nothing when none wait; says why instead of a number when it cannot tell", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      // no containment fact yet: the board cannot tell, so it says why and what to do, and invents no number
+      let html = await v.page();
+      expect(line(html)).toContain("说不清有多少件在等部署");
+      expect(line(html)).toContain("<code>production:deployed.tasks</code>");
+      expect(line(html)).toContain("<code>ateam release</code>");
+      expect(html).not.toContain("有 0 件");
+
+      // one of the two is not in production yet: exactly that one is waiting
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1"], not_contained: ["t-2"] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(line(html)).toBe("有 1 件已验的等一次部署");
+
+      // both in production: nothing waits, so the line is gone entirely
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1", "t-2"], not_contained: [] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(html).not.toContain('class="meta waiting"');
+      expect(html).not.toContain("等一次部署");
+    } finally { await v.stop(); }
+  });
+
+  it("counts only what the data says, and the CLI says the same sentence from the same counts", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-1", "t-2"] }, method: "ateam release 用 git 逐件测" });
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      expect(b.release.counts).toMatchObject({ pending_deploy: 2, deployed_unverified: 0, unknown: 0 });
+      expect(waitingLine(b)).toBe("有 2 件已验的等一次部署");
+      expect(line(await v.page())).toBe("有 2 件已验的等一次部署");
+    } finally { await v.stop(); }
   });
 });

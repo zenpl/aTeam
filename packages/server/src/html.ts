@@ -34,6 +34,23 @@ export function contactEnabled(b: Board): boolean {
   return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
 }
 
+/** Machine words (a fact name, a command, a sha) inside a human sentence are set as code, so the eye can skip them. */
+export function machineWords(text: string): string {
+  return esc(text).replace(/\b(?:[a-z][a-z0-9]*:[a-z][a-z0-9.]*|ateam [a-z-]+|git|[0-9a-f]{7,40})\b/g, (m) => `<code>${m}</code>`);
+}
+
+/**
+ * t-091: 「有 N 件已验的等一次部署」 from the counts t-078 derives, never recomputed here. Empty when nothing waits;
+ * when the containment fact is missing or stale the board says why instead of inventing a number (t-078's shape).
+ */
+export function waitingLine(b: Board): string {
+  const c = b.release?.counts;
+  if (!c) return "";
+  if (c.pending_deploy > 0) return UI.waitingDeploy(c.pending_deploy) + (c.unknown ? `，${UI.waitingAlsoUnknown(c.unknown)}` : "");
+  if (c.unknown > 0) return UI.waitingUnknown(b.release.basis || "");
+  return "";
+}
+
 /** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
 export function contactLine(address: string | null): string {
   if (!address) return UI.contactNone;
@@ -257,6 +274,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
+  // t-091: one standing line for what is verified and not yet deployed, from t-078's counts. Nothing when there is
+  // nothing waiting; when the containment fact cannot answer, the reason instead of a made-up number.
+  const waiting = waitingLine(b);
+  if (waiting) out.push(`<p class="meta waiting">${machineWords(waiting)}</p>`);
   // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
   // no address or skipped; an email that nothing sends to; an https address that gets the call.
   if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
@@ -627,6 +648,7 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .ask .body { margin:-.4rem 0 .85rem; color:var(--muted); max-width:40em; }
 .actions.contact input { flex:1 1 14rem; min-width:0; font:inherit; padding:.55rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 a.btn { text-decoration:none; display:inline-block; }
+.waiting { margin:.35rem 0 0; }
 .contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }

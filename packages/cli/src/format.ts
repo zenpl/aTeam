@@ -57,6 +57,11 @@ export function board(b: Board, me: string): string {
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
     if (b.alert?.status === "misconfigured" && b.alert.line) out.push(`           ${b.alert.line}`); // t-084
+    // t-091: the same sentence the board shows, from the same counts (t-078); nothing when nothing waits
+    const c = b.release?.counts;
+    const waiting = !c ? "" : c.pending_deploy > 0 ? `有 ${c.pending_deploy} 件已验的等一次部署${c.unknown ? `，另有 ${c.unknown} 件说不清` : ""}`
+      : c.unknown > 0 ? `说不清有多少件在等部署：${b.release.basis ?? ""}` : "";
+    if (waiting) out.push(`           ${waiting}`);
     out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.shows ? `${t.id} ${t.shows}` : t.id).join(", ") || "—"}${earlier}` : live);
   }
 

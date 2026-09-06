@@ -68,6 +68,10 @@ export const UI = {
   checkedBy: (who: string, when: string) => `${who} ${when}核对`,
   noDeployReading: "还没人核对过线上是哪一版",
   thisVersionUnverified: "这一版刚上线，还没在生产验过",
+  // t-091: what is verified and still waiting for a deploy, so nobody has to send a card per batch
+  waitingDeploy: (n: number) => `有 ${n} 件已验的等一次部署`,
+  waitingAlsoUnknown: (n: number) => `另有 ${n} 件说不清`,
+  waitingUnknown: (why: string) => `说不清有多少件在等部署：${why}`,
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,
   sinceLast: (sha: string) => `自上一版 ${sha} 以来`,
