@@ -404,7 +404,7 @@
 - 生产（1a4c32d）已有：地址即工具包（curl 地址得到给陌生 agent 的说明书，纯 HTTP 四步）、多项目与隔离（每项目一条日志一把管理钥匙、牌桌 `/p/<id>/`，跨项目钥匙 403）、邀请链接换节点钥匙、按缺分配角色、加入幂等、按角色的说明书、牌桌 v2（需要你 / 说一句 / 现在 / 谁在、token 小页面）、起项目首屏。qa 15:31 在生产上只凭 curl 建了项目 qa-d1f1cb 并加入两个角色，隔离核过。
 - 已验未上线（第 6+7 批，c86f44b，28 件，等 human 推）：其中与 S8 直接相关的是 t-055（没有 qa 时验收退化进「需要你」，最小团队 pm+dev 靠它）、t-058（节点声明能不能推）、t-064（撤回指令）、t-065/t-070（牌桌不随日志长）、t-066（说明书去本项目专有词）。
 - 没有的：`npx ateam`（CLI 未发布，陌生 agent 只能走 curl，说明书已按 curl 写）；给人看的「怎么用」一页（现在人的入口是一句话「对你的 agent 说：用 <地址> 起一个项目」）；说明书按职责拼装（Q21，自定义角色如「写手」拿不到说明书）；平台核心仍认我们五个角色名（dev 21:25 边界，未做）；外呼与看门狗（human 22:4x 定：外呼先不做）。
-- 结论（22:5x 更正，human 的案例角色是 FE / BE / PM / Release manager / UX scanner）：平台不限角色名——join 接受 project:roles 里声明的任何小写 id，谁在、任务、touches、表面都是字符串，验收只要求不是作者。**可以挪**，前提是补两条说明书缺口：① 任何已声明角色的说明书 = common.md + 职责附录（现在非默认角色拿到的 manual 是空串、/manual/<role> 404）；② 说明书写明第一个节点怎么声明角色集（现在 pm.md 与 welcome 都没写，陌生 pm 不会声明，fe/be 加入会被 409）。建议声明：{pm:[R1,R2,R4,R13], fe:[R5:界面], be:[R5:后端], release-manager:[R8,R9], ux-scanner:[R6,R12]}，R3 归 pm 或 owner。角色名先用小写 id（fe、be、pm、release-manager、ux-scanner），显示名随意。非软件项目（写手/审稿）同理可用，Q21 的后半（按职责拼装的职责段）是让说明书更好，不是门槛。
+- 结论（22:5x 更正，human 的案例角色是 FE / BE / PM / Release manager / UX scanner）：平台不限角色名——join 接受 project:roles 里声明的任何小写 id，谁在、任务、touches、表面都是字符串，验收只要求不是作者。**可以挪**，前提是补两条说明书缺口：① 任何已声明角色的说明书 = common.md + 职责附录（现在非默认角色拿到的 manual 是空串、/manual/<role> 404）；② 说明书写明第一个节点怎么声明角色集（现在 pm.md 与 welcome 都没写，陌生 pm 不会声明，fe/be 加入会被 409）。建议声明（human 22:5x 补：还有 QA）：{pm:[R1,R2,R4,R13], fe:[R5:界面], be:[R5:后端], release-manager:[R8,R9], qa:[R6], ux-scanner:[R12, R6:生产上人可见的]}，R3 归 pm 或 owner；qa 与 ux-scanner 的 R6 用分界说明隔开，免得触发重叠预警。22:41 human 已把第 6+7 批推上生产（eae0b22），前提「先推」已满足。角色名先用小写 id（fe、be、pm、release-manager、ux-scanner），显示名随意。非软件项目（写手/审稿）同理可用，Q21 的后半（按职责拼装的职责段）是让说明书更好，不是门槛。
 
 ---
 
