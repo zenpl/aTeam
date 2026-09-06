@@ -1,0 +1,74 @@
+import type { Reading } from "./events.js";
+import type { State, TaskState, InstructionState, ReadingState, SeamState } from "./reduce.js";
+
+/** What every session reads first. Derived; nobody moves cards. */
+export interface Board {
+  now: string;
+  focus?: { body: unknown; set_by: string; at: string };
+  /** Only things a human must act on: instructions to the human, overdue instructions, tasks awaiting verification with no eligible agent. */
+  needs_human: { kind: "instruction" | "overdue" | "open_seam"; id: string; summary: string; since: string }[];
+  instructions: { id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue"; sent: string; delivered?: string; acked?: string }[];
+  readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
+  tasks: Record<string, { id: string; title: string; owner?: string; blocked_on?: string; verified_on?: string[] }[]>;
+  seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string }[];
+  presence: { actor: string; last_seen: string; idle_s: number }[];
+}
+
+export function board(s: State, human: string, now: Date = new Date()): Board {
+  const nowIso = now.toISOString();
+  const b: Board = {
+    now: nowIso,
+    needs_human: [],
+    instructions: [],
+    readings: [],
+    tasks: {},
+    seams: [],
+    presence: [],
+  };
+
+  if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
+
+  for (const st of [...s.instructions.values()].sort(byId((x) => x.instruction.id))) {
+    const i = st.instruction;
+    const status = st.acked_at ? "acked" : st.overdue ? "overdue" : st.delivered_at ? "delivered" : "pending";
+    b.instructions.push({ id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at });
+    if (status === "acked") continue;
+    if (i.to === human) b.needs_human.push({ kind: "instruction", id: i.id, summary: `${i.actor}: ${i.body}`, since: i.at });
+    else if (status === "overdue") b.needs_human.push({ kind: "overdue", id: i.id, summary: `${i.to} has not acked "${i.body}" from ${i.actor}`, since: i.ack_by });
+  }
+
+  for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
+    const r = rs.reading;
+    if (r.surface === "team" && r.key === "focus") continue;
+    const valid = rs.valid && !rs.expired;
+    b.readings.push({
+      id: r.id, key: r.key, surface: r.surface, value: r.value, at: r.at, by: r.actor, valid,
+      why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
+      assumptions: r.assumptions,
+    });
+  }
+
+  for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    (b.tasks[t.status] ??= []).push({
+      id: t.id, title: t.title, owner: t.owner, blocked_on: t.blocked_on,
+      verified_on: t.verifications.filter((v) => v.pass).map((v) => v.surface),
+    });
+  }
+
+  for (const seam of s.seams.values()) {
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, resolved: seam.resolution?.by });
+    if (!seam.resolution) b.needs_human.push({ kind: "open_seam", id: seam.id, summary: `${seam.tasks.join(" and ")} both touch ${seam.overlap.join(", ")}; nobody owns the seam`, since: nowIso });
+  }
+
+  for (const [actor, last] of s.presence) {
+    b.presence.push({ actor, last_seen: last, idle_s: Math.max(0, Math.round((now.getTime() - Date.parse(last)) / 1000)) });
+  }
+  b.presence.sort((a, b) => a.actor.localeCompare(b.actor));
+  return b;
+}
+
+function byId<T>(get: (x: T) => string) {
+  return (a: T, b: T) => get(a).localeCompare(get(b));
+}
+
+export type { TaskState, InstructionState, ReadingState, SeamState, Reading };

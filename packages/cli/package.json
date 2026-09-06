@@ -1,0 +1,12 @@
+{
+  "name": "@ateam/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": { "ateam": "./bin/ateam.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "@ateam/core": "workspace:*"  },
+  "devDependencies": { "@types/node": "^22.0.0" }
+}
