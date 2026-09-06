@@ -16,7 +16,24 @@ export interface TaskState {
   status: TaskStatus;
   blocked_on?: string;
   evidence?: string;
-  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string }[];
+  /** How many times the owner has said done. Verifications belong to the round they were made in. */
+  round: number;
+  /** Every verification ever recorded, on every surface, in every round. Nothing is dropped. */
+  verifications: TaskVerification[];
+}
+
+export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
+
+/** Latest result per surface in the current round: what the board shows next to the task. */
+export function surfaceResults(t: TaskState): { surface: string; pass: boolean }[] {
+  const latest = new Map<string, boolean>();
+  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, v.pass);
+  return [...latest].map(([surface, pass]) => ({ surface, pass }));
+}
+
+/** Has this surface already passed in the current round? A second pass there says nothing new. */
+export function passedOn(t: TaskState, surface: string): boolean {
+  return t.verifications.some((v) => v.round === t.round && v.surface === surface && v.pass);
 }
 
 export interface ReadingState {
@@ -142,7 +159,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: e.criteria, criteria_by: e.actor,
-        created_at: e.at, touches: [], status: "open", verifications: [],
+        created_at: e.at, touches: [], status: "open", round: 0, verifications: [],
       });
       return;
     case "seam": {
@@ -161,11 +178,15 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       detectSeams(s, t);
       return;
     case "done":
-      t.status = "done"; t.evidence = e.evidence; return;
-    case "verify":
-      t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence });
-      t.status = e.pass ? "verified" : "failed";
+      t.status = "done"; t.evidence = e.evidence; t.round += 1; return;
+    case "verify": {
+      // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
+      // stands, per surface); a fail with nothing passed yet is a plain failed.
+      const passedBefore = surfaceResults(t).some((r) => r.pass);
+      t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
+      t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
+    }
     case "block":
       t.status = "blocked"; t.blocked_on = e.on; return;
     case "unblock":

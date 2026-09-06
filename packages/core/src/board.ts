@@ -1,5 +1,24 @@
 import type { Reading } from "./events.js";
-import type { State, TaskState, InstructionState, ReadingState, SeamState } from "./reduce.js";
+import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState } from "./reduce.js";
+
+/** One task as the board shows it, with everything `ateam task show` needs. */
+export interface BoardTask {
+  id: string;
+  title: string;
+  status: string;
+  criteria: string[];
+  criteria_by: string;
+  created_at: string;
+  owner?: string;
+  touches: string[];
+  blocked_on?: string;
+  evidence?: string;
+  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
+  surfaces: { surface: string; pass: boolean }[];
+  /** Surfaces whose latest result since the task was last done is a pass. */
+  verified_on: string[];
+}
 
 /** What every session reads first. Derived; nobody moves cards. */
 export interface Board {
@@ -9,7 +28,7 @@ export interface Board {
   needs_human: { kind: "instruction" | "overdue" | "open_seam"; id: string; summary: string; since: string }[];
   instructions: { id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue"; sent: string; delivered?: string; acked?: string }[];
   readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
-  tasks: Record<string, { id: string; title: string; owner?: string; blocked_on?: string; verified_on?: string[] }[]>;
+  tasks: Record<string, BoardTask[]>;
   seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string }[];
   presence: { actor: string; last_seen: string; idle_s: number }[];
 }
@@ -50,8 +69,10 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
-      id: t.id, title: t.title, owner: t.owner, blocked_on: t.blocked_on,
-      verified_on: t.verifications.filter((v) => v.pass).map((v) => v.surface),
+      id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, created_at: t.created_at,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, evidence: t.evidence, verifications: t.verifications,
+      surfaces: surfaceResults(t),
+      verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
     });
   }
 
@@ -65,6 +86,12 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   }
   b.presence.sort((a, b) => a.actor.localeCompare(b.actor));
   return b;
+}
+
+/** Find one task on the board by id, whatever its status. */
+export function boardTask(b: Board, id: string): BoardTask | undefined {
+  for (const list of Object.values(b.tasks)) for (const t of list) if (t.id === id) return t;
+  return undefined;
 }
 
 function byId<T>(get: (x: T) => string) {

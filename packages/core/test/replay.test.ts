@@ -124,6 +124,78 @@ describe("F5 · separation of duties is a rule, not a role", () => {
   });
 });
 
+describe("t-006 · verified on one surface is not verified on another", () => {
+  async function doneTask(store: MemoryStore, c: ReturnType<typeof clock>, id = "t1") {
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: "sha endpoint", criteria: ["/health has sha"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "fd76455" });
+  }
+  const status = async (store: MemoryStore, c: ReturnType<typeof clock>) => reduce(await store.read(), c.now()).tasks.get("t1")!.status;
+
+  it("accepts a production verify after a repo pass; rejects a second pass on repo, naming the surface", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true, evidence: "ran dist" });
+    expect(await status(store, c)).toBe("verified");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true, evidence: "curl /health" });
+    expect(await status(store, c)).toBe("verified");
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }));
+    expect(again.rule).toBe("verify");
+    expect(again.message).toMatch(/already passed on repo/);
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.verified[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: true }]);
+    expect(b.tasks.verified[0].verified_on).toEqual(["repo", "production"]);
+    expect(b.tasks.verified[0].verifications).toHaveLength(2);
+  });
+
+  it("a production fail after a repo pass sends the task back to done and the board shows both results", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: false, evidence: "sha is unknown" });
+    expect(await status(store, c)).toBe("done");
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: false }]);
+    expect(b.tasks.done[0].verified_on).toEqual(["repo"]);
+    // after a redeploy, production can be judged again; repo still cannot
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true });
+    expect(await status(store, c)).toBe("verified");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/repo/);
+  });
+
+  it("a failed task that is reclaimed and done again starts a new round: repo may pass again, history is kept", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: false, evidence: "no sha field" });
+    expect(await status(store, c)).toBe("failed");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1", evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    expect(await status(store, c)).toBe("verified");
+    const t = reduce(await store.read(), c.now()).tasks.get("t1")!;
+    expect(t.verifications.map((v) => [v.round, v.surface, v.pass])).toEqual([[1, "repo", false], [2, "repo", true]]);
+  });
+
+  it("owner and criteria-author exclusions and the open-seam rule still apply on the second surface", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t1", surface: "production", pass: true }))).message).toMatch(/owner/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "production", pass: true }))).message).toMatch(/criteria/);
+
+    // a seam opened while the task is done blocks the next surface too
+    const store2 = new MemoryStore();
+    await doneTask(store2, c);
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t2", title: "board page", criteria: ["GET / html"] });
+    await emit(store2, c, { kind: "task", op: "claim", actor: "frontend", task: "t2", touches: ["app.ts"] });
+    expect((await rejected(emit(store2, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true }))).message).toMatch(/seam/);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
