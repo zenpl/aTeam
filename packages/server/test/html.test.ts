@@ -317,7 +317,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(shown).toContain("任务7");
       expect(now).toMatch(/<span class="chip"><b>7<\/b> 在做<\/span>/);
 
-      expect(now).toMatch(/<span class="ok">在生产上验过 3 件<\/span>/);
+      expect(now).toMatch(/<span class="ok">在生产上验过 1 件<\/span>/); // pd 22:47 (B): this version's count only; the 2 earlier are in 更早的
       expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 2 件<\/summary><ul class="plain"><li>登录修复<\/li><li>导出报表<\/li><\/ul><\/details>/);
 
       const say = section(html, "say", "now");
@@ -347,7 +347,8 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       let now = section(await v.authedPage(), "now", "rest");
-      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
+      expect(now).not.toContain("在生产上验过"); // pd 22:47 (B): no cumulative count beside the empty state
+      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
       expect(now).not.toContain("这一版带来了什么");
       // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
       const f = server();
@@ -355,7 +356,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       try {
         await f.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
         const first = section(await f.authedPage(), "now", "rest");
-        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<\/div>/);
+        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<p class="meta contact-line">.*?<\/p>\s*<\/div>/);
         expect(first).not.toContain("更早的");
       } finally { await f.stop(); }
       // 3. something verified on this version: the list is back, the sentence is gone
@@ -807,12 +808,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       let html = await v.page();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<span class="kind">请你做</span>');
-      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个邮箱或 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
+      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
-      expect(card).toContain('<input type="text" name="value" placeholder="邮箱或 https://…" aria-label="邮箱或 https://…" autocomplete="off">');
+      expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
       expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="先不要">先不要</button>');
       expect(html).not.toContain('<p class="meta contact-line">'); // the card is on screen: no grey line under 线上
       expect(html).not.toContain("填写</button>"); // the option names are not what the human reads
+      expect(html).not.toContain("邮箱"); // pd 22:45: the service only calls webhooks, so the page never promises email
 
       const cookie = await v.cookie();
       html = await v.page({ cookie });
@@ -826,7 +828,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain('<p class="recent">你刚定了：<b>找你用 me@example.org</b>');
-      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时发到 me@example.org</a></p>');
+      // an email is recorded but nothing sends to it (t-050 posts to https only): the grey line says so, and is not a link
+      expect(html).toContain('<p class="meta contact-line">记下了邮箱，但现在只能叫 webhook：你不在时，我们还找不到你。</p>');
       const readings = (await (await v.api("/board")).json()).readings;
       expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("me@example.org");
     } finally { await v.stop(); }
@@ -842,7 +845,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       let html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>先不要</b>");
-      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时，我们找不到你。</a></p>');
+      expect(html).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
 
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
@@ -855,21 +858,24 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect(anon).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/fact">');
 
       expect((await v.form("/fact", { key: "alert.webhook", value: "not an address" }, { cookie, accept: "text/html" })).status).toBe(400);
+      expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(400); // only a webhook can be called
       expect((await v.form("/fact", { key: "deployed.sha", value: "https://h.example/x" }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(303);
       html = await v.page({ cookie });
-      expect(html).toContain('<a href="/?ask=alert">你不在时发到 https://hooks.example/abc</a>');
+      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/abc</p>');
       // reopened with an address: the input is prefilled
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "x@y.z", token: TOKEN })).status).toBe(303);
-      expect((await v.page({ cookie })).includes("你不在时发到 x@y.z")).toBe(true);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://x.example/y", token: TOKEN })).status).toBe(303);
+      expect((await v.page({ cookie })).includes("你不在时发到 https://x.example/y")).toBe(true);
     } finally { await v.stop(); }
   });
 
   it("off by default: without the fact the card is hidden, there is no grey line, no reopen page and no /fact route", async () => {
-    expect(await w.authedPage()).not.toContain('<p class="meta contact-line">');
+    // the grey line is always there, not clickable, and truthful (pd 22:45)
+    expect(await w.authedPage()).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
+    expect(await w.authedPage()).not.toContain('?ask=alert');
     const v = server();
     await v.start();
     try {
@@ -877,7 +883,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       const cookie = await v.cookie();
       let html = await v.page({ cookie });
       expect(html).not.toContain("你不在时怎么找你");
-      expect(html).not.toContain('<p class="meta contact-line">');
+      expect(html).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
       expect(html).toContain('<section class="needs empty" id="needs-you">');
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).not.toContain("你不在时怎么找你");
@@ -887,13 +893,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
       expect((await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(303);
-      expect(await v.page({ cookie })).toContain("你不在时发到 me@example.org");
+      expect(await v.page({ cookie })).toContain("记下了邮箱，但现在只能叫 webhook：你不在时，我们还找不到你。");
       // an address recorded any other way also counts as on
       const u = server();
       await u.start();
       try {
         await u.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/x" });
-        expect(await u.authedPage()).toContain('<a href="/?ask=alert">你不在时发到 https://hooks.example/x</a>');
+        expect(await u.authedPage()).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/x</p>');
       } finally { await u.stop(); }
     } finally { await v.stop(); }
   });

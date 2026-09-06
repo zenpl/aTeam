@@ -24,14 +24,15 @@ export const UI = {
   youJust: "你刚定了：",
   // 起项目第二张卡：你不在时怎么找你 (t-069, pd 21:08)
   contactTitle: "你不在时怎么找你？",
-  contactBody: "给个邮箱或 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。",
-  contactPlaceholder: "邮箱或 https://…",
+  contactBody: "给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。",
+  contactPlaceholder: "https://…",
   contactSave: "记下",
   contactSkip: "先不要",
   contactSet: (v: string) => `找你用 ${v}`,
   contactNone: "你不在时，我们找不到你。",
   contactTo: (v: string) => `你不在时发到 ${v}`,
-  contactInvalid: "填一个邮箱或 https:// 开头的 webhook 地址",
+  contactEmail: "记下了邮箱，但现在只能叫 webhook：你不在时，我们还找不到你。",
+  contactInvalid: "填一个 https:// 开头的 webhook 地址",
   youJustDid: "你刚点了：",
   notNowWhy: "点了「先不做」，没写原因",
 
