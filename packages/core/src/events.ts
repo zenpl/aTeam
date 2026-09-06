@@ -14,6 +14,14 @@ export interface Base {
   writes?: string[];
 }
 
+/** What values a reading key may take. A regex is matched against the value as a string; an enum by JSON equality. */
+export interface ReadingShape { regex?: string; enum?: unknown[] }
+
+/** Shapes every log starts with. `deployed.sha` is a git sha, never an event id or "unknown". */
+export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
+  "deployed.sha": { regex: "^[0-9a-f]{7,40}$" },
+};
+
 /** A measurement of the world at one moment. Never a constant. */
 export interface Reading extends Base {
   kind: "reading";
@@ -28,6 +36,8 @@ export interface Reading extends Base {
   depends_on?: string[];
   /** ISO timestamp after which the reading is expired. */
   valid_until?: string;
+  /** Declares, once per key, what values this key may take. Later readings of the key that do not match are rejected. */
+  shape?: ReadingShape;
 }
 
 /** An action demand with exactly one recipient. Short. Must be acked. */
