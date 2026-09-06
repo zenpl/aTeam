@@ -161,32 +161,31 @@ ${d.join("\n")}
   return page(body, { now: b.now, refresh, sha: opts.sha });
 }
 
-/** One thing the human said on the board (board.said, from t-030): the line, when, and what became of it. */
+/** One thing the human said on the board (board.said, t-030): the line, when, and what became of it. */
 export interface Said {
   id: string;
+  /** the line as written, without the 「human 说：」 prefix */
   body: string;
   at: string;
-  /** received | requirement | task | live, or already a sentence; rendered through UI.saidStatus when it is a key */
-  status: string;
-  /** what it turned into: the tasks (title) or the requirement note */
-  links?: { kind?: string; id?: string; title?: string }[];
+  status: "received" | "requirement" | "task" | "live" | string;
+  /** the Chinese sentence the board already worded: 「已收到」「已成为需求」「已成为任务：<标题>」「已上线」 */
+  label?: string;
+  links?: { requirements?: string[]; tasks?: { id: string; title: string; status?: string }[] };
 }
 export const SAID_SHOWN = 5;
 
-/** Newest first. Tolerates a board without `said` (a server older than t-030). */
+/** Newest first, as the board sends it. Tolerates a board without `said` (a server older than t-030). */
 export function saidOf(b: Board): Said[] {
   const list = ((b as Board & { said?: Said[] }).said ?? []).slice();
   return list.sort((x, y) => y.at.localeCompare(x.at));
 }
 
-/** The status sentence: 「已收到」「已成为需求」「已成为任务：<标题>」「已上线」. The board decides; this only words it. */
+/** The board decides the status sentence (`label`); the page only falls back to wording a bare status key. */
 export function saidStatus(x: Said): string {
+  if (x.label) return x.label;
   const base = UI.saidStatus[x.status] ?? x.status;
-  if (x.status === "task" || x.status === "live") {
-    const titles = (x.links ?? []).filter((l) => l.title).map((l) => l.title!);
-    return titles.length ? `${base}：${titles.join("；")}` : base;
-  }
-  return base;
+  const titles = (x.links?.tasks ?? []).map((t) => t.title).filter(Boolean);
+  return titles.length && (x.status === "task" || x.status === "live") ? `${base}：${titles.join("、")}` : base;
 }
 
 /** How many items a group shows before folding the rest; the board folds in_flight at the same count. */

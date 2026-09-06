@@ -456,13 +456,13 @@ describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列�
     const b = board(state, HUMAN) as Board & { said?: unknown[] };
     const at = (m: number) => new Date(Date.parse(b.now) - m * 60_000).toISOString();
     b.said = [
-      { id: "S1", body: "登录页太慢", at: at(50), status: "received" },
-      { id: "S2", body: "想要导出报表", at: at(40), status: "requirement", links: [{ kind: "note", id: "N1" }] },
-      { id: "S3", body: "限流要可配", at: at(30), status: "task", links: [{ kind: "task", id: "t-7", title: "限流阈值可配置" }, { kind: "task", id: "t-8", title: "限流有日志" }] },
-      { id: "S4", body: "邮箱别进日志", at: at(20), status: "live", links: [{ kind: "task", id: "t-9", title: "日志脱敏" }] },
-      { id: "S5", body: "牌桌要中文", at: at(10), status: "已成为任务：牌桌中文化" },
-      { id: "S6", body: "按钮太小", at: at(5), status: "received" },
-      { id: "S7", body: "最新的一句", at: at(0.5), status: "received" },
+      { id: "S1", body: "登录页太慢", at: at(50), status: "received", label: "已收到", links: { requirements: [], tasks: [] } },
+      { id: "S2", body: "想要导出报表", at: at(40), status: "requirement", label: "已成为需求", links: { requirements: ["N1"], tasks: [] } },
+      { id: "S3", body: "限流要可配", at: at(30), status: "task", label: "已成为任务：限流阈值可配置、限流有日志", links: { requirements: [], tasks: [{ id: "t-7", title: "限流阈值可配置", status: "working" }, { id: "t-8", title: "限流有日志", status: "open" }] } },
+      { id: "S4", body: "邮箱别进日志", at: at(20), status: "live", label: "已上线", links: { requirements: [], tasks: [{ id: "t-9", title: "日志脱敏", status: "verified" }] } },
+      { id: "S5", body: "牌桌要中文", at: at(10), status: "task", links: { tasks: [{ id: "t-10", title: "牌桌中文化" }] } },   // no label: the page words it
+      { id: "S6", body: "按钮太小", at: at(5), status: "received", label: "已收到" },
+      { id: "S7", body: "最新的一句", at: at(0.5), status: "received", label: "已收到" },
     ];
     const html = renderBoard(b, state, { human: HUMAN });
     const needs = html.slice(html.indexOf('id="needs-you"'), html.indexOf('id="status"'));
@@ -477,12 +477,13 @@ describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列�
     expect(rest).toContain("登录页太慢");
     expect(rest).toContain("· 已收到</span>");
     expect(rest).toContain("· 已成为需求</span>");
-    expect(shown).toContain("· 已成为任务：限流阈值可配置；限流有日志</span>");
-    expect(shown).toContain("· 已上线：日志脱敏</span>");
-    expect(shown).toContain("· 已成为任务：牌桌中文化</span>");            // a status the board already worded
+    expect(shown).toContain("· 已成为任务：限流阈值可配置、限流有日志</span>");   // label from the board, verbatim
+    expect(shown).toContain("· 已上线</span>");
+    expect(shown).toContain("· 已成为任务：牌桌中文化</span>");            // no label: worded from status + links
     expect(shown).toContain("刚刚");
     expect(shown).toContain("5 分钟前");
     expect(aboveTheFold(html)).not.toMatch(/\bS\d\b|\bt-\d+\b|\bN1\b/);     // no ids above the fold
+    expect(needs.indexOf("最新的一句")).toBeLessThan(needs.indexOf("按钮太小")); // the board's order is kept
   });
 
   it("board 没有 said 字段（老服务器）时页面照常渲染，没有「你说过的」", async () => {
