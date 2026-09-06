@@ -55,6 +55,8 @@ export interface Instruction extends Base {
   options?: string[];
   /** One of `options`; what happens if nobody chooses. */
   default?: string;
+  /** For the human's board: a question to answer, a thing to do, or something to know. Derived when absent. */
+  intent?: InstructionIntent;
 }
 
 export interface Ack extends Base {
@@ -96,6 +98,12 @@ export type Event = Reading | Instruction | Ack | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
+export type InstructionIntent = "ask" | "do" | "info";
+export const INSTRUCTION_INTENTS: InstructionIntent[] = ["ask", "do", "info"];
+/** A first sentence up to this long is the card's title on the human's board. */
+export const TITLE_MAX_CHARS = 30;
+/** A note the human leaves when acking with "not now" starts with this. */
+export const DEFER_PREFIX = "先不做：";
 /** The identity that owns task scope (decision 01M1TM…: identities are pm, dev, qa, human). It may withdraw any task. */
 export const PM_ACTOR = "pm";
 /** The identity that owns scenarios and wording (decision 07:02). It may add criteria to any task. */

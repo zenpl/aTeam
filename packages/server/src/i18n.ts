@@ -23,7 +23,7 @@ export const UI = {
   detail: "细节",
   youJust: "你刚定了：",
   youJustDid: "你刚点了：",
-  deferredNote: (title: string) => `human 先不做：${title}`,
+  notNowWhy: "点了「先不做」，没写原因",
 
   // 说一句
   say: "说",

@@ -26,6 +26,19 @@ export function kindOf(i: { body: string; options?: string[] }): Kind {
   return /^(请|把|去|帮|麻烦|需要你|你来|由你)|请(你|把|在|去|看|读|点|运行|执行|合并|部署|推|开|打开|确认|回复|检查|改)/.test(b) ? "do" : "tell";
 }
 
+/** The board says the kind (t-036: ask | do | info); an older board leaves it to kindOf. */
+export function cardKind(i: { body: string; options?: string[]; kind?: string }): Kind {
+  if (i.kind === "ask" || i.kind === "do") return i.kind;
+  if (i.kind === "info") return "tell";
+  return kindOf(i);
+}
+
+/** The board's title/detail (t-036); an empty title means the first sentence was too long, so the whole text is the title. */
+export function cardTitle(i: { body: string; title?: string; detail?: string }): { title: string; detail: string } {
+  if (i.title !== undefined && i.detail !== undefined) return i.title ? { title: i.title, detail: i.detail } : { title: i.detail || i.body, detail: "" };
+  return splitTitle(i.body);
+}
+
 const ENDERS = /[。！？\n]/;
 const COLONS = /[：:]/;
 /**
@@ -88,8 +101,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   if (asks.length) {
     out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length}</span></h2>`);
     for (const i of asks) {
-      const kind = kindOf(i);
-      const { title, detail } = splitTitle(i.body);
+      const kind = cardKind(i);
+      const { title, detail } = cardTitle(i);
       out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
       out.push(`<p class="q">${esc(title)}</p>`);
       if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
@@ -98,9 +111,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
       } else if (kind === "do") {
-        // Two actions on one form: each button names where it goes (直接 or via the token page).
-        const target = canDecide ? "" : ` formaction="/token"`;
-        out.push(`<form class="actions" method="post" action="${canDecide ? "/ack" : "/token"}">${id}<button class="btn primary" type="submit" name="then" value="/ack"${target}>${UI.didIt}</button><button class="btn" type="submit" name="then" value="/defer"${canDecide ? ' formaction="/defer"' : target}>${UI.notNow}</button></form>`);
+        // 做好了 = ack; 先不做 = ack with a note (POST /ack, t-036). Both go through the token page when anonymous.
+        out.push(form("/ack", "actions", id, `<button class="btn primary" type="submit">${UI.didIt}</button><button class="btn" type="submit" name="note" value="${esc(UI.notNowWhy)}">${UI.notNow}</button>`));
       } else {
         out.push(form("/ack", "actions", id, `<button class="btn primary" type="submit">${UI.gotIt}</button>`));
       }
@@ -118,9 +130,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     .filter((x) => now - Date.parse(x.at) < JUST_MS)
     .sort((x, y) => y.at.localeCompare(x.at))[0];
   if (just) {
-    const { title } = splitTitle(just.i.body);
-    const deferred = s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith(UI.deferredNote("")));
-    const clicked = deferred ? UI.notNow : kindOf(just.i) === "do" ? UI.didIt : UI.gotIt;
+    const { title } = cardTitle(just.i);
+    const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
+    const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
   }

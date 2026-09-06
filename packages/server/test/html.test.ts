@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, whyLine, tokenPage } from "../src/html.js";
+import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -48,9 +48,9 @@ let ask: { id: string }, doIt: { id: string }, tell: { id: string };
 beforeAll(async () => {
   await w.start();
   await w.post("pm", { kind: "reading", surface: "team", key: "focus", value: "P0: <login> broken & nobody on it" });
-  ask = await w.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？细节：私有要每次带 token，公开谁都能看。", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
+  ask = await w.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证选私有还是公开？细节：私有要每次带 token，公开谁都能看。", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
   doIt = await w.post("pm", { kind: "instruction", to: HUMAN, body: "请把第 3 批推到 production：claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。", ack_by: soon() });
-  tell = await w.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署了", ack_by: soon() });
+  tell = await w.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署了", ack_by: soon(), intent: "info" });
   await w.post("pm", { kind: "instruction", to: "dev", body: "claim t-1 now", ack_by: soon() });
   await w.post("pm", { kind: "instruction", to: "dev", body: "claim t-5 now, touching packages/core/src/rules.ts", ack_by: new Date(Date.now() - 60_000).toISOString() });
   await w.post("pm", { kind: "task", op: "create", task: "t-1", title: "Cookie flags", criteria: ["cookie is SameSite=Lax", "no <script> on the page"] });
@@ -158,13 +158,13 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const a = card(ask.id), d = card(doIt.id), tl = card(tell.id);
     expect(a).toContain('data-kind="ask"');
     expect(a).toContain('<span class="kind">问你</span>');
-    expect(a).toContain('<p class="q">看板认证：私有还是公开？</p>');
+    expect(a).toContain('<p class="q">看板认证选私有还是公开</p>');           // the board's title (t-036) drops the closing mark
     expect(a).toMatch(/<details class="detail"><summary>细节<\/summary><p>细节：私有要每次带 token，公开谁都能看。<\/p><\/details>/);
     expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，到期按 公开<\/span><\/form>/);
     expect(d).toContain('<span class="kind">请你做</span>');
     expect(d).toContain('<p class="q">请把第 3 批推到 production</p>');
     expect(d).toContain("<summary>细节</summary><p>claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。</p>");
-    expect(d).toMatch(/action="\/ack"><input[^>]+><button class="btn primary" type="submit" name="then" value="\/ack">做好了<\/button><button class="btn" type="submit" name="then" value="\/defer" formaction="\/defer">先不做<\/button>/);
+    expect(d).toMatch(/<form class="actions" method="post" action="\/ack"><input type="hidden" name="id" value="[^"]+"><button class="btn primary" type="submit">做好了<\/button><button class="btn" type="submit" name="note" value="点了「先不做」，没写原因">先不做<\/button><\/form>/);
     expect(tl).toContain('<span class="kind">告诉你</span>');
     expect(tl).toContain('<p class="q">今天不再部署了</p>');
     expect(tl).not.toContain("细节");
@@ -177,7 +177,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const needs = section(anon, "needs-you", "say");
     expect(needs).not.toMatch(/\bdisabled\b/);
     expect(needs).toMatch(/<form class="actions" method="post" action="\/token"><input type="hidden" name="then" value="\/decide">/);
-    expect(needs).toMatch(/action="\/token"><input type="hidden" name="id" value="[^"]+"><button class="btn primary" type="submit" name="then" value="\/ack" formaction="\/token">做好了<\/button><button class="btn" type="submit" name="then" value="\/defer" formaction="\/token">先不做<\/button>/);
+    expect(needs).toMatch(/<form class="actions" method="post" action="\/token"><input type="hidden" name="then" value="\/ack"><input type="hidden" name="id" value="[^"]+"><button class="btn primary" type="submit">做好了<\/button><button class="btn" type="submit" name="note" value="点了「先不做」，没写原因">先不做<\/button><\/form>/);
     expect(section(anon, "say", "now")).toContain('action="/token"><input type="hidden" name="then" value="/say">');
 
     // the token page carries the fields on
@@ -208,7 +208,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
 
     // now with the cookie the page shows 你刚定了 and the card is gone
     const after = await w.page({ cookie: cookie.split(";")[0] });
-    expect(after).toMatch(/<p class="recent">你刚定了：看板认证：私有还是公开？ → <b>公开<\/b>/);
+    expect(after).toMatch(/<p class="recent">你刚定了：看板认证选私有还是公开 → <b>公开<\/b>/);
     expect(section(after, "needs-you", "say")).not.toContain(ask.id);
     expect(after).toMatch(/<span class="count">2<\/span>/);
     expect(section(after, "needs-you", "say")).not.toMatch(/action="\/token"/);
@@ -217,11 +217,13 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
   it("「先不做」acks and leaves a note in the human's name; 「做好了」/「知道了」ack; the card disappears and 你刚点了 appears", async () => {
     const cookie = await w.cookie();
     const before = (await (await w.api("/log")).json()).events.length;
-    const defer = await w.form("/defer", { id: doIt.id }, { cookie, accept: "text/html" });
+    const defer = await w.form("/ack", { id: doIt.id, note: "点了「先不做」，没写原因" }, { cookie, accept: "text/html" });
     expect(defer.status).toBe(303);
     const events = (await (await w.api("/log")).json()).events.slice(before);
     expect(events.map((e: { kind: string; actor: string }) => [e.kind, e.actor])).toEqual([["ack", HUMAN], ["note", HUMAN]]);
-    expect(events[1]).toMatchObject({ body: "human 先不做：请把第 3 批推到 production：claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。", refs: [doIt.id] });
+    expect(events[1]).toMatchObject({ body: "先不做：点了「先不做」，没写原因", refs: [doIt.id] });
+    const bd = await (await w.api("/board")).json();
+    expect(bd.instructions.find((i: { id: string }) => i.id === doIt.id).deferred).toMatchObject({ body: "点了「先不做」，没写原因" });
 
     const ack = await w.form("/ack", { id: tell.id }, { cookie, accept: "text/html" });
     expect(ack.status).toBe(303);
@@ -230,7 +232,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(html).toMatch(/<p class="recent">你刚点了：今天不再部署了 → <b>知道了<\/b>/);
     // the deferred one reads 先不做 when it is the latest
     const again = await w.post("pm", { kind: "instruction", to: HUMAN, body: "请重启一次服务", ack_by: soon() });
-    await w.form("/defer", { id: again.id }, { cookie, accept: "text/html" });
+    await w.form("/ack", { id: again.id, note: "点了「先不做」，没写原因" }, { cookie, accept: "text/html" });
     expect(await w.page({ cookie })).toMatch(/<p class="recent">你刚点了：请重启一次服务 → <b>先不做<\/b>/);
     expect((html.match(/class="btn primary"/g) ?? []).length).toBe(0);
     expect(html).not.toContain('<span class="count">');            // no red left on the page
@@ -251,6 +253,10 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(splitTitle("这一句没有标点也没有细节")).toEqual({ title: "这一句没有标点也没有细节", detail: "" });
     const long = "这一句实在太长了远远超过了三十个字所以整句都必须当作标题来显示不能拆开：细节";
     expect(splitTitle(long)).toEqual({ title: long, detail: "" });
+    expect(cardKind({ body: "今天不再部署", kind: "info" })).toBe("tell");
+    expect(cardKind({ body: "今天不再部署", kind: "do" })).toBe("do");
+    expect(cardTitle({ body: "x", title: "", detail: "全文太长没有标题" })).toEqual({ title: "全文太长没有标题", detail: "" });
+    expect(cardTitle({ body: "x", title: "标题", detail: "细节" })).toEqual({ title: "标题", detail: "细节" });
     expect(kindOf({ body: "x", options: ["a", "b"] })).toBe("ask");
     expect(kindOf({ body: "请把分支合进去" })).toBe("do");
     expect(kindOf({ body: "今天不再部署了" })).toBe("tell");
@@ -383,7 +389,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("pm", { kind: "reading", surface: "team", key: "focus", value: "人能读懂的看板" });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "请读部署说明", ack_by: soon() });
-      await z.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署", ack_by: soon() });
+      await z.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署", ack_by: soon(), intent: "info" });
       await z.post("pm", { kind: "instruction", to: "dev", body: "认领 t-1", ack_by: new Date(Date.now() - 60_000).toISOString() });
       await z.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
       await z.post("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] });

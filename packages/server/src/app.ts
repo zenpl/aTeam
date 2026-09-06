@@ -1,8 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
+import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
-import { UI } from "./i18n.js";
 
 const COOKIE = "ateam_token";
 
@@ -56,27 +55,24 @@ export function createApp(opts: ServerOptions) {
 
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
       // run the same action right after the token is entered (docs/board.md: buttons are always clickable).
-      const ACTIONS = new Set(["/ack", "/defer", "/say", "/decide"]);
+      const ACTIONS = new Set(["/ack", "/say", "/decide"]);
       const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
         if (then === "/ack") {
-          // 「知道了」/「做好了」: ack.
-          const of = form.get("id") ?? "";
-          const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
-          bus.emit("append", e);
-          return { status: 201, body: e };
-        }
-        if (then === "/defer") {
-          // 「先不做」: ack, plus a note saying so, so the team knows it was seen and put off.
-          const of = form.get("id") ?? "";
-          const st = reduce(await store.read()).instructions.get(of);
-          if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
-          const note = await serialize(async () => {
-            const fresh = reduce(await store.read()).instructions.get(of)!;
-            if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
-            return append(store, { kind: "note", actor: human, body: UI.deferredNote(st.instruction.body), refs: [of] }, { human });
+          // 「知道了」/「做好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
+          // when the instruction names a task, the note hangs on that task too.
+          const of = form.get("id") ?? "", why = (form.get("note") ?? "").trim();
+          const events = await serialize(async () => {
+            const st = reduce(await store.read()).instructions.get(of);
+            const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
+            if (why) {
+              const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
+              const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
+              out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human }));
+            }
+            return out;
           });
-          bus.emit("append", note);
-          return { status: 201, body: note };
+          for (const e of events) bus.emit("append", e);
+          return { status: 201, body: { events } };
         }
         if (then === "/say") {
           // The human says one sentence: a note in their name, prefixed so the board can follow it (t-030).

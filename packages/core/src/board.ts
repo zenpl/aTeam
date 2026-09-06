@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, type Reading } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
@@ -28,6 +28,24 @@ export interface BoardTask {
 }
 
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
+
+/** How an instruction to the human reads: asked, or derived (options → ask, otherwise do). */
+export function instructionKind(i: Pick<Instruction, "intent" | "options">): InstructionIntent {
+  return i.intent ?? (i.options?.length ? "ask" : "do");
+}
+
+/**
+ * The first sentence (up to the first 。！？, colon, or line break) is the card title when it is at most 30 characters;
+ * otherwise the title is empty and the whole body is the detail.
+ */
+export function splitTitle(body: string): { title: string; detail: string } {
+  const text = body.trim();
+  const m = /[。！？：:\n]/.exec(text);
+  const first = (m ? text.slice(0, m.index) : text).trim();
+  const rest = m ? text.slice(m.index + 1).trim() : "";
+  if (!first || [...first].length > TITLE_MAX_CHARS) return { title: "", detail: text };
+  return { title: first, detail: rest };
+}
 
 export type SaidStatus = "received" | "requirement" | "task" | "live";
 export interface BoardSaid {
@@ -70,7 +88,8 @@ export interface Board {
   focus?: { body: unknown; set_by: string; at: string };
   /** Only what the human must answer: open instructions addressed to the human. Nothing else, ever. */
   needs_human: {
-    kind: "instruction"; id: string; from: string; body: string; summary: string; since: string;
+    /** ask: answer it; do: do it and say "done"; info: read it. */
+    kind: InstructionIntent; id: string; from: string; body: string; title: string; detail: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
@@ -99,6 +118,10 @@ export interface Board {
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue";
     sent: string; delivered?: string; acked?: string;
+    /** For instructions to the human: how it reads on the board, and the first sentence as a title. */
+    kind?: InstructionIntent; title?: string; detail?: string;
+    /** The human acked with "not now" and said why. */
+    deferred?: { note: string; body: string; at: string };
     /** present when the instruction asks the human to choose */
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
@@ -131,8 +154,12 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   for (const st of [...s.instructions.values()].sort(byId((x) => x.instruction.id))) {
     const i = st.instruction;
     const status = st.acked_at ? "acked" : st.overdue ? "overdue" : st.delivered_at ? "delivered" : "pending";
+    const toHuman = i.to === human;
+    const deferNote = toHuman ? s.notes.find((n) => n.actor === human && n.body.startsWith(DEFER_PREFIX) && n.refs?.includes(i.id)) : undefined;
     b.instructions.push({
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
+      kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
+      deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
       options: i.options, default: i.default,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
@@ -141,7 +168,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
-        kind: "instruction", id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
+        kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
         options: i.options, default: i.default,
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });

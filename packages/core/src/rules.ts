@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR, PD_ACTOR } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR } from "./events.js";
 import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -53,6 +53,10 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (e.body.length > INSTRUCTION_MAX_CHARS)
         throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
       if (!e.ack_by) throw new Rejected("instruction", "ack_by is required");
+      if (e.intent !== undefined) {
+        if (e.to !== human) throw new Rejected("instruction", `kind is for the human's board; ${e.to} just acts`);
+        if (!INSTRUCTION_INTENTS.includes(e.intent)) throw new Rejected("instruction", `kind must be one of ${INSTRUCTION_INTENTS.join(" | ")}, not "${e.intent}"`);
+      }
       if (e.options !== undefined || e.default !== undefined) {
         if (e.to !== human) throw new Rejected("instruction", `options are for the human; ${e.to} acts, the human decides`);
         const opts = (e.options ?? []).map((o) => o.trim());
