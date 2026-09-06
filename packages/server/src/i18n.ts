@@ -130,7 +130,7 @@ export const UI = {
   supersededBy: "已被取代",
   invalidatedBy: "已失效，原因",
   expired: "已过期",
-  instrStatus: { pending: "待送达", delivered: "已送达", acked: "已确认", overdue: "逾期" } as Record<string, string>,
+  instrStatus: { pending: "待送达", delivered: "已送达", acked: "已确认", overdue: "逾期", withdrawn: "已撤回" } as Record<string, string>,
   surface: { repo: "仓库", staging: "staging", production: "生产" } as Record<string, string>,
 
   // token 小页面

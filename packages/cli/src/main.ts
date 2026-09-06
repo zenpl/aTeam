@@ -6,7 +6,7 @@ import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamErrors, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { deploy, realGit } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -24,6 +24,7 @@ setup
 every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
+  ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
   ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
@@ -152,6 +153,7 @@ async function main(argv: string[]) {
       return;
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
+    case "untell": return emit({ kind: "untell", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
     case "board": {
       exact(rest);
       const b = await client.board();
@@ -242,7 +244,12 @@ async function main(argv: string[]) {
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
-          else for (const w of seamWarnings(await client.board(), task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+          else {
+            const b = await client.board();
+            const errors = seamErrors(b, task, evidence);
+            if (errors.length) throw new UsageError(errors.join("\n"));
+            for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+          }
           return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
         }
         case "verify": {

@@ -1422,3 +1422,138 @@ describe("t-059 · who holds what: the board says which responsibilities nobody 
     expect(b.needs_human).toEqual([]);
   });
 });
+
+describe("t-064 · the sender takes an instruction back", () => {
+  it("before an ack: withdrawn, out of for_me / open / needs_human, never overdue, no default fires; the log keeps the original", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const i = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: c.iso(min(15)) });
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "上 A 还是 B？", options: ["A", "B"], default: "B", ack_by: c.iso(min(15)) });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "qa", of: i.id, reason: "x" }))).message).toMatch(/only the sender or human/);
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: " " }))).message).toMatch(/say why/);
+    const u = await emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "t-1 已经不用改了" });
+    await emit(store, c, { kind: "untell", actor: HUMAN, of: ask.id, reason: "问题问错了" }); // the human may take back anyone's
+    // dev pulls now: the instruction and its untell arrive together; it is not "for me"
+    const p = await pull(store, "dev", null, c.now());
+    expect(p.events.map((e) => e.kind)).toEqual(["instruction", "instruction", "untell", "untell"]);
+    expect(p.for_me).toEqual([]);
+    expect(p.taken_back_seen).toBeUndefined();
+    c.tick(min(30)); // past ack_by: not overdue, and the ask's default does not fire
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(i.id)).toMatchObject({ withdrawn: { by: "pm", reason: "t-1 已经不用改了", seen: false }, overdue: false });
+    expect(s.instructions.get(ask.id)!.chosen).toBeUndefined();
+    const b = board(s, HUMAN, c.now());
+    expect(b.instructions.map((x) => [x.id, x.status])).toEqual([[i.id, "withdrawn"], [ask.id, "withdrawn"]]);
+    expect(b.overdue).toEqual([]);
+    expect(b.needs_human).toEqual([]);
+    expect(b.instructions[0].withdrawn).toMatchObject({ reason: "t-1 已经不用改了" });
+    expect((await store.read()).events.map((e) => e.kind)).toEqual(["instruction", "instruction", "untell", "untell"]); // nothing rewritten
+    // acking or deciding what was taken back is refused; taking it back twice too
+    expect((await rejected(emit(store, c, { kind: "ack", actor: "dev", of: i.id }))).message).toMatch(/taken back/);
+    expect((await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "A", decision: true, decides: { of: ask.id, option: "A" } }))).message).toMatch(/taken back/);
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "再撤" }))).message).toMatch(/already taken back/);
+    void u;
+  });
+
+  it("after an ack or a decision it is refused; once delivered, the recipient is told it had seen it", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const i = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: c.iso(min(15)) });
+    await pull(store, "dev", null, c.now()); // dev has seen it
+    c.tick(min(1));
+    const cursor = i.id;
+    const u = await emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "不用了" });
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(i.id)!.withdrawn).toMatchObject({ seen: true });
+    const p = await pull(store, "dev", cursor, c.now());
+    expect(p.events.map((e) => e.id)).toEqual([u.id]);
+    expect(p.taken_back_seen).toEqual([i.id]); // the CLI turns this into 你已看过的这条被撤回了
+    // acked: too late
+    const j = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-2", ack_by: c.iso(min(15)) });
+    await emit(store, c, { kind: "ack", actor: "dev", of: j.id });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: j.id, reason: "x" }))).message).toMatch(/was acked by dev/);
+    // decided: too late
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "A 还是 B？", options: ["A", "B"], ack_by: c.iso(min(15)) });
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "A", decision: true, decides: { of: ask.id, option: "A" } });
+    expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: ask.id, reason: "x" }))).message).toMatch(/was decided/);
+    // F1/F2 still hold for an instruction nobody took back
+    c.tick(min(30));
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).overdue.map((o) => o.instruction)).toEqual([]); // j acked, ask decided, i withdrawn
+  });
+});
+
+describe("t-067 · the side that was done before the other claimed is never blocked by it, whoever owns them", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("cross-owner: A done, then B (another owner) claims the same files: verify A passes, and B may be verified too once done; both in flight still collide", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B"); await create(store, c, "C");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "aaaaaaa1 完成" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", stacked: { done: "A", on: "B" }, open: false });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // released by the rule, not by pm
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+    // C (dev) claims while B is in flight: a collision, same as ever
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
+    expect((await seams(store, c)).find((x) => x.id === "seam:B+C")).toMatchObject({ open: true, stacked: undefined });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "bbbbbbb1 合并了 aaaaaaa1" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }))).message).toMatch(/seam:B\+C/);
+  });
+
+  it("re-done after a reopen is judged on the newest done: a reopened A back in flight collides with B, and once A is done again it depends on who claimed when", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0].stacked).toEqual({ done: "A", on: "B" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补" });
+    expect((await seams(store, c))[0]).toMatchObject({ open: true, stacked: undefined }); // A is in flight again
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    expect((await seams(store, c))[0]).toMatchObject({ open: true }); // A's newest done is after B's claim: both were in flight
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    // B finishes first this time; then A reclaims after B's done: B is the earlier side now
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再补" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts", "html.ts"] });
+    expect((await seams(store, c))[0].stacked).toEqual({ done: "B", on: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
+  });
+});
+
+describe("t-068 · every task says which layer it belongs to: this version, or earlier", () => {
+  it("before any deploy everything is this version; after a second deploy, what production carried before it is earlier, the rest stays", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(120));
+    const create = (id: string) => emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    const ship = async (id: string, who = "dev") => {
+      await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
+      await emit(store, c, { kind: "task", op: "done", actor: who, task: id, evidence: "abc1234" });
+      await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
+    };
+    const eras = async () => Object.fromEntries(Object.values(board(reduce(await store.read(), c.now()), HUMAN, c.now()).tasks).flat().map((t) => [t.id, t.era]));
+    for (const id of ["A", "B", "C", "D", "E"]) await create(id);
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "aaaaaaa" });
+    await ship("A");
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "重复" });
+    c.tick(min(5));
+    expect(await eras()).toEqual({ A: "this_version", B: "this_version", C: "this_version", D: "this_version", E: "this_version" }); // one deploy: no "before"
+    // the second deploy: A and D happened before it; B ships on it; C is in flight; E untouched
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "bbbbbbb" });
+    c.tick(min(1));
+    await ship("B", "frontend");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
+    expect(await eras()).toEqual({ A: "earlier", B: "this_version", C: "this_version", D: "earlier", E: "this_version" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live.earlier.map((x) => x.id)).toEqual(["A"]); // the same rule as the live list
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "A")!.summary).toBe("✓ production");
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "D")!.summary).toBe("已撤回：重复");
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "C")!.summary).toBe("working");
+  });
+});

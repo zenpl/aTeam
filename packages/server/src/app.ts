@@ -272,7 +272,7 @@ export function createApp(opts: ServerOptions) {
       }
 
       // t-065: one task in full, same rules as the board (public unless the board is private).
-      if (req.method === "GET" && path.startsWith("/task/")) {
+      if (req.method === "GET" && wantsHtml && path.startsWith("/task/")) {
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
         const state = reduce(await store.read());
         const out = renderTask(board(state, human), state, decodeURIComponent(path.slice("/task/".length)), { sha, human, base });
@@ -377,6 +377,17 @@ export function createApp(opts: ServerOptions) {
       }
 
       if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
+
+      // t-068: one task in full, for a page that inlines only this version's tasks and fetches the rest on demand
+      const taskPath = /^\/task\/([^/]+)$/.exec(path);
+      if (req.method === "GET" && taskPath) {
+        const id = decodeURIComponent(taskPath[1]);
+        const state = reduce(await store.read(), now());
+        const b = board(state, human, now());
+        const task = Object.values(b.tasks).flat().find((t) => t.id === id);
+        if (!task) return json(res, 404, { error: "not found", message: `日志里没有任务 ${id}` });
+        return json(res, 200, { task, seams: b.seams.filter((x) => x.tasks.includes(id)), refs: state.tasks.get(id)?.refs ?? [] });
+      }
 
       if (req.method === "GET" && path === "/events") {
         const after = url.searchParams.get("after");

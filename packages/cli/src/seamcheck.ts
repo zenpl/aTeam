@@ -18,13 +18,32 @@ export function gitIsAncestor(cwd = process.cwd()): IsAncestor {
   };
 }
 
+/**
+ * t-067: a seam the rule released by itself (this task claimed after the other side was done) has no resolution
+ * written by anyone, so the evidence has to say it: the later side names the merged sha of the earlier side, or done
+ * is refused. Returns one message per stacked seam whose earlier side's sha is missing from the evidence.
+ */
+export function seamErrors(b: Board, id: string, evidence: string | undefined): string[] {
+  const out: string[] = [];
+  for (const seam of b.seams) {
+    if (seam.resolved || !seam.stacked || seam.stacked.on !== id) continue;
+    const other = boardTask(b, seam.stacked.done);
+    const theirs = other ? evidenceSha(other.evidence) : null;
+    if (!theirs) continue;
+    const text = evidence ?? "";
+    const named = text.includes(theirs) || (theirs.length >= 7 && text.includes(theirs.slice(0, 7))) || /[0-9a-f]{7,40}/g.test(text) && [...text.matchAll(/[0-9a-f]{7,40}/g)].some((m) => theirs.startsWith(m[0]) || m[0].startsWith(theirs));
+    if (!named) out.push(`${seam.id}：${id} 是在 ${seam.stacked.done} done 之后 claim 的，接缝按规则自动放行，但你要合并它。请在 --evidence 里写明合并了 ${theirs.slice(0, 7)}（${seam.stacked.done} 的证据 sha），或 --no-seam-check`);
+  }
+  return out;
+}
+
 /** Warnings for `task done <id> --evidence ...`, one per resolved seam whose other side (already done) is not merged in. */
 export function seamWarnings(b: Board, id: string, evidence: string | undefined, isAncestor: IsAncestor): string[] {
   const mine = evidenceSha(evidence);
   if (!mine) return [];
   const out: string[] = [];
   for (const seam of b.seams) {
-    if (!seam.resolved || !seam.tasks.includes(id)) continue;
+    if (!seam.tasks.includes(id) || !(seam.resolved || seam.stacked?.on === id)) continue; // resolved, or released by the rule with me as the later side
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);
     if (!other || (other.status !== "done" && other.status !== "verified")) continue;

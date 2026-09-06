@@ -323,7 +323,7 @@ function fold(rows: string[], label: (n: number) => string, listClass = "plain")
 
 function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = ""): string {
   const d: string[] = [];
-  const open = b.instructions.filter((i) => i.status !== "acked" && i.to !== human && !i.chosen);
+  const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
   const valid = b.readings.filter((r) => r.valid), stale = b.readings.filter((r) => !r.valid);
   const why = (r: Board["readings"][number]) => !r.why ? "" : r.why.startsWith("superseded by") ? `${UI.supersededBy} <code>${esc(r.why.slice(14))}</code>` : r.why.startsWith("invalidated by") ? `${UI.invalidatedBy} <code>${esc(r.why.slice(15))}</code>` : UI.expired;
