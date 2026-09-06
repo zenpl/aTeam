@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent } from "@ateam/core";
+import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER } from "@ateam/core";
 import { renderBoard } from "./html.js";
 
 const COOKIE = "ateam_token";
@@ -62,7 +62,7 @@ export function createApp(opts: ServerOptions) {
         if (!st) return json(res, 404, { error: "not found", message: `${of} is not an instruction` });
         const i = st.instruction;
         if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
-        if (st.chosen) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
+        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
         // Inside the write lock, look again: a click that raced another one must not half-apply.
         const note = await serialize(async () => {
           const fresh = reduce(await store.read()).instructions.get(of)!;

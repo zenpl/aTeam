@@ -1,5 +1,5 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR } from "./events.js";
-import { type State, openSeamsFor, passedOn } from "./reduce.js";
+import { type State, openSeamsFor, passedOn, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -81,7 +81,8 @@ export function validate(state: State, e: NewEvent, human: string): void {
         if (!i.options?.length) throw new Rejected("decide", `${i.id} carries no options`);
         if (!i.options.includes(e.decides.option)) throw new Rejected("decide", `"${e.decides.option}" is not one of: ${i.options.join(" | ")}`);
         if (i.to !== e.actor && e.actor !== human) throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
-        if (st.chosen) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
+        // a default that took effect at ack_by may still be overridden; a real decision may not
+        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
         if (!e.decision) throw new Rejected("decide", "a choice is a decision; set decision: true");
       }
       return;

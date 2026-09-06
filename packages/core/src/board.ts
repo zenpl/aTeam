@@ -75,12 +75,13 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
     if (status === "acked") continue;
+    if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
         kind: "instruction", id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
         options: i.options, default: i.default,
-        chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
+        chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }
     else if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });

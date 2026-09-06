@@ -55,8 +55,11 @@ export interface InstructionState {
   acked_by?: string;
   /** now > ack_by and not acked */
   overdue?: boolean;
-  /** For instructions with options: the option picked, by whom, and the decision note that records it. */
-  chosen?: { option: string; by: string; at: string; note: string };
+  /**
+   * For instructions with options: the option picked, by whom, and the decision note that records it.
+   * `by: "default"` (no note) means nobody chose before ack_by and the default took effect; the human may still override it.
+   */
+  chosen?: { option: string; by: string; at: string; note?: string };
 }
 
 export interface SeamState {
@@ -105,6 +108,9 @@ export function overlapOf(a: string[], b: string[]): string[] {
   return [...out];
 }
 
+/** The `chosen.by` of a decision that nobody made: the default took effect when ack_by passed. */
+export const DEFAULT_DECIDER = "default";
+
 export function seamId(a: string, b: string): string {
   return "seam:" + [a, b].sort().join("+");
 }
@@ -139,7 +145,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
       case "note": {
         s.notes.push(e);
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
-        if (st && !st.chosen) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+        if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
         break;
       }
       case "task": applyTask(s, e); break;
@@ -157,7 +163,12 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   const nowIso = now.toISOString();
   for (const st of s.instructions.values()) {
-    st.overdue = !st.acked_at && st.instruction.ack_by < nowIso;
+    const i = st.instruction;
+    // An ask with a default answers itself at ack_by: the human's silence is the default, and it stays overridable.
+    if (!st.chosen && !st.acked_at && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
+      st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
+    }
+    st.overdue = !st.acked_at && i.ack_by < nowIso && !st.chosen;
   }
   for (const rs of s.readings.values()) {
     if (rs.reading.valid_until && rs.reading.valid_until < nowIso) rs.expired = true;

@@ -411,6 +411,55 @@ describe("t-017 · a task created on a false premise is withdrawn, not worked ar
   });
 });
 
+describe("t-022 · an ask with a default answers itself at ack_by; the human may still override", () => {
+  const ask = (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string }> = {}) =>
+    emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("before ack_by it is a question for the human; after, it is decided by default and leaves needs_human", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(30));
+    let b = await at(store, c);
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    expect(b.instructions[0].chosen).toBeUndefined();
+    c.tick(min(31));
+    b = await at(store, c);
+    expect(b.needs_human).toHaveLength(0);
+    expect(b.overdue).toHaveLength(0);
+    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: q.ack_by });
+  });
+
+  it("after the default took effect the human can still decide; that decision wins and is a note; a second one is rejected", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(90));
+    expect((await at(store, c)).instructions[0].chosen?.by).toBe("default");
+    await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
+    const n = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
+    const b = await at(store, c);
+    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at });
+    expect(b.needs_human).toHaveLength(0);
+    expect(reduce(await store.read(), c.now()).notes.some((x) => x.id === n.id && x.decides?.option === "public")).toBe(true);
+    const again = await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 私有", decision: true, decides: { of: q.id, option: "private" } }));
+    expect(again.message).toMatch(/already decided: public by human/);
+  });
+
+  it("without a default nothing changes: the ask stays with the human past ack_by; plain instructions still go overdue", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, { default: undefined });
+    const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy", ack_by: c.iso(min(10)) });
+    c.tick(min(90));
+    const b = await at(store, c);
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    expect(b.instructions.find((i) => i.id === q.id)!.chosen).toBeUndefined();
+    expect(b.overdue.map((o) => o.instruction)).toEqual([plain.id]);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
