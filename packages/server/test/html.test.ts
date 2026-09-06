@@ -168,7 +168,8 @@ describe("POST /decide · one click acks the instruction and records the decisio
     expect(anon).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
     expect(anon).toMatch(/<button[^>]*name="option" value="A"[^>]*disabled>A<\/button>/);
     expect(anon).toMatch(/<button[^>]*name="option" value="B"[^>]*class="default"[^>]*disabled>B <small>默认<\/small><\/button>/);
-    expect(anon).toContain("要回答，请先打开一次 <code>/?token=…</code>");
+    expect(anon).toContain("要作答，先打开一次 <code>/?token=…</code>（之后 30 天不用再开）");
+    expect(anon.replace(/<[^>]+>/g, "")).toContain("要作答，先打开一次 /?token=…（之后 30 天不用再开）");   // pd 决策 01M1TRTAAASJ9X9BGTXXCAHYEF 的原句
     expect(anon).not.toMatch(/<script\b/i);
 
     const authed = await (await api("/")).text();
@@ -352,7 +353,7 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
         for (const z of ["aTeam · 牌桌", "需要你", "现状", "焦点", "线上", "在途", "谁在线", "知道了", "默认", "不回复则默认：", "刚刚", "逾期", "已失效", "已过期", "被卡住", "已完成，等待验收", "已验收，尚未上生产", "（已验收：仓库）", "还没开始", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "同一份数据"]) expect(ui).toContain(z);
       }
       const anon = await (await fetch(`${zurl}/`)).text();
-      expect(anon).toContain("要回答，请先打开一次");
+      expect(anon).toContain("要作答，先打开一次 <code>/?token=…</code>（之后 30 天不用再开）");
       const bare = await fetch(`${zurl}/decide`, { method: "POST" });
       expect(await bare.text()).toContain("这个页面需要项目 token");
     } finally {
@@ -443,7 +444,7 @@ describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列�
   it("「需要你」下方有输入框与「说」按钮，POST /say；无作答 cookie 时禁用并给出同样的提示", async () => {
     const anon = await (await fetch(`${base}/`)).text();
     const needs = anon.slice(anon.indexOf('id="needs-you"'), anon.indexOf('id="status"'));
-    expect(needs).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off" disabled><button type="submit" disabled>说<\/button> <span class="meta">要回答，请先打开一次/);
+    expect(needs).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off" disabled><button type="submit" disabled>说<\/button> <span class="meta">要作答，先打开一次 <code>\/\?token=…<\/code>（之后 30 天不用再开）<\/span>/);
     const authed = await (await api("/")).text();
     const needs2 = authed.slice(authed.indexOf('id="needs-you"'), authed.indexOf('id="status"'));
     expect(needs2).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off"><button type="submit">说<\/button><\/form>/);
