@@ -1664,35 +1664,69 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
 });
 
 describe("t-077 · the slim board tells omitted from empty", () => {
-  it("an omitted field is absent, an empty one is sent, and omitted lists the paths; the full board omits nothing", async () => {
+  /** An independent walk (not the one in core): every path present in full and absent in slim, plus every list slim cut short. */
+  const missing = (f: unknown, s: unknown, p = ""): string[] => {
+    const out: string[] = [];
+    if (Array.isArray(f) && Array.isArray(s)) {
+      if (s.length < f.length) out.push(`${p}[${f.length - s.length} of ${f.length}]`);
+      const ids = (xs: unknown[]) => xs.map((x) => (x && typeof x === "object" && "id" in x ? String((x as { id: unknown }).id) : null));
+      const fi = ids(f), si = ids(s);
+      f.forEach((fx, i) => { const j = fi[i] !== null ? si.indexOf(fi[i]) : i; if (j >= 0 && j < s.length) out.push(...missing(fx, s[j], `${p}[]`)); });
+    } else if (f && s && typeof f === "object" && typeof s === "object") {
+      for (const [k, fv] of Object.entries(f as Record<string, unknown>)) {
+        if (fv === undefined || k === "omitted") continue;
+        const sv = (s as Record<string, unknown>)[k];
+        if (sv === undefined) out.push(`${p ? p + "." : ""}${k}`); else out.push(...missing(fv, sv, `${p ? p + "." : ""}${k}`));
+      }
+    }
+    return [...new Set(out)];
+  };
+  /** Every key slim has, full has with the same value, unless the path is a list slim cut short. */
+  const extra = (f: unknown, s: unknown, p = ""): string[] => {
+    const out: string[] = [];
+    if (Array.isArray(f) && Array.isArray(s)) return out;
+    if (f && s && typeof f === "object" && typeof s === "object") for (const k of Object.keys(s as object)) if (!(k in (f as object)) && k !== "omitted") out.push(`${p}.${k}`);
+    return out;
+  };
+  const check = (full: Board, slim: Board) => {
+    const gone = missing(full, slim);
+    for (const path of gone) expect(slim.omitted, `${path} disappeared but omitted does not say so`).toContain(path);
+    for (const path of slim.omitted) expect(gone, `omitted lists ${path} but it did not disappear`).toContain(path);
+    expect(extra(full, slim)).toEqual([]); // nothing invented
+    expect(full.omitted).toEqual([]);
+  };
+
+  it("omitted is exactly what disappeared, on a rich board and on a nearly empty one; empties stay empties", async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] }); // open: no surfaces, no owner
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] });
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题 B", criteria: ["works"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
-    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["x"] }); // stacked on A
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["x"] });
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "team", key: "focus", value: "一" });
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "team", key: "focus", value: "二" }); // one stale reading
+    for (let i = 0; i < 8; i++) { const ins = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: `做 ${i}`, ack_by: c.iso(min(15)) }); await emit(store, c, { kind: "ack", actor: "dev", of: ins.id }); }
     const full = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(full.omitted).toEqual([]);
-    expect(full.seams[0].overlap).toEqual(["x"]);
-    expect(full.release.candidates).toEqual([]);
     const slim = slimBoard(full);
-    const a = slim.tasks.done[0], b = slim.tasks.working[0];
-    // omitted: absent
-    for (const k of ["criteria", "evidence", "notes", "verifications", "history", "touches", "created_at"]) expect(k in a, k).toBe(false);
-    expect("overlap" in slim.seams[0]).toBe(false);
-    expect("candidates" in slim.release).toBe(false);
-    expect("shown" in slim.in_flight.working).toBe(false);
-    // really empty: sent as empty
-    expect(a.surfaces).toEqual([]);
-    expect(a.verified_on).toEqual([]);
-    expect(b.evidence_sha).toBeUndefined(); // no evidence at all: undefined on the full board too
-    expect(full.tasks.working[0].evidence_sha).toBeUndefined();
-    expect(slim.needs_human).toEqual([]);
-    expect(JSON.parse(JSON.stringify(slim)).tasks.done[0]).not.toHaveProperty("criteria");
-    expect(slim.omitted).toContain("tasks[].criteria");
-    expect(slim.omitted).toContain("seams[!open].overlap");
+    check(full, slim);
+    expect(slim.omitted).toContain("tasks.done[].criteria");
+    expect(slim.omitted).toContain("seams[].overlap");
     expect(slim.omitted).toContain("release.candidates");
-    expect(slim.omitted.length).toBeGreaterThanOrEqual(12);
+    expect(slim.omitted).toContain("instructions[8 of 8]");
+    // really empty stays empty and is not "omitted"
+    expect(slim.tasks.done[0].surfaces).toEqual([]);
+    expect(slim.tasks.done[0].verified_on).toEqual([]);
+    expect(slim.needs_human).toEqual([]);
+    expect(slim.undelivered).toEqual([]);
+    expect(slim.omitted.some((x) => x.startsWith("undelivered") || x.startsWith("needs_human"))).toBe(false);
+    // a nearly empty board: only what actually went away
+    const tiny = new MemoryStore();
+    await emit(tiny, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] });
+    const tf = board(reduce(await tiny.read(), c.now()), HUMAN, c.now());
+    const ts = slimBoard(tf);
+    check(tf, ts);
+    expect(ts.omitted.some((x) => x.startsWith("seams") || x.startsWith("readings") || x.startsWith("instructions"))).toBe(false);
+    expect(ts.omitted).toContain("release.candidates"); // the key went away even though it was empty: that is still a removal
   });
 });
