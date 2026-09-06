@@ -31,6 +31,14 @@ export interface BoardTask {
   verified_on: string[];
   /** Notes attached with --task, in log order. */
   notes: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
+  /**
+   * t-068: which layer of the page the task belongs to. this_version: brought by the current deploy or still in flight
+   * (criteria and evidence inlined); earlier: verified on production before the current sha, or ended before it
+   * (title and one line only; the rest is GET /task/<id>).
+   */
+  era: "this_version" | "earlier";
+  /** One line for the earlier layer: status, and where it was verified. */
+  summary: string;
 }
 
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
@@ -395,7 +403,18 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const currentSince = current ? deploys.find((r) => sameSha(r.value, current.value))!.at : undefined;
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    // t-068: the t-026 rule for the "recent" list, applied to every task: production-verified before the current sha, or
+    // ended (withdrawn/obsolete) before it, is earlier; anything the current version brought or that is still open is this version
+    const prodPass = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass).map((v) => v.at).sort().pop();
+    const endedAt = t.withdrawn?.at ?? t.obsolete?.at;
+    const before = (at: string | undefined) => !!at && b.live.since_sha !== null && currentSince !== undefined && at < currentSince;
+    const era: "this_version" | "earlier" = before(prodPass) || before(endedAt) ? "earlier" : "this_version";
+    const results0 = surfaceResults(t);
+    const summary = t.status === "withdrawn" ? `已撤回：${t.withdrawn?.reason ?? ""}`
+      : t.status === "obsolete" ? `已被 ${t.obsolete?.decision ?? "?"} 取代`
+      : results0.length ? results0.map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ") : t.status;
     (b.tasks[t.status] ??= []).push({
+      era, summary,
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),

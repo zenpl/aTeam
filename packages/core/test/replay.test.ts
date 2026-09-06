@@ -1526,3 +1526,34 @@ describe("t-067 · the side that was done before the other claimed is never bloc
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
   });
 });
+
+describe("t-068 · every task says which layer it belongs to: this version, or earlier", () => {
+  it("before any deploy everything is this version; after a second deploy, what production carried before it is earlier, the rest stays", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(120));
+    const create = (id: string) => emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    const ship = async (id: string, who = "dev") => {
+      await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
+      await emit(store, c, { kind: "task", op: "done", actor: who, task: id, evidence: "abc1234" });
+      await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
+    };
+    const eras = async () => Object.fromEntries(Object.values(board(reduce(await store.read(), c.now()), HUMAN, c.now()).tasks).flat().map((t) => [t.id, t.era]));
+    for (const id of ["A", "B", "C", "D", "E"]) await create(id);
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "aaaaaaa" });
+    await ship("A");
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "重复" });
+    c.tick(min(5));
+    expect(await eras()).toEqual({ A: "this_version", B: "this_version", C: "this_version", D: "this_version", E: "this_version" }); // one deploy: no "before"
+    // the second deploy: A and D happened before it; B ships on it; C is in flight; E untouched
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "bbbbbbb" });
+    c.tick(min(1));
+    await ship("B", "frontend");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
+    expect(await eras()).toEqual({ A: "earlier", B: "this_version", C: "this_version", D: "earlier", E: "this_version" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live.earlier.map((x) => x.id)).toEqual(["A"]); // the same rule as the live list
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "A")!.summary).toBe("✓ production");
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "D")!.summary).toBe("已撤回：重复");
+    expect(Object.values(b.tasks).flat().find((t) => t.id === "C")!.summary).toBe("working");
+  });
+});
