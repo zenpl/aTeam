@@ -18,7 +18,8 @@ export async function decide(client: Decider, of: string, option: string): Promi
   if (!i) throw new Rejected("decide", `${of} is not an instruction in the log`);
   if (!i.options?.length) throw new Rejected("decide", `${of} carries no options; ack it instead`);
   if (!i.options.includes(option)) throw new Rejected("decide", `"${option}" is not one of: ${i.options.join(" | ")}`);
-  if (i.chosen) throw new Rejected("decide", `${of} already decided: ${i.chosen.option} by ${i.chosen.by}`);
+  // a default that took effect at ack_by (t-022) is still the human's to override; a real decision is final
+  if (i.chosen && i.chosen.by !== "default") throw new Rejected("decide", `${of} already decided: ${i.chosen.option} by ${i.chosen.by}`);
 
   const out: Event[] = [];
   if (i.status !== "acked") out.push(await client.emit({ kind: "ack", of }));
