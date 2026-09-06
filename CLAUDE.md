@@ -46,6 +46,10 @@ pnpm install && pnpm build
 | **qa** | Verifies on a named surface with evidence: `task verify <id> --surface repo|staging|production --pass/--fail --evidence "..."`. Records readings. Writes criteria it learned from real failures as notes. | Treat "code runs" as "criterion met". Verify on `repo` what the human will only see on `production`. |
 | **human** | Policy authority. Can ack anything, verify anything. Reads only NEEDS HUMAN. | |
 
+## Language
+
+**Write to the log in Chinese.** Task titles, criteria, instruction bodies, notes, evidence, seam resolutions: all Chinese. Code identifiers, file paths, shas, and command names stay as they are (`packages/core/src/rules.ts`, `deployed.sha`, `verify`). The human reads the log; write for them.
+
 ## Norms the server cannot enforce
 
 - **Concerns are free.** `./bin/ateam note "concern: ..."`. No task, no permission needed. Say it early.
