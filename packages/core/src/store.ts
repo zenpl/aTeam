@@ -13,6 +13,9 @@ export interface EventStore {
   recordDelivery(d: Delivery): Promise<void>;
 }
 
+/** t-088: what `append` did — a new event, or the one that already carried this `from`. */
+export interface Appended { event: Event; created: boolean }
+
 export interface AppendOptions {
   human: string;
   now?: Date;
@@ -22,13 +25,25 @@ export interface AppendOptions {
 
 /** Validate against the current state, then append. The one write path. */
 export async function append(store: EventStore, ne: NewEvent, opts: AppendOptions): Promise<Event> {
+  return (await appendFrom(store, ne, opts)).event;
+}
+
+/**
+ * The one write path, saying whether it wrote (t-088). An event that carries `from` is written once: if the log already
+ * holds one with that exact `from`, the existing event comes back with created=false and nothing is appended.
+ */
+export async function appendFrom(store: EventStore, ne: NewEvent, opts: AppendOptions): Promise<Appended> {
   const now = opts.now ?? new Date();
   const log = await store.read();
   const state = reduce(log, now);
+  if (ne.from) {
+    const seen = state.from.get(ne.from);
+    if (seen) return { event: seen, created: false };
+  }
   validate(state, ne, opts.human, now);
   const e = { ...ne, id: (opts.mint ?? ulid)(now.getTime()), at: now.toISOString() } as Event;
   await store.appendRaw(e);
-  return e;
+  return { event: e, created: true };
 }
 
 export class MemoryStore implements EventStore {

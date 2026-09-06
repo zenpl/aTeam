@@ -446,7 +446,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     b.readings.push({
       id: r.id, key: r.key, surface: r.surface, value: r.value, at: r.at, by: r.actor, valid,
       measured_at: measured, recorded_after_s: recordedAfter, late: validFor !== undefined && recordedAfter * 1000 > validFor / 2, valid_until: r.valid_until,
-      why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
+      why: valid ? undefined : rs.imported_why ?? (rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired"),
       assumptions: r.assumptions,
     });
   }

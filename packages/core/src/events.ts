@@ -12,6 +12,12 @@ export interface Base {
   refs?: string[];
   /** World state this event changed, as `surface:key`. Invalidates readings that depend_on them. */
   writes?: string[];
+  /**
+   * t-088: where this event came from when it was carried in from somewhere else — a path, a ticket number, a URL, a
+   * message id, whatever that place calls things. Free text, matched exactly: writing a second event with the same
+   * `from` returns the first one instead of adding a duplicate, so an import can be run again safely.
+   */
+  from?: string;
 }
 
 /** What values a reading key may take. A regex is matched against the value as a string; an enum by JSON equality. */

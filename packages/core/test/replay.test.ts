@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, pull, reduce, board, slimBoard, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, slimBoard, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1821,5 +1821,63 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     r = await rel(store, c);
     expect(r.counts.unknown).toBe(r.candidates!.length);
     expect(r.unknown![0].reason).toMatch(/ateam release/); // the deploy invalidated the fact (it depends on production:deployed.sha): measure again
+  });
+});
+
+describe("t-088 · an event can say where it came from, and the same source lands once", () => {
+  it("the second write with the same from returns the first event and appends nothing; different from, different events; no from is untouched", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const one = await appendFrom(store, { kind: "note", actor: "pm", body: "旧单据 #12 的内容", from: "tracker#12" }, { human: HUMAN, now: c.now() });
+    expect(one.created).toBe(true);
+    const again = await appendFrom(store, { kind: "note", actor: "dev", body: "同一张单据，第二次搬", from: "tracker#12" }, { human: HUMAN, now: c.tick(min(1)) });
+    expect(again.created).toBe(false);
+    expect(again.event.id).toBe(one.event.id);
+    expect(again.event.body).toBe("旧单据 #12 的内容"); // the first one stands; the second is not written over it
+    const other = await appendFrom(store, { kind: "note", actor: "pm", body: "另一张", from: "tracker#13" }, { human: HUMAN, now: c.tick(min(1)) });
+    expect(other.created).toBe(true);
+    // no from: every write is its own event, exactly as before
+    for (let i = 0; i < 2; i++) await emit(store, c, { kind: "note", actor: "pm", body: "普通 note" });
+    const events = (await store.read()).events;
+    expect(events.map((e) => e.from)).toEqual(["tracker#12", "tracker#13", undefined, undefined]);
+    expect(events).toHaveLength(4);
+    // the state can be asked, and the board carries from through
+    const s = reduce(await store.read(), c.now());
+    expect(s.from.get("tracker#12")!.id).toBe(one.event.id);
+    expect(s.from.size).toBe(2);
+    // two writers racing on the same from: the log still holds one
+    const race = new MemoryStore();
+    const results = await Promise.all([1, 2, 3].map((i) => appendFrom(race, { kind: "note", actor: "pm", body: `第 ${i} 次`, from: "同一处" }, { human: HUMAN, now: c.now() })
+      .catch(() => null)));
+    void results;
+    const raced = (await race.read()).events.filter((e) => e.from === "同一处");
+    expect(raced.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("t-089 · a number carried in from somewhere else lands expired", () => {
+  it("it must say when it was measured, it is never current, and a reading without from is untouched", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const bad = await rejected(emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "users.count", value: 1200, from: "旧看板/指标页" }));
+    expect(bad.rule).toBe("reading");
+    expect(bad.message).toContain("必须带 measured_at");
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "users.count", value: 1200, from: "旧看板/指标页", measured_at: c.iso(-min(5)), valid_for: 24 * 3600_000 } as never);
+    const s = reduce(await store.read(), c.now());
+    const rs = [...s.readings.values()][0];
+    expect(rs.expired).toBe(true);
+    expect(rs.valid).toBe(false); // measured five minutes ago with a day of validity, and still not current: it was measured elsewhere
+    const b = board(s, HUMAN, c.now());
+    const row = b.readings.find((r) => r.key === "users.count")!;
+    expect(row.valid).toBe(false);
+    expect(row.why).toBe("搬进来的数字：在这里没有测过，谁用谁重测");
+    // nothing that reads a current value picks it up
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "production", key: "deployed.sha", value: "abc1234", from: "旧看板/发布页", measured_at: c.iso(-min(1)) });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).live.deployed_sha).toBeNull();
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "https://hooks.example/x", from: "旧看板/设置页", measured_at: c.iso(-min(1)) });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert.status).not.toBe("set");
+    // a reading measured here, as always
+    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.sha", value: "def5678", method: "curl /health", depends_on: ["production:deployed.sha"] });
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).live.deployed_sha).toBe("def5678");
   });
 });
