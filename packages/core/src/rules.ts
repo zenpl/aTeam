@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, PROJECT_SURFACE, ROLES_KEY } from "./events.js";
 import { type State, type TaskState, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles } from "./board.js";
 
@@ -29,12 +29,21 @@ export function verifierEligibility(s: State, t: TaskState, surface: string | un
   return { eligible, blocked };
 }
 
-/** The way out, appended to every rejection that says who may *not* verify: who may. */
+/**
+ * The way out, appended to every rejection that says who may *not* verify: who may.
+ * pd 23:50：一个都没有时先说自动会发生什么，再说人要做的选择，否则人以为系统卡住在等他救场。
+ * 但「验收自动进 human 的需要你」（t-055）看的是项目里有没有 qa 类角色，不是这一件有没有合格的人——
+ * 所以这句也现算，不照抄：roles 里还有 qa 而只是这一件没人能验时，那条自动退化并不会发生。
+ */
 export function whoCanVerify(s: State, t: TaskState, surface: string | undefined, human: string): string {
   const { eligible, blocked } = verifierEligibility(s, t, surface, human);
   if (eligible.length) return `。可以由谁来落：${eligible.join("、")}`;
-  const why = blocked.length ? blocked.map((b) => `${b.role} ${b.why}`).join("；") : `${JSON.stringify(projectRoles(s))} 里除了 ${human} 没有别人`;
-  return `。本项目没有合格的第三方：${why}。出路只有两条：让 ${human} 亲自判，或者请 pm 把一个新角色加进 project:roles`;
+  const why = blocked.length ? blocked.map((b) => `${b.role} ${b.why}`).join("；") : `${projectRoles(s).join("、")} 里除了 ${human} 没有别人`;
+  const escalates = !projectRoles(s).some((r) => VERIFIER_ROLES.includes(r)); // t-055 的自动退化：整个项目没有验收角色时才发生
+  const next = escalates
+    ? `这件的验收会进 ${human} 的「需要你」由他来判；要恢复三方分离，请 ${PM_ACTOR} 把一个新角色加进 ${PROJECT_SURFACE}:${ROLES_KEY}`
+    : `项目里有验收角色，所以验收不会自动转给 ${human}：这一件要么请 ${human} 亲自判，要么请 ${PM_ACTOR} 把一个没牵涉进来的角色加进 ${PROJECT_SURFACE}:${ROLES_KEY}`;
+  return `。本项目没有合格的第三方：${why}。${next}`;
 }
 
 export class Rejected extends Error {

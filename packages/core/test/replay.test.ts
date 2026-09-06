@@ -2149,12 +2149,26 @@ describe("t-101 · a refused verify says who can do it instead", () => {
     const { store, c } = await world(["pm", "dev"]);
     const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
     expect(r.message).toContain("本项目没有合格的第三方：pm 写了判据；dev 是 owner");
-    expect(r.message).toContain(`让 ${HUMAN} 亲自判`);
+    // pd 23:50：先说自动会发生的事，再说人要做的选择。这个项目没有 qa 类角色，t-055 的自动退化确实会发生
+    expect(r.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
     expect(r.message).toContain("project:roles");
     expect(r.message).not.toMatch(/可以由谁来落/);
     expect(r.message).not.toMatch(/：\s*。/);                          // 判据 3：不印空列表
     // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
     expect(r.message).not.toMatch(/可以由谁来落：[^。]*human/);
+  });
+
+  it("nobody qualifies but the project does have a verifier role: it does not promise the t-055 escalation that will not happen", async () => {
+    const { store, c } = await world(["dev", "qa"]);
+    // 判据由 dev 写、qa 是 owner：这一件没人能验，但项目里有 qa，t-055 的自动退化不会触发
+    await emit(store, c, { kind: "task", op: "create", actor: "dev", task: "B", title: "题二", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "B", touches: ["y"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "qa", task: "B", evidence: "abc1234 全绿" });
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }));
+    expect(r.message).toContain("本项目没有合格的第三方：dev 写了判据；qa 是 owner");
+    expect(r.message).toContain(`项目里有验收角色，所以验收不会自动转给 ${HUMAN}`);
+    expect(r.message).not.toContain("会进");                            // 不承诺一件不会发生的事
+    expect(r.message).not.toMatch(/可以由谁来落/);
   });
 
   it("the way out is only on the rejections that another identity can resolve, not on the ones that need different evidence", async () => {

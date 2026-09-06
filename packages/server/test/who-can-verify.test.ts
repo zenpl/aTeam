@@ -53,7 +53,7 @@ describe("t-101 · 409 on verify says who can do it instead", () => {
     const r = await post("dev", { kind: "task", op: "verify", task: "t-b", surface: "repo", pass: true });
     expect(r.status).toBe(409);
     expect(r.body.message).toContain("本项目没有合格的第三方：pm 写了判据；dev 是 owner");
-    expect(r.body.message).toContain(`让 ${HUMAN} 亲自判`);
+    expect(r.body.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
     expect(r.body.message).not.toMatch(/可以由谁来落/);
   });
 });
