@@ -960,7 +960,7 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
       await setup(v);
       // no containment fact yet: the board cannot tell, so it says why and what to do, and invents no number
       let html = await v.page();
-      expect(line(html)).toContain("说不清有多少件在等部署");
+      expect(line(html)).toContain("不知道有多少件在等上线");
       expect(line(html)).toContain("<code>production:deployed.tasks</code>");
       expect(line(html)).toContain("<code>ateam release</code>");
       expect(html).not.toContain("有 0 件");
@@ -968,13 +968,14 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
       // one of the two is not in production yet: exactly that one is waiting
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1"], not_contained: ["t-2"] }, method: "ateam release 用 git 逐件测" });
       html = await v.page();
-      expect(line(html)).toBe("有 1 件已验的等一次部署");
+      expect(line(html)).toBe("1 件验过了，等一次上线。");
+      expect(html).not.toContain("部署"); // pd: 上线 is the human's word, 部署 is the machine's
 
       // both in production: nothing waits, so the line is gone entirely
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1", "t-2"], not_contained: [] }, method: "ateam release 用 git 逐件测" });
       html = await v.page();
       expect(html).not.toContain('class="meta waiting"');
-      expect(html).not.toContain("等一次部署");
+      expect(html).not.toContain("等一次上线");
     } finally { await v.stop(); }
   });
 
@@ -986,8 +987,10 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-1", "t-2"] }, method: "ateam release 用 git 逐件测" });
       const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
       expect(b.release.counts).toMatchObject({ pending_deploy: 2, deployed_unverified: 0, unknown: 0 });
-      expect(waitingLine(b)).toBe("有 2 件已验的等一次部署");
-      expect(line(await v.page())).toBe("有 2 件已验的等一次部署");
+      expect(waitingLine(b)).toBe("2 件验过了，等一次上线。");
+      expect(line(await v.page())).toBe("2 件验过了，等一次上线。");
+      // the line states, it never asks: no link and no button in it
+      expect(line(await v.page())).not.toMatch(/<a |<button|<form/);
     } finally { await v.stop(); }
   });
 });

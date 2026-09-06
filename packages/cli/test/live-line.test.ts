@@ -46,12 +46,12 @@ describe("t-091 · LIVE 下的待部署一句", () => {
     const fact = (contained: string[], not_contained: string[]): NewEvent => ({ kind: "reading", actor: "dev", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained, not_contained }, method: "ateam release 用 git 逐件测" } as NewEvent);
 
     const cannotTell = await liveBlock(base);
-    expect(cannotTell).toContain("说不清有多少件在等部署");
+    expect(cannotTell).toContain("不知道有多少件在等上线");
 
-    expect(await liveBlock([...base, fact(["t-1"], ["t-2"])])).toContain("有 1 件已验的等一次部署");
+    expect(await liveBlock([...base, fact(["t-1"], ["t-2"])])).toContain("1 件验过了，等一次上线。");
 
     const none = await liveBlock([...base, fact(["t-1", "t-2"], [])]);
-    expect(none).not.toContain("等一次部署");
-    expect(none).not.toContain("有 0 件");
+    expect(none).not.toContain("等一次上线");
+    expect(none).not.toContain("0 件");
   });
 });

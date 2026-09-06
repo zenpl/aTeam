@@ -46,7 +46,7 @@ export function machineWords(text: string): string {
 export function waitingLine(b: Board): string {
   const c = b.release?.counts;
   if (!c) return "";
-  if (c.pending_deploy > 0) return UI.waitingDeploy(c.pending_deploy) + (c.unknown ? `，${UI.waitingAlsoUnknown(c.unknown)}` : "");
+  if (c.pending_deploy > 0) return c.unknown ? `${UI.waitingDeploy(c.pending_deploy).replace(/。$/, "；")}${UI.waitingAlsoUnknown(c.unknown)}` : UI.waitingDeploy(c.pending_deploy);
   if (c.unknown > 0) return UI.waitingUnknown(b.release.basis || "");
   return "";
 }
