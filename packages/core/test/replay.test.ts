@@ -3,7 +3,7 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, appendFrom, pull, reduce, board, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1991,5 +1991,38 @@ describe("t-092 · the service counts what an import landed and asks the human t
       const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
       expect(b.needs_human.map((x) => x.id)).not.toContain((card as { id: string }).id);
     }
+  });
+});
+
+describe("t-096 · a display name people recognise, next to an id that never moves", () => {
+  it("a task and a decision can carry one, it can change, two records may share it, and every lookup still goes by id", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const a = await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录超时", criteria: ["works"], label: "T-07", from: "pm/单据#7" });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["works"], label: "T-07" }); // the same label, no from: they are independent
+    const d1 = await emit(store, c, { kind: "note", actor: "pm", body: "旧决定 12", decision: true, label: "决策 12", from: "pm/台账#12" });
+    await emit(store, c, { kind: "note", actor: "pm", body: "没有显示名的决定", decision: true });
+    let s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("t-1")).toMatchObject({ id: "t-1", label: "T-07", from: "pm/单据#7" });
+    expect(s.tasks.get("t-2")).toMatchObject({ id: "t-2", label: "T-07", from: undefined }); // label and from are independent
+    expect(s.notes.find((n) => n.id === d1.id)).toMatchObject({ label: "决策 12" });
+    expect(s.notes.find((n) => n.body === "没有显示名的决定")!.label).toBeUndefined();
+    // ids are what everything refers to: two tasks share a label and stay distinct
+    expect([...s.tasks.keys()]).toEqual(["t-1", "t-2"]);
+    expect(boardTask(board(s, HUMAN, c.now()), "t-1")!.title).toBe("登录超时");
+    expect(boardTask(board(s, HUMAN, c.now()), "t-2")!.title).toBe("另一件");
+    expect(boardTask(board(s, HUMAN, c.now()), "T-07")).toBeUndefined(); // a label is not a way to find anything
+    // the name can change; the id cannot, and nothing else moves with it
+    await emit(store, c, { kind: "task", op: "label", actor: "dev", task: "t-1", label: "T-07（旧单）" });
+    s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("t-1")).toMatchObject({ id: "t-1", label: "T-07（旧单）", title: "登录超时", from: "pm/单据#7" });
+    expect((await store.read()).events.find((e) => e.id === a.id)).toMatchObject({ label: "T-07" }); // history untouched
+    expect((await rejected(emit(store, c, { kind: "task", op: "label", actor: "dev", task: "t-1", label: "  " }))).rule).toBe("label");
+    expect((await rejected(emit(store, c, { kind: "task", op: "label", actor: "dev", task: "t-1", label: "字".repeat(31) }))).message).toMatch(/max 30/);
+    // a task with no label at all is unchanged
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-3", title: "本地新建", criteria: ["works"] });
+    const t3 = boardTask(board(reduce(await store.read(), c.now()), HUMAN, c.now()), "t-3")!;
+    expect(t3.label).toBeUndefined();
+    expect("label" in t3).toBe(true); // the field exists on the board shape, absent when unset
   });
 });

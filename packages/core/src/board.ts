@@ -7,6 +7,8 @@ import { surfaceResults, type State, type TaskState, type InstructionState, type
 export interface BoardTask {
   id: string;
   title: string;
+  /** t-096: what people call it (an old number, say); absent when nobody set one. References are always by id. */
+  label?: string;
   status: string;
   /** Absent on the slim board (t-070): GET /task/<id> has them. */
   criteria?: string[];
@@ -35,7 +37,7 @@ export interface BoardTask {
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
   /** Notes attached with --task, in log order. */
-  notes?: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
+  notes?: { id: string; actor: string; at: string; body: string; decision?: boolean; /** t-096 */ label?: string }[];
   /**
    * t-068: which layer of the page the task belongs to. this_version: brought by the current deploy or still in flight
    * (criteria and evidence inlined); earlier: verified on production before the current sha, or ended before it
@@ -520,11 +522,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       : results0.length ? results0.map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ") : t.status;
     (b.tasks[t.status] ??= []).push({
       era, summary,
-      id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
+      id: t.id, title: t.title, label: t.label, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
-      notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
+      notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
     });
     if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
       b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
@@ -626,7 +628,7 @@ export function slimBoard(b: Board): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
-      id: t.id, title: t.title, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
+      id: t.id, title: t.title, label: t.label, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));

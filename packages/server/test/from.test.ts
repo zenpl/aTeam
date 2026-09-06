@@ -82,3 +82,19 @@ describe("t-092 · the check card over the API", () => {
     expect(told[0].body).toContain("迁移完成");
   });
 });
+
+describe("t-096 · display names over the API", () => {
+  it("a task carries its old number to the board, the name can change, and lookups still go by id", async () => {
+    expect((await post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["x"], label: "T-07", from: "pm/单据#7" })).status).toBe(201);
+    expect((await post("pm", { kind: "task", op: "create", task: "L-2", title: "另一件", criteria: ["x"], label: "T-07" })).status).toBe(201);
+    const byId = await (await fetch(`${base}/task/L-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect(byId.task).toMatchObject({ id: "L-1", label: "T-07", title: "登录超时" });
+    expect((await fetch(`${base}/task/T-07`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).status).toBe(404); // a label finds nothing
+    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    const open = b.tasks.open as { id: string; label?: string }[];
+    expect(open.filter((t) => t.label === "T-07").map((t) => t.id).sort()).toEqual(["L-1", "L-2"]); // same name, two ids
+    expect((await post("dev", { kind: "task", op: "label", task: "L-1", label: "T-07 登录" })).status).toBe(201);
+    const after = await (await fetch(`${base}/task/L-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect(after.task).toMatchObject({ id: "L-1", label: "T-07 登录", title: "登录超时" });
+  });
+});

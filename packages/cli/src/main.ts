@@ -27,7 +27,8 @@ every turn
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
-  ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
+  ateam release [--json] [--deploy <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
+      what passed on repo and not yet on production; --deploy pushes that sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
@@ -175,7 +176,7 @@ async function main(argv: string[]) {
         return;
       }
       const outcome = await deploy(b, target, {
-        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN,
+        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
         reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
         note: async (body) => { await emit({ kind: "note", body }); },
         print: console.log,
