@@ -7,6 +7,7 @@ import { resolveConfig, initFields, joinOutput, type Config } from "./config.js"
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
+import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
@@ -50,7 +51,7 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
 
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
   ateam log [--after <id>]       raw events
-  ateam watch [--interval 20s] [--once]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction (old Monitor usage)
+  ateam watch [--interval 20s] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
 `;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
@@ -120,7 +121,17 @@ async function main(argv: string[]) {
     }
     case "watch": {
       exact(rest);
-      await watch(client, cfg.me, fileCursor(cfg.me), duration(str(a, "interval") ?? "20s"), console.log, { once: bool(a, "once") });
+      const interval = duration(str(a, "interval") ?? "20s");
+      const lockPath = join(process.cwd(), ".ateam", `watch.${cfg.me}.lock`);
+      const other = blockingLock(lockPath, new Date(), 3 * interval);
+      if (other && !bool(a, "force")) throw new UsageError(`another watch is already listening as ${cfg.me} in this checkout (pid ${other.pid}, heartbeat ${other.at}). Two watches replay old instructions to each other. Stop it first: kill ${other.pid}; or run with --force if it is really gone.`);
+      const beat = () => writeLock(lockPath, process.pid);
+      beat();
+      const release = () => removeLock(lockPath, process.pid);
+      process.on("exit", release);
+      for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
+      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat });
+      release();
       return;
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
