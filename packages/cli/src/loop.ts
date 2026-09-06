@@ -23,6 +23,8 @@ export interface WatchOptions {
   once?: boolean;
   /** Ends the watch from outside (tests, shutdown). */
   signal?: AbortSignal;
+  /** Called once per loop turn: the lock file's heartbeat (t-049). */
+  heartbeat?: () => void;
 }
 
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
@@ -32,6 +34,18 @@ const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(reso
 export function isTransient(err: unknown): boolean {
   if (err instanceof ClientError) return err.status >= 500;
   return err instanceof Error && !(err instanceof SyntaxError);
+}
+
+/**
+ * The cursor only moves forward (t-049). Two processes sharing the file interleave read-pull-write; a stale
+ * value must never overwrite a newer one, or old instructions replay. ULIDs sort by time, so a plain compare works.
+ */
+export function advance(cursor: CursorStore, next: string | null): boolean {
+  const current = cursor.read();
+  if (next !== null && current !== null && next <= current) return false;
+  if (next === null && current !== null) return false;
+  cursor.write(next);
+  return true;
 }
 
 /** Render one pull the way `ateam sync` shows it. */
@@ -50,7 +64,7 @@ export function report(r: PullResult, me: string, after: string | null): string[
 export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null): Promise<PullResult> {
   const after = cursor.read();
   const r = await client.pull(after, waitMs);
-  cursor.write(r.cursor);
+  advance(cursor, r.cursor);
   if (print) for (const line of report(r, me, after)) print(line);
   return r;
 }
@@ -68,6 +82,7 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
   let last: PullResult = { events: [], for_me: [], cursor: cursor.read() };
   for (;;) {
     if (opts.signal?.aborted) return last;
+    opts.heartbeat?.();
     const after = cursor.read();
     let r: PullResult;
     try {

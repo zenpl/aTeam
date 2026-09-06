@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { Event, PullResult } from "@ateam/core";
-import { sync, watch, isTransient, type CursorStore, type Puller } from "../src/loop.js";
+import { sync, watch, advance, isTransient, type CursorStore, type Puller } from "../src/loop.js";
 import { ClientError } from "../src/client.js";
 
 const ME = "frontend";
@@ -92,7 +92,7 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     expect(text.indexOf("note t-007 priority")).toBeLessThan(text.indexOf("INSTRUCTION → frontend"));
     expect(out.filter((l) => l.includes("note t-007 priority"))).toHaveLength(1);
     expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(1);
-    expect(cursor.writes).toEqual([null, "01B", "01B", "01D"]);
+    expect(cursor.writes).toEqual([null, "01B", "01D"]);
   });
 
   it("sync itself still prints events and marks instructions for me", async () => {
@@ -200,7 +200,7 @@ describe("t-046 · watch keeps listening after an instruction", () => {
     expect(out.filter((l) => l.includes("第二条"))).toHaveLength(1);
     expect(out.filter((l) => l.includes("中间的 note"))).toHaveLength(1);
     expect(srv.pulls).toEqual([null, null, "02A", "02A", "02C"]);   // each pull from the cursor the last one left
-    expect(cursor.writes).toEqual([null, "02A", "02A", "02C", "02C"]);
+    expect(cursor.writes).toEqual([null, "02A", "02C"]);            // the cursor only moves forward (t-049): a repeat is not a write
     expect(r.cursor).toBe("02C");
   });
 
@@ -210,5 +210,35 @@ describe("t-046 · watch keeps listening after an instruction", () => {
     expect(r.for_me.map((e) => e.id)).toEqual(["02A"]);
     expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(1);
     expect(out.some((l) => l.includes("第二条"))).toBe(false);
+  });
+});
+
+describe("t-049 · the cursor only moves forward", () => {
+  it("a stale value never overwrites a newer one; equal is not a write; null never replaces a value", () => {
+    const c = memoryCursor();
+    expect(advance(c, null)).toBe(true);
+    expect(advance(c, "01B")).toBe(true);
+    expect(advance(c, "01A")).toBe(false);   // older: ignored
+    expect(advance(c, "01B")).toBe(false);   // same: ignored
+    expect(advance(c, null)).toBe(false);    // a pull that saw nothing cannot rewind
+    expect(advance(c, "01C")).toBe(true);
+    expect(c.read()).toBe("01C");
+    expect(c.writes).toEqual([null, "01B", "01C"]);
+  });
+
+  it("two watches interleaving on one cursor: the shared cursor stays monotonic and no event is pulled from an older position twice", async () => {
+    const shared = memoryCursor();
+    const outA: string[] = [], outB: string[] = [];
+    // both read the empty cursor; A pulls two events, B (which read before A wrote) pulls the same two plus one more
+    const srvA = server([2]);
+    const srvB = server([3]);
+    await sync(srvA, ME, shared, 0, (l) => outA.push(l));
+    expect(shared.read()).toBe("01B");
+    await sync(srvB, ME, shared, 0, (l) => outB.push(l));
+    expect(shared.read()).toBe("01C");
+    // now a straggler pull result from A's older position arrives: it cannot move the cursor back
+    expect(advance(shared, "01B")).toBe(false);
+    expect(shared.read()).toBe("01C");
+    expect(shared.writes).toEqual(["01B", "01C"]);
   });
 });
