@@ -122,6 +122,12 @@ export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
 /** An instruction still not pulled this long after it was sent counts as undelivered on the board (t-048). */
 export const UNDELIVERED_AFTER_MS = 5 * 60_000;
+/** What a node may push, declared when it joins (t-058): nothing, its own branch, the integration branch, or production. */
+export const PUSH_LEVELS = ["none", "own-branch", "integration", "production"] as const;
+export type PushLevel = (typeof PUSH_LEVELS)[number];
+/** Surface of the per-node capability fact; its key is `<role>:能力`. */
+export const NODE_SURFACE = "node";
+export const capabilityKey = (role: string) => `${role}:能力`;
 /** `shows` on done/verify: one sentence for the owner, at most this long. */
 export const SHOWS_MAX_CHARS = 120;
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */

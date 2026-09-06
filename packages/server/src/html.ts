@@ -52,7 +52,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   fold.push(`<dt>${UI.focus}</dt><dd>${b.focus ? `${esc(str(b.focus.body))} <span class="meta">（${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}）</span>` : `<span class="empty">${UI.noFocus}</span>`}</dd>`);
   fold.push(`<dt>${UI.live}</dt><dd>${sha ? `${UI.build} <code>${esc(sha)}</code>${shaReading ? ` <span class="meta">（${esc(UI.checked(ago(shaReading.at)))}）</span>` : ""}` : `<span class="empty">${UI.noDeployReading}</span>`}${b.live.verified_on_production.length ? `<ul class="plain">${b.live.verified_on_production.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>` : `<div class="meta">${UI.noneOnProduction}</div>`}</dd>`);
   fold.push(`<dt>${UI.inFlight}</dt><dd>${flight.some((g) => g.items.length) ? flight.filter((g) => g.items.length).map((g) => `<div class="group"><span class="label">${esc(g.label)}</span><ul class="plain">${g.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("") : `<span class="empty">${UI.nothingInFlight}</span>`}</dd>`);
-  fold.push(`<dt>${UI.who}</dt><dd>${b.presence.length ? `<ul class="presence">${b.presence.map((p) => `<li class="${p.present ? "here" : "away"}"><b>${esc(p.actor)}</b> <span class="meta">${p.last_seen ? t(p.last_seen) : "—"}</span></li>`).join("")}</ul>` : `<span class="empty">${UI.nobody}</span>`}</dd>`);
+  fold.push(`<dt>${UI.who}</dt><dd>${b.presence.length ? `<ul class="presence">${b.presence.map((p) => `<li class="${p.present ? "here" : "away"}"><b>${esc(p.actor)}</b> <span class="meta">${p.last_seen ? t(p.last_seen) : "—"}</span>${p.push === "production" ? ` <span class="can-push">${UI.canPushProduction}</span>` : ""}</li>`).join("")}</ul>` : `<span class="empty">${UI.nobody}</span>`}</dd>`);
   fold.push(`</dl></section>`);
 
   // ---------- details: the team's state ----------
@@ -218,6 +218,7 @@ ul.notes { margin: .35rem 0 .25rem; padding-left: 1rem; font-size: .9rem; border
 ul.notes li { padding: .15rem 0; }
 ul.presence { display: flex; flex-wrap: wrap; gap: .3rem 1.25rem; margin: 0; }
 ul.presence li.away { color: var(--muted); }
+ul.presence .can-push { font-size: .85em; border: 1px solid currentColor; border-radius: .6em; padding: 0 .4em; }
 .tag { display: inline-block; font-size: .75rem; letter-spacing: .05em; padding: .1em .45em; border-radius: 999px; border: 1px solid currentColor; }
 .tag.instruction, .tag.pending, .tag.delivered { color: var(--accent); }
 .tag.overdue, .tag.open_seam, .tag.stale { color: var(--bad); }

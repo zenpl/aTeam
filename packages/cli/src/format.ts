@@ -118,7 +118,7 @@ export function board(b: Board, me: string): string {
     const label = st === "listening" ? `在听  ${ago(p.last_seen!)} 前`
       : st === "deaf" ? `没在听 ${p.last_pull ? `${ago(p.last_pull)}` : "从未拉取"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
-    out.push(`  ${p.actor.padEnd(10)} ${label}`);
+    out.push(`  ${p.actor.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
   }
 
   return out.join("\n");

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -16,7 +16,7 @@ import { decide } from "./decide.js";
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
-  ateam join --me <role> [--url <server>] [--token <t>]   become a node: writes .ateam/config.json, syncs once, prints the role's manual (init is an alias)
+  ateam join --me <role> [--url <server>] [--token <t>] [--push none|own-branch|integration|production]   become a node: writes .ateam/config.json, syncs once, prints the role's manual (init is an alias); --push records what you may push as the fact node:<role>:能力
   ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json
                                                           precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
@@ -103,6 +103,12 @@ async function main(argv: string[]) {
     console.log(`configured as "${eff.me}" against ${eff.url} (wrote ${Object.keys(fields).join(", ")} to .ateam/config.json). Add .ateam/ to .gitignore.`);
     // join: one sync (delivery is recorded, your presence begins), then the manual for the role
     const client = new Client(eff);
+    const push = str(a, "push");
+    if (push !== undefined) {
+      if (!(PUSH_LEVELS as readonly string[]).includes(push)) throw new UsageError(`--push 只能是 ${PUSH_LEVELS.join(" | ")}`);
+      const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
+      console.log(fmt.event(e, eff.me));
+    }
     await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
     console.log(joinOutput(eff.me, await client.manual(eff.me)));

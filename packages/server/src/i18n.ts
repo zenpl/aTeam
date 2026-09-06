@@ -41,6 +41,7 @@ export const UI = {
   onSurface: (s: string) => `（已验收：${s}）`,
   who: "谁在线",
   nobody: "还没有人",
+  canPushProduction: "能推上线",
 
   more: "其余：团队自己的状态（session 之间的指令、带 id 的任务、接缝、事实）",
   overdue: "逾期",

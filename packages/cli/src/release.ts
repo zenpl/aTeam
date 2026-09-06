@@ -4,7 +4,7 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, type Board } from "@ateam/core";
+import { evidenceSha, type Board, type PushLevel } from "@ateam/core";
 
 export const DEPLOY_KEY = "deploy.enabled";
 export interface DeploySetting { branch: string; by: string[] }
@@ -91,6 +91,12 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   const setting = deploySetting(b);
   if (!setting) { deps.print(`这个项目没有开启团队部署（事实 project:${DEPLOY_KEY}），什么都没做。`); return "skipped"; }
   if (!setting.by.includes(deps.me)) { deps.print(`只有 ${setting.by.join("/")} 可以推 ${setting.branch}，你是 ${deps.me}。`); return "refused"; }
+  const level: PushLevel = b.presence?.find((p) => p.actor === deps.me)?.push ?? "none";
+  if (level !== "production") {
+    deps.print(`不推：你（${deps.me}）加入时声明的推送能力是 ${level}，推 ${setting.branch} 要 production。缺的是许可：human 许可后，用 ateam join --me ${deps.me} --push production 重新声明。`);
+    return "refused";
+  }
+  if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return "refused"; }
   const sha = deps.git.resolve(shaArg);
   if (!sha) { deps.print(`本地没有提交 ${shaArg}；先 fetch。`); return "refused"; }
   const p = plan(b, sha, deps.git.isAncestor);
@@ -103,7 +109,6 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
     if (!current || !(current === sha || sha.startsWith(current) || current.startsWith(sha))) await deps.reading("deployed.sha", sha, { surface: "production", writes: ["production:deployed.sha"], method: `ateam release --deploy：${setting.branch} 已在此 sha` });
     return "already";
   }
-  if (!deps.hasCredential) { deps.print(`环境里没有推送凭据（ATEAM_DEPLOY_TOKEN），不推。`); return "refused"; }
   try {
     deps.git.push(sha, setting.branch);
   } catch (err) {

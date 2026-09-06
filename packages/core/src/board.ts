@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -162,6 +162,8 @@ export interface BoardPresence {
   /** Same as listening: only a node that pulls counts as here (t-047). */
   present: boolean;
   listening: boolean;
+  /** What this node said it may push when it joined (fact node:<role>:能力 → push); none when it never said (t-058). */
+  push: PushLevel;
   last_pull: string | null;
   last_event: string | null;
   idle_pull_s: number | null;
@@ -197,6 +199,15 @@ export function serviceNoticeStale(s: State, i: Instruction): boolean {
     return false;
   }
   return false;
+}
+
+/** The push level a role declared when it joined; "none" when the fact is missing, stale, or says something else. */
+export function pushLevelOf(s: State, role: string): PushLevel {
+  const id = s.latestReading.get(`${NODE_SURFACE}:${capabilityKey(role)}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const push = v && typeof v === "object" && !Array.isArray(v) ? (v as { push?: unknown }).push : undefined;
+  return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
 }
 
 /** The role a service card is about, from its first words; undefined for any other instruction. */
@@ -378,7 +389,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const listening = idle_pull_s !== null && idle_pull_s * 1000 <= listenWindow;
     const spoke = idle_event_s !== null && idle_event_s * 1000 <= PRESENCE_WINDOW_MS;
     const status = listening ? "listening" : spoke ? "deaf" : "missing";
-    return { actor, role, status, present: listening, listening, last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
+    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   for (const actor of [...s.presence.keys()].sort()) {

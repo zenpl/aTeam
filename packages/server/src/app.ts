@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { runFollowUps } from "./verifyflow.js";
@@ -118,6 +118,8 @@ export function createApp(opts: ServerOptions) {
           const body = (await readJson(req)) as { agent_id?: unknown; role?: unknown; capabilities?: unknown };
           const agentId = typeof body.agent_id === "string" ? body.agent_id.trim() : "";
           if (!agentId) return json(res, 400, { error: "agent_id", message: "给一个能稳定代表你这个 session 的 agent_id" });
+          const caps = capabilitiesOf(body.capabilities);
+          if (caps instanceof Error) return json(res, 400, { error: "capabilities", message: caps.message });
           const pstore = storeFor(owner.id);
           const result = await serialize(async () => {
             const state = reduce(await pstore.read());
@@ -135,9 +137,8 @@ export function createApp(opts: ServerOptions) {
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
             // joining is the first pull: the node is listening as of now (its own sync starts from its local cursor)
             await pstore.setCursor({ actor: role, last_event_id: null, at: new Date().toISOString() });
-            const caps = Array.isArray(body.capabilities) ? body.capabilities.filter((c): c is string => typeof c === "string" && !!c.trim()) : [];
             const out: unknown[] = [];
-            if (caps.length) out.push(await append(pstore, { kind: "reading", actor: role, surface: "node", key: `${role}:能力`, value: caps, method: "节点加入时自报" }, { human }));
+            if (caps !== null) out.push(await append(pstore, { kind: "reading", actor: role, surface: NODE_SURFACE, key: capabilityKey(role), value: caps, method: "节点加入时自报" }, { human }));
             if (first && created) {
               out.push(await append(pstore, { kind: "reading", actor: role, surface: "team", key: "focus", value: "等 human 说这个项目是什么" }, { human }));
               out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human }));
@@ -323,6 +324,24 @@ export function createApp(opts: ServerOptions) {
   });
   server.on("close", () => { if (timer) clearInterval(timer); });
   return server;
+}
+
+/**
+ * What a joining node says it can do (t-058): an object whose `push` is one of PUSH_LEVELS (default none), plus anything
+ * else it wants known; or the older plain list of words (push none). null when nothing was said; an Error when it is malformed.
+ */
+export function capabilitiesOf(raw: unknown): Record<string, unknown> | string[] | null | Error {
+  if (raw === undefined || raw === null) return null;
+  if (Array.isArray(raw)) {
+    const words = raw.filter((c): c is string => typeof c === "string" && !!c.trim());
+    return words.length ? words : null;
+  }
+  if (typeof raw !== "object") return new Error("capabilities 是一个对象，比如 {\"push\":\"own-branch\"}");
+  const o = { ...(raw as Record<string, unknown>) };
+  const push = o.push === undefined ? "none" : o.push;
+  if (typeof push !== "string" || !(PUSH_LEVELS as readonly string[]).includes(push))
+    return new Error(`capabilities.push 只能是 ${PUSH_LEVELS.join(" | ")}，不是 ${JSON.stringify(o.push)}`);
+  return { ...o, push };
 }
 
 function bearer(req: IncomingMessage): string | undefined {

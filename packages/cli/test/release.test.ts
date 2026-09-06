@@ -27,6 +27,7 @@ async function world(enable: unknown = true) {
   let t = 0;
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date(60_000 * ++t) });
   if (enable !== null) await emit({ kind: "reading", actor: "pm", key: "deploy.enabled", surface: "project", value: enable });
+  await emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: { push: "production" }, method: "join" }); // t-058: pm said it may push production
   const ship = async (id: string, sha: string, verify = true) => {
     await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
     await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
@@ -99,10 +100,36 @@ describe("t-052 · ateam release --deploy", () => {
     expect(await deploy(b, A, w.deps(fakeGit(), "dev"))).toBe("refused");
     expect(w.log.at(-1)).toBe("只有 pm 可以推 production，你是 dev。");
     expect(await deploy(b, A, w.deps(fakeGit(), "pm", false))).toBe("refused");
-    expect(w.log.at(-1)).toContain("没有推送凭据");
+    expect(w.log.at(-1)).toContain("缺的是凭据");
     expect(await deploy(b, "fffffff", w.deps(fakeGit()))).toBe("refused"); // unknown locally
     const off = await world(null);
     expect(await deploy(await off.b(), A, off.deps(fakeGit()))).toBe("skipped");
     expect(off.log).toEqual(["这个项目没有开启团队部署（事实 project:deploy.enabled），什么都没做。"]);
+  });
+});
+
+describe("t-058 · release --deploy checks what the pusher said it may push", () => {
+  it("a pusher whose capability fact is missing or below production is refused for lack of permission, before anything is pushed; no credential is refused for lack of credential", async () => {
+    const w = await world();
+    await w.ship("t-1", A);
+    for (const push of ["none", "own-branch", "integration"]) {
+      await w.emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: { push } });
+      const git = fakeGit();
+      expect(await deploy(await w.b(), A, w.deps(git))).toBe("refused");
+      expect(w.log.at(-1)).toBe(`不推：你（pm）加入时声明的推送能力是 ${push}，推 production 要 production。缺的是许可：human 许可后，用 ateam join --me pm --push production 重新声明。`);
+      expect(git.pushes).toEqual([]);
+    }
+    // a fact that is not an object, or a push nobody knows, counts as none
+    await w.emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: ["写仓库"] });
+    expect((await w.b()).presence.find((p) => p.actor === "pm")!.push).toBe("none");
+    expect(await deploy(await w.b(), A, w.deps(fakeGit()))).toBe("refused");
+    expect(w.log.at(-1)).toContain("推送能力是 none");
+    await w.emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: { push: "production", can: ["有网"] } });
+    expect((await w.b()).presence.find((p) => p.actor === "pm")!.push).toBe("production");
+    expect(await deploy(await w.b(), A, w.deps(fakeGit(), "pm", false))).toBe("refused");
+    expect(w.log.at(-1)).toBe("不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。");
+    const git = fakeGit();
+    expect(await deploy(await w.b(), A, w.deps(git))).toBe("pushed");
+    expect(git.pushes).toEqual([`${A}->production`]);
   });
 });

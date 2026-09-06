@@ -139,3 +139,31 @@ describe("t-042 · a quiet role with work in its hands becomes a card for the hu
     expect(b.presence.find((x: { actor: string }) => x.actor === "dev")).toMatchObject({ role: "dev", present: true });
   });
 });
+
+describe("t-058 · a node says what it may push when it joins", () => {
+  it("capabilities.push is recorded as the fact node:<role>:能力 and shows on presence; a bad value is 400; the old word list still works as none", async () => {
+    const p = await newProject("能力");
+    const bad = await join(code(p.invite_url), { agent_id: "x", capabilities: { push: "everything" } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain("none | own-branch | integration | production");
+    const a = await join(code(p.invite_url), { agent_id: "a", capabilities: { push: "production", can: ["有网"] } });
+    expect(a.status).toBe(201);
+    const b = (await j(await api(p.project, "/board", a.body.node_key, "pm"))).body;
+    expect(b.readings.find((r: { surface: string; key: string }) => r.surface === "node" && r.key === "pm:能力").value).toEqual({ push: "production", can: ["有网"] });
+    expect(b.presence.find((x: { actor: string }) => x.actor === "pm").push).toBe("production");
+    // the next node says nothing about push: none. A plain list, as before: none.
+    const c = await join(code(p.invite_url), { agent_id: "b", capabilities: { can: ["写仓库"] } });
+    expect(c.body.role).toBe("pd");
+    const d = await join(code(p.invite_url), { agent_id: "c", capabilities: ["写仓库"] });
+    expect(d.body.role).toBe("dev");
+    const b2 = (await j(await api(p.project, "/board", a.body.node_key, "pm"))).body;
+    expect(b2.readings.find((r: { key: string }) => r.key === "pd:能力").value).toEqual({ can: ["写仓库"], push: "none" });
+    expect(b2.readings.find((r: { key: string }) => r.key === "dev:能力").value).toEqual(["写仓库"]);
+    expect(b2.presence.filter((x: { role?: string }) => x.role).map((x: { actor: string; push: string }) => [x.actor, x.push])).toEqual([["pd", "none"], ["pm", "production"], ["dev", "none"], ["frontend", "none"], ["qa", "none"]]);
+    // the page marks who can push production
+    const page = await api(p.project, "/", a.body.node_key, "pm", { headers: { accept: "text/html" } });
+    const html = await page.text();
+    expect(html.match(/能推上线/g)).toHaveLength(1);
+    expect(html).toMatch(/<b>pm<\/b> <span class="meta">[^\n]*?<\/span> <span class="can-push">能推上线<\/span><\/li>/);
+  });
+});
