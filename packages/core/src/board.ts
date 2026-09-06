@@ -104,6 +104,8 @@ export interface Board {
    */
   live: {
     deployed_sha: string | null;
+    /** Who recorded the current deployed sha: a role (the team pushed) or the human. */
+    deployed_by: string | null;
     since_sha: string | null;
     verified_on_production: { id: string; title: string }[];
     recent: { id: string; title: string }[];
@@ -202,7 +204,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    live: { deployed_sha: null, deployed_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [] },
     said: [],
     seams: [],
@@ -261,6 +263,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
   if (current) {
     b.live.deployed_sha = current.value as string;
+    b.live.deployed_by = current.actor;
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }

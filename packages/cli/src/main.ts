@@ -8,6 +8,7 @@ import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
+import { deploy, realGit } from "./release.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
@@ -23,7 +24,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam board [--json]           what is true, what is open, who is here
-  ateam release [--json]         what passed on repo and not yet on production: the deploy list for the human
+  ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
@@ -145,7 +146,15 @@ async function main(argv: string[]) {
     case "release": {
       exact(rest);
       const b = await client.board();
-      console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
+      const target = str(a, "deploy");
+      if (target === undefined) { console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b)); return; }
+      const outcome = await deploy(b, target, {
+        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN,
+        reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
+        note: async (body) => { await emit({ kind: "note", body }); },
+        print: console.log,
+      });
+      if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
       return;
     }
     case "trace": {
