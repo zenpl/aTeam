@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ClientEvent } from "@ateam/core";
+import { boardTask, type ClientEvent } from "@ateam/core";
 import { parse, str, list, bool, duration, type Args } from "./args.js";
 import { Client, ClientError, type Config } from "./client.js";
 import * as fmt from "./format.js";
@@ -22,6 +22,7 @@ say things
   ateam note <body> [--decision] [--supersedes <id>]
 
 tasks
+  ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
   ateam task done <id> [--evidence "..."]
@@ -143,6 +144,13 @@ async function main(argv: string[]) {
     case "task": {
       const [op, id, ...more] = rest;
       switch (op) {
+        case "show": {
+          const b = await client.board();
+          const t = boardTask(b, need(id, "<id>"));
+          if (!t) throw new Error(`no task "${id}" in the log`);
+          console.log(fmt.task(t, b.seams));
+          return;
+        }
         case "create": return emit({ kind: "task", op, task: need(id, "<id>"), title: need(more.join(" "), "<title>"), criteria: list(a, "criteria") ?? [] });
         case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
         case "done": return emit({ kind: "task", op, task: need(id, "<id>"), evidence: str(a, "evidence") });

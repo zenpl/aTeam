@@ -1,4 +1,4 @@
-import type { Event, Board } from "@ateam/core";
+import type { Event, Board, BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -74,5 +74,35 @@ export function board(b: Board, me: string): string {
   out.push("", "PRESENCE");
   for (const p of b.presence) out.push(`  ${p.actor.padEnd(10)} ${ago(p.last_seen)} ago`);
 
+  return out.join("\n");
+}
+
+/** `ateam task show <id>`: everything the log knows about one task. */
+export function task(t: BoardTask, seams: Board["seams"]): string {
+  const out: string[] = [];
+  // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
+  const touches = t.touches ?? [];
+  const verifications = t.verifications ?? [];
+  out.push(`${t.id}  ${t.title}`);
+  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}`);
+  out.push(`owner      ${t.owner ?? "—"}`);
+  if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
+  else {
+    out.push(`criteria   (by ${t.criteria_by})`);
+    if (!t.criteria.length) out.push("  (none)");
+    t.criteria.forEach((c, i) => out.push(`  ${i + 1}. ${c}`));
+  }
+  out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
+  out.push(`evidence   ${t.evidence ?? "—"}`);
+  out.push("verifications");
+  if (!verifications.length) out.push("  (none)");
+  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
+  const mine = seams.filter((s) => s.tasks.includes(t.id));
+  out.push("seams");
+  if (!mine.length) out.push("  (none)");
+  for (const s of mine) {
+    const other = s.tasks.find((x) => x !== t.id);
+    out.push(`  ${s.resolved ? `resolved by ${s.resolved}` : "OPEN"}  with ${other}: ${s.overlap.join(", ")}`);
+  }
   return out.join("\n");
 }
