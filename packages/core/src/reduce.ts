@@ -16,7 +16,24 @@ export interface TaskState {
   status: TaskStatus;
   blocked_on?: string;
   evidence?: string;
-  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string }[];
+  /** How many times the owner has said done. Verifications belong to the round they were made in. */
+  round: number;
+  /** Every verification ever recorded, on every surface, in every round. Nothing is dropped. */
+  verifications: TaskVerification[];
+}
+
+export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
+
+/** Latest result per surface in the current round: what the board shows next to the task. */
+export function surfaceResults(t: TaskState): { surface: string; pass: boolean }[] {
+  const latest = new Map<string, boolean>();
+  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, v.pass);
+  return [...latest].map(([surface, pass]) => ({ surface, pass }));
+}
+
+/** Has this surface already passed in the current round? A second pass there says nothing new. */
+export function passedOn(t: TaskState, surface: string): boolean {
+  return t.verifications.some((v) => v.round === t.round && v.surface === surface && v.pass);
 }
 
 export interface ReadingState {
@@ -42,6 +59,11 @@ export interface SeamState {
   id: string;
   tasks: [string, string];
   overlap: string[];
+  /**
+   * Set when one side was already done before the other claimed: the later task stacks on the earlier one.
+   * Informational; it blocks nobody's verification. Cleared if both sides come back in flight.
+   */
+  stacked?: { done: string; on: string };
   resolution?: { by: string; at: string; text: string };
 }
 
@@ -56,6 +78,25 @@ export interface State {
   /** actor -> last time we heard from them (event or cursor) */
   presence: Map<string, string>;
   focus?: Reading;
+}
+
+/**
+ * Do two declared touches overlap? Exact match; a `#symbol` suffix overlaps its file; a directory prefix overlaps
+ * everything under it. Unrelated paths (or non-path touches like `GET /health`) only overlap when equal.
+ */
+export function touchesOverlap(a: string, b: string): boolean {
+  const pa = a.split("#")[0].replace(/\/+$/, "");
+  const pb = b.split("#")[0].replace(/\/+$/, "");
+  if (pa === pb) return true;
+  return pa.startsWith(pb + "/") || pb.startsWith(pa + "/");
+}
+
+/** The touches of either task that overlap something the other declared. */
+export function overlapOf(a: string[], b: string[]): string[] {
+  const out = new Set<string>();
+  for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
+  for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
+  return [...out];
 }
 
 export function seamId(a: string, b: string): string {
@@ -142,7 +183,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: e.criteria, criteria_by: e.actor,
-        created_at: e.at, touches: [], status: "open", verifications: [],
+        created_at: e.at, touches: [], status: "open", round: 0, verifications: [],
       });
       return;
     case "seam": {
@@ -157,15 +198,21 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   if (!t) return;
   switch (e.op) {
     case "claim":
-      t.owner = e.actor; t.touches = e.touches; t.status = "working";
+      // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
+      t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      t.owner = e.actor; t.status = "working";
       detectSeams(s, t);
       return;
     case "done":
-      t.status = "done"; t.evidence = e.evidence; return;
-    case "verify":
-      t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence });
-      t.status = e.pass ? "verified" : "failed";
+      t.status = "done"; t.evidence = e.evidence; t.round += 1; return;
+    case "verify": {
+      // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
+      // stands, per surface); a fail with nothing passed yet is a plain failed.
+      const passedBefore = surfaceResults(t).some((r) => r.pass);
+      t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
+      t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
+    }
     case "block":
       t.status = "blocked"; t.blocked_on = e.on; return;
     case "unblock":
@@ -173,19 +220,24 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   }
 }
 
-/** Two in-flight tasks whose declared touches intersect share a seam that someone must own. */
+/**
+ * Two in-flight tasks whose declared touches intersect share a seam that someone must own.
+ * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
+ */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
-    const overlap = t.touches.filter((x) => other.touches.includes(x));
+    const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
+    const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap });
+    if (existing) { existing.overlap = overlap; existing.stacked = stacked; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked });
   }
 }
 
+/** Seams that block verifying `task`: unresolved and not stacked. */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && x.tasks.includes(task));
 }

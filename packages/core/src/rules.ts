@@ -1,5 +1,5 @@
 import { type Event, type NewEvent, INSTRUCTION_MAX_CHARS } from "./events.js";
-import { type State, openSeamsFor } from "./reduce.js";
+import { type State, openSeamsFor, passedOn } from "./reduce.js";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -82,6 +82,11 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
 
   switch (e.op) {
     case "claim":
+      // open or failed: anyone may take it. working: only its owner, to widen what it touches.
+      if (t.status === "working" && t.owner === e.actor) {
+        if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
+        return;
+      }
       if (t.status !== "open" && t.status !== "failed")
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
@@ -91,12 +96,15 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (t.status !== "working") throw new Rejected("done", `${t.id} is ${t.status}`);
       return;
     // R2: done is a claim; verified is another identity's act, on a named surface, with no open seam.
+    // Verified on one surface is not verified on another: a verified task may be verified again on a new surface.
     case "verify": {
-      if (t.status !== "done") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
+      if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
+      if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
+      if (passedOn(t, e.surface))
+        throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; verify on a surface it has not passed on`);
       if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
       if (e.actor === t.criteria_by && e.actor !== human)
         throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");
-      if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
       const seams = openSeamsFor(state, t.id);
       if (seams.length)
         throw new Rejected("verify", `unresolved seam ${seams.map((s) => s.id + " [" + s.overlap.join(",") + "]").join(", ")}`);

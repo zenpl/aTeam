@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Deploy the server to Fly, stamping the image with the commit it was built from so GET /health can report it.
+# Falls back to "unknown" (never fails) when the sha cannot be determined, e.g. outside a git checkout.
+set -eu
+cd "$(dirname "$0")/.."
+sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  echo "bin/deploy: working tree is dirty; the deployed sha ($sha) will not match what runs" >&2
+fi
+exec fly deploy --build-arg "GIT_SHA=$sha" "$@"

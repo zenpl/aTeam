@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ClientEvent } from "@ateam/core";
+import { boardTask, type ClientEvent } from "@ateam/core";
 import { parse, str, list, bool, duration, type Args } from "./args.js";
-import { Client, ClientError, type Config } from "./client.js";
+import { Client, ClientError } from "./client.js";
+import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
-  ateam init --url <server> --me <name> [--token <t>]     writes .ateam/config.json (or use ATEAM_URL/ATEAM_ME/ATEAM_TOKEN)
+  ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json; the rest come from ATEAM_URL/ATEAM_TOKEN (ATEAM_ME wins over the file)
 
 every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
@@ -22,6 +23,7 @@ say things
   ateam note <body> [--decision] [--supersedes <id>]
 
 tasks
+  ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
   ateam task done <id> [--evidence "..."]
@@ -35,14 +37,12 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
   ateam watch [--interval 20s]   loop sync; exits 0 when an instruction for you arrives (for Monitor)
 `;
 
+const configFile = () => join(process.cwd(), ".ateam", "config.json");
+
 function loadConfig(): Config {
-  const file = join(process.cwd(), ".ateam", "config.json");
+  const file = configFile();
   const f = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
-  const url = process.env.ATEAM_URL ?? f.url;
-  const me = process.env.ATEAM_ME ?? f.me;
-  const token = process.env.ATEAM_TOKEN ?? f.token;
-  if (!url || !me) throw new Error("not configured: run `ateam init --url <server> --me <name>` or set ATEAM_URL and ATEAM_ME");
-  return { url, me, token };
+  return resolveConfig(f, process.env);
 }
 
 function cursorFile(me: string) { return join(process.cwd(), ".ateam", `cursor.${me}`); }
@@ -89,10 +89,11 @@ async function main(argv: string[]) {
   if (!cmd || cmd === "help" || bool(a, "help")) { console.log(HELP); return; }
 
   if (cmd === "init") {
-    const cfg: Config = { url: need(str(a, "url"), "--url"), me: need(str(a, "me"), "--me"), token: str(a, "token") };
+    const fields = initFields({ url: str(a, "url"), me: str(a, "me"), token: str(a, "token") }, process.env);
     mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
-    writeFileSync(join(process.cwd(), ".ateam", "config.json"), JSON.stringify(cfg, null, 2));
-    console.log(`configured as "${cfg.me}" against ${cfg.url}. Add .ateam/ to .gitignore.`);
+    writeFileSync(configFile(), JSON.stringify(fields, null, 2) + "\n");
+    const eff = resolveConfig(fields, process.env);
+    console.log(`configured as "${eff.me}" against ${eff.url} (wrote ${Object.keys(fields).join(", ")} to .ateam/config.json). Add .ateam/ to .gitignore.`);
     return;
   }
 
@@ -143,6 +144,13 @@ async function main(argv: string[]) {
     case "task": {
       const [op, id, ...more] = rest;
       switch (op) {
+        case "show": {
+          const b = await client.board();
+          const t = boardTask(b, need(id, "<id>"));
+          if (!t) throw new Error(`no task "${id}" in the log`);
+          console.log(fmt.task(t, b.seams));
+          return;
+        }
         case "create": return emit({ kind: "task", op, task: need(id, "<id>"), title: need(more.join(" "), "<title>"), criteria: list(a, "criteria") ?? [] });
         case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
         case "done": return emit({ kind: "task", op, task: need(id, "<id>"), evidence: str(a, "evidence") });

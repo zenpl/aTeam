@@ -124,6 +124,172 @@ describe("F5 · separation of duties is a rule, not a role", () => {
   });
 });
 
+describe("t-006 · verified on one surface is not verified on another", () => {
+  async function doneTask(store: MemoryStore, c: ReturnType<typeof clock>, id = "t1") {
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: "sha endpoint", criteria: ["/health has sha"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "fd76455" });
+  }
+  const status = async (store: MemoryStore, c: ReturnType<typeof clock>) => reduce(await store.read(), c.now()).tasks.get("t1")!.status;
+
+  it("accepts a production verify after a repo pass; rejects a second pass on repo, naming the surface", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true, evidence: "ran dist" });
+    expect(await status(store, c)).toBe("verified");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true, evidence: "curl /health" });
+    expect(await status(store, c)).toBe("verified");
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }));
+    expect(again.rule).toBe("verify");
+    expect(again.message).toMatch(/already passed on repo/);
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.verified[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: true }]);
+    expect(b.tasks.verified[0].verified_on).toEqual(["repo", "production"]);
+    expect(b.tasks.verified[0].verifications).toHaveLength(2);
+  });
+
+  it("a production fail after a repo pass sends the task back to done and the board shows both results", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: false, evidence: "sha is unknown" });
+    expect(await status(store, c)).toBe("done");
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: false }]);
+    expect(b.tasks.done[0].verified_on).toEqual(["repo"]);
+    // after a redeploy, production can be judged again; repo still cannot
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true });
+    expect(await status(store, c)).toBe("verified");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/repo/);
+  });
+
+  it("a failed task that is reclaimed and done again starts a new round: repo may pass again, history is kept", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: false, evidence: "no sha field" });
+    expect(await status(store, c)).toBe("failed");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1", evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    expect(await status(store, c)).toBe("verified");
+    const t = reduce(await store.read(), c.now()).tasks.get("t1")!;
+    expect(t.verifications.map((v) => [v.round, v.surface, v.pass])).toEqual([[1, "repo", false], [2, "repo", true]]);
+  });
+
+  it("owner and criteria-author exclusions and the open-seam rule still apply on the second surface", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await doneTask(store, c);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t1", surface: "production", pass: true }))).message).toMatch(/owner/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "production", pass: true }))).message).toMatch(/criteria/);
+
+    // a seam between two tasks that were in flight together blocks the next surface too
+    const store2 = new MemoryStore();
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "sha endpoint", criteria: ["/health has sha"] });
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t2", title: "board page", criteria: ["GET / html"] });
+    await emit(store2, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
+    await emit(store2, c, { kind: "task", op: "claim", actor: "frontend", task: "t2", touches: ["app.ts"] });
+    await emit(store2, c, { kind: "task", op: "done", actor: "dev", task: "t1" });
+    expect((await rejected(emit(store2, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true }))).message).toMatch(/seam/);
+  });
+});
+
+describe("t-009 · a seam with a task that was done before you claimed is stacking, not a collision", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+
+  it("A claim -> A done -> B claim overlapping: verify A is accepted; the board lists the seam as stacked", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "5241517" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams).toHaveLength(1);
+    expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
+    expect(b.needs_human).toHaveLength(0);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+  });
+
+  it("A claim -> B claim overlapping -> A done: verify A is still rejected (both were in flight)", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toBeUndefined();
+    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+  });
+
+  it("a stacked seam turns back into a collision if the done task fails and is reclaimed while the other is still in flight", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "test missing" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams[0].stacked).toBeUndefined();
+    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+  });
+});
+
+describe("t-010 · touches overlap by path, and the owner can widen a claim", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("main.ts#init overlaps main.ts; packages/cli overlaps packages/cli/src/main.ts; unrelated paths do not", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const id of ["A", "B", "C", "D"]) await create(store, c, id);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/cli/src/main.ts#init"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/cli/src/main.ts"] });
+    let s = await seams(store, c);
+    expect(s.map((x) => x.id)).toEqual(["seam:A+B"]);
+    expect(s[0].overlap.sort()).toEqual(["packages/cli/src/main.ts", "packages/cli/src/main.ts#init"]);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "C", touches: ["packages/cli"] });
+    s = await seams(store, c);
+    expect(s.map((x) => x.id).sort()).toEqual(["seam:A+B", "seam:A+C", "seam:B+C"]);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "pm", task: "D", touches: ["packages/client", "packages/clix/src/main.ts", "packages/server/src/main.tsx", "GET /health"] });
+    expect((await seams(store, c)).some((x) => x.tasks.includes("D"))).toBe(false);
+  });
+
+  it("the owner may claim again to widen touches; the union is kept and a seam a fresh claim would raise appears", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/core/src/rules.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/server/src/app.ts"] });
+    expect(await seams(store, c)).toHaveLength(0);
+
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/server/src/app.ts#health"] });
+    const st = reduce(await store.read(), c.now());
+    expect(st.tasks.get("A")!.touches).toEqual(["packages/core/src/rules.ts", "packages/server/src/app.ts#health"]);
+    expect(st.tasks.get("A")!.status).toBe("working");
+    expect(st.tasks.get("A")!.owner).toBe("dev");
+    expect((await seams(store, c)).map((x) => x.id)).toEqual(["seam:A+B"]);
+
+    // still nobody else's to claim
+    const r = await rejected(emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "A", touches: ["x"] }));
+    expect(r.rule).toBe("claim");
+    expect(r.message).toMatch(/owner dev/);
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
