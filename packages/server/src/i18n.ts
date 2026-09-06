@@ -76,6 +76,8 @@ export const UI = {
   // 其余
   rest: "其余：团队自己的状态",
   restSummary: (agents: number, overdue: number, seams: number, facts: number) => `session 之间的指令 ${agents} · 逾期 ${overdue} · 接缝 ${seams} 条未解决 · 事实 ${facts} 条有效`,
+  collabReport: "最近一份协作报告：",
+  collabNone: "还没有协作报告",
   overdue: "逾期",
   overdueLine: (to: string, body: string, from: string) => `${to} 还没有确认来自 ${from} 的「${body}」`,
   due: (when: string) => `期限 ${when}`,

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole } from "../src/html.js";
+import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -583,6 +583,33 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
       expect(r4.status).toBe(201);
       const bd = await (await v.api("/board")).json();
       for (const id of [a.id, c.id, d.id, e.id]) expect(bd.instructions.find((i: { id: string }) => i.id === id).status).toBe("acked");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("协作报告不上首屏；挖层一行「最近一份协作报告」（pd 14:50 ③）", () => {
+  it("names the latest docs/collab report from the notes, links it only when repo:url is a valid fact, never above the fold", async () => {
+    const v = server();
+    await v.start();
+    try {
+      let html = await v.authedPage();
+      expect(html).toContain("最近一份协作报告：还没有协作报告");
+      await v.post("pm", { kind: "note", body: "协作顺滑度报告第一份：docs/collab/2026-09-06-1435.md @ pm 分支 007f6c9，覆盖 05:58–14:34。" });
+      await v.post("pm", { kind: "note", body: "第二份：docs/collab/2026-09-06-1635.md @ 1a2b3c4d5e6f，覆盖 14:35–16:34。" });
+      await v.post("pm", { kind: "note", body: "补发的旧报告 docs/collab/2026-09-06-1200.md" });
+      html = await v.authedPage();
+      const rest = html.slice(html.indexOf('<details class="rest"'));
+      expect(rest).toContain('<p class="meta report">最近一份协作报告：2026-09-06 16:35Z <code>docs/collab/2026-09-06-1635.md @ 1a2b3c4</code></p>');
+      expect(rest).not.toContain("<a href");
+      expect(fold(html)).not.toContain("协作报告");
+      expect(fold(html)).not.toContain("docs/collab");
+
+      await v.post("pm", { kind: "reading", surface: "repo", key: "url", value: "https://example.org/team/project" });
+      html = await v.authedPage();
+      expect(html).toContain('<a href="https://example.org/team/project/blob/1a2b3c4/docs/collab/2026-09-06-1635.md">2026-09-06 16:35Z</a>');
+      const b = await (await v.api("/board")).json();
+      const st = reduce(await new MemoryStore().read());
+      expect(latestReport({ ...st, notes: [{ id: "n", actor: "pm", at: b.now, kind: "note", body: "docs/collab/2026-09-07-0900.md" }] } as unknown as typeof st, b)).toMatchObject({ path: "docs/collab/2026-09-07-0900.md", when: "2026-09-07 09:00Z", href: "https://example.org/team/project/blob/HEAD/docs/collab/2026-09-07-0900.md" });
     } finally { await v.stop(); }
   });
 });

@@ -320,6 +320,10 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, valid.length))}</span></summary>`);
 
+  // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
+  const report = latestReport(s, b);
+  d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
+
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
   d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(i.to, i.body, i.from))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(`</section>`);
@@ -370,6 +374,26 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   d.push(`</details>`);
   return d.join("\n");
+}
+
+/**
+ * The latest collaboration report named in a note as docs/collab/<YYYY-MM-DD-HHMM>.md (optionally "@ <sha>").
+ * It links only when the project recorded where its repository lives (a valid reading repo:url), so the board
+ * carries no host of its own; otherwise the path is shown as text.
+ */
+export function latestReport(s: State, b: Board): { path: string; when: string; sha?: string; href?: string } | null {
+  let best: { path: string; stamp: string; sha?: string } | null = null;
+  for (const n of s.notes) {
+    const m = /docs\/collab\/(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})\.md(?:\s*@\s*([0-9a-f]{7,40}))?/.exec(n.body);
+    if (!m) continue;
+    const stamp = `${m[1]}-${m[2]}${m[3]}`;
+    if (!best || stamp > best.stamp) best = { path: `docs/collab/${stamp}.md`, stamp, sha: m[4]?.slice(0, 7) };
+  }
+  if (!best) return null;
+  const when = `${best.stamp.slice(0, 10)} ${best.stamp.slice(11, 13)}:${best.stamp.slice(13, 15)}Z`;
+  const repo = b.readings.find((r) => r.valid && r.surface === "repo" && r.key === "url" && typeof r.value === "string");
+  const href = repo ? `${String(repo.value).replace(/\/$/, "")}/blob/${best.sha ?? "HEAD"}/${best.path}` : undefined;
+  return { path: best.path, when, sha: best.sha, href };
 }
 
 export function unauthorizedPage(): string {
@@ -470,6 +494,7 @@ li.warn .dot { background:var(--warn); }
 .who-chip .meta { font-size:.78rem; }
 .rest { border-top:1px solid var(--line); padding-top:.75rem; }
 .rest > summary { cursor:pointer; color:var(--muted); font-size:.9rem; }
+.rest .report { margin:.5rem 0 .25rem; } .rest .report a { color:var(--accent); }
 .rest section { padding:.25rem 0; }
 .tag { display:inline-block; font-size:.75rem; padding:.05em .45em; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
 .tag.warn { color:var(--warn); border-color:currentColor; }
