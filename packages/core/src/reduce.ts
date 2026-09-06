@@ -22,6 +22,8 @@ export interface TaskState {
   round: number;
   /** Every verification ever recorded, on every surface, in every round. Nothing is dropped. */
   verifications: TaskVerification[];
+  /** Notes attached with `task`, in log order. */
+  notes: Note[];
 }
 
 export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
@@ -146,6 +148,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
         s.notes.push(e);
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
         if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+        if (e.task) s.tasks.get(e.task)?.notes.push(e);
         break;
       }
       case "task": applyTask(s, e); break;
@@ -207,7 +210,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: e.criteria, criteria_by: e.actor,
-        created_at: e.at, touches: [], status: "open", round: 0, verifications: [],
+        created_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
       });
       return;
     case "seam": {

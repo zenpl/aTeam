@@ -67,6 +67,8 @@ export interface Note extends Base {
   supersedes?: string;
   /** This note answers an instruction that carried options: which one was chosen. */
   decides?: { of: string; option: string };
+  /** Attach to a task: `task show`, the board and GET / list it there. A body starting "evidence:" is an evidence update. */
+  task?: string;
 }
 
 export type TaskOp =

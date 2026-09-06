@@ -659,3 +659,23 @@ describe("t-011 · instructions to the human carry options; a click is ack + dec
     expect(s.notes.filter((n) => n.decision).map((n) => n.id)).toEqual([note.id]);
   });
 });
+
+describe("t-018 · notes attach to a task", () => {
+  it("--task stores the reference, an unknown task is rejected, and the board lists the notes in order", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "Cookie flags", criteria: ["SameSite=Lax"] });
+    expect((await rejected(emit(store, c, { kind: "note", actor: "dev", body: "on a ghost", task: "t-9" }))).rule).toBe("note");
+    const n1 = await emit(store, c, { kind: "note", actor: "dev", body: "concern: the proxy strips the flag", task: "t-1" });
+    await emit(store, c, { kind: "note", actor: "dev", body: "unrelated, not attached" });
+    const n2 = await emit(store, c, { kind: "note", actor: "pm", body: "evidence: PR #12 merged as 1234567", task: "t-1" });
+    const s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("t-1")!.notes.map((n) => n.id)).toEqual([n1.id, n2.id]);
+    expect(s.notes).toHaveLength(3);
+    const b = board(s, HUMAN, c.now());
+    expect(b.tasks.open[0].notes).toEqual([
+      { id: n1.id, actor: "dev", at: n1.at, body: "concern: the proxy strips the flag", decision: undefined },
+      { id: n2.id, actor: "pm", at: n2.at, body: "evidence: PR #12 merged as 1234567", decision: undefined },
+    ]);
+  });
+});

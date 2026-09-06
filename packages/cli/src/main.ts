@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, type ClientEvent } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent } from "@ateam/core";
 import { parse, str, list, bool, duration, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { sync, watch, type CursorStore } from "./loop.js";
+import { decide } from "./decide.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -25,7 +26,7 @@ say things
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
   ateam focus <body>                                                 the one thing that matters most right now
-  ateam note <body> [--decision] [--supersedes <id>]
+  ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
 tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
@@ -124,12 +125,9 @@ async function main(argv: string[]) {
     }
     case "decide": {
       const [id, ...option] = rest;
-      const of = need(id, "<id>"), choice = need(option.join(" "), "<option>");
-      const b = await client.board();
-      const i = b.instructions.find((x) => x.id === of);
-      if (!i) throw new Error(`no instruction "${of}" in the log`);
-      if (i.status !== "acked") await emit({ kind: "ack", of });
-      return emit({ kind: "note", body: `decision: ${i.body} -> ${choice}`, decision: true, decides: { of, option: choice } });
+      const events = await decide({ board: () => client.board(), emit: (e) => client.emit({ ...e, ...common(a) } as ClientEvent) }, need(id, "<id>"), need(option.join(" "), "<option>"));
+      for (const ev of events) console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+      return;
     }
     case "reading": {
       const [key, ...value] = rest;
@@ -141,7 +139,7 @@ async function main(argv: string[]) {
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: need(rest.join(" "), "<body>") });
-    case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes") });
+    case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
       switch (op) {
@@ -176,6 +174,7 @@ main(process.argv.slice(2)).catch((err) => {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
     process.exit(err.status === 409 ? 2 : 1);
   }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

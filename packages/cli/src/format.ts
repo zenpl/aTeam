@@ -13,7 +13,7 @@ export function event(e: Event, me: string): string {
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
     case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
-    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
+    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.task ? `[${e.task}] ` : ""}${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
       switch (e.op) {
         case "create": return `${t} ${who} task ${e.task} created: ${e.title}`;
@@ -120,6 +120,8 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   }
   out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
   out.push(`evidence   ${t.evidence ?? "—"}`);
+  const notes = t.notes ?? [];
+  for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);
   out.push("verifications");
   if (!verifications.length) out.push("  (none)");
   for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
@@ -131,5 +133,14 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
     const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : "OPEN";
     out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
   }
+  out.push("notes");
+  if (!notes.length) out.push("  (none)");
+  for (const n of notes) out.push(`  ${hhmm(n.at)} ${n.actor.padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
   return out.join("\n");
+}
+
+const EVIDENCE_PREFIX = /^evidence:/i;
+/** A note attached to a task whose body starts "evidence:" is an evidence update (done cannot be re-emitted). */
+export function isEvidenceUpdate(n: { body: string }): boolean {
+  return EVIDENCE_PREFIX.test(n.body.trimStart());
 }

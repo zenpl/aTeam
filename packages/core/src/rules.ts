@@ -73,6 +73,7 @@ export function validate(state: State, e: NewEvent, human: string): void {
       if (!e.body?.trim()) throw new Rejected("note", "body is required");
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
         throw new Rejected("note", `${e.supersedes} is not a note`);
+      if (e.task !== undefined && !state.tasks.has(e.task)) throw new Rejected("note", `${e.task} is not a task in the log`);
       // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
       if (e.decides) {
         const st = state.instructions.get(e.decides.of);

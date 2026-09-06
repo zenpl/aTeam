@@ -80,3 +80,20 @@ describe("t-003 · ateam task show", () => {
     expect(boardTask(b, "t-999")).toBeUndefined();
   });
 });
+
+describe("t-018 · task show lists attached notes and evidence updates", () => {
+  it("prints notes in order with actor and time, and an 'evidence:' note right after the done evidence", async () => {
+    const { store, emit } = await fixture();
+    await emit({ kind: "note", actor: "qa", body: "concern: sha in evidence is not on the default branch", task: "t-001" });
+    await emit({ kind: "note", actor: "dev", body: "evidence: fd76455 is now on the default branch too", task: "t-001" });
+    await emit({ kind: "note", actor: "pm", body: "not attached" });
+    const b = board(reduce(await store.read()), HUMAN);
+    const text = fmt.task(boardTask(b, "t-001")!, b.seams);
+    expect(text).toContain("evidence   fd76455: /health returns sha locally\n  + fd76455 is now on the default branch too  (dev 06:06)\nverifications");
+    expect(text).toContain("notes\n  06:05 qa        concern: sha in evidence is not on the default branch\n  06:06 dev       evidence: fd76455 is now on the default branch too");
+    expect(text).not.toContain("not attached");
+    expect(fmt.task(boardTask(b, "t-002")!, b.seams)).toContain("notes\n  (none)");
+    const ev = await emit({ kind: "note", actor: "qa", body: "one more", task: "t-002" });
+    expect(fmt.event(ev, "pm")).toContain("note [t-002] one more");
+  });
+});

@@ -43,6 +43,8 @@ beforeAll(async () => {
   await post("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, method: "select count(*)", depends_on: ["production:users"] });
   await post("dev", { kind: "note", body: "imported batch 3", writes: ["production:users"] });
   await post("qa", { kind: "reading", surface: "production", key: "health", value: "ok" });
+  await post("qa", { kind: "note", body: "concern: <flag> may be stripped by the proxy", task: "t-1" });
+  await post("dev", { kind: "note", body: "evidence: also on the default branch as 7654321", task: "t-1" });
 });
 
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
@@ -64,6 +66,9 @@ describe("GET / · read-only HTML board", () => {
     expect(html).toContain(esc("no <script> on the page"));
     expect(html).toContain("429 after 100 rps");
     expect(html).toContain("sha 1234567");                           // evidence
+    expect(html).toContain("+ also on the default branch as 7654321"); // evidence update from a note --task
+    expect(html).toMatch(/<ul class="notes">.*<b>qa<\/b>.*concern: &lt;flag&gt; may be stripped by the proxy.*<b>dev<\/b>.*evidence: also on the default branch/s);
+    expect(html.match(/<ul class="notes">/g)).toHaveLength(1);     // only t-1 has notes
     expect(html).toMatch(/verified on <b>repo<\/b> by qa/);          // verification
     expect(html).toContain("production:health");                     // valid reading
     expect(html).toContain("production:users.count");                // stale reading, with why
@@ -72,9 +77,11 @@ describe("GET / · read-only HTML board", () => {
     expect(html).toContain("abc1234");                               // server sha in the footer
   });
 
-  it("is read-only: no script, no forms other than decision buttons, and refreshes no more often than every 30 s", async () => {
+  it("is read-only: no script, no forms other than answer buttons, and refreshes no more often than every 30 s", async () => {
     const html = await (await api("/")).text();
-    expect(html).not.toMatch(/<form\b/i);                           // no instruction with options yet
+    const forms = html.match(/<form\b[^>]*>/gi) ?? [];
+    expect(forms).toHaveLength(1);                                   // one open instruction to human, without options: a "Got it" form
+    for (const f of forms) expect(f).toMatch(/action="\/(decide|ack)"/);
     expect(html).not.toMatch(/<script\b/i);
     expect(html).not.toMatch(/\bon[a-z]+\s*=/i);
     const m = html.match(/http-equiv="refresh" content="(\d+)"/);
@@ -155,9 +162,8 @@ describe("POST /decide · one click acks the instruction and records the decisio
 
   it("renders one button per option on the needs-human entry, default marked; buttons are disabled without the token", async () => {
     const anon = await (await fetch(`${base}/`)).text();
-    const forms = anon.match(/<form\b[^>]*>/gi) ?? [];
+    const forms = (anon.match(/<form\b[^>]*>/gi) ?? []).filter((f) => f.includes('action="/decide"'));
     expect(forms).toHaveLength(1);
-    expect(forms[0]).toContain('action="/decide"');
     expect(anon).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
     expect(anon).toMatch(/<button[^>]*name="option" value="A"[^>]*disabled>A<\/button>/);
     expect(anon).toMatch(/<button[^>]*name="option" value="B"[^>]*class="default"[^>]*disabled>B <small>default<\/small><\/button>/);
@@ -200,11 +206,90 @@ describe("POST /decide · one click acks the instruction and records the decisio
     expect(b.needs_human.map((n: { id: string }) => n.id)).not.toContain(ask.id);
 
     const page = await (await api("/")).text();
-    expect(page).not.toMatch(/<form\b/i);
+    expect(page).not.toMatch(/action="\/decide"/);
     expect(page).toContain("<b>⇒ B</b>");
 
     const again = await fetch(`${base}/decide`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=A` });
     expect(again.status).toBe(409);
     expect((await again.json()).message).toContain("already decided");
+  });
+});
+
+/** Visible text above the fold: everything before the details toggle, tags stripped, attribute values gone. */
+function aboveTheFold(html: string): string {
+  const cut = html.indexOf('<details class="more">');
+  expect(cut).toBeGreaterThan(0);
+  return html.slice(0, cut).replace(/<[^>]+>/g, " ");
+}
+
+describe("t-020 · a card page for the human: NEEDS YOU, STATUS, everything else behind a toggle", () => {
+  beforeAll(async () => {
+    await post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", method: "GET /health" });
+    await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "seen on ateam.fly.dev" });
+    await post("pm", { kind: "task", op: "create", task: "t-3", title: "Card page for the human", criteria: ["no ids above the fold"] });
+    await post("frontend", { kind: "task", op: "claim", task: "t-3", touches: ["packages/server/src/html.ts"] });
+    await post("pm", { kind: "task", op: "create", task: "t-4", title: "Watch survives errors", criteria: ["retries"] });
+    await post("dev", { kind: "task", op: "claim", task: "t-4", touches: ["packages/cli/src/loop.ts"] });
+    await post("dev", { kind: "task", op: "done", task: "t-4", evidence: "b6228e3 on the dev branch" });
+    await post("pm", { kind: "instruction", to: "dev", body: "claim t-5 now, touching packages/core/src/rules.ts", ack_by: new Date(Date.now() - 60_000).toISOString() });
+    await post("pm", { kind: "task", op: "create", task: "t-6", title: "Env beats config file", criteria: ["env wins"] });
+    await post("dev", { kind: "task", op: "claim", task: "t-6", touches: ["packages/cli/src/config.ts"] });
+    await post("dev", { kind: "task", op: "block", task: "t-6", on: "premise was wrong, see 01M1TP818FWVXP1YQV31X092RR and packages/cli/src/config.ts" });
+  });
+
+  it("above the fold: NEEDS YOU holds only questions for the human, STATUS speaks in titles; no ids, paths, long shas or agent instructions", async () => {
+    const html = await (await api("/")).text();
+    const fold = aboveTheFold(html);
+    expect(html.indexOf('id="needs-you"')).toBeLessThan(html.indexOf('id="status"'));
+    expect(html.indexOf('id="status"')).toBeLessThan(html.indexOf('<details class="more">'));
+
+    expect(fold).toContain("approve the deploy");                    // the human's own question
+    expect(fold).not.toContain("claim t-1 now");                     // pm → dev is not for the human
+    expect(fold).not.toContain("claim t-5 now");                     // nor an overdue one
+    expect(fold).toContain("ede0f06");                               // live build, short
+    expect(fold).not.toContain("ede0f06b");                          // never the long sha
+    expect(fold).toContain("Cookie flags");                          // verified on production → live
+    expect(fold).toContain("Card page for the human (frontend)");    // being worked on
+    expect(fold).toContain("Watch survives errors");                 // done, waiting for a check
+    expect(fold).toMatch(/Being worked on[\s\S]*Card page/);
+    expect(fold).toMatch(/Done, waiting for a check[\s\S]*Watch survives/);
+    expect(fold).toMatch(/Blocked[\s\S]*Env beats config file \(dev\)/);
+    expect(fold).not.toContain("premise was wrong");                 // a blocked_on reason stays below the fold
+    for (const p of ["pm", "dev", "qa", "frontend"]) expect(fold).toContain(p);
+    expect(fold).toContain("just now");
+
+    expect(fold).not.toMatch(/\b[0-9A-HJKMNP-TV-Z]{26}\b/);           // no event ids
+    expect(fold).not.toMatch(/[\w-]+\/[\w-]+\.[a-z]{2,3}\b/);        // no file paths
+    expect(fold).not.toMatch(/\b[0-9a-f]{8,40}\b/);                  // no long shas
+    expect(fold).not.toMatch(/\bt-\d+\b/);                           // titles, not task ids
+    expect(html).not.toMatch(/<script\b/i);
+  });
+
+  it("the details toggle carries the rest: agent instructions, overdue, seams, readings, task ids", async () => {
+    const html = await (await api("/")).text();
+    const rest = html.slice(html.indexOf('<details class="more">'));
+    expect(rest).toContain("claim t-1 now");
+    expect(rest).toMatch(/Overdue[\s\S]*has not acked "claim t-5 now/);
+    expect(rest).toContain("production:deployed.sha");
+    expect(rest).toContain("<code>t-3</code>");
+    expect(rest).toContain("packages/server/src/html.ts");
+  });
+
+  it("a question without options gets a 'Got it' button; POST /ack acks it as the human and returns to /", async () => {
+    const ask = await post("pm", { kind: "instruction", to: HUMAN, body: "please read the deploy note", ack_by: new Date(Date.now() + 60_000).toISOString() });
+    const html = await (await api("/")).text();
+    expect(html).toContain(`<form class="decide" method="post" action="/ack"><input type="hidden" name="id" value="${ask.id}"><button type="submit">Got it</button></form>`);
+
+    const anon = await fetch(`${base}/ack`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}` });
+    expect(anon.status).toBe(401);
+    const bad = await fetch(`${base}/ack`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/x-www-form-urlencoded" }, body: `id=nope` });
+    expect(bad.status).toBe(409);
+
+    const cookie = ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+    const click = await fetch(`${base}/ack`, { method: "POST", redirect: "manual", headers: { cookie, accept: "text/html", "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}` });
+    expect(click.status).toBe(303);
+    const b = await (await api("/board")).json();
+    expect(b.instructions.find((i: { id: string }) => i.id === ask.id)).toMatchObject({ status: "acked" });
+    expect(aboveTheFold(await (await api("/")).text())).not.toContain("please read the deploy note");
   });
 });

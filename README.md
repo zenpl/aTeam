@@ -45,6 +45,7 @@ ateam decide <id> B                                              # human, from a
 ateam reading users.count 128 --surface production --method "select count(*)" \
       --assumes "prod and roster have zero overlap" --depends-on production:users
 ateam note "imported roster batch 3" --writes production:users      # invalidates the reading above
+ateam note "evidence: also merged as 1234567" --task t-cookie         # attaches to the task; task show / GET / list it
 ateam task create t-cookie "Session cookie flags" --criteria "cookie is SameSite=Lax"
 ateam task claim t-cookie --touches auth.session_cookie,api/session.ts
 ateam task done t-cookie --evidence "PR #12"

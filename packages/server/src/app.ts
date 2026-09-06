@@ -50,7 +50,17 @@ export function createApp(opts: ServerOptions) {
         }
         if (!boardPublic && !authed()) return html(res, 401, unauthorizedPage());
         const state = reduce(await store.read());
-        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed() }));
+        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed(), human }));
+      }
+
+      // The "Got it" button: the human acks an instruction without options.
+      if (req.method === "POST" && url.pathname === "/ack") {
+        if (!authed()) return html(res, 401, unauthorizedPage());
+        const of = new URLSearchParams(await readText(req)).get("id") ?? "";
+        const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
+        bus.emit("append", e);
+        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
+        return json(res, 201, e);
       }
 
       // One click on the board: ack the instruction and record the decision, as the human, in one request.
