@@ -128,7 +128,14 @@ export interface Board {
     /** present when the instruction asks the human to choose */
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
-  readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
+  readings: {
+    id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[];
+    /** When the world was measured (equal to `at` unless the reading said otherwise), and how long after it was written down. */
+    measured_at: string; recorded_after_s: number;
+    /** The record came more than half the validity period after the measurement: treat with care. */
+    late: boolean;
+    valid_until?: string;
+  }[];
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
   seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean }[];
@@ -235,8 +242,12 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const r = rs.reading;
     if (r.surface === "team" && r.key === "focus") continue;
     const valid = rs.valid && !rs.expired;
+    const measured = r.measured_at ?? r.at;
+    const recordedAfter = Math.max(0, Math.round((Date.parse(r.at) - Date.parse(measured)) / 1000));
+    const validFor = r.valid_until ? Date.parse(r.valid_until) - Date.parse(measured) : undefined;
     b.readings.push({
       id: r.id, key: r.key, surface: r.surface, value: r.value, at: r.at, by: r.actor, valid,
+      measured_at: measured, recorded_after_s: recordedAfter, late: validFor !== undefined && recordedAfter * 1000 > validFor / 2, valid_until: r.valid_until,
       why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
       assumptions: r.assumptions,
     });

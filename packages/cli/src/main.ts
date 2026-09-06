@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
-import { parse, str, list, bool, duration, exact, UsageError, type Args } from "./args.js";
+import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
@@ -31,6 +31,7 @@ say things
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
+                                    [--measured-at <ISO | 10m>]        when the world was measured (10m = ten minutes ago); validity counts from it
   ateam say <正文>                                                   human only: one sentence to the team; the board shows where it went
   ateam focus <body>                                                 the one thing that matters most right now
   ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
@@ -178,11 +179,13 @@ async function main(argv: string[]) {
     case "reading": {
       const [key, value] = exact(rest, "key", "value");
       const validFor = str(a, "valid-for");
+      const measuredAt = str(a, "measured-at") ? measuredAtOf(str(a, "measured-at")!, new Date()) : undefined;
+      const from = measuredAt ? Date.parse(measuredAt) : Date.now();
       const shapeRe = str(a, "shape"), shapeEnum = list(a, "enum");
       const shape = shapeRe !== undefined || shapeEnum?.length ? { regex: shapeRe, enum: shapeEnum?.map(parseValue) } : undefined;
       return emit({ kind: "reading", key, value: parseValue(value),
         surface: need(str(a, "surface"), "--surface"), method: str(a, "method"), assumptions: list(a, "assumes"),
-        depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
+        depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(from + duration(validFor)).toISOString() : undefined, shape, measured_at: measuredAt });
     }
     case "say": {
       const [text] = exact(rest, "正文");

@@ -23,7 +23,7 @@ export async function append(store: EventStore, ne: NewEvent, opts: AppendOption
   const now = opts.now ?? new Date();
   const log = await store.read();
   const state = reduce(log, now);
-  validate(state, ne, opts.human);
+  validate(state, ne, opts.human, now);
   const e = { ...ne, id: ulid(now.getTime()), at: now.toISOString() } as Event;
   await store.appendRaw(e);
   return e;

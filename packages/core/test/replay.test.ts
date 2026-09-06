@@ -1015,6 +1015,31 @@ describe("t-048 · the board says who is not receiving", () => {
   });
 });
 
+describe("t-051 · a fact has a measurement time and a record time", () => {
+  it("measured_at defaults to the event time; a measurement from the future is refused; validity counts from the measurement", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const plain = await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 12, surface: "production" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.readings.find((r) => r.id === plain.id)).toMatchObject({ measured_at: plain.at, recorded_after_s: 0, late: false });
+    const r = await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 13, surface: "production", measured_at: c.iso(min(1)) }));
+    expect(r.rule).toBe("reading");
+    expect(r.message).toMatch(/measured_at .* is later than now/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 13, surface: "production", measured_at: "yesterday-ish" }))).message).toMatch(/is not a time/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 13, surface: "production", measured_at: c.iso(-min(10)), valid_until: c.iso(-min(20)) }))).message).toMatch(/valid_until is before measured_at/);
+    // measured 40 minutes ago, valid for an hour from then: 20 minutes of validity left, not 60
+    const late = await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 14, surface: "production", measured_at: c.iso(-min(40)), valid_until: c.iso(min(20)) });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.readings.find((r) => r.id === late.id)).toMatchObject({ measured_at: c.iso(-min(40)), recorded_after_s: 2400, late: true, valid: true });
+    c.tick(min(21));
+    expect((await rejected(emit(store, c, { kind: "note", actor: "dev", body: "x", refs: [late.id] }))).message).toMatch(/expired/);
+    // recorded 10 minutes after a measurement valid for an hour: not late (under half)
+    const ok = await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", value: 15, surface: "production", measured_at: c.iso(-min(10)), valid_until: c.iso(min(50)) });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.readings.find((r) => r.id === ok.id)).toMatchObject({ recorded_after_s: 600, late: false });
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
@@ -1054,8 +1079,9 @@ describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly"
   it("time-limited readings expire", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const r = await emit(store, c, { kind: "reading", actor: "qa", key: "staging.has_real_users", value: false, surface: "staging", valid_until: c.iso(min(60)) });
-    c.tick(min(61));
+    // measured 10 minutes before it was written; valid for an hour from the measurement (t-051)
+    const r = await emit(store, c, { kind: "reading", actor: "qa", key: "staging.has_real_users", value: false, surface: "staging", measured_at: c.iso(-min(10)), valid_until: c.iso(min(50)) });
+    c.tick(min(51));
     expect((await rejected(emit(store, c, { kind: "note", actor: "backend", body: "ok to wipe staging", refs: [r.id] }))).message).toMatch(/expired/);
   });
 

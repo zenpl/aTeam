@@ -11,7 +11,7 @@ export class Rejected extends Error {
  * The structural rules. They are the product; everything else is storage.
  * Throws Rejected. `state` is the reduction of the log *before* this event.
  */
-export function validate(state: State, e: NewEvent, human: string): void {
+export function validate(state: State, e: NewEvent, human: string, now: Date = new Date()): void {
   if (!e.actor) throw new Rejected("actor", "actor is required");
 
   // R0: you may not build on a reading that is no longer true, nor on an event that is not in the log.
@@ -32,6 +32,12 @@ export function validate(state: State, e: NewEvent, human: string): void {
     // it never leaks to another surface (staging:users.count is not production:users.count).
     case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      if (e.measured_at !== undefined) {
+        const m = Date.parse(e.measured_at);
+        if (Number.isNaN(m)) throw new Rejected("reading", `measured_at ${JSON.stringify(e.measured_at)} is not a time`);
+        if (m > now.getTime()) throw new Rejected("reading", `measured_at ${e.measured_at} is later than now (${now.toISOString()}); a measurement cannot come from the future`);
+        if (e.valid_until !== undefined && Date.parse(e.valid_until) < m) throw new Rejected("reading", "valid_until is before measured_at");
+      }
       const declared = shapeFor(state, e.surface, e.key);
       if (e.shape) {
         if (e.shape.regex === undefined && !e.shape.enum?.length) throw new Rejected("reading", "a shape needs a regex or a non-empty enum");

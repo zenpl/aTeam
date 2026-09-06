@@ -2,7 +2,7 @@
  * t-023: a stray positional argument is refused and echoed, never folded silently into a title or body.
  */
 import { describe, it, expect } from "vitest";
-import { exact, UsageError, parse } from "../src/args.js";
+import { exact, UsageError, parse, measuredAtOf } from "../src/args.js";
 import * as fmt from "../src/format.js";
 
 describe("t-023 · exact positionals", () => {
@@ -41,5 +41,15 @@ describe("t-023 · task create echoes what was sent", () => {
   it("prints the title and numbered criteria", () => {
     expect(fmt.created("服务器报告部署的 sha", ["GET /health 返回 sha", "缺 sha 时显示 unknown"])).toBe(
       "  title: 服务器报告部署的 sha\n  1. GET /health 返回 sha\n  2. 缺 sha 时显示 unknown");
+  });
+});
+
+describe("t-051 · --measured-at", () => {
+  it("takes an ISO time or how long ago, and refuses anything else", () => {
+    const now = new Date(1_700_000_000_000);
+    expect(measuredAtOf("10m", now)).toBe(new Date(now.getTime() - 600_000).toISOString());
+    expect(measuredAtOf("2h", now)).toBe(new Date(now.getTime() - 7_200_000).toISOString());
+    expect(measuredAtOf(new Date(now.getTime() - 5000).toISOString(), now)).toBe(new Date(now.getTime() - 5000).toISOString());
+    expect(() => measuredAtOf("yesterday", now)).toThrow(UsageError);
   });
 });

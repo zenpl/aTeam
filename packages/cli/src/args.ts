@@ -67,3 +67,12 @@ export function exact(rest: string[], ...names: string[]): string[] {
     return v;
   });
 }
+
+/** `--measured-at`: an ISO time, or how long ago as a duration ("10m" = ten minutes before now). */
+export function measuredAtOf(s: string, now: Date): string {
+  const v = s.trim();
+  if (/^\d+(?:\.\d+)?\s*(s|m|h|d)$/.test(v)) return new Date(now.getTime() - duration(v)).toISOString();
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) throw new UsageError(`--measured-at ${JSON.stringify(s)}: give an ISO time or how long ago (10m, 2h)`);
+  return new Date(t).toISOString();
+}
