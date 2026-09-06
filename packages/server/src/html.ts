@@ -16,7 +16,8 @@ export const TITLE_MAX = 30;
 /** How long 「你刚定了」 stays on the page after the human answered. */
 const JUST_MS = 60 * 60_000;
 
-export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string }
+/** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
+export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string }
 
 export type Kind = "ask" | "do" | "tell";
 /** What kind of card an instruction to the human is. Options → 问你; asked to act → 请你做; else 告诉你. */
@@ -98,11 +99,12 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const ago = (iso: string) => UI.ago(secAgo(iso));
   const t = (iso: string) => `<time datetime="${esc(iso)}" title="${esc(iso)}">${esc(ago(iso))}</time>`;
   const canDecide = opts.canDecide !== false;
-  // Buttons are always clickable. Without the cookie, a form posts to the token page, which does the action after the token.
+  const base = opts.base ?? "";
+  // Buttons are always clickable. Without the cookie, a form posts to the token page, which does the action after the key.
   const form = (action: string, cls: string, fields: string, inner: string) =>
     canDecide
-      ? `<form class="${cls}" method="post" action="${action}">${fields}${inner}</form>`
-      : `<form class="${cls}" method="post" action="/token"><input type="hidden" name="then" value="${esc(action)}">${fields}${inner}</form>`;
+      ? `<form class="${cls}" method="post" action="${esc(base + action)}">${fields}${inner}</form>`
+      : `<form class="${cls}" method="post" action="${esc(base)}/token"><input type="hidden" name="then" value="${esc(action)}">${fields}${inner}</form>`;
 
   const out: string[] = [];
 
@@ -368,14 +370,14 @@ export function unauthorizedPage(): string {
 }
 
 /** The token page: the only thing on it is a token box; the hidden fields carry the action the human clicked. */
-export function tokenPage(fields: Record<string, string>, wrong = false): string {
+export function tokenPage(fields: Record<string, string>, wrong = false, base = ""): string {
   const hidden = Object.entries(fields).filter(([k]) => k !== "token").map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("");
   return `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${UI.tokenTitle} · ${UI.title}</title>
 <style>${CSS}</style></head>
 <body><main class="token-page"><header><h1>${UI.header}</h1></header>
 <section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${UI.tokenWrong}</p>` : ""}
-<form method="post" action="/token" class="line">${hidden}<input type="password" name="token" aria-label="${UI.tokenLabel}" autofocus autocomplete="off" required><button class="btn primary" type="submit">${UI.tokenSubmit}</button></form>
+<form method="post" action="${esc(base)}/token" class="line">${hidden}<input type="password" name="token" aria-label="${UI.tokenLabel}" autofocus autocomplete="off" required><button class="btn primary" type="submit">${UI.tokenSubmit}</button></form>
 </section></main></body></html>
 `;
 }

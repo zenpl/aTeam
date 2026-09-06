@@ -1,13 +1,20 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, welcome, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
+import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 
 const COOKIE = "ateam_token";
 
 export interface ServerOptions {
-  store: EventStore;
+  /** Legacy single-project form: the store and shared key of the default project. */
+  store?: EventStore;
   token?: string;
+  /** Multi-project form (t-041): who knows the projects and keys, and where each project's log lives. */
+  registry?: Registry;
+  storeFor?: (project: string) => EventStore;
+  /** The project the unprefixed address means. Default "ateam". */
+  defaultProject?: string;
   human: string;
   maxWaitMs?: number;
   /** Git commit the running image was built from; "unknown" when the build did not say. */
@@ -16,12 +23,23 @@ export interface ServerOptions {
   boardPublic?: boolean;
 }
 
-/** One project, one log, one shared token. Identity is the X-Actor header. */
+/** Many projects, each one log and its own keys; the unprefixed address is the default project. Identity is the X-Actor header. */
 export function createApp(opts: ServerOptions) {
-  const { store, token, human } = opts;
+  const { token, human } = opts;
   const sha = opts.sha?.trim() || "unknown";
   const boardPublic = opts.boardPublic ?? true;
   const maxWait = opts.maxWaitMs ?? 30_000;
+  const defaultProject = opts.defaultProject ?? "ateam";
+  const registry = opts.registry ?? new MemoryRegistry();
+  const memory = new Map<string, EventStore>();
+  const storeFor = opts.storeFor ?? ((p: string) => {
+    if (p === defaultProject && opts.store) return opts.store;
+    let s = memory.get(p);
+    if (!s) { s = new MemoryStore(); memory.set(p, s); }
+    return s;
+  });
+  const ready = registry.ensure(defaultProject, defaultProject, token);
+
   const bus = new EventEmitter();
   bus.setMaxListeners(1000);
   let chain: Promise<unknown> = Promise.resolve();
@@ -33,53 +51,79 @@ export function createApp(opts: ServerOptions) {
 
   return createServer(async (req, res) => {
     try {
+      await ready;
       const url = new URL(req.url ?? "/", "http://x");
+      const proto = String(req.headers["x-forwarded-proto"] ?? "").includes("https") ? "https" : "http";
+      const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
+      const origin = `${proto}://${host}`;
+      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
+
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
 
-      // The address is the toolkit: an agent that is not a browser gets the "how to start, how to join" manual at /.
-      // A browser says text/html (and ?token= is the browser's login); anything else at / is an agent reading the manual.
-      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
-      if (req.method === "GET" && (url.pathname === "/manual" || (url.pathname === "/" && !wantsHtml))) {
-        const proto = String(req.headers["x-forwarded-proto"] ?? "").includes("https") ? "https" : "http";
-        const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
-        const text = welcome(`${proto}://${host}`);
-        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
-        return res.end(text);
-      }
+      // Which project, and what path inside it. /p/<id>/... names one; anything else is the default project.
+      const m = /^\/p\/([^/]+)(\/.*)?$/.exec(url.pathname);
+      const projectId = m ? decodeURIComponent(m[1]) : defaultProject;
+      const path = m ? (m[2] || "/") : url.pathname;
+      const base = m ? `/p/${encodeURIComponent(projectId)}` : "";
 
-      // The manual a joining node reads. Generic by construction, so it needs no key.
-      if (req.method === "GET" && url.pathname.startsWith("/manual/")) {
-        const text = manual(decodeURIComponent(url.pathname.slice("/manual/".length)));
+      // Global: the newcomer's manual, and the role manuals. Generic by construction, so they need no key.
+      if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
+      if (req.method === "GET" && path.startsWith("/manual/")) {
+        const text = manual(decodeURIComponent(path.slice("/manual/".length)));
         if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
-        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
-        return res.end(text);
+        return markdown(res, text);
       }
 
-      // The human's page. Same data as /board, no identity needed. Reading is public unless boardPublic is off;
-      // the decision buttons POST as the human and always need the token. Browsers cannot send the Bearer header,
-      // so the token may arrive once as ?token= and is then kept in a cookie.
-      const authed = () => !token || req.headers.authorization === `Bearer ${token}` || cookie(req, COOKIE) === token;
-      if (req.method === "GET" && url.pathname === "/") {
+      // A new project: one board, one log, one key. The key is in this response and nowhere else.
+      if (req.method === "POST" && path === "/projects" && !m) {
+        const body = (await readJson(req)) as { name?: unknown };
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        if (!name) return json(res, 400, { error: "name", message: "给项目一个名字：{\"name\": \"...\"}" });
+        const { project, admin_key, invite } = await registry.create(name);
+        return json(res, 201, {
+          project: project.id, name: project.name,
+          board_url: `${origin}/p/${encodeURIComponent(project.id)}/`, project_url: `${origin}/p/${encodeURIComponent(project.id)}`,
+          admin_key, invite_url: `${origin}/invite/${invite.code}`, invite_expires_at: invite.expires_at,
+        });
+      }
+
+      const project = await registry.get(projectId);
+      if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
+      const store = storeFor(projectId);
+      const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
+
+      // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
+      // token is the default project's admin key. A key of another project is refused outright.
+      const presented = bearer(req) ?? cookie(req, cookieName);
+      const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
+      if (record && record.project !== projectId) return json(res, 403, { error: "forbidden", message: "这把钥匙属于另一个项目" });
+      const isAdmin = !!record && record.role === null;
+      const authed = () => isAdmin || !!record;
+
+      if (req.method === "GET" && path === "/") {
         const given = url.searchParams.get("token");
-        if (token && given !== null) {
-          if (given !== token) return html(res, 401, unauthorizedPage());
-          const secure = String(req.headers["x-forwarded-proto"] ?? "").includes("https");
-          res.writeHead(303, { location: "/", "set-cookie": `${COOKIE}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}` });
+        if (given !== null) {
+          const r = await registry.lookup(given);
+          if (!r || r.project !== projectId || r.role !== null) return html(res, 401, unauthorizedPage());
+          const secure = proto === "https";
+          res.writeHead(303, { location: `${base}/`, "set-cookie": `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}` });
           return res.end();
         }
-        if (!boardPublic && !authed()) return html(res, 401, unauthorizedPage());
+        if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
         const state = reduce(await store.read());
-        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed(), human }));
+        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: isAdmin, human, base }));
       }
 
+      const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };
+      const emitAll = (events: unknown[]) => { for (const e of events) bus.emit("append", { project: projectId, e }); };
+
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
-      // run the same action right after the token is entered (docs/board.md: buttons are always clickable).
+      // run the same action right after the key is entered (docs/board.md: buttons are always clickable).
       const ACTIONS = new Set(["/ack", "/say", "/decide"]);
       const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
         if (then === "/ack") {
-          // 「知道了」/「做好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
-          // when the instruction names a task, the note hangs on that task too.
-          // Several ids at once come from the missing-role card (t-043): 起好了 acks everything waiting on that role.
+          // 「知道了」/「做好了」/「起好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
+          // when the instruction names a task, the note hangs on that task too. Several ids ack together (t-043).
           const ids = form.getAll("id").filter(Boolean), of = ids[0] ?? "", why = (form.get("note") ?? "").trim();
           const events = await serialize(async () => {
             const st = reduce(await store.read()).instructions.get(of);
@@ -95,7 +139,7 @@ export function createApp(opts: ServerOptions) {
             }
             return out;
           });
-          for (const e of events) bus.emit("append", e);
+          emitAll(events);
           return { status: 201, body: { events } };
         }
         if (then === "/say") {
@@ -104,7 +148,7 @@ export function createApp(opts: ServerOptions) {
           if (!text) return { status: 400, body: { error: "empty", message: "说点什么再点「说」" } };
           if (text.length > SAID_MAX_CHARS) return { status: 400, body: { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` } };
           const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
-          bus.emit("append", note);
+          emitAll([note]);
           return { status: 201, body: note };
         }
         if (then === "/decide") {
@@ -118,62 +162,61 @@ export function createApp(opts: ServerOptions) {
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           const note = await serialize(async () => {
             const fresh = reduce(await store.read()).instructions.get(of)!;
-            if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
+            if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human })]);
             return append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
           });
-          bus.emit("append", note);
+          emitAll([note]);
           return { status: 201, body: note };
         }
         return { status: 404, body: { error: "not found" } };
       };
-      if (req.method === "POST" && ACTIONS.has(url.pathname)) {
-        if (!authed()) return html(res, 401, unauthorizedPage());
-        const r = await act(url.pathname, new URLSearchParams(await readText(req)));
-        if (r.status < 300 && wantsHtml) { res.writeHead(303, { location: "/" }); return res.end(); }
+
+      if (req.method === "POST" && ACTIONS.has(path)) {
+        if (!isAdmin) return html(res, 401, unauthorizedPage());
+        const r = await act(path, new URLSearchParams(await readText(req)));
+        if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
       }
 
-      // The token page: a form posts here with `then` (the action) and its fields; without the token it asks for
-      // one; with the right token it sets the cookie and performs the action, then returns to the board.
-      if (url.pathname === "/token" && (req.method === "GET" || req.method === "POST")) {
+      // The token page: a form posts here with `then` (the action) and its fields; without the key it asks for
+      // one; with this project's admin key it sets the cookie, performs the action, and returns to the board.
+      if (path === "/token" && (req.method === "GET" || req.method === "POST")) {
         const form = new URLSearchParams(req.method === "POST" ? await readText(req) : url.search);
         const fields: Record<string, string> = {};
         for (const [k, v] of form) if (k !== "token") fields[k] = v;
         const given = form.get("token");
-        if (given === null) return html(res, 200, tokenPage(fields));
-        if (token && given !== token) return html(res, 401, tokenPage(fields, true));
-        const secure = String(req.headers["x-forwarded-proto"] ?? "").includes("https");
-        const setCookie = `${COOKIE}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`;
+        if (given === null) return html(res, 200, tokenPage(fields, false, base));
+        const r0 = await registry.lookup(given);
+        if (!r0 || r0.project !== projectId || r0.role !== null) return html(res, 401, tokenPage(fields, true, base));
+        const secure = proto === "https";
+        const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`;
         const then = fields.then ?? "";
         const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
         if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
-        res.writeHead(303, { location: "/", "set-cookie": setCookie });
+        res.writeHead(303, { location: `${base}/`, "set-cookie": setCookie });
         return res.end();
       }
 
-      if (token && req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: "unauthorized" });
+      // The API: a key of this project, and an identity. A node key is bound to its role; an admin key may speak as anyone.
+      if (!record) return json(res, 401, { error: "unauthorized" });
       const actor = String(req.headers["x-actor"] ?? "").trim();
       if (!actor) return json(res, 400, { error: "X-Actor header is required" });
+      if (record.role !== null && actor !== record.role) return json(res, 403, { error: "forbidden", message: `这把钥匙是 ${record.role} 的，不能以 ${actor} 说话` });
 
-      if (req.method === "GET" && url.pathname === "/board") {
-        const b = board(reduce(await store.read()), human);
-        return json(res, 200, b);
-      }
+      if (req.method === "GET" && path === "/board") return json(res, 200, board(reduce(await store.read()), human));
 
-      if (req.method === "GET" && url.pathname === "/log") {
-        const after = url.searchParams.get("after");
-        return json(res, 200, { events: await store.since(after) });
-      }
+      if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
 
-      if (req.method === "GET" && url.pathname === "/events") {
+      if (req.method === "GET" && path === "/events") {
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
         let result = await pull(store, actor, after);
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, wait);
-            function done() { clearTimeout(timer); bus.off("append", done); resolve(); }
-            bus.on("append", done);
+            function onAppend(x: { project: string }) { if (x.project === projectId) done(); }
+            function done() { clearTimeout(timer); bus.off("append", onAppend); resolve(); }
+            bus.on("append", onAppend);
             req.on("close", done);
           });
           result = await pull(store, actor, after);
@@ -181,11 +224,11 @@ export function createApp(opts: ServerOptions) {
         return json(res, 200, result);
       }
 
-      if (req.method === "POST" && url.pathname === "/events") {
+      if (req.method === "POST" && path === "/events") {
         const body = (await readJson(req)) as NewEvent;
         const ne = { ...body, actor } as NewEvent;
         const e = await serialize(() => append(store, ne, { human }));
-        bus.emit("append", e);
+        emitAll([e]);
         return json(res, 201, e);
       }
 
@@ -197,6 +240,16 @@ export function createApp(opts: ServerOptions) {
       return json(res, 500, { error: "internal", message: (err as Error).message });
     }
   });
+}
+
+function bearer(req: IncomingMessage): string | undefined {
+  const h = String(req.headers.authorization ?? "");
+  return h.startsWith("Bearer ") ? h.slice(7).trim() || undefined : undefined;
+}
+
+function markdown(res: ServerResponse, text: string) {
+  res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-length": Buffer.byteLength(text) });
+  res.end(text);
 }
 
 function html(res: ServerResponse, status: number, body: string) {
@@ -211,7 +264,6 @@ function cookie(req: IncomingMessage, name: string): string | undefined {
   }
   return undefined;
 }
-
 
 function json(res: ServerResponse, status: number, body: unknown) {
   const s = JSON.stringify(body);
