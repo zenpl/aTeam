@@ -601,11 +601,11 @@ describe("t-027 · the board tells this version's changes from history, and fold
     c.tick(min(5));
     await deploy(store, c, "bbbbbbb");
     c.tick(min(1));
-    await deploy(store, c, "bbbbbbb"); // qa re-measures the same sha: the line does not move
+    await deploy(store, c, "bbbbbbb1234567890abcdef1234567890abcdef1"); // qa re-measures the same sha in long form: the line does not move
     c.tick(min(5));
     await passOnProd(store, c, "C", "withdraw op");
     const l = await live(store, c);
-    expect(l.deployed_sha).toBe("bbbbbbb");
+    expect(l.deployed_sha).toBe("bbbbbbb1234567890abcdef1234567890abcdef1");
     expect(l.since_sha).toBe("aaaaaaa");
     expect(l.recent.map((x) => x.id)).toEqual(["C"]);
     expect(l.earlier.map((x) => x.id)).toEqual(["A", "B"]);
@@ -614,7 +614,7 @@ describe("t-027 · the board tells this version's changes from history, and fold
     c.tick(min(5));
     await deploy(store, c, "ccccccc");
     const l3 = await live(store, c);
-    expect(l3).toMatchObject({ deployed_sha: "ccccccc", since_sha: "bbbbbbb", recent: [] });
+    expect(l3).toMatchObject({ deployed_sha: "ccccccc", since_sha: "bbbbbbb1234567890abcdef1234567890abcdef1", recent: [] }); // the latest reading of the previous sha, long form
     expect(l3.earlier.map((x) => x.id)).toEqual(["A", "B", "C"]);
   });
 
