@@ -3,23 +3,31 @@ import {
   FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
 } from "./events.js";
 
-export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed";
+export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn";
 
 export interface TaskState {
   id: string;
   title: string;
+  /** All criteria in order: the ones from create, then every addition. */
   criteria: string[];
+  /** Who created the task (and its first criteria). */
   criteria_by: string;
+  /** Criteria added after creation: which index in `criteria`, by whom, when. */
+  criteria_added: { index: number; by: string; at: string }[];
   created_at: string;
   owner?: string;
   touches: string[];
   status: TaskStatus;
   blocked_on?: string;
+  /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
+  withdrawn?: { by: string; at: string; reason: string };
   evidence?: string;
   /** How many times the owner has said done. Verifications belong to the round they were made in. */
   round: number;
   /** Every verification ever recorded, on every surface, in every round. Nothing is dropped. */
   verifications: TaskVerification[];
+  /** Notes attached with `task`, in log order. */
+  notes: Note[];
 }
 
 export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
@@ -29,6 +37,11 @@ export function surfaceResults(t: TaskState): { surface: string; pass: boolean }
   const latest = new Map<string, boolean>();
   for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, v.pass);
   return [...latest].map(([surface, pass]) => ({ surface, pass }));
+}
+
+/** Everyone who wrote a criterion of this task: none of them may judge it met. */
+export function criteriaAuthors(t: TaskState): string[] {
+  return [...new Set([t.criteria_by, ...t.criteria_added.map((a) => a.by)])];
 }
 
 /** Has this surface already passed in the current round? A second pass there says nothing new. */
@@ -53,8 +66,11 @@ export interface InstructionState {
   acked_by?: string;
   /** now > ack_by and not acked */
   overdue?: boolean;
-  /** For instructions with options: the option picked, by whom, and the decision note that records it. */
-  chosen?: { option: string; by: string; at: string; note: string };
+  /**
+   * For instructions with options: the option picked, by whom, and the decision note that records it.
+   * `by: "default"` (no note) means nobody chose before ack_by and the default took effect; the human may still override it.
+   */
+  chosen?: { option: string; by: string; at: string; note?: string };
 }
 
 export interface SeamState {
@@ -73,7 +89,7 @@ export interface State {
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
-  /** key -> declared value shape (defaults plus the first reading that declared one) */
+  /** surface:key -> the shape its first declaring reading gave it. Defaults (by key) live in DEFAULT_SHAPES; see shapeFor. */
   shapes: Map<string, ReadingShape>;
   instructions: Map<string, InstructionState>;
   tasks: Map<string, TaskState>;
@@ -103,6 +119,9 @@ export function overlapOf(a: string[], b: string[]): string[] {
   return [...out];
 }
 
+/** The `chosen.by` of a decision that nobody made: the default took effect when ack_by passed. */
+export const DEFAULT_DECIDER = "default";
+
 export function seamId(a: string, b: string): string {
   return "seam:" + [a, b].sort().join("+");
 }
@@ -115,7 +134,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     readings: new Map(),
     latestReading: new Map(),
-    shapes: new Map(Object.entries(DEFAULT_SHAPES)),
+    shapes: new Map(),
     instructions: new Map(),
     tasks: new Map(),
     seams: new Map(),
@@ -137,7 +156,8 @@ export function reduce(log: Log, now: Date = new Date()): State {
       case "note": {
         s.notes.push(e);
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
-        if (st && !st.chosen) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+        if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+        if (e.task) s.tasks.get(e.task)?.notes.push(e);
         break;
       }
       case "task": applyTask(s, e); break;
@@ -155,7 +175,12 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   const nowIso = now.toISOString();
   for (const st of s.instructions.values()) {
-    st.overdue = !st.acked_at && st.instruction.ack_by < nowIso;
+    const i = st.instruction;
+    // An ask with a default answers itself at ack_by: the human's silence is the default, and it stays overridable.
+    if (!st.chosen && !st.acked_at && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
+      st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
+    }
+    st.overdue = !st.acked_at && i.ack_by < nowIso && !st.chosen;
   }
   for (const rs of s.readings.values()) {
     if (rs.reading.valid_until && rs.reading.valid_until < nowIso) rs.expired = true;
@@ -177,9 +202,14 @@ function invalidate(s: State, e: Event) {
   }
 }
 
+/** The shape a reading on `surface:key` must match: what that surface:key declared, else the key's default, else none. */
+export function shapeFor(s: State, surface: string, key: string): ReadingShape | undefined {
+  return s.shapes.get(`${surface}:${key}`) ?? DEFAULT_SHAPES[key];
+}
+
 function applyReading(s: State, r: Reading) {
-  if (r.shape && !s.shapes.has(r.key)) s.shapes.set(r.key, r.shape);
   const key = readingKey(r);
+  if (r.shape && !s.shapes.has(key)) s.shapes.set(key, r.shape);
   const prevId = s.latestReading.get(key);
   if (prevId) {
     const prev = s.readings.get(prevId)!;
@@ -193,8 +223,8 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   switch (e.op) {
     case "create":
       s.tasks.set(e.task, {
-        id: e.task, title: e.title, criteria: e.criteria, criteria_by: e.actor,
-        created_at: e.at, touches: [], status: "open", round: 0, verifications: [],
+        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [],
+        created_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
       });
       return;
     case "seam": {
@@ -228,6 +258,15 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "blocked"; t.blocked_on = e.on; return;
     case "unblock":
       t.status = t.owner ? "working" : "open"; t.blocked_on = undefined; return;
+    case "criteria":
+      for (const text of e.add) { t.criteria.push(text); t.criteria_added.push({ index: t.criteria.length - 1, by: e.actor, at: e.at }); }
+      return;
+    case "withdraw":
+      t.status = "withdrawn"; t.blocked_on = undefined;
+      t.withdrawn = { by: e.actor, at: e.at, reason: e.reason };
+      // a withdrawn task touches nothing any more: its seams go with it
+      for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
+      return;
   }
 }
 
@@ -237,7 +276,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
-    if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
+    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);

@@ -17,9 +17,13 @@ export interface Base {
 /** What values a reading key may take. A regex is matched against the value as a string; an enum by JSON equality. */
 export interface ReadingShape { regex?: string; enum?: unknown[] }
 
-/** Shapes every log starts with. `deployed.sha` is a git sha, never an event id or "unknown". */
+/**
+ * Shapes every log starts with, by key, on every surface (a declaration for one `surface:key` is checked against them).
+ * `deployed.sha` is a git sha or the literal "unknown" that GET /health reports when the image was built without one;
+ * never an event id.
+ */
 export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
-  "deployed.sha": { regex: "^[0-9a-f]{7,40}$" },
+  "deployed.sha": { regex: "^([0-9a-f]{7,40}|unknown)$" },
 };
 
 /** A measurement of the world at one moment. Never a constant. */
@@ -36,7 +40,7 @@ export interface Reading extends Base {
   depends_on?: string[];
   /** ISO timestamp after which the reading is expired. */
   valid_until?: string;
-  /** Declares, once per key, what values this key may take. Later readings of the key that do not match are rejected. */
+  /** Declares, once per surface:key, what values it may take. Later readings of that surface:key that do not match are rejected. */
   shape?: ReadingShape;
 }
 
@@ -67,6 +71,8 @@ export interface Note extends Base {
   supersedes?: string;
   /** This note answers an instruction that carried options: which one was chosen. */
   decides?: { of: string; option: string };
+  /** Attach to a task: `task show`, the board and GET / list it there. A body starting "evidence:" is an evidence update. */
+  task?: string;
 }
 
 export type TaskOp =
@@ -76,6 +82,10 @@ export type TaskOp =
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
+  /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
+  | { op: "withdraw"; task: string; reason: string }
+  /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
+  | { op: "criteria"; task: string; add: string[] }
   | { op: "seam"; tasks: [string, string]; resolution: string };
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
@@ -84,6 +94,8 @@ export type Event = Reading | Instruction | Ack | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
+/** The identity that owns task scope (decision 01M1TM…: identities are pm, dev, qa, human). It may withdraw any task. */
+export const PM_ACTOR = "pm";
 export const FOCUS_KEY = "focus";
 export const TEAM_SURFACE = "team";
 

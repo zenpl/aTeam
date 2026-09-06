@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, type ClientEvent } from "@ateam/core";
-import { parse, str, list, bool, duration, type Args } from "./args.js";
+import { boardTask, Rejected, type ClientEvent } from "@ateam/core";
+import { parse, str, list, bool, duration, exact, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { sync, watch, type CursorStore } from "./loop.js";
+import { decide } from "./decide.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -25,7 +26,7 @@ say things
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
   ateam focus <body>                                                 the one thing that matters most right now
-  ateam note <body> [--decision] [--supersedes <id>]
+  ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
 tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
@@ -34,6 +35,8 @@ tasks
   ateam task done <id> [--evidence "..."]
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
+  ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
+  ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm or human; not once verified
   ateam task seam <a> <b> --resolution "..."
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
@@ -97,52 +100,55 @@ async function main(argv: string[]) {
 
   switch (cmd) {
     case "sync": {
+      exact(rest);
       await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log);
       return;
     }
     case "watch": {
+      exact(rest);
       await watch(client, cfg.me, fileCursor(cfg.me), duration(str(a, "interval") ?? "20s"), console.log);
       return;
     }
-    case "ack": return emit({ kind: "ack", of: need(rest[0], "<id>") });
+    case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
     case "board": {
+      exact(rest);
       const b = await client.board();
       console.log(bool(a, "json") ? JSON.stringify(b, null, 2) : fmt.board(b, cfg.me));
       return;
     }
     case "log": {
+      exact(rest);
       const { events } = await client.log(str(a, "after") ?? null);
       for (const e of events) console.log(`${e.id}  ${fmt.event(e, cfg.me)}`);
       return;
     }
     case "tell": {
-      const [to, ...body] = rest;
-      return emit({ kind: "instruction", to: need(to, "<to>"), body: need(body.join(" "), "<body>"),
+      const [to, body] = exact(rest, "to", "body");
+      return emit({ kind: "instruction", to, body,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
         options: list(a, "option"), default: str(a, "default") });
     }
     case "decide": {
-      const [id, ...option] = rest;
-      const of = need(id, "<id>"), choice = need(option.join(" "), "<option>");
-      const b = await client.board();
-      const i = b.instructions.find((x) => x.id === of);
-      if (!i) throw new Error(`no instruction "${of}" in the log`);
-      if (i.status !== "acked") await emit({ kind: "ack", of });
-      return emit({ kind: "note", body: `decision: ${i.body} -> ${choice}`, decision: true, decides: { of, option: choice } });
+      const [id, option] = exact(rest, "id", "option");
+      const events = await decide({ board: () => client.board(), emit: (e) => client.emit({ ...e, ...common(a) } as ClientEvent) }, id, option);
+      for (const ev of events) console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+      return;
     }
     case "reading": {
-      const [key, ...value] = rest;
+      const [key, value] = exact(rest, "key", "value");
       const validFor = str(a, "valid-for");
       const shapeRe = str(a, "shape"), shapeEnum = list(a, "enum");
       const shape = shapeRe !== undefined || shapeEnum?.length ? { regex: shapeRe, enum: shapeEnum?.map(parseValue) } : undefined;
-      return emit({ kind: "reading", key: need(key, "<key>"), value: parseValue(need(value.join(" "), "<value>")),
+      return emit({ kind: "reading", key, value: parseValue(value),
         surface: need(str(a, "surface"), "--surface"), method: str(a, "method"), assumptions: list(a, "assumes"),
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
     }
-    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: need(rest.join(" "), "<body>") });
-    case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes") });
+    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
+    case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
+      const given = [id, ...more].filter((x): x is string => x !== undefined);
+      if (op !== "create" && op !== "seam" && op !== "criteria") exact(given, "id"); // every other task op takes the id and nothing else
       switch (op) {
         case "show": {
           const b = await client.board();
@@ -151,7 +157,13 @@ async function main(argv: string[]) {
           console.log(fmt.task(t, b.seams));
           return;
         }
-        case "create": return emit({ kind: "task", op, task: need(id, "<id>"), title: need(more.join(" "), "<title>"), criteria: list(a, "criteria") ?? [] });
+        case "create": {
+          const [task, title] = exact([id, ...more].filter((x) => x !== undefined), "id", "title");
+          const criteria = list(a, "criteria") ?? [];
+          await emit({ kind: "task", op, task, title, criteria });
+          console.log(fmt.created(title, criteria));
+          return;
+        }
         case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
         case "done": return emit({ kind: "task", op, task: need(id, "<id>"), evidence: str(a, "evidence") });
         case "verify": {
@@ -160,7 +172,13 @@ async function main(argv: string[]) {
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
-        case "seam": return emit({ kind: "task", op, tasks: [need(id, "<a>"), need(more[0], "<b>")], resolution: str(a, "resolution") ?? "" });
+        case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "criteria": {
+          const [sub, task, text] = exact(given, "add", "id", "text");
+          if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);
+          return emit({ kind: "task", op, task, add: [text] });
+        }
+        case "seam": { const [x, y] = exact([id, ...more].filter((v) => v !== undefined), "a", "b"); return emit({ kind: "task", op, tasks: [x, y], resolution: str(a, "resolution") ?? "" }); }
         default: throw new Error(`unknown task op "${op}"`);
       }
     }
@@ -174,6 +192,8 @@ main(process.argv.slice(2)).catch((err) => {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
     process.exit(err.status === 409 ? 2 : 1);
   }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); process.exit(2); }
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });

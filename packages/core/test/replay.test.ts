@@ -37,7 +37,10 @@ describe("F1/F2 · instructions have delivery, ack and an overdue state", () => 
     c.tick(min(25));
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.instructions[0].status).toBe("overdue");
-    expect(b.needs_human.map((x) => x.kind)).toContain("overdue");
+    // overdue is the team's problem, not a question for the human
+    expect(b.overdue.map((x) => x.instruction)).toEqual([order.id]);
+    expect(b.overdue[0]).toMatchObject({ to: "backend", from: "pm", age_s: min(15) / 1000 });
+    expect(b.needs_human).toHaveLength(0);
 
     // backend finally pulls: delivery is a server-side fact, not a guess
     const got = await pull(store, "backend", null, c.now());
@@ -49,6 +52,7 @@ describe("F1/F2 · instructions have delivery, ack and an overdue state", () => 
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.instructions[0].status).toBe("acked");
     expect(b.needs_human).toHaveLength(0);
+    expect(b.overdue).toHaveLength(0);
     // latency is measurable: sent → delivered
     expect(Date.parse(b.instructions[0].delivered!) - Date.parse(b.instructions[0].sent)).toBe(min(25));
   });
@@ -81,7 +85,8 @@ describe("F4 · a seam appears when two in-flight tasks touch the same surface",
     let s = reduce(await store.read(), c.now());
     expect([...s.seams.values()]).toHaveLength(1);
     expect([...s.seams.values()][0].overlap).toEqual(["auth.session_cookie"]);
-    expect(board(s, HUMAN, c.now()).needs_human.some((x) => x.kind === "open_seam")).toBe(true);
+    expect(board(s, HUMAN, c.now()).seams.some((x) => x.open)).toBe(true);
+    expect(board(s, HUMAN, c.now()).needs_human).toHaveLength(0); // the seam is the team's to own, not the human's question
 
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-login" });
     const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-login", surface: "staging", pass: true }));
@@ -212,6 +217,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams).toHaveLength(1);
     expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
+    expect(b.seams[0].open).toBe(false);
     expect(b.needs_human).toHaveLength(0);
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
@@ -226,7 +232,8 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
-    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect(b.seams[0].open).toBe(true);
+    expect(b.needs_human).toHaveLength(0); // a seam is the team's to own, never a question for the human
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
   });
 
@@ -241,7 +248,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
-    expect(b.needs_human.map((x) => x.kind)).toContain("open_seam");
+    expect(b.seams[0].open).toBe(true);
   });
 });
 
@@ -298,10 +305,12 @@ describe("t-008 · a reading key can declare what values it takes", () => {
     await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "fd76455" });
     const r = await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "01M1TNREK0TD5ZFJXK18XVNTWF" }));
     expect(r.rule).toBe("reading");
-    expect(r.message).toMatch(/deployed\.sha/);
-    expect(r.message).toMatch(/\^\[0-9a-f\]\{7,40\}\$/);
-    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknown" }))).message).toMatch(/does not match shape/);
-    expect(reduce(await store.read(), c.now()).readings.size).toBe(2);
+    expect(r.message).toMatch(/production:deployed\.sha/);
+    expect(r.message).toMatch(/\[0-9a-f\]\{7,40\}/);
+    // t-024: "unknown" is what /health says when the image carries no sha; recording that is a true reading
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknown" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknow" }))).message).toMatch(/does not match shape/);
+    expect(reduce(await store.read(), c.now()).readings.size).toBe(3);
   });
 
   it("an undeclared key takes anything, as before", async () => {
@@ -313,19 +322,238 @@ describe("t-008 · a reading key can declare what values it takes", () => {
     expect(reduce(await store.read(), c.now()).readings.size).toBe(3);
   });
 
-  it("a shape is declared once, on a reading; later readings must match it; a different declaration is rejected", async () => {
+  it("a shape is declared once, on a reading, per surface:key; later readings there must match it; a different declaration is rejected", async () => {
     const store = new MemoryStore();
     const c = clock();
     // the declaring reading is itself checked
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "C", shape: { enum: ["A", "B"] } }))).message).toMatch(/auth\.mode = "C" does not match shape one of "A" \| "B"/);
     await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "B", shape: { enum: ["A", "B"] } });
-    await emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "A" });
-    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "public" }))).message).toMatch(/auth\.mode = "public" does not match shape/);
+    await emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "production", value: "A" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "production", value: "public" }))).message).toMatch(/production:auth\.mode = "public" does not match shape/);
     // same declaration again is fine; a different one is not
     await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B"] } });
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B", "C"] } }))).message).toMatch(/already has shape/);
     expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 1, shape: { regex: "(" } }))).message).toMatch(/does not compile/);
-    expect(reduce(await store.read(), c.now()).shapes.get("auth.mode")).toEqual({ enum: ["A", "B"] });
+    expect(reduce(await store.read(), c.now()).shapes.get("production:auth.mode")).toEqual({ enum: ["A", "B"] });
+  });
+
+  it("t-024: a shape belongs to one surface:key; another surface takes anything until it declares its own", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 128, shape: { regex: "^[0-9]+$" } });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: "many" }))).message).toMatch(/production:users\.count = "many"/);
+    // staging does not inherit production's shape
+    await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: "many" });
+    // staging may declare a different one for itself; production's stays
+    await emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: "few", shape: { enum: ["few", "many"] } });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "users.count", surface: "staging", value: 3 }))).message).toMatch(/staging:users\.count = 3 does not match shape one of "few" \| "many"/);
+    await emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 129 });
+    const st = reduce(await store.read(), c.now());
+    expect(st.shapes.get("production:users.count")).toEqual({ regex: "^[0-9]+$" });
+    expect(st.shapes.get("staging:users.count")).toEqual({ enum: ["few", "many"] });
+    expect(st.shapes.has("users.count")).toBe(false);
+  });
+
+  it("t-024: deployed.sha takes a sha or 'unknown' on any surface, and an event id on none; a surface cannot loosen it", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "unknown" });
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "abc1234" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "01M1TQGSB6MGNYGE0HYZAP15RG" }))).message).toMatch(/staging:deployed\.sha .* does not match shape/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "01M1TQGSB6MGNYGE0HYZAP15RG" }))).message).toMatch(/production:deployed\.sha/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "anything", shape: { regex: ".*" } }))).message).toMatch(/already has shape/);
+  });
+});
+
+describe("t-017 · a task created on a false premise is withdrawn, not worked around", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, by = "pm") =>
+    emit(store, c, { kind: "task", op: "create", actor: by, task: id, title: id, criteria: ["works"] });
+  const withdraw = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, actor: string, reason = "premise was a measurement error") =>
+    emit(store, c, { kind: "task", op: "withdraw", actor, task: id, reason });
+
+  it("accepted from the criteria author while open or blocked; terminal, with the reason kept", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "t-013");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-013", touches: ["config.ts"] });
+    await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "t-013", on: "withdrawn: no cancel op exists" });
+    await withdraw(store, c, "t-013", "pm");
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.blocked ?? []).toHaveLength(0);
+    expect(b.tasks.open ?? []).toHaveLength(0);
+    expect(b.tasks.working ?? []).toHaveLength(0);
+    expect(b.tasks.withdrawn.map((t) => t.id)).toEqual(["t-013"]);
+    expect(b.tasks.withdrawn[0].withdrawn).toMatchObject({ by: "pm", reason: "premise was a measurement error" });
+    // ids are forever: nothing can happen to it again, and it cannot be re-created
+    expect((await rejected(emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-013", touches: ["x"] }))).message).toMatch(/is withdrawn/);
+    expect((await rejected(withdraw(store, c, "t-013", "pm"))).message).toMatch(/is withdrawn/);
+    expect((await rejected(create(store, c, "t-013"))).message).toMatch(/already exists/);
+    // the human may withdraw anything open, and an author who is not pm may withdraw their own
+    await create(store, c, "t-a", "qa");
+    await withdraw(store, c, "t-a", "qa");
+    await create(store, c, "t-b", "qa");
+    await withdraw(store, c, "t-b", HUMAN);
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.withdrawn.map((t) => t.id)).toEqual(["t-013", "t-a", "t-b"]);
+  });
+
+  it("rejected while working, done or verified, and from anyone but the author, pm or the human", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "t1", "qa");
+    expect((await rejected(withdraw(store, c, "t1", "dev"))).message).toMatch(/only qa \(criteria author\), pm or human can withdraw t1, not dev/);
+    expect((await rejected(withdraw(store, c, "t1", "frontend"))).message).toMatch(/not frontend/);
+    expect((await rejected(withdraw(store, c, "t1", "pm", "  "))).message).toMatch(/say why/);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["a"] });
+    expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is working; only an open or blocked task/);
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1" });
+    expect((await rejected(withdraw(store, c, "t1", HUMAN))).message).toMatch(/t1 is done/);
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", pass: true });
+    expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is verified/);
+    expect(reduce(await store.read(), c.now()).tasks.get("t1")!.status).toBe("verified");
+  });
+
+  it("its seams disappear from the open and stacked lists, and nothing seams against it afterwards", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const id of ["A", "B", "C", "D"]) await create(store, c, id);
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });   // collision A+B
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "C", touches: ["cli/main.ts"] });         // C stacks on B, collides with A
+    await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "A", on: "superseded by C" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.map((x) => x.id).sort()).toEqual(["seam:A+B", "seam:A+C", "seam:B+C"]);
+    expect(b.seams.filter((x) => x.open)).toHaveLength(2);
+
+    await withdraw(store, c, "A", "pm", "C does the same thing");
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.map((x) => x.id)).toEqual(["seam:B+C"]);
+    expect(b.seams[0].stacked).toEqual({ done: "B", on: "C" });
+    expect(b.seams.filter((x) => x.open)).toHaveLength(0);
+    // B is no longer blocked by A: verify goes through
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    // a new claim over the same file does not seam against the withdrawn task
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "D", touches: ["cli/main.ts"] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.seams.some((x) => x.tasks.includes("A"))).toBe(false);
+  });
+});
+
+describe("t-022 · an ask with a default answers itself at ack_by; the human may still override", () => {
+  const ask = (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string }> = {}) =>
+    emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("before ack_by it is a question for the human; after, it is decided by default and leaves needs_human", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(30));
+    let b = await at(store, c);
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    expect(b.instructions[0].chosen).toBeUndefined();
+    c.tick(min(31));
+    b = await at(store, c);
+    expect(b.needs_human).toHaveLength(0);
+    expect(b.overdue).toHaveLength(0);
+    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: q.ack_by });
+  });
+
+  it("after the default took effect the human can still decide; that decision wins and is a note; a second one is rejected", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(90));
+    expect((await at(store, c)).instructions[0].chosen?.by).toBe("default");
+    await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
+    const n = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
+    const b = await at(store, c);
+    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at });
+    expect(b.needs_human).toHaveLength(0);
+    expect(reduce(await store.read(), c.now()).notes.some((x) => x.id === n.id && x.decides?.option === "public")).toBe(true);
+    const again = await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 私有", decision: true, decides: { of: q.id, option: "private" } }));
+    expect(again.message).toMatch(/already decided: public by human/);
+  });
+
+  it("without a default nothing changes: the ask stays with the human past ack_by; plain instructions still go overdue", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, { default: undefined });
+    const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy", ack_by: c.iso(min(10)) });
+    c.tick(min(90));
+    const b = await at(store, c);
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    expect(b.instructions.find((i) => i.id === q.id)!.chosen).toBeUndefined();
+    expect(b.overdue.map((o) => o.instruction)).toEqual([plain.id]);
+  });
+});
+
+describe("t-025 · criteria can be added to an unfinished task; the adder becomes a criteria author", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "t-020", title: "牌桌卡片页", criteria: ["GET / 是卡片页"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-020", touches: ["html.ts"] });
+    return { store, c };
+  };
+  const task = async (store: MemoryStore, c: ReturnType<typeof clock>) => reduce(await store.read(), c.now()).tasks.get("t-020")!;
+
+  it("the author, pm and the human may add while open/working/done; numbering continues; the create event is untouched", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "criteria", actor: "qa", task: "t-020", add: ["空状态有一句话说明"] });
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["标签全部中文"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    c.tick(min(3));
+    const added = await emit(store, c, { kind: "task", op: "criteria", actor: HUMAN, task: "t-020", add: ["时间用相对时间", "空列表也有说明"] });
+    const t = await task(store, c);
+    expect(t.criteria).toEqual(["GET / 是卡片页", "空状态有一句话说明", "标签全部中文", "时间用相对时间", "空列表也有说明"]);
+    expect(t.criteria_added).toEqual([
+      { index: 1, by: "qa", at: expect.any(String) }, { index: 2, by: "pm", at: expect.any(String) },
+      { index: 3, by: HUMAN, at: added.at }, { index: 4, by: HUMAN, at: added.at },
+    ]);
+    expect(t.criteria_by).toBe("qa");
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done[0].criteria).toHaveLength(5);
+    expect(b.tasks.done[0].criteria_added.map((a) => a.by)).toEqual(["qa", "pm", HUMAN, HUMAN]);
+    const create = (await store.read()).events.find((e) => e.kind === "task" && e.op === "create")!;
+    expect((create as { criteria: string[] }).criteria).toEqual(["GET / 是卡片页"]);
+  });
+
+  it("anyone else is refused, empty additions too; once pm has added, pm is an author as well", async () => {
+    const { store, c } = await setup();
+    const r = await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "frontend", task: "t-020", add: ["我自己定的标准"] }));
+    expect(r.rule).toBe("criteria");
+    expect(r.message).toMatch(/only qa \(criteria author\), pm or human can add criteria to t-020, not frontend/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "dev", task: "t-020", add: ["x"] }))).message).toMatch(/not dev/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["  "] }))).message).toMatch(/non-empty/);
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["a"] });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "dev", task: "t-020", add: ["c"] }))).message).toMatch(/only qa\/pm/);
+  });
+
+  it("verified is final: no more criteria; withdrawn too", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["再加一条"] }))).message).toMatch(/t-020 is verified; its criteria are what was judged/);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-x", add: ["z"] }))).message).toMatch(/is withdrawn/);
+  });
+
+  it("whoever added a criterion cannot verify the task any more; the human still can", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["空状态有一句话说明"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    expect((await task(store, c)).status).toBe("verified");
+    // the human is the policy authority even when they added a criterion
+    const s2 = await setup();
+    await emit(s2.store, s2.c, { kind: "task", op: "criteria", actor: HUMAN, task: "t-020", add: ["x"] });
+    await emit(s2.store, s2.c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
   });
 });
 
@@ -406,6 +634,57 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toHaveLength(0);
   });
+
+  it("t-019: needs_human holds only questions for the human, with their options and choice", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Board auth?", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private" });
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy 1.4.2", ack_by: c.iso(min(5)) });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "b", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "A", touches: ["f"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["f"] });
+    c.tick(min(10));
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toHaveLength(1);
+    expect(b.needs_human[0]).toMatchObject({ kind: "instruction", id: q.id, from: "pm", body: "Board auth?", options: ["private", "public"], default: "private" });
+    expect(b.needs_human[0].chosen).toBeUndefined();
+    expect(b.overdue.map((o) => o.to)).toEqual(["backend"]);
+    expect(b.seams.filter((x) => x.open).map((x) => x.id)).toEqual(["seam:A+B"]);
+  });
+
+  it("t-019: live says what production runs and what is verified there; in_flight groups unfinished tasks by status", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    for (const [id, title] of [["A", "sha endpoint"], ["B", "html board"], ["C", "withdraw op"], ["D", "never started"]]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    }
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live).toEqual({ deployed_sha: null, verified_on_production: [] });
+    expect(b.in_flight).toEqual({ open: [{ id: "A", title: "sha endpoint" }, { id: "B", title: "html board" }, { id: "C", title: "withdraw op" }, { id: "D", title: "never started" }] });
+
+    await emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: "1501d1cce361834f93f3b4063dadf89fb70379e0", depends_on: ["production:deployed.sha"] });
+    for (const [id, who] of [["A", "dev"], ["B", "frontend"]]) {
+      await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
+      await emit(store, c, { kind: "task", op: "done", actor: who, task: id });
+    }
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "duplicate" });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live).toEqual({ deployed_sha: "1501d1cce361834f93f3b4063dadf89fb70379e0", verified_on_production: [{ id: "A", title: "sha endpoint" }] });
+    expect(Object.keys(b.in_flight).sort()).toEqual(["working"]);
+    expect(b.in_flight.working).toEqual([{ id: "C", title: "withdraw op", owner: "dev" }]);
+    expect(JSON.parse(JSON.stringify(b))).toHaveProperty("live.deployed_sha");
+    expect(JSON.parse(JSON.stringify(b))).toHaveProperty("in_flight.working");
+
+    // a deploy that nobody has measured since: the sha is unknown again, not stale-but-shown
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "deployed", writes: ["production:deployed.sha"] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.live.deployed_sha).toBeNull();
+  });
 });
 
 describe("S8 · presence is an environment property", () => {
@@ -475,5 +754,25 @@ describe("t-011 · instructions to the human carry options; a click is ack + dec
     expect(b.instructions.find((i) => i.id === ask.id)).toMatchObject({ status: "acked", chosen: { option: "B", by: HUMAN } });
     expect(b.needs_human.map((n) => n.id)).not.toContain(ask.id);
     expect(s.notes.filter((n) => n.decision).map((n) => n.id)).toEqual([note.id]);
+  });
+});
+
+describe("t-018 · notes attach to a task", () => {
+  it("--task stores the reference, an unknown task is rejected, and the board lists the notes in order", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "Cookie flags", criteria: ["SameSite=Lax"] });
+    expect((await rejected(emit(store, c, { kind: "note", actor: "dev", body: "on a ghost", task: "t-9" }))).rule).toBe("note");
+    const n1 = await emit(store, c, { kind: "note", actor: "dev", body: "concern: the proxy strips the flag", task: "t-1" });
+    await emit(store, c, { kind: "note", actor: "dev", body: "unrelated, not attached" });
+    const n2 = await emit(store, c, { kind: "note", actor: "pm", body: "evidence: PR #12 merged as 1234567", task: "t-1" });
+    const s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("t-1")!.notes.map((n) => n.id)).toEqual([n1.id, n2.id]);
+    expect(s.notes).toHaveLength(3);
+    const b = board(s, HUMAN, c.now());
+    expect(b.tasks.open[0].notes).toEqual([
+      { id: n1.id, actor: "dev", at: n1.at, body: "concern: the proxy strips the flag", decision: undefined },
+      { id: n2.id, actor: "pm", at: n2.at, body: "evidence: PR #12 merged as 1234567", decision: undefined },
+    ]);
   });
 });

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent } from "@ateam/core";
-import { renderBoard } from "./html.js";
+import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER } from "@ateam/core";
+import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
 
@@ -50,7 +50,17 @@ export function createApp(opts: ServerOptions) {
         }
         if (!boardPublic && !authed()) return html(res, 401, unauthorizedPage());
         const state = reduce(await store.read());
-        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed() }));
+        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed(), human }));
+      }
+
+      // The "Got it" button: the human acks an instruction without options.
+      if (req.method === "POST" && url.pathname === "/ack") {
+        if (!authed()) return html(res, 401, unauthorizedPage());
+        const of = new URLSearchParams(await readText(req)).get("id") ?? "";
+        const e = await serialize(() => append(store, { kind: "ack", actor: human, of }, { human }));
+        bus.emit("append", e);
+        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
+        return json(res, 201, e);
       }
 
       // One click on the board: ack the instruction and record the decision, as the human, in one request.
@@ -62,7 +72,7 @@ export function createApp(opts: ServerOptions) {
         if (!st) return json(res, 404, { error: "not found", message: `${of} is not an instruction` });
         const i = st.instruction;
         if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
-        if (st.chosen) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
+        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
         // Inside the write lock, look again: a click that raced another one must not half-apply.
         const note = await serialize(async () => {
           const fresh = reduce(await store.read()).instructions.get(of)!;
@@ -135,9 +145,6 @@ function cookie(req: IncomingMessage, name: string): string | undefined {
   return undefined;
 }
 
-function unauthorizedPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>aTeam board</title></head><body style="font:15px system-ui;padding:2rem"><h1>aTeam board</h1><p>This page needs the project token. Open <code>/?token=&lt;ATEAM_TOKEN&gt;</code> once; it is then kept in a cookie.</p></body></html>`;
-}
 
 function json(res: ServerResponse, status: number, body: unknown) {
   const s = JSON.stringify(body);

@@ -13,7 +13,7 @@ export function event(e: Event, me: string): string {
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
     case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
-    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
+    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.task ? `[${e.task}] ` : ""}${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
       switch (e.op) {
         case "create": return `${t} ${who} task ${e.task} created: ${e.title}`;
@@ -22,6 +22,8 @@ export function event(e: Event, me: string): string {
         case "verify": return `${t} ${who} task ${e.task} ${e.pass ? "VERIFIED" : "FAILED"} on ${e.surface}${e.evidence ? `: ${e.evidence}` : ""}`;
         case "block": return `${t} ${who} task ${e.task} blocked on ${e.on}`;
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
+        case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
+        case "criteria": return `${t} ${who} task ${e.task} criteria added: ${e.add.join(" | ")}`;
         case "seam": return `${t} ${who} seam ${e.tasks.join("+")} resolved: ${e.resolution}`;
       }
   }
@@ -38,9 +40,19 @@ export function board(b: Board, me: string): string {
 
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${b.focus.set_by}, ${ago(b.focus.at)} ago)` : "—"}`);
 
+  if (b.live) {
+    const live = `LIVE       production ${b.live.deployed_sha ? b.live.deployed_sha.slice(0, 7) : "sha unknown"}`;
+    out.push(b.live.verified_on_production.length ? `${live} · verified there: ${b.live.verified_on_production.map((t) => t.id).join(", ")}` : live);
+  }
+
   if (b.needs_human.length) {
     out.push("", "NEEDS HUMAN");
-    for (const n of b.needs_human) out.push(`  [${n.kind}] ${n.summary}  (${n.id})`);
+    for (const n of b.needs_human) out.push(`  ${n.summary}  (${n.id})`);
+  }
+
+  if (b.overdue?.length) {
+    out.push("", "OVERDUE");
+    for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 
   const open = b.instructions.filter((i) => i.status !== "acked");
@@ -49,7 +61,8 @@ export function board(b: Board, me: string): string {
     for (const i of open) {
       const you = i.to === me ? "  ⇐ YOU" : "";
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
-      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      const defaulted = i.chosen?.by === "default" ? `  ⇒ ${i.chosen.option} by default at ack_by (human may still decide)` : "";
+      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
     }
   }
 
@@ -60,17 +73,17 @@ export function board(b: Board, me: string): string {
   }
 
   out.push("", "TASKS");
-  for (const status of ["blocked", "working", "done", "failed", "open", "verified"]) {
+  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"]) {
     for (const t of b.tasks[status] ?? []) {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
-      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : results ? `  ${results}` : "";
+      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : results ? `  ${results}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
     }
   }
 
-  const openSeams = b.seams.filter((s) => !s.resolved && !s.stacked);
+  const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
-    out.push("", "OPEN SEAMS");
+    out.push("", "SEAMS (open: nobody owns these; they block verify)");
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
   }
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
@@ -98,16 +111,21 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   const touches = t.touches ?? [];
   const verifications = t.verifications ?? [];
   out.push(`${t.id}  ${t.title}`);
-  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}`);
+  out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}`);
   out.push(`owner      ${t.owner ?? "—"}`);
   if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {
     out.push(`criteria   (by ${t.criteria_by})`);
     if (!t.criteria.length) out.push("  (none)");
-    t.criteria.forEach((c, i) => out.push(`  ${i + 1}. ${c}`));
+    t.criteria.forEach((c, i) => {
+      const added = t.criteria_added?.find((a) => a.index === i);
+      out.push(`  ${i + 1}. ${c}${added ? `  (added by ${added.by} ${hhmm(added.at)})` : ""}`);
+    });
   }
   out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
   out.push(`evidence   ${t.evidence ?? "—"}`);
+  const notes = t.notes ?? [];
+  for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);
   out.push("verifications");
   if (!verifications.length) out.push("  (none)");
   for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
@@ -119,5 +137,19 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
     const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : "OPEN";
     out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
   }
+  out.push("notes");
+  if (!notes.length) out.push("  (none)");
+  for (const n of notes) out.push(`  ${hhmm(n.at)} ${n.actor.padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
   return out.join("\n");
+}
+
+const EVIDENCE_PREFIX = /^evidence:/i;
+/** A note attached to a task whose body starts "evidence:" is an evidence update (done cannot be re-emitted). */
+export function isEvidenceUpdate(n: { body: string }): boolean {
+  return EVIDENCE_PREFIX.test(n.body.trimStart());
+}
+
+/** Echo of a task just created, so the author can check what the team will read. */
+export function created(title: string, criteria: string[]): string {
+  return [`  title: ${title}`, ...criteria.map((c, i) => `  ${i + 1}. ${c}`)].join("\n");
 }
