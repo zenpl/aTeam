@@ -89,6 +89,7 @@ export class SqliteRegistry implements Registry {
     return { project, admin_key, invite };
   }
   async get(id: string) { return (this.db.prepare("SELECT id, name, created_at, node_secret FROM projects WHERE id = ?").get(id) as Project | undefined) ?? null; }
+  async list() { return this.db.prepare("SELECT id, name, created_at, node_secret FROM projects ORDER BY created_at").all() as unknown as Project[]; }
   async ensure(id: string, name: string, adminKey: string | undefined, now = new Date()) {
     this.db.prepare("INSERT OR IGNORE INTO projects (id, name, created_at, node_secret) VALUES (?, ?, ?, ?)").run(id, name, now.toISOString(), randomBytes(24).toString("base64url"));
     this.db.prepare("UPDATE projects SET node_secret = ? WHERE id = ? AND node_secret = ''").run(randomBytes(24).toString("base64url"), id);

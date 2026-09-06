@@ -978,9 +978,9 @@ describe("t-047 · listening and speaking are two different things", () => {
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
     await emit(store, c, { kind: "note", actor: "dev", body: "我在，但没在听" });
-    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 已经缺了 5 分钟，手里有 1 条指令。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 没在听了 5 分钟，1 条指令没送到。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening
+    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening; the 没在听 wording is recognised too
     await pull(store, "dev", null, c.now());
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toEqual([]);

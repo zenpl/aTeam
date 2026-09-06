@@ -118,6 +118,14 @@ export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
 /** An instruction still not pulled this long after it was sent counts as undelivered on the board (t-048). */
 export const UNDELIVERED_AFTER_MS = 5 * 60_000;
+/** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
+export const ALERT_WEBHOOK_KEY = "alert.webhook";
+/** The whole team not listening for this long is a call-out. */
+export const ALL_MISSING_AFTER_MS = 15 * 60_000;
+/** An instruction to the human unacked this long past ack_by is a call-out. */
+export const HUMAN_OVERDUE_AFTER_MS = 30 * 60_000;
+/** The same situation is called out at most once per this. */
+export const ALERT_COOLDOWN_MS = 60 * 60_000;
 /** A node whose last pull is older than this is not listening: instructions to it are not arriving (t-047). */
 export const LISTEN_WINDOW_MS = 5 * 60_000;
 /** A note from the human on the board starts with this; the board derives where each such sentence went. */

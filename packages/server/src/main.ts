@@ -17,5 +17,6 @@ const sdb = new SqliteDb(db, defaultProject);
 const app = createApp({
   registry: new SqliteRegistry(sdb), storeFor: (project) => new SqliteStore(sdb, project),
   defaultProject, token, human, sha, boardPublic,
+  publicUrl: process.env.ATEAM_PUBLIC_URL,
 });
 app.listen(port, () => console.log(`ateam server on :${port} db=${db} default=${defaultProject} human=${human} sha=${sha} board=${boardPublic ? "public" : "token"}`));
