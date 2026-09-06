@@ -136,3 +136,22 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
     expect(notices(await state(), HUMAN, VERIFY_ASK).filter((i) => i.body.startsWith("有 qa 的项目"))).toHaveLength(0);
   });
 });
+
+describe("t-087 · a fail notice goes stale when another role takes the task over", () => {
+  it("over the API: the notice leaves the human's and the owner's lists with the reason in the data, and the events stay", async () => {
+    await task("t-9", "接手用例");
+    await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234" });
+    const v = await post("qa", { kind: "task", op: "verify", task: "t-9", surface: "repo", pass: false, evidence: "少一条测试" });
+    expect(v.status).toBe(201);
+    const later = new Date(Date.now() + 30 * 60_000);
+    const notice = notices(await state(later), "dev", FAIL_NOTICE).find((i) => i.body.startsWith("t-9"))!;
+    expect(board(await state(later), HUMAN, later).overdue.map((o) => o.instruction)).toContain(notice.id);
+    const claim = await post("frontend", { kind: "task", op: "claim", task: "t-9", touches: ["t-9"] });
+    expect(claim.status).toBe(201);
+    const b = board(await state(later), HUMAN, later);
+    expect(b.overdue.map((o) => o.instruction)).not.toContain(notice.id);
+    expect(b.instructions.find((i) => i.id === notice.id)!.stale).toEqual({ reason: "taken_over", task: "t-9", by: "frontend", claim: claim.body.id });
+    const events = (await store.read()).events;
+    expect(events.find((e) => e.id === notice.id)).toBeTruthy(); // nothing deleted, nothing edited
+  });
+});

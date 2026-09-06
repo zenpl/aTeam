@@ -1881,3 +1881,54 @@ describe("t-089 · a number carried in from somewhere else lands expired", () =>
     expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).live.deployed_sha).toBe("def5678");
   });
 });
+
+describe("t-087 · a fail notice stops being true when someone else takes the task over", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
+    const v = await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没满足" });
+    const notice = await emit(store, c, { kind: "instruction", actor: "ateam", to: "dev", body: `A${" 验收未过："}判据 2 没满足。改完重新 done。`, ack_by: c.iso(min(15)), refs: [v.id] });
+    return { store, c, notice };
+  };
+  const card = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string) => {
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    return { b, i: b.instructions.find((x) => x.id === id)! };
+  };
+
+  it("another role claims it: the notice leaves overdue with the reason and who took it; nobody claims: unchanged; the owner redoing it still clears it", async () => {
+    const { store, c, notice } = await setup();
+    c.tick(min(30)); // past ack_by, unacked
+    let { b, i } = await card(store, c, notice.id);
+    expect(b.overdue.map((o) => o.instruction)).toContain(notice.id); // criterion 3: nobody took over, nothing changed
+    expect(i.stale).toBeUndefined();
+    const claim = await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["x"] });
+    ({ b, i } = await card(store, c, notice.id));
+    expect(b.overdue.map((o) => o.instruction)).not.toContain(notice.id);
+    expect(b.needs_human.map((x) => x.id)).not.toContain(notice.id);
+    expect(i.stale).toEqual({ reason: "taken_over", task: "A", by: "frontend", claim: claim.id });
+    expect(i.status).toBe("overdue"); // the instruction itself is untouched: unacked and past its time, just no longer true
+    // history is intact: the notice event and the verify are still there, unedited
+    const events = (await store.read()).events;
+    expect(events.find((e) => e.id === notice.id)!.body).toContain("验收未过");
+    expect(events).toHaveLength(6);
+
+    // the owner redoing it clears the notice too, as before (t-054)
+    const w = await setup();
+    w.c.tick(min(30));
+    await emit(w.store, w.c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "改" });
+    await emit(w.store, w.c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678" });
+    const after = await card(w.store, w.c, w.notice.id);
+    expect(after.b.overdue.map((o) => o.instruction)).not.toContain(w.notice.id);
+    expect(after.i.stale).toEqual({ reason: "redone", task: "A" });
+    // the same person reclaiming their own task is not a takeover
+    const own = await setup();
+    own.c.tick(min(30));
+    await emit(own.store, own.c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x", "y"] });
+    const still = await card(own.store, own.c, own.notice.id);
+    expect(still.i.stale).toBeUndefined();
+    expect(still.b.overdue.map((o) => o.instruction)).toContain(own.notice.id);
+  });
+});
