@@ -162,7 +162,7 @@ async function main(argv: string[]) {
     }
     case "release": {
       exact(rest);
-      const b = await client.board();
+      const b = await client.board(true); // candidates and evidence live on the full board (t-070)
       const target = str(a, "deploy");
       if (target === undefined) { console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b)); return; }
       const outcome = await deploy(b, target, {

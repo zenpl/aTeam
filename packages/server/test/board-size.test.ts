@@ -17,24 +17,24 @@ afterAll(() => new Promise<void>((r) => (app ? app.close(() => r()) : r())));
  */
 async function bigDay() {
   const b = new Builder({ start: Date.now() - 6 * 3600_000, stepMs: 10_000 });
-  const long = (n: number, s: string) => Array.from({ length: n }, (_, i) => `${s} ${i} ${"判据正文很长，说明人能看到什么，以及在哪个表面验".repeat(2)}`);
+  const long = (n: number, s: string) => Array.from({ length: n }, (_, i) => `${s} ${i} ${"判据正文很长，说明人能看到什么，以及在哪个表面验".repeat(4)}`); // today's tasks carry ~6KB of text each
   for (let i = 0; i < 40; i++) {
     const id = `t-${String(i).padStart(3, "0")}`;
     await b.task.create("pm", id, `任务 ${i}：牌桌上的一件事`, long(3, "判据"));
     const owner = i % 2 ? "dev" : "frontend";
     await b.task.claim(owner, id, [`packages/x/${i}.ts`, `packages/x/${i}.test.ts`, ...(i % 7 === 0 ? ["packages/server/src/app.ts"] : [])]);
-    await b.note(owner, "note 正文也很长：".repeat(10), { task: id });
-    await b.task.done(owner, id, { evidence: `${(1000000 + i).toString(16).padStart(7, "0")}abcd @ 分支：${"证据正文很长，逐条对应判据".repeat(6)}`, shows: "人能看到的一句话" });
+    await b.note(owner, "note 正文也很长：".repeat(40), { task: id });
+    await b.task.done(owner, id, { evidence: `${(1000000 + i).toString(16).padStart(7, "0")}abcd @ 分支：${"证据正文很长，逐条对应判据".repeat(40)}`, shows: "人能看到的一句话" });
     if (i % 3 === 0) {
-      await b.task.verify("qa", id, "repo", false, { evidence: "判据 2 未满足：".repeat(5) });
+      await b.task.verify("qa", id, "repo", false, { evidence: "判据 2 未满足：".repeat(30) });
       await b.task.reopen(owner, id, "修");
-      await b.task.done(owner, id, { evidence: `${(2000000 + i).toString(16).padStart(7, "0")}abcd 改了：${"证据".repeat(20)}` });
+      await b.task.done(owner, id, { evidence: `${(2000000 + i).toString(16).padStart(7, "0")}abcd 改了：${"证据正文".repeat(60)}` });
     }
   }
   for (let i = 0; i < 200; i++) {
     const to = ["dev", "frontend", "qa", "pd"][i % 4];
-    const ins = await b.tell("pm", to, `第 ${i} 条指令：${"正文说明要做什么以及为什么".repeat(3)}`);
-    if (i % 10) await b.ack(to, ins.id);
+    const ins = await b.tell("pm", to, `第 ${i} 条指令：${"正文说明要做什么以及为什么".repeat(12)}`); // ~440 bytes, like today's
+    if (i % 20) await b.ack(to, ins.id); // today: 14 of 486 still open
   }
   for (let i = 0; i < 5; i++) {
     const ask = await b.tell("pd", b.human, `问题 ${i}：A 还是 B？`, { options: ["A", "B"], default: "B" });
@@ -45,14 +45,15 @@ async function bigDay() {
 }
 
 describe("t-070 · GET /board is slim by default", () => {
-  it("under a day like today's, the default board is under 60KB, keeps every field the page and CLI use, and ?full=1 is the whole thing", async () => {
+  it("under a day like today's, the default board is under 12% of the full one, keeps every field the page and CLI use, and ?full=1 is the whole thing", async () => {
     const b = await bigDay();
     const full = await b.board();
     const fullBytes = Buffer.byteLength(JSON.stringify(full));
     expect(fullBytes).toBeGreaterThan(150 * 1024); // the problem is real in this sample
     const slim = slimBoard(full);
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
-    expect(slimBytes).toBeLessThan(60 * 1024);
+    expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
+    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, candidates: [] }); // derived from tasks: the full board has it
     // what stays: every task with the fields the board and CLI read
     const tasks = Object.values(slim.tasks).flat();
     expect(tasks).toHaveLength(40);
@@ -66,7 +67,7 @@ describe("t-070 · GET /board is slim by default", () => {
     expect(slim.instructions.every((i) => i.status !== "acked" || i.chosen)).toBe(true);
     expect(slim.instructions.filter((i) => i.chosen)).toHaveLength(5);
     expect(slim.instructions.filter((i) => i.status !== "acked").length).toBe(full.instructions.filter((i) => i.status !== "acked").length);
-    for (const k of ["undelivered", "overdue", "presence", "roles", "coverage", "allocation", "live", "release", "said", "focus", "now", "alert"] as (keyof Board)[]) expect(slim[k]).toEqual(full[k]);
+    for (const k of ["undelivered", "overdue", "presence", "roles", "coverage", "allocation", "live", "said", "focus", "now", "alert"] as (keyof Board)[]) expect(slim[k]).toEqual(full[k]);
     expect(slim.needs_human.map((c) => [c.id, c.summary, c.title])).toEqual(full.needs_human.map((c) => [c.id, c.summary, c.title]));
     expect(Object.values(slim.in_flight).map((g) => [g.total, g.all.length])).toEqual(Object.values(full.in_flight).map((g) => [g.total, g.all.length]));
     expect(slim.seams.filter((x) => x.open)).toEqual(full.seams.filter((x) => x.open)); // open seams in full
@@ -81,7 +82,7 @@ describe("t-070 · GET /board is slim by default", () => {
     const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
     const get = (p: string) => fetch(`${base}${p}`, { headers: { authorization: "Bearer k", "x-actor": "qa" } });
     const served = await (await get("/board")).text();
-    expect(Buffer.byteLength(served)).toBeLessThan(60 * 1024);
+    expect(Buffer.byteLength(served) / Buffer.byteLength(JSON.stringify(await (await get("/board?full=1")).json()))).toBeLessThan(0.12);
     const servedFull = await (await get("/board?full=1")).json();
     const expected = JSON.parse(JSON.stringify(board(await b.state(new Date(t)), "human", new Date(t))));
     delete servedFull.invite_url;

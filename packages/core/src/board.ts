@@ -563,7 +563,9 @@ export function slimBoard(b: Board): Board {
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]
   const needs_human = b.needs_human.map((c) => ({ ...c, detail: "" }));
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, shown: [], all: g.all }]));
-  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight };
+  // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, candidates: [] };
+  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release };
 }
 
 export function boardTask(b: Board, id: string): BoardTask | undefined {
