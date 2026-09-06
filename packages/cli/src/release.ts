@@ -74,6 +74,13 @@ export function realGit(cwd: string, token: string | undefined): Git {
   };
 }
 
+/** The lines of a git failure that say why: the "! [rejected]" / "error:" / "fatal:" ones; git puts its hints after them. Else the last three. */
+export function gitReason(stderr: string): string {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
+  const why = lines.filter((l) => /^(! \[|error:|fatal:|remote: error)/.test(l));
+  return (why.length ? why : lines.slice(-3)).join(" ");
+}
+
 export interface DeployDeps {
   git: Git;
   me: string;
@@ -113,7 +120,7 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
     deps.git.push(sha, setting.branch);
   } catch (err) {
     const why = (err as Error).message;
-    await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${why.split("\n").slice(-3).join(" ")}`);
+    await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${gitReason(why)}`);
     deps.print(`推送失败：${why}`);
     return "failed";
   }

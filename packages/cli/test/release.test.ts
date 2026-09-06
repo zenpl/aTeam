@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { MemoryStore, append, reduce, board, type NewEvent, type Board } from "@ateam/core";
-import { deploy, deploySetting, plan, type Git } from "../src/release.js";
+import { deploy, deploySetting, plan, gitReason, type Git } from "../src/release.js";
 
 const HUMAN = "human";
 const A = "aaaaaaa" + "1".repeat(33), B = "bbbbbbb" + "1".repeat(33), C = "ccccccc" + "1".repeat(33); // 40-char shas
@@ -131,5 +131,13 @@ describe("t-058 · release --deploy checks what the pusher said it may push", ()
     const git = fakeGit();
     expect(await deploy(await w.b(), A, w.deps(git))).toBe("pushed");
     expect(git.pushes).toEqual([`${A}->production`]);
+  });
+});
+
+describe("qa 21:22 · the failure note carries git's reason, not its hints", () => {
+  it("picks the rejected/error/fatal lines; falls back to the last three", () => {
+    const stderr = "To github.com:x/y.git\n ! [rejected]        a57793b -> production (non-fast-forward)\nerror: failed to push some refs to 'github.com:x/y.git'\nhint: Updates were rejected because the tip of your current branch is behind\nhint: its remote counterpart. If you want to integrate the remote changes, use 'git pull'\nhint: before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.";
+    expect(gitReason(stderr)).toBe("! [rejected]        a57793b -> production (non-fast-forward) error: failed to push some refs to 'github.com:x/y.git'");
+    expect(gitReason("a\nb\nc\nd")).toBe("b c d");
   });
 });
