@@ -3,7 +3,7 @@ export interface Args {
   flags: Record<string, string | boolean | string[]>;
 }
 
-const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet"]);
+const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "once", "force", "full"]);
 const REPEATABLE = new Set(["criteria", "assumes", "option"]);
 
 export function parse(argv: string[]): Args {
@@ -46,4 +46,33 @@ export function duration(s: string): number {
   if (!m) throw new Error(`bad duration "${s}" (use 30s, 15m, 2h, 1d)`);
   const n = Number(m[1]);
   return n * { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2] as "s" | "m" | "h" | "d"];
+}
+
+/** A command line that cannot mean what was typed. Exit 2, like a rejection: the system said no before anything happened. */
+export class UsageError extends Error {}
+
+/**
+ * Exactly these positionals, in order. Anything beyond them is refused and echoed back, so a stray word never
+ * lands silently in a title or a body; a multi-word value has to be quoted.
+ */
+export function exact(rest: string[], ...names: string[]): string[] {
+  if (rest.length > names.length) {
+    const got = rest.map((r, i) => `  ${i + 1}. ${JSON.stringify(r)}`).join("\n");
+    const want = names.length ? names.map((n) => `<${n}>`).join(" ") : "no positional arguments";
+    throw new UsageError(`expected ${want}, got ${rest.length}:\n${got}\nQuote a value that has spaces: "...". Nothing was sent.`);
+  }
+  return names.map((n, i) => {
+    const v = rest[i];
+    if (v === undefined || !v.trim()) throw new UsageError(`missing <${n}>`);
+    return v;
+  });
+}
+
+/** `--measured-at`: an ISO time, or how long ago as a duration ("10m" = ten minutes before now). */
+export function measuredAtOf(s: string, now: Date): string {
+  const v = s.trim();
+  if (/^\d+(?:\.\d+)?\s*(s|m|h|d)$/.test(v)) return new Date(now.getTime() - duration(v)).toISOString();
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) throw new UsageError(`--measured-at ${JSON.stringify(s)}: give an ISO time or how long ago (10m, 2h)`);
+  return new Date(t).toISOString();
 }

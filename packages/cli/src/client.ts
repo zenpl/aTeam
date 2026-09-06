@@ -1,4 +1,4 @@
-import type { Event, ClientEvent, Board, PullResult } from "@ateam/core";
+import type { Event, ClientEvent, Board, BoardTask, PullResult } from "@ateam/core";
 
 export interface Config { url: string; token?: string; me: string }
 
@@ -33,6 +33,16 @@ export class Client {
     if (waitMs) q.set("wait", String(waitMs));
     return this.call("GET", `/events?${q}`);
   }
-  board(): Promise<Board> { return this.call("GET", "/board"); }
+  /** The board; slim by default (t-070), `full` for criteria, evidence, notes and every instruction. */
+  board(full = false): Promise<Board> { return this.call("GET", full ? "/board?full=1" : "/board"); }
+  /** One task in full, with the seams touching it (t-068). */
+  task(id: string): Promise<{ task: BoardTask; seams: Board["seams"]; refs: string[] }> { return this.call("GET", `/task/${encodeURIComponent(id)}`); }
+  /** The manual for a role, as Markdown; null when the server has none for it. */
+  async manual(role: string): Promise<string | null> {
+    const res = await fetch(this.cfg.url.replace(/\/$/, "") + `/manual/${encodeURIComponent(role)}`, { headers: this.headers() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ClientError(res.status, { error: res.statusText });
+    return res.text();
+  }
   log(after: string | null): Promise<{ events: Event[] }> { return this.call("GET", `/log${after ? `?after=${after}` : ""}`); }
 }

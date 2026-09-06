@@ -4,7 +4,8 @@
  */
 import { describe, it, expect } from "vitest";
 import type { Event, PullResult } from "@ateam/core";
-import { sync, watch, type CursorStore, type Puller } from "../src/loop.js";
+import { sync, watch, advance, isTransient, type CursorStore, type Puller } from "../src/loop.js";
+import { ClientError } from "../src/client.js";
 
 const ME = "frontend";
 const at = "2026-09-06T06:12:00.000Z";
@@ -43,7 +44,7 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     const out: string[] = [];
     const cursor = memoryCursor();
     // pull 1: nothing yet; pull 2: still nothing; pull 3: the four events land at once
-    const r = await watch(server([0, 0, 4]), ME, cursor, 100, (l) => out.push(l));
+    const r = await watch(server([0, 0, 4]), ME, cursor, 100, (l) => out.push(l), { once: true });
 
     expect(r.for_me.map((e) => e.id)).toEqual(["01C"]);
     const text = out.join("\n");
@@ -63,7 +64,7 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     const out: string[] = [];
     const cursor = memoryCursor();
     const srv = server([0, 3, 1]); // wake on the third event (the instruction for me), 01D not yet published
-    await watch(srv, ME, cursor, 100, (l) => out.push(l));
+    await watch(srv, ME, cursor, 100, (l) => out.push(l), { once: true });
     expect(cursor.writes).toEqual([null, "01C"]);
     expect(srv.pulls).toEqual([null, null]);           // two pulls, both from the same (empty) cursor
     expect(out.join("\n")).not.toContain("not for frontend");
@@ -85,13 +86,13 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
   it("prints events that arrive in a pull before the wake-up too, so nothing is consumed unseen", async () => {
     const out: string[] = [];
     const cursor = memoryCursor();
-    await watch(server([0, 2, 0, 2]), ME, cursor, 100, (l) => out.push(l));
+    await watch(server([0, 2, 0, 2]), ME, cursor, 100, (l) => out.push(l), { once: true });
     const text = out.join("\n");
     expect(text.indexOf("note t-007 priority")).toBeGreaterThanOrEqual(0);
     expect(text.indexOf("note t-007 priority")).toBeLessThan(text.indexOf("INSTRUCTION → frontend"));
     expect(out.filter((l) => l.includes("note t-007 priority"))).toHaveLength(1);
     expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(1);
-    expect(cursor.writes).toEqual([null, "01B", "01B", "01D"]);
+    expect(cursor.writes).toEqual([null, "01B", "01D"]);
   });
 
   it("sync itself still prints events and marks instructions for me", async () => {
@@ -105,5 +106,139 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     const quiet: string[] = [];
     await sync(server([4]), ME, memoryCursor(), 0, null);
     expect(quiet).toEqual([]);
+  });
+});
+
+describe("t-015 · ateam watch survives transient fetch errors", () => {
+  /** A server that answers each pull with the next scripted outcome: an Error to throw, or a slice size to release. */
+  function flaky(script: (number | Error)[]): Puller & { pulls: (string | null)[] } {
+    const good = server(script.filter((x): x is number => typeof x === "number"));
+    const pulls: (string | null)[] = [];
+    return {
+      pulls,
+      async pull(after, waitMs) {
+        pulls.push(after);
+        const next = script.shift();
+        if (next instanceof Error) throw next;
+        return good.pull(after, waitMs);
+      },
+    };
+  }
+  const netErr = () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+  const http = (status: number) => new ClientError(status, { error: status >= 500 ? "Bad Gateway" : "unauthorized" });
+
+  it("two failing pulls then a good one: prints each error, backs off 1s then 2s, keeps the cursor, and still wakes", async () => {
+    const out: string[] = [];
+    const sleeps: number[] = [];
+    const cursor = memoryCursor();
+    const srv = flaky([netErr(), http(502), 4]);
+    const r = await watch(srv, ME, cursor, 25_000, (l) => out.push(l), { sleep: async (ms) => { sleeps.push(ms); }, once: true });
+    expect(r.for_me.map((e) => e.id)).toEqual(["01C"]);
+    expect(sleeps).toEqual([1_000, 2_000]);
+    expect(out[0]).toBe("watch: fetch failed (ECONNRESET); retrying in 1s (attempt 1)");
+    expect(out[1]).toBe("watch: server 502: Bad Gateway; retrying in 2s (attempt 2)");
+    expect(out[out.length - 1]).toBe("\ninstruction received");
+    // the failed pulls never moved the cursor; the good pull moved it once
+    expect(cursor.writes).toEqual(["01D"]);
+    expect(srv.pulls).toEqual([null, null, null]);
+  });
+
+  it("backoff grows 1s, 2s, 4s, then holds at 4s, all capped at the interval, and resets after a good pull", async () => {
+    const sleeps: number[] = [];
+    const cursor = memoryCursor();
+    // five failures, a quiet good pull, one more failure, then the wake
+    const srv = flaky([netErr(), netErr(), netErr(), netErr(), netErr(), 0, netErr(), 4]);
+    await watch(srv, ME, cursor, 3_000, () => {}, { sleep: async (ms) => { sleeps.push(ms); }, once: true });
+    expect(sleeps).toEqual([1_000, 2_000, 3_000, 3_000, 3_000, 1_000]);
+  });
+
+  it("a 4xx, a rejection or a bad config still ends the watch with the error", async () => {
+    const cursor = memoryCursor();
+    await expect(watch(flaky([http(401), 4]), ME, cursor, 1_000, () => {}, { sleep: async () => {}, once: true })).rejects.toMatchObject({ status: 401 });
+    await expect(watch(flaky([new ClientError(409, { error: "rejected", rule: "ack" }), 4]), ME, cursor, 1_000, () => {}, { sleep: async () => {}, once: true })).rejects.toMatchObject({ status: 409 });
+    expect(cursor.writes).toEqual([]);
+    expect(isTransient(http(500))).toBe(true);
+    expect(isTransient(http(404))).toBe(false);
+    expect(isTransient(netErr())).toBe(true);
+    expect(isTransient(new SyntaxError("bad json"))).toBe(false);
+  });
+});
+
+describe("t-046 · watch keeps listening after an instruction", () => {
+  /** Two instructions for me, published in two separate pulls, with quiet pulls between. Times are relative to now. */
+  const now = Date.now();
+  const sent = new Date(now).toISOString(), ackBy = new Date(now + 15 * 60_000).toISOString();
+  const LOG2: Event[] = [
+    { id: "02A", actor: "pm", at: sent, kind: "instruction", to: ME, body: "第一条", ack_by: ackBy },
+    { id: "02B", actor: "pm", at: sent, kind: "note", body: "中间的 note" },
+    { id: "02C", actor: "pm", at: sent, kind: "instruction", to: ME, body: "第二条", ack_by: ackBy },
+  ];
+  function server2(slices: number[], onDrained: () => void): Puller & { pulls: (string | null)[] } {
+    let released = 0;
+    const pulls: (string | null)[] = [];
+    return {
+      pulls,
+      async pull(after) {
+        pulls.push(after);
+        if (!slices.length) onDrained();
+        released = Math.min(LOG2.length, released + (slices.shift() ?? 0));
+        const start = after ? LOG2.findIndex((e) => e.id === after) + 1 : 0;
+        const events = LOG2.slice(start, released);
+        return { events, for_me: events.filter((e) => e.kind === "instruction" && e.to === ME), cursor: events.length ? events[events.length - 1].id : after };
+      },
+    };
+  }
+
+  it("prints both batches with 'instruction received' each time, never exits on its own, and moves the cursor once per pull", async () => {
+    const out: string[] = [];
+    const cursor = memoryCursor();
+    const ac = new AbortController();
+    const srv = server2([0, 1, 0, 2], () => ac.abort());
+    const r = await watch(srv, ME, cursor, 100, (l) => out.push(l), { signal: ac.signal });
+    expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(2);
+    expect(out.filter((l) => l.includes("第一条"))).toHaveLength(1);
+    expect(out.filter((l) => l.includes("第二条"))).toHaveLength(1);
+    expect(out.filter((l) => l.includes("中间的 note"))).toHaveLength(1);
+    expect(srv.pulls).toEqual([null, null, "02A", "02A", "02C"]);   // each pull from the cursor the last one left
+    expect(cursor.writes).toEqual([null, "02A", "02C"]);            // the cursor only moves forward (t-049): a repeat is not a write
+    expect(r.cursor).toBe("02C");
+  });
+
+  it("--once keeps the old behaviour: returns on the first instruction", async () => {
+    const out: string[] = [];
+    const r = await watch(server2([0, 1, 0, 2], () => {}), ME, memoryCursor(), 100, (l) => out.push(l), { once: true });
+    expect(r.for_me.map((e) => e.id)).toEqual(["02A"]);
+    expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(1);
+    expect(out.some((l) => l.includes("第二条"))).toBe(false);
+  });
+});
+
+describe("t-049 · the cursor only moves forward", () => {
+  it("a stale value never overwrites a newer one; equal is not a write; null never replaces a value", () => {
+    const c = memoryCursor();
+    expect(advance(c, null)).toBe(true);
+    expect(advance(c, "01B")).toBe(true);
+    expect(advance(c, "01A")).toBe(false);   // older: ignored
+    expect(advance(c, "01B")).toBe(false);   // same: ignored
+    expect(advance(c, null)).toBe(false);    // a pull that saw nothing cannot rewind
+    expect(advance(c, "01C")).toBe(true);
+    expect(c.read()).toBe("01C");
+    expect(c.writes).toEqual([null, "01B", "01C"]);
+  });
+
+  it("two watches interleaving on one cursor: the shared cursor stays monotonic and no event is pulled from an older position twice", async () => {
+    const shared = memoryCursor();
+    const outA: string[] = [], outB: string[] = [];
+    // both read the empty cursor; A pulls two events, B (which read before A wrote) pulls the same two plus one more
+    const srvA = server([2]);
+    const srvB = server([3]);
+    await sync(srvA, ME, shared, 0, (l) => outA.push(l));
+    expect(shared.read()).toBe("01B");
+    await sync(srvB, ME, shared, 0, (l) => outB.push(l));
+    expect(shared.read()).toBe("01C");
+    // now a straggler pull result from A's older position arrives: it cannot move the cursor back
+    expect(advance(shared, "01B")).toBe(false);
+    expect(shared.read()).toBe("01C");
+    expect(shared.writes).toEqual(["01B", "01C"]);
   });
 });
