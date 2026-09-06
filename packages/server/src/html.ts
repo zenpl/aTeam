@@ -322,6 +322,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
+  if (b.allocation?.summary) d.push(`<p class="meta team">${UI.team}：${esc(b.allocation.summary)}</p>`); // t-061: the summary only; the fact carries the details
   d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
 
   // t-059: responsibilities nobody holds right now, one sentence each; never above the fold, never a card

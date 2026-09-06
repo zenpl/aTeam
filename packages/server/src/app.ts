@@ -4,6 +4,7 @@ import { append, pull, reduce, board, manual, welcome, inviteManual, projectRole
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { runFollowUps } from "./verifyflow.js";
+import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
 
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
@@ -194,6 +195,9 @@ export function createApp(opts: ServerOptions) {
             const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
             out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs }, { human }));
           }
+          // t-061: the allocation warnings as a fact, at most one entry per pattern per period
+          const fact = allocationFact(state, human, now);
+          if (fact) out.push(await append(store, fact, { human, now }));
           return out;
         });
         for (const e of events) bus.emit("append", { project: projectId, e });

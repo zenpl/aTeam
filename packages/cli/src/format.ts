@@ -125,6 +125,10 @@ export function board(b: Board, me: string): string {
     out.push("", "COVERAGE (responsibilities nobody holds right now)");
     for (const c of gaps) out.push(`  ${c.responsibility.padEnd(4)} ${c.line}`);
   }
+  if (b.allocation?.warnings?.length) {
+    out.push("", `TEAM  ${b.allocation.summary}`);
+    for (const w of b.allocation.warnings) out.push(`  ${w.pattern}  ${w.hint}`);
+  }
 
   return out.join("\n");
 }
