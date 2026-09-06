@@ -49,8 +49,10 @@ export function board(b: Board, me: string): string {
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${b.focus.set_by}, ${ago(b.focus.at)} ago)` : "—"}`);
 
   if (b.live) {
-    // t-083: 推的 only when release --deploy wrote the reading; 核对的 when someone measured it; nothing when the source is unsaid
-    const by = b.live.deployed_by ? ` (${b.live.deployed_by} 推的)` : b.live.checked_by ? ` (${b.live.checked_by} 核对的)` : "";
+    // t-083: 推的 only when release --deploy wrote the reading, 核对 (no 的, pd 22:47) when someone measured it, nothing when
+    // the source is unsaid; each with how long ago, so nobody has to guess whether it was just now or six hours back
+    const when = b.live.at ? `${ago(b.live.at)}前` : "";
+    const by = b.live.deployed_by ? ` (${b.live.deployed_by} ${when}推的)` : b.live.checked_by ? ` (${b.live.checked_by} ${when}核对)` : "";
     const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${by}` : "sha unknown"}`;
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";

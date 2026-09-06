@@ -126,6 +126,8 @@ export interface Board {
     deployed_by: string | null;
     /** t-083: who recorded the sha by hand (a measurement, not a push); null when the push recorded it or the source is unknown. */
     checked_by: string | null;
+    /** t-083: when that reading was written, so the line can say how long ago it was pushed or checked. */
+    at: string | null;
     since_sha: string | null;
     verified_on_production: { id: string; title: string; shows?: string }[];
     recent: { id: string; title: string; shows?: string }[];
@@ -391,7 +393,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, deployed_by: null, checked_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     said: [],
     seams: [],
@@ -458,6 +460,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     b.live.deployed_sha = current.value as string;
     // t-083: the one who pushed is the one whose `release --deploy` wrote the reading; anyone else who wrote it measured it.
     // A reading with no method at all says nothing about its source: neither.
+    b.live.at = current.at;
     const source = deploySource(current);
     b.live.deployed_by = source === "pushed" ? current.actor : null;
     b.live.checked_by = source === "checked" ? current.actor : null;
