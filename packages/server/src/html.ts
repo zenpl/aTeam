@@ -94,7 +94,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       const bits: string[] = [];
       if (task.owner) bits.push(`@${esc(task.owner)}`);
       if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
-      if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.join(", "))}`);
+      if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
       d.push(`<li><details><summary><code>${esc(task.id)}</code> ${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
       if (st) {
         d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
@@ -102,7 +102,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         if (st.touches.length) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
         if (st.evidence) d.push(`<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
         for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
-        for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(v.surface)}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
+        for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
         if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
         if (st.notes.length) {
           d.push(`<ul class="notes">`);
@@ -150,7 +150,7 @@ ${d.join("\n")}
 export function inFlightOf(b: Board): { label: string; items: string[] }[] {
   const title = (t: { title: string; owner?: string }) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`;
   const g = (k: string) => (b.in_flight[k] ?? []).map(title);
-  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.join("、") || "?")}`);
+  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`);
   return [
     { label: UI.groups.working, items: g("working") },
     { label: UI.groups.blocked, items: g("blocked") },
@@ -228,12 +228,17 @@ footer { color: var(--muted); font-size: .8rem; display: flex; gap: 1rem; flex-w
 </style>
 </head>
 <body>
-<header><h1>${UI.title}</h1><span class="meta">${UI.refreshes(m.refresh)} · <time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 16))}Z</time></span></header>
+<header><h1>${UI.header}</h1><span class="meta">${UI.refreshes(m.refresh)} · <time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 16))}Z</time></span></header>
 ${body}
 <footer><span>${UI.buildLabel} <code>${esc((m.sha ?? "unknown").slice(0, 7))}</code></span><span>${UI.sameAs} <code>GET /board</code> ${UI.sameAsTail}</span></footer>
 </body>
 </html>
 `;
+}
+
+/** Surface names the human knows: repo → 仓库, production → 生产. Unknown surfaces stay as written. */
+export function surface(s: string): string {
+  return UI.surface[s] ?? s;
 }
 
 function str(v: unknown): string {
