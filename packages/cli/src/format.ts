@@ -60,7 +60,8 @@ export function board(b: Board, me: string): string {
     for (const i of open) {
       const you = i.to === me ? "  ⇐ YOU" : "";
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
-      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      const defaulted = i.chosen?.by === "default" ? `  ⇒ ${i.chosen.option} by default at ack_by (human may still decide)` : "";
+      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
     }
   }
 
