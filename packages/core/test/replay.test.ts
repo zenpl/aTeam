@@ -1768,3 +1768,57 @@ describe("t-084 · the call-out address has a shape; a bad one is said, not hidd
     expect(b.alert).toMatchObject({ status: "misconfigured", value: "human@example.com", line: "外呼地址配了但发不出去：不是 https（human@example.com）" });
   });
 });
+
+describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
+  const world = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const ship = async (id: string, sha: string | undefined, verifyProd = false) => {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+      await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: sha ? `${sha} 完成` : "没有 sha 的证据" });
+      await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+      if (verifyProd) await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
+    };
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
+    await ship("A", "aaaaaaa1"); // already in production
+    await ship("B", "bbbbbbb2"); // not yet
+    await ship("C", undefined);  // no sha at all
+    await ship("D", "ddddddd4", true); // verified on production: not a candidate at all
+    await emit(store, c, { kind: "reading", actor: HUMAN, surface: "production", key: "deployed.sha", value: "eeeeeee5", method: "ateam release --deploy 推到 production", depends_on: ["production:deployed.sha"] });
+    return { store, c };
+  };
+  const rel = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).release;
+
+  it("without a containment fact every candidate is unknown, with the reason naming the fact to record", async () => {
+    const { store, c } = await world();
+    const r = await rel(store, c);
+    expect(r.candidates!.map((x) => x.task)).toEqual(["A", "B", "C"]); // D passed on production
+    expect(r.counts).toEqual({ pending_deploy: 0, deployed_unverified: 0, unknown: 3 });
+    expect(r.unknown!.every((x) => x.reason.includes("production:deployed.tasks"))).toBe(true);
+    expect(r.basis).toContain("production:deployed.tasks");
+  });
+
+  it("with the fact: contained ones are deployed_unverified, the rest pending_deploy, no-sha and uncovered ones unknown", async () => {
+    const { store, c } = await world();
+    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks", value: { sha: "eeeeeee5", contained: ["A"], not_contained: ["B"], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+    let r = await rel(store, c);
+    expect(r.deployed_unverified!.map((x) => x.task)).toEqual(["A"]);
+    expect(r.pending_deploy!.map((x) => x.task)).toEqual(["B"]);
+    expect(r.unknown!.map((x) => [x.task, x.reason])).toEqual([["C", "证据里没有 sha，无从比对"]]);
+    expect(r.counts).toEqual({ pending_deploy: 1, deployed_unverified: 1, unknown: 1 });
+    expect(r.basis).toContain("git-ancestor");
+    // a task finished after the fact was measured is not silently placed
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "E", title: "题 E", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "E", touches: ["E"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "E", evidence: "fffffff6 完成" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "E", surface: "repo", pass: true });
+    r = await rel(store, c);
+    expect(r.unknown!.find((x) => x.task === "E")!.reason).toContain("没有覆盖 E");
+    // a new deploy invalidates the fact: everything is unknown again, saying which sha the fact was measured against
+    await emit(store, c, { kind: "reading", actor: HUMAN, surface: "production", key: "deployed.sha", value: "9999999", method: "ateam release --deploy 推到 production", writes: ["production:deployed.sha"], depends_on: ["production:deployed.sha"] });
+    r = await rel(store, c);
+    expect(r.counts.unknown).toBe(r.candidates!.length);
+    expect(r.unknown![0].reason).toMatch(/ateam release/); // the deploy invalidated the fact (it depends on production:deployed.sha): measure again
+  });
+});

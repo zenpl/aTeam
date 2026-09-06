@@ -156,6 +156,31 @@ export const RESPONSIBILITIES: Responsibility[] = [
   { id: "R17", name: "对外接口", holder: "none" },
   { id: "R18", name: "钥匙与边界", holder: "service" },
 ];
+/**
+ * What the holder of each responsibility does, in one line (docs/responsibilities.md, 「持有者需要知道」条). The manual for any
+ * role is assembled from these by id (t-081), so a project that calls its roles fe / be / release-manager gets a real manual
+ * without anyone writing a file per role name.
+ */
+export const RESPONSIBILITY_DOING: Record<string, string> = {
+  R1: "一句话说清现在最要紧的一件事，并说明什么被推迟了；焦点变了要让每个人下一轮就读到。",
+  R2: "引用人的原话写成场景需求，定人可见之物的措辞与交互，把产品问题带选项和默认交给人。",
+  R3: "动手前把判据写成可判定的句子，每条指明在哪个表面判；判据只追加、有留痕。",
+  R4: "把要求拆成任务，写清判据与接口约定；按谁在听、谁有能力派活；被阻塞的说清卡在哪。",
+  R5: "claim 时把触点写宽，做完 done 带证据（能定位产出、逐条对应判据）；改变了世界要 writes。",
+  R6: "在指定表面上对照判据判 pass/fail 并带证据；不验自己写判据的任务；FAIL 要说清缺什么。",
+  R7: "把值记成事实，写清表面、方法、假设与有效期；引用别人的事实前先看它有没有失效。",
+  R8: "触点重叠时说清谁合谁、边界在哪；批次集成，后落地方合并先落地方。",
+  R9: "部署或迁移，写 writes 让相关事实失效，部署后把新状态记成事实；推之前确认自己有许可和凭据。",
+  R10: "决定写成带 --decision 的 note，改变决定用 --supersedes，从不改历史。",
+  R11: "把 friction 变成任务，改进规则本身；不要把本项目的约定固化成平台。",
+  R12: "在真实表面上巡查，把观察写成 note 带证据，不直接当需求。",
+  R13: "定期出报告，说节奏、返工、摩擦、人的负担与结构性发现；要人做的事变成卡。",
+  R14: "谁在听、谁没在听、谁缺；缺人时把它变成一张给人的卡。",
+  R15: "政策与产品范围由人定；给出选项和默认，到期按默认执行并留痕。",
+  R16: "新节点十分钟内做出第一个正确动作；换人不需要口头交接。",
+  R17: "外部信号带来源与信任级进来，先过滤再进日志。",
+  R18: "项目隔离、钥匙发放与撤销；钥匙不进对话、不进文件。",
+};
 /** The default packing (responsibilities.md, 打包 · 默认五角色): what a role holds when the project declares only role names. */
 export const DEFAULT_RESPONSIBILITIES: Record<string, string[]> = {
   pd: ["R2", "R12"],
