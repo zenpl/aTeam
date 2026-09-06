@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, INSTRUCTION_MAX_CHARS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS } from "./events.js";
 import { type State, openSeamsFor, passedOn } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -27,9 +27,21 @@ export function validate(state: State, e: NewEvent, human: string): void {
   }
 
   switch (e.kind) {
-    case "reading":
+    // R0b: a key that declared a shape only takes values of that shape. The declaration itself is made once.
+    case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      const declared = state.shapes.get(e.key);
+      if (e.shape) {
+        if (e.shape.regex === undefined && !e.shape.enum?.length) throw new Rejected("reading", "a shape needs a regex or a non-empty enum");
+        if (e.shape.regex !== undefined) try { new RegExp(e.shape.regex); } catch { throw new Rejected("reading", `shape regex ${JSON.stringify(e.shape.regex)} does not compile`); }
+        if (declared && !sameShape(declared, e.shape))
+          throw new Rejected("reading", `${e.key} already has shape ${describeShape(declared)}; a shape is declared once`);
+      }
+      const shape = e.shape ?? declared;
+      if (shape && !matchesShape(shape, e.value))
+        throw new Rejected("reading", `${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
       return;
+    }
 
     // R1: an instruction is short, has one recipient, and a deadline to be acked.
     case "instruction":
@@ -100,6 +112,11 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
 
   switch (e.op) {
     case "claim":
+      // open or failed: anyone may take it. working: only its owner, to widen what it touches.
+      if (t.status === "working" && t.owner === e.actor) {
+        if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
+        return;
+      }
       if (t.status !== "open" && t.status !== "failed")
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
@@ -130,4 +147,21 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (t.status !== "blocked") throw new Rejected("unblock", `${t.id} is not blocked`);
       return;
   }
+}
+
+export function matchesShape(shape: ReadingShape, value: unknown): boolean {
+  if (shape.regex !== undefined && !new RegExp(shape.regex).test(typeof value === "string" ? value : JSON.stringify(value))) return false;
+  if (shape.enum?.length && !shape.enum.some((v) => JSON.stringify(v) === JSON.stringify(value))) return false;
+  return true;
+}
+
+export function describeShape(shape: ReadingShape): string {
+  const parts: string[] = [];
+  if (shape.regex !== undefined) parts.push(`/${shape.regex}/`);
+  if (shape.enum?.length) parts.push(`one of ${shape.enum.map((v) => JSON.stringify(v)).join(" | ")}`);
+  return parts.join(" and ");
+}
+
+function sameShape(a: ReadingShape, b: ReadingShape): boolean {
+  return a.regex === b.regex && JSON.stringify(a.enum ?? null) === JSON.stringify(b.enum ?? null);
 }

@@ -40,12 +40,12 @@ describe("t-003 · ateam task show", () => {
     expect(text).toContain("seams\n  (none)");
   });
 
-  it("shows an open seam on both sides, then its resolution and each verification with surface and pass/fail", async () => {
+  it("shows a seam on both sides (stacked, since t-001 was done first), then its resolution and each verification", async () => {
     const { store, emit } = await fixture();
     await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-002", touches: ["packages/server/src/app.ts"] });
     let b = board(reduce(await store.read()), HUMAN);
-    expect(fmt.task(boardTask(b, "t-001")!, b.seams)).toContain("OPEN  with t-002: packages/server/src/app.ts");
-    expect(fmt.task(boardTask(b, "t-002")!, b.seams)).toContain("OPEN  with t-001: packages/server/src/app.ts");
+    expect(fmt.task(boardTask(b, "t-001")!, b.seams)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-002: packages/server/src/app.ts");
+    expect(fmt.task(boardTask(b, "t-002")!, b.seams)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-001: packages/server/src/app.ts");
 
     await emit({ kind: "task", op: "seam", actor: "pm", tasks: ["t-001", "t-002"], resolution: "frontend adds routes below /health only" });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-001", surface: "repo", pass: true, evidence: "ran dist locally" });

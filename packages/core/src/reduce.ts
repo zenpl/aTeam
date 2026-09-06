@@ -1,6 +1,6 @@
 import {
-  type Event, type Log, type Reading, type Instruction, type Note,
-  FOCUS_KEY, TEAM_SURFACE,
+  type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
 } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed";
@@ -61,6 +61,11 @@ export interface SeamState {
   id: string;
   tasks: [string, string];
   overlap: string[];
+  /**
+   * Set when one side was already done before the other claimed: the later task stacks on the earlier one.
+   * Informational; it blocks nobody's verification. Cleared if both sides come back in flight.
+   */
+  stacked?: { done: string; on: string };
   resolution?: { by: string; at: string; text: string };
 }
 
@@ -68,6 +73,8 @@ export interface State {
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
+  /** key -> declared value shape (defaults plus the first reading that declared one) */
+  shapes: Map<string, ReadingShape>;
   instructions: Map<string, InstructionState>;
   tasks: Map<string, TaskState>;
   seams: Map<string, SeamState>;
@@ -75,6 +82,25 @@ export interface State {
   /** actor -> last time we heard from them (event or cursor) */
   presence: Map<string, string>;
   focus?: Reading;
+}
+
+/**
+ * Do two declared touches overlap? Exact match; a `#symbol` suffix overlaps its file; a directory prefix overlaps
+ * everything under it. Unrelated paths (or non-path touches like `GET /health`) only overlap when equal.
+ */
+export function touchesOverlap(a: string, b: string): boolean {
+  const pa = a.split("#")[0].replace(/\/+$/, "");
+  const pb = b.split("#")[0].replace(/\/+$/, "");
+  if (pa === pb) return true;
+  return pa.startsWith(pb + "/") || pb.startsWith(pa + "/");
+}
+
+/** The touches of either task that overlap something the other declared. */
+export function overlapOf(a: string[], b: string[]): string[] {
+  const out = new Set<string>();
+  for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
+  for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
+  return [...out];
 }
 
 export function seamId(a: string, b: string): string {
@@ -89,6 +115,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     readings: new Map(),
     latestReading: new Map(),
+    shapes: new Map(Object.entries(DEFAULT_SHAPES)),
     instructions: new Map(),
     tasks: new Map(),
     seams: new Map(),
@@ -151,6 +178,7 @@ function invalidate(s: State, e: Event) {
 }
 
 function applyReading(s: State, r: Reading) {
+  if (r.shape && !s.shapes.has(r.key)) s.shapes.set(r.key, r.shape);
   const key = readingKey(r);
   const prevId = s.latestReading.get(key);
   if (prevId) {
@@ -181,7 +209,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   if (!t) return;
   switch (e.op) {
     case "claim":
-      t.owner = e.actor; t.touches = e.touches; t.status = "working";
+      // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
+      t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      t.owner = e.actor; t.status = "working";
       detectSeams(s, t);
       return;
     case "done":
@@ -201,19 +231,24 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   }
 }
 
-/** Two in-flight tasks whose declared touches intersect share a seam that someone must own. */
+/**
+ * Two in-flight tasks whose declared touches intersect share a seam that someone must own.
+ * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
+ */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || !other.touches.length) continue;
-    const overlap = t.touches.filter((x) => other.touches.includes(x));
+    const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
+    const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap });
+    if (existing) { existing.overlap = overlap; existing.stacked = stacked; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked });
   }
 }
 
+/** Seams that block verifying `task`: unresolved and not stacked. */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && x.tasks.includes(task));
 }
