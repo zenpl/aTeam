@@ -8,6 +8,7 @@ import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
+import { watchState, deafNotice } from "./deaf.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -144,7 +145,8 @@ async function main(argv: string[]) {
       const lockPath = join(process.cwd(), ".ateam", `watch.${cfg.me}.lock`);
       const other = blockingLock(lockPath, new Date(), 3 * interval);
       if (other && !bool(a, "force")) throw new UsageError(`another watch is already listening as ${cfg.me} in this checkout (pid ${other.pid}, heartbeat ${other.at}). Two watches replay old instructions to each other. Stop it first: kill ${other.pid}; or run with --force if it is really gone.`);
-      const beat = () => writeLock(lockPath, process.pid);
+      const started = `ateam ${["watch", ...process.argv.slice(3).filter((x) => x !== "--force")].join(" ")}`; // t-102: what to re-run, in this node's own words
+      const beat = () => writeLock(lockPath, process.pid, new Date(), started);
       beat();
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
@@ -290,14 +292,34 @@ async function main(argv: string[]) {
   }
 }
 
-main(process.argv.slice(2)).catch((err) => {
+/**
+ * t-102: after any command but `watch` itself, tell this node — and only this node — that its own watch stopped.
+ * On stderr so `board --json` stays pipeable while a person still reads it at the end of the output. Best effort:
+ * a node with no config, or no readable .ateam/, simply has nothing to say.
+ */
+function sayIfDeaf(argv: string[]): void {
+  try {
+    if (argv[0] === "watch") return;
+    const file = configFile();
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
+    const me = process.env.ATEAM_ME || stored.me;   // just the identity: a half-configured node still deserves the reminder
+    if (!me) return;
+    const path = join(process.cwd(), ".ateam", `watch.${me}.lock`);
+    const line = deafNotice(watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date()));
+    if (line) console.error(line);
+  } catch { /* never let the reminder break the command that carried it */ }
+}
+
+main(process.argv.slice(2)).then(() => sayIfDeaf(process.argv.slice(2))).catch((err) => {
+  // the reminder goes last, after whatever this command had to say — including its failure
+  const bye = (code: number) => { sayIfDeaf(process.argv.slice(2)); process.exit(code); };
   if (err instanceof ClientError) {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
-    process.exit(err.status === 409 ? 2 : 1);
+    return bye(err.status === 409 ? 2 : 1);
   }
-  if (err instanceof ShapeError) { console.error(err.message); process.exit(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); process.exit(2); }
+  if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2); }
   console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
+  return bye(1);
 });
