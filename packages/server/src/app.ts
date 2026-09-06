@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
+import { runAlerts } from "./alerts.js";
 
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
 export const REMIND_COOLDOWN_MS = 15 * 60_000;
@@ -24,6 +25,10 @@ export interface ServerOptions {
   sha?: string;
   /** GET / without the token. Default true (decision 06:23). Writing (POST /decide) always needs the token. */
   boardPublic?: boolean;
+  /** Where the service is reachable from outside (for links in call-outs); else the origin of the last request seen. */
+  publicUrl?: string;
+  /** How often the call-out check runs; 0 disables the timer (tests call runAlerts directly). Default 60s. */
+  alertIntervalMs?: number;
 }
 
 /** Many projects, each one log and its own keys; the unprefixed address is the default project. Identity is the X-Actor header. */
@@ -42,6 +47,15 @@ export function createApp(opts: ServerOptions) {
     return s;
   });
   const ready = registry.ensure(defaultProject, defaultProject, token);
+  let lastOrigin = opts.publicUrl ?? "";
+  const boardUrl = (p: string) => `${(opts.publicUrl ?? lastOrigin) || "http://localhost"}${p === defaultProject ? "/" : `/p/${encodeURIComponent(p)}/`}`;
+  // t-050: the service calls out on its own clock; no node needs to be online for this
+  const alertInterval = opts.alertIntervalMs ?? 60_000;
+  const timer = alertInterval > 0 ? setInterval(async () => {
+    try { for (const p of await registry.list()) await runAlerts(p.id, storeFor(p.id), { fetch: (u, i) => fetch(u, i), human, boardUrl }); }
+    catch (err) { console.error("alerts:", err); }
+  }, alertInterval) : undefined;
+  timer?.unref();
 
   const bus = new EventEmitter();
   bus.setMaxListeners(1000);
@@ -52,13 +66,14 @@ export function createApp(opts: ServerOptions) {
     return p;
   };
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     try {
       await ready;
       const url = new URL(req.url ?? "/", "http://x");
       const proto = String(req.headers["x-forwarded-proto"] ?? "").includes("https") ? "https" : "http";
       const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
       const origin = `${proto}://${host}`;
+      lastOrigin = origin;
       const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
 
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
@@ -303,6 +318,8 @@ export function createApp(opts: ServerOptions) {
       return json(res, 500, { error: "internal", message: (err as Error).message });
     }
   });
+  server.on("close", () => { if (timer) clearInterval(timer); });
+  return server;
 }
 
 function bearer(req: IncomingMessage): string | undefined {

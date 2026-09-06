@@ -12,6 +12,7 @@ export interface Invite { code: string; project: string; created_at: string; exp
 export interface Registry {
   create(name: string, now?: Date): Promise<{ project: Project; admin_key: string; invite: Invite }>;
   get(id: string): Promise<Project | null>;
+  list(): Promise<Project[]>;
   /** The project the default (unprefixed) address means, created on first start with the legacy key as its admin key. */
   ensure(id: string, name: string, adminKey: string | undefined, now?: Date): Promise<Project>;
   lookup(key: string): Promise<KeyRecord | null>;
@@ -57,6 +58,7 @@ export class MemoryRegistry implements Registry {
     return { project, admin_key, invite };
   }
   async get(id: string) { return this.projects.get(id) ?? null; }
+  async list() { return [...this.projects.values()]; }
   async ensure(id: string, name: string, adminKey: string | undefined, now = new Date()) {
     let p = this.projects.get(id);
     if (!p) { p = { id, name, created_at: now.toISOString(), node_secret: randomBytes(24).toString("base64url") }; this.projects.set(id, p); }
