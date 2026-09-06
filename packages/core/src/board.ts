@@ -191,13 +191,15 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
+  // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
+  const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
   if (current) {
     b.live.deployed_sha = current.value as string;
-    const previous = [...deploys].reverse().find((r) => r.value !== current.value);
+    const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
-  // when the current sha was first recorded (the same sha re-measured later does not move the line)
-  const currentSince = current ? deploys.find((r) => r.value === current.value)!.at : undefined;
+  // when the current sha was first recorded (the same sha re-measured later, short or long, does not move the line)
+  const currentSince = current ? deploys.find((r) => sameSha(r.value, current.value))!.at : undefined;
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
