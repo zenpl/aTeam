@@ -353,7 +353,7 @@ export function createApp(opts: ServerOptions) {
           // The feature is fact-gated (pm 22:39): with it off there is no entrance, so no route either.
           if (!contactEnabled(board(reduce(await store.read(), now()), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
           if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$|^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址" } };
+          if (!/^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个 https:// 开头的 webhook 地址" } };
           const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
           emitAll([reading]);
           return { status: 201, body: reading };

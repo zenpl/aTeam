@@ -34,6 +34,12 @@ export function contactEnabled(b: Board): boolean {
   return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
 }
 
+/** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
+export function contactLine(address: string | null): string {
+  if (!address) return UI.contactNone;
+  return /^https?:\/\//i.test(address) ? UI.contactTo(address) : UI.contactEmail;
+}
+
 /** The address the call-outs use, when the fact is valid. */
 export function contactOf(b: Board): string | null {
   const r = b.readings.find((r) => r.valid && r.surface === PROJECT_SURFACE && r.key === ALERT_WEBHOOK_KEY);
@@ -230,10 +236,19 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
   const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");
   const since = previousSha(b);
-  const onProd = b.live.verified_on_production.length;
+  // pd 22:47 (B): the count is this version's only; with nothing verified on this version there is no count at all.
+  const onProd = b.live.recent.length;
   out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
   if (sha) {
-    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${shaReading ? ` <span class="meta">· ${esc(UI.checkedBy(shaReading.by, ago(shaReading.at)))}</span>` : ""}</div>`);
+    // t-086: the board says where the sha came from, by the fields t-083 derives from the reading's method: who pushed it
+    // (their own `release --deploy` wrote the fact), who only checked which version is live, both when both are known,
+    // and neither when the fact says nothing about its source.
+    const when = shaReading ? ago(shaReading.at) : "";
+    const source = [
+      b.live.deployed_by ? UI.pushedBy(b.live.deployed_by, when) : "",
+      b.live.checked_by ? UI.checkedBy(b.live.checked_by, when) : "",
+    ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
+    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
     const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
     if (b.live.recent.length) {
       out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
@@ -242,8 +257,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
-  // t-069: while the contact card is not on screen, one grey line says where the call-outs go; clicking it reopens the card.
-  if (contactOn && !asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line"><a href="${esc(base)}/?ask=alert">${esc(contact ? UI.contactTo(contact) : UI.contactNone)}</a></p>`);
+  // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
+  // no address or skipped; an email that nothing sends to; an https address that gets the call.
+  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);
