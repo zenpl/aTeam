@@ -8,11 +8,12 @@ export function event(e: Event, me: string): string {
   switch (e.kind) {
     case "instruction": {
       const mark = e.to === me ? "  ⇐ FOR YOU, ack it: ateam ack " + e.id : "";
-      return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${mark}`;
+      const ask = e.options?.length ? `  options: ${e.options.join(" | ")}${e.default ? ` (default ${e.default})` : ""}` : "";
+      return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${ask}${mark}`;
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
     case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
-    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
+    case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.decides ? `  (chose "${e.decides.option}" for ${e.decides.of})` : ""}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
       switch (e.op) {
         case "create": return `${t} ${who} task ${e.task} created: ${e.title}`;
@@ -47,8 +48,15 @@ export function board(b: Board, me: string): string {
     out.push("", "OPEN INSTRUCTIONS");
     for (const i of open) {
       const you = i.to === me ? "  ⇐ YOU" : "";
-      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
+      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
     }
+  }
+
+  const decided = b.instructions.filter((i) => i.chosen);
+  if (decided.length) {
+    out.push("", "DECIDED");
+    for (const i of decided.slice(-5)) out.push(`  ${i.from} → ${i.to}: ${i.body}  ⇒ ${i.chosen!.option}  (${i.chosen!.by}, ${ago(i.chosen!.at)} ago)  ${i.id}`);
   }
 
   out.push("", "TASKS");

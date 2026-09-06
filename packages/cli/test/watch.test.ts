@@ -1,0 +1,109 @@
+/**
+ * `ateam watch` (t-007): it wakes on an instruction and must show it. Before, the quiet pull that
+ * found the instruction advanced the cursor, and the follow-up printing sync said "nothing new".
+ */
+import { describe, it, expect } from "vitest";
+import type { Event, PullResult } from "@ateam/core";
+import { sync, watch, type CursorStore, type Puller } from "../src/loop.js";
+
+const ME = "frontend";
+const at = "2026-09-06T06:12:00.000Z";
+const LOG: Event[] = [
+  { id: "01A", actor: "pm", at, kind: "note", body: "t-007 priority: whoever is free" },
+  { id: "01B", actor: "pm", at, kind: "task", op: "create", task: "t-007", title: "watch prints the wake event", criteria: ["prints the pull"] },
+  { id: "01C", actor: "pm", at, kind: "instruction", to: ME, body: "t-007 is yours: claim it", ack_by: "2026-09-06T06:27:00.000Z" },
+  { id: "01D", actor: "pm", at, kind: "instruction", to: "dev", body: "not for frontend", ack_by: "2026-09-06T06:27:00.000Z" },
+];
+
+/** A server that releases the log in scripted slices: each pull returns the next slice after the cursor. */
+function server(slices: number[]): Puller & { pulls: (string | null)[] } {
+  let released = 0;
+  const pulls: (string | null)[] = [];
+  return {
+    pulls,
+    async pull(after, _waitMs) {
+      pulls.push(after);
+      released = Math.min(LOG.length, released + (slices.shift() ?? 0));
+      const start = after ? LOG.findIndex((e) => e.id === after) + 1 : 0;
+      const events = LOG.slice(start, released);
+      const r: PullResult = { events, for_me: events.filter((e) => e.kind === "instruction" && e.to === ME), cursor: events.length ? events[events.length - 1].id : after };
+      return r;
+    },
+  };
+}
+
+function memoryCursor(): CursorStore & { writes: (string | null)[] } {
+  let c: string | null = null;
+  const writes: (string | null)[] = [];
+  return { writes, read: () => c, write: (v) => { c = v; writes.push(v); } };
+}
+
+describe("t-007 · ateam watch prints the instruction it woke on", () => {
+  it("prints the full events of the wake-up pull, in sync format, before 'instruction received'", async () => {
+    const out: string[] = [];
+    const cursor = memoryCursor();
+    // pull 1: nothing yet; pull 2: still nothing; pull 3: the four events land at once
+    const r = await watch(server([0, 0, 4]), ME, cursor, 100, (l) => out.push(l));
+
+    expect(r.for_me.map((e) => e.id)).toEqual(["01C"]);
+    const text = out.join("\n");
+    expect(text).toContain("note t-007 priority: whoever is free");
+    expect(text).toContain("task t-007 created: watch prints the wake event");
+    expect(text).toContain("INSTRUCTION → frontend: t-007 is yours: claim it");
+    expect(text).toContain("⇐ FOR YOU, ack it: ateam ack 01C");
+    expect(text).toContain("INSTRUCTION → dev: not for frontend");
+    expect(text).toContain("1 instruction(s) for you. Ack each with: ateam ack <id>");
+    expect(out[out.length - 1]).toBe("\ninstruction received");
+    expect(out.indexOf("\ninstruction received")).toBeGreaterThan(out.findIndex((l) => l.includes("01C")));
+    // quiet rounds print nothing
+    expect(out.some((l) => l === "nothing new" || l === "log is empty")).toBe(false);
+  });
+
+  it("advances the cursor exactly once for those events; a following sync prints nothing new and skips nothing", async () => {
+    const out: string[] = [];
+    const cursor = memoryCursor();
+    const srv = server([0, 3, 1]); // wake on the third event (the instruction for me), 01D not yet published
+    await watch(srv, ME, cursor, 100, (l) => out.push(l));
+    expect(cursor.writes).toEqual([null, "01C"]);
+    expect(srv.pulls).toEqual([null, null]);           // two pulls, both from the same (empty) cursor
+    expect(out.join("\n")).not.toContain("not for frontend");
+
+    const after: string[] = [];
+    let r = await sync(srv, ME, cursor, 0, (l) => after.push(l));
+    // 01D was published after the wake; it is the one new thing, printed once
+    expect(r.events.map((e) => e.id)).toEqual(["01D"]);
+    expect(after.join("\n")).toContain("INSTRUCTION → dev: not for frontend");
+    expect(cursor.read()).toBe("01D");
+
+    const again: string[] = [];
+    r = await sync(srv, ME, cursor, 0, (l) => again.push(l));
+    expect(r.events).toEqual([]);
+    expect(again).toEqual(["nothing new"]);
+    expect(srv.pulls).toEqual([null, null, "01C", "01D"]);
+  });
+
+  it("prints events that arrive in a pull before the wake-up too, so nothing is consumed unseen", async () => {
+    const out: string[] = [];
+    const cursor = memoryCursor();
+    await watch(server([0, 2, 0, 2]), ME, cursor, 100, (l) => out.push(l));
+    const text = out.join("\n");
+    expect(text.indexOf("note t-007 priority")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("note t-007 priority")).toBeLessThan(text.indexOf("INSTRUCTION → frontend"));
+    expect(out.filter((l) => l.includes("note t-007 priority"))).toHaveLength(1);
+    expect(out.filter((l) => l === "\ninstruction received")).toHaveLength(1);
+    expect(cursor.writes).toEqual([null, "01B", "01B", "01D"]);
+  });
+
+  it("sync itself still prints events and marks instructions for me", async () => {
+    const out: string[] = [];
+    const cursor = memoryCursor();
+    const r = await sync(server([4]), ME, cursor, 0, (l) => out.push(l));
+    expect(r.events).toHaveLength(4);
+    expect(out[0]).toContain("note t-007 priority");
+    expect(out.filter((l) => l.includes("FOR YOU"))).toHaveLength(1);
+    expect(cursor.read()).toBe("01D");
+    const quiet: string[] = [];
+    await sync(server([4]), ME, memoryCursor(), 0, null);
+    expect(quiet).toEqual([]);
+  });
+});
