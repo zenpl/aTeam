@@ -65,7 +65,7 @@ export const UI = {
   verifiedCount: (n: number) => `在生产上验过 ${n} 件`,
   // t-086: who pushed this version and who only checked which one is live are different claims, and never merged into one.
   pushedBy: (who: string, when: string) => `${who} ${when}推的`,
-  checkedBy: (who: string, when: string) => `${who} ${when}核对的`,
+  checkedBy: (who: string, when: string) => `${who} ${when}核对`,
   noDeployReading: "还没人核对过线上是哪一版",
   thisVersionUnverified: "这一版刚上线，还没在生产验过",
   thisVersion: "这一版带来了什么",

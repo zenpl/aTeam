@@ -275,7 +275,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
   it("线上 line, 在途 chips, working/blocked read, the rest dug; blocked reason in amber clipped to 60", async () => {
     const html = await w.authedPage();
     const now = section(html, "now", "rest");
-    expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对的<\/span>/);
+    expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span>/);
     expect(now).toMatch(/<details class="more-list"><summary>这一版带来了什么<\/summary><ul class="plain"><li>Cookie flags<\/li><\/ul><\/details>/);
     expect(now).toMatch(/<span class="chip"><b>1<\/b> 在做<\/span><span class="chip warn"><b>1<\/b> 卡住<\/span><span class="chip"><b>1<\/b> 做完了，等验<\/span><span class="chip"><b>1<\/b> 没开始<\/span>/);
     expect(now).toMatch(/<div class="grp"><div class="grp-h">在做<\/div><ul class="tasks"><li><span class="dot"><\/span><span class="ttl">Card page for the human<\/span><span class="who">frontend<\/span><\/li><\/ul><\/div>/);
@@ -476,7 +476,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对的", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)
@@ -904,7 +904,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
   });
 });
 
-describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
+describe("t-086 · 「线上」按来源署名：推的 / 核对", () => {
   it("names the pusher when the fact came from release --deploy, the checker when someone measured it, and nobody when the fact says neither", async () => {
     const v = server();
     await v.start();
@@ -912,19 +912,19 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
       // measured: whoever wrote the reading only checked which version is live
       await v.post("qa", { kind: "reading", surface: "production", key: "deployed.sha", value: "eae0b22fd12", method: "curl /health 读到的" });
       let now = section(await v.page(), "now", "rest");
-      expect(now).toContain('<span class="meta">· qa 刚刚核对的</span>');
+      expect(now).toContain('<span class="meta">· qa 刚刚核对</span>');
       expect(now).not.toContain("推的");
       // pushed: the deployer's own release --deploy wrote it
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222", method: "ateam release --deploy 推的" });
       now = section(await v.page(), "now", "rest");
       expect(now).toContain('<span class="meta">· dev 刚刚推的</span>');
-      expect(now).not.toContain("核对的");
+      expect(now).not.toContain("核对");
       // a reading with no method says nothing about its source: the sha stands alone
       await v.post("pm", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
       now = section(await v.page(), "now", "rest");
       expect(now).toContain('<code class="sha">ccccccc</code>');
       expect(now).not.toContain("推的");
-      expect(now).not.toContain("核对的");
+      expect(now).not.toContain("核对");
     } finally { await v.stop(); }
   });
 
@@ -935,6 +935,6 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对的", () => {
     const b = board(state, HUMAN);
     b.live.checked_by = "qa"; // the same version pushed by one and checked by another
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对的</span>');
+    expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对</span>');
   });
 });
