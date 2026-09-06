@@ -39,9 +39,19 @@ export function board(b: Board, me: string): string {
 
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${b.focus.set_by}, ${ago(b.focus.at)} ago)` : "—"}`);
 
+  if (b.live) {
+    const live = `LIVE       production ${b.live.deployed_sha ? b.live.deployed_sha.slice(0, 7) : "sha unknown"}`;
+    out.push(b.live.verified_on_production.length ? `${live} · verified there: ${b.live.verified_on_production.map((t) => t.id).join(", ")}` : live);
+  }
+
   if (b.needs_human.length) {
     out.push("", "NEEDS HUMAN");
-    for (const n of b.needs_human) out.push(`  [${n.kind}] ${n.summary}  (${n.id})`);
+    for (const n of b.needs_human) out.push(`  ${n.summary}  (${n.id})`);
+  }
+
+  if (b.overdue?.length) {
+    out.push("", "OVERDUE");
+    for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 
   const open = b.instructions.filter((i) => i.status !== "acked");
@@ -69,9 +79,9 @@ export function board(b: Board, me: string): string {
     }
   }
 
-  const openSeams = b.seams.filter((s) => !s.resolved && !s.stacked);
+  const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
-    out.push("", "OPEN SEAMS");
+    out.push("", "SEAMS (open: nobody owns these; they block verify)");
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
   }
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
