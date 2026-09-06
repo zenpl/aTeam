@@ -426,6 +426,7 @@ function latestPerSurface<V extends { surface: string }>(vs: V[]): V[] {
 
 /** On the board, a finished task's evidence and each verdict show this much; the task page has all of it (t-065). */
 const EVIDENCE_MAX = 160;
+const NOTE_MAX = 200;
 /** Stale readings listed on the board: the latest few; older ones are a count (t-065). */
 const STALE_SHOWN = 8;
 /** Settled questions listed in the dig layer: the latest few. */
@@ -442,18 +443,20 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
   d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
   d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
   if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
-  const evidence = st.evidence && href && !withNotes ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;
+  const evidence = st.evidence && href ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;
   if (evidence) d.push(st.shows ? `<details class="meta"><summary>${UI.evidence}</summary>${esc(evidence)}</details>` : `<div class="meta">${UI.evidence}：${esc(evidence)}</div>`);
   const evidenceNotes = st.notes.filter((n) => /^\s*evidence:/i.test(n.body));
-  if (withNotes) for (const n of evidenceNotes) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
+  // On the board a note keeps its first lines; the task page has the whole text (t-065).
+  const body = (text: string) => href ? clip(text, NOTE_MAX) : text;
+  if (withNotes) for (const n of evidenceNotes) d.push(`<div class="meta">+ ${esc(body(n.body.replace(/^\s*evidence:\s*/i, "")))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
   // On the board a finished task's verdicts keep their first line; the verifier's full evidence is on the task page.
   const verdicts = href && !withNotes ? latestPerSurface(st.verifications) : st.verifications;
-  for (const v of verdicts) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(href && !withNotes ? clip(v.evidence, VERDICT_MAX) : v.evidence)}` : ""}</div>`);
+  for (const v of verdicts) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(href ? clip(v.evidence, VERDICT_MAX) : v.evidence)}` : ""}</div>`);
   if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
   if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
   const other = withNotes ? st.notes.filter((n) => !/^\s*evidence:/i.test(n.body)) : st.notes;
   if (st.touches.length && (withNotes || !href)) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(n.body)}</li>`).join("")}</ul>`);
+  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(body(n.body))}</li>`).join("")}</ul>`);
   // On the board, a finished task's notes are a count and a link: they are what made the page grow with the log (t-065).
   if (href) d.push(`<div class="meta">${other.length && !withNotes ? esc(UI.notesCount(other.length)) + " · " : ""}<a href="${esc(href)}">${UI.details}</a></div>`);
   return d.join("\n");
