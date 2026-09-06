@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -17,7 +17,18 @@ export const TITLE_MAX = 30;
 const JUST_MS = 60 * 60_000;
 
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
-export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string }
+export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null }
+
+/** The contact card (t-069): the instruction whose body is the S0 second question. */
+export function isContactCard(i: { body: string }): boolean {
+  return i.body === CONTACT_ASK;
+}
+
+/** The address the call-outs use, when the fact is valid. */
+export function contactOf(b: Board): string | null {
+  const r = b.readings.find((r) => r.valid && r.surface === PROJECT_SURFACE && r.key === ALERT_WEBHOOK_KEY);
+  return r && typeof r.value === "string" && r.value ? r.value : null;
+}
 
 export type Kind = "ask" | "do" | "tell";
 /** What kind of card an instruction to the human is. Options → 问你; asked to act → 请你做; else 告诉你. */
@@ -117,17 +128,41 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const asks = b.needs_human.filter((n) => !n.chosen);
   const invite = inviteUrl(b);
   const roles = rolesOf(b);
-  if (asks.length) {
-    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length}</span></h2>`);
+  const contact = contactOf(b);
+  // t-069: an input, 记下 (primary) and 先不要. On the card the buttons are the card's options (POST /decide);
+  // reopened from the grey line under 线上 it posts the address alone (POST /fact) and 先不要 just goes back.
+  const contactForm = (action: string, fields: string, current: string | null) => {
+    const input = `<input type="text" name="value" placeholder="${esc(UI.contactPlaceholder)}" aria-label="${esc(UI.contactPlaceholder)}" autocomplete="off"${current ? ` value="${esc(current)}"` : ""}>`;
+    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(CONTACT_FILL)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
+    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(CONTACT_SKIP)}">${UI.contactSkip}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
+    return form(action, "actions contact", fields, `${input}${save}${skip}`);
+  };
+  const reopen = opts.ask === "alert" && !asks.some(isContactCard);
+  if (asks.length || reopen) {
+    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + (reopen ? 1 : 0)}</span></h2>`);
+    if (reopen) {
+      out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span></div>`);
+      out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      out.push(contactForm("/fact", `<input type="hidden" name="key" value="${esc(ALERT_WEBHOOK_KEY)}">`, contact));
+      out.push(`</article>`);
+    }
     for (const i of asks) {
       const kind = cardKind(i);
       // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
       const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
-      out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
-      out.push(`<p class="q">${esc(title)}</p>`);
-      if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
+      if (isContactCard(i)) {
+        // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
+        out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      } else {
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<p class="q">${esc(title)}</p>`);
+        if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
+      }
       const id = `<input type="hidden" name="id" value="${esc(i.id)}">`;
-      if (kind === "ask" && !i.options?.length) {
+      if (isContactCard(i)) {
+        out.push(contactForm("/decide", id, contact));
+      } else if (kind === "ask" && !i.options?.length) {
         // A question with no options is answered in the 说一句 box (UC-S0: 「这个项目是什么？说一句。」).
         out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
         if (invite) out.push(inviteLine(invite));
@@ -161,7 +196,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const { title } = cardTitle(just.i);
     const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
-    const what = just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
+    const what = isContactCard(just.i) && just.i.chosen
+      ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
+      : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
   }
 
@@ -194,6 +231,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
+  // t-069: while the contact card is not on screen, one grey line says where the call-outs go; clicking it reopens the card.
+  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line"><a href="${esc(base)}/?ask=alert">${esc(contact ? UI.contactTo(contact) : UI.contactNone)}</a></p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);
@@ -558,6 +597,10 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .kind { font-size:.78rem; letter-spacing:.08em; color:var(--alert); font-weight:600; }
 .q { margin:.35rem 0 .85rem; font:500 1.2rem/1.65 var(--serif); text-wrap:balance; max-width:38em; }
 .actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.ask .body { margin:-.4rem 0 .85rem; color:var(--muted); max-width:40em; }
+.actions.contact input { flex:1 1 14rem; min-width:0; font:inherit; padding:.55rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
+a.btn { text-decoration:none; display:inline-block; }
+.contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
 .btn small { font-size:.75em; letter-spacing:.05em; }
