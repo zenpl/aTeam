@@ -9,7 +9,8 @@ import * as fmt from "./format.js";
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
-  ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json; the rest come from ATEAM_URL/ATEAM_TOKEN (ATEAM_ME wins over the file)
+  ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json
+                                                          precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
 every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
@@ -19,6 +20,7 @@ every turn
 say things
   ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
+                                    [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
   ateam focus <body>                                                 the one thing that matters most right now
   ateam note <body> [--decision] [--supersedes <id>]
 
@@ -135,9 +137,11 @@ async function main(argv: string[]) {
     case "reading": {
       const [key, ...value] = rest;
       const validFor = str(a, "valid-for");
+      const shapeRe = str(a, "shape"), shapeEnum = list(a, "enum");
+      const shape = shapeRe !== undefined || shapeEnum?.length ? { regex: shapeRe, enum: shapeEnum?.map(parseValue) } : undefined;
       return emit({ kind: "reading", key: need(key, "<key>"), value: parseValue(need(value.join(" "), "<value>")),
         surface: need(str(a, "surface"), "--surface"), method: str(a, "method"), assumptions: list(a, "assumes"),
-        depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined });
+        depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: need(rest.join(" "), "<body>") });
     case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes") });

@@ -290,6 +290,45 @@ describe("t-010 · touches overlap by path, and the owner can widen a claim", ()
   });
 });
 
+describe("t-008 · a reading key can declare what values it takes", () => {
+  it("deployed.sha takes a git sha by default and rejects an event id, naming the key and the shape", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "fd764558495cfa377bb2c7b40ca4016cf57f79d6" });
+    await emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "staging", value: "fd76455" });
+    const r = await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "01M1TNREK0TD5ZFJXK18XVNTWF" }));
+    expect(r.rule).toBe("reading");
+    expect(r.message).toMatch(/deployed\.sha/);
+    expect(r.message).toMatch(/\^\[0-9a-f\]\{7,40\}\$/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "deployed.sha", surface: "production", value: "unknown" }))).message).toMatch(/does not match shape/);
+    expect(reduce(await store.read(), c.now()).readings.size).toBe(2);
+  });
+
+  it("an undeclared key takes anything, as before", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "health", surface: "production", value: "ok" });
+    await emit(store, c, { kind: "reading", actor: "pm", key: "health", surface: "production", value: { ok: true, sha: "x" } });
+    await emit(store, c, { kind: "reading", actor: "pm", key: "health", surface: "production", value: 42 });
+    expect(reduce(await store.read(), c.now()).readings.size).toBe(3);
+  });
+
+  it("a shape is declared once, on a reading; later readings must match it; a different declaration is rejected", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    // the declaring reading is itself checked
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "C", shape: { enum: ["A", "B"] } }))).message).toMatch(/auth\.mode = "C" does not match shape one of "A" \| "B"/);
+    await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "B", shape: { enum: ["A", "B"] } });
+    await emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "A" });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "qa", key: "auth.mode", surface: "staging", value: "public" }))).message).toMatch(/auth\.mode = "public" does not match shape/);
+    // same declaration again is fine; a different one is not
+    await emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B"] } });
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "auth.mode", surface: "production", value: "A", shape: { enum: ["A", "B", "C"] } }))).message).toMatch(/already has shape/);
+    expect((await rejected(emit(store, c, { kind: "reading", actor: "pm", key: "users.count", surface: "production", value: 1, shape: { regex: "(" } }))).message).toMatch(/does not compile/);
+    expect(reduce(await store.read(), c.now()).shapes.get("auth.mode")).toEqual({ enum: ["A", "B"] });
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();

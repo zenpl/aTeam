@@ -1,4 +1,4 @@
-import type { Event, Board, BoardTask } from "@ateam/core";
+import { describeShape, type Event, type Board, type BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -11,7 +11,7 @@ export function event(e: Event, me: string): string {
       return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${mark}`;
     }
     case "ack": return `${t} ${who} ack ${e.of}`;
-    case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
+    case "reading": return `${t} ${who} reading ${e.surface}:${e.key} = ${JSON.stringify(e.value)}${e.shape ? `  shape: ${describeShape(e.shape)}` : ""}${e.assumptions?.length ? `  assumes: ${e.assumptions.join("; ")}` : ""}`;
     case "note": return `${t} ${who} ${e.decision ? "DECISION" : "note"} ${e.body}${e.supersedes ? `  (supersedes ${e.supersedes})` : ""}`;
     case "task":
       switch (e.op) {

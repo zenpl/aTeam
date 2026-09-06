@@ -1,6 +1,6 @@
 import {
-  type Event, type Log, type Reading, type Instruction, type Note,
-  FOCUS_KEY, TEAM_SURFACE,
+  type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
 } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed";
@@ -71,6 +71,8 @@ export interface State {
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
+  /** key -> declared value shape (defaults plus the first reading that declared one) */
+  shapes: Map<string, ReadingShape>;
   instructions: Map<string, InstructionState>;
   tasks: Map<string, TaskState>;
   seams: Map<string, SeamState>;
@@ -111,6 +113,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     readings: new Map(),
     latestReading: new Map(),
+    shapes: new Map(Object.entries(DEFAULT_SHAPES)),
     instructions: new Map(),
     tasks: new Map(),
     seams: new Map(),
@@ -168,6 +171,7 @@ function invalidate(s: State, e: Event) {
 }
 
 function applyReading(s: State, r: Reading) {
+  if (r.shape && !s.shapes.has(r.key)) s.shapes.set(r.key, r.shape);
   const key = readingKey(r);
   const prevId = s.latestReading.get(key);
   if (prevId) {
