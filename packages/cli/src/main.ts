@@ -50,7 +50,7 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
 
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
   ateam log [--after <id>]       raw events
-  ateam watch [--interval 20s]   loop sync, printing what arrives; exits 0 when an instruction for you arrives (for Monitor)
+  ateam watch [--interval 20s] [--once]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction (old Monitor usage)
 `;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
@@ -120,7 +120,7 @@ async function main(argv: string[]) {
     }
     case "watch": {
       exact(rest);
-      await watch(client, cfg.me, fileCursor(cfg.me), duration(str(a, "interval") ?? "20s"), console.log);
+      await watch(client, cfg.me, fileCursor(cfg.me), duration(str(a, "interval") ?? "20s"), console.log, { once: bool(a, "once") });
       return;
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
