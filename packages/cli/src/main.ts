@@ -36,7 +36,7 @@ tasks
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
-  ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm or human; not once verified
+  ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
   ateam task seam <a> <b> --resolution "..."
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).

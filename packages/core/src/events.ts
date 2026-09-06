@@ -96,6 +96,8 @@ export type Kind = Event["kind"];
 export const INSTRUCTION_MAX_CHARS = 280;
 /** The identity that owns task scope (decision 01M1TM…: identities are pm, dev, qa, human). It may withdraw any task. */
 export const PM_ACTOR = "pm";
+/** The identity that owns scenarios and wording (decision 07:02). It may add criteria to any task. */
+export const PD_ACTOR = "pd";
 export const FOCUS_KEY = "focus";
 export const TEAM_SURFACE = "team";
 

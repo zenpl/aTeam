@@ -524,7 +524,7 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     const { store, c } = await setup();
     const r = await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "frontend", task: "t-020", add: ["我自己定的标准"] }));
     expect(r.rule).toBe("criteria");
-    expect(r.message).toMatch(/only qa \(criteria author\), pm or human can add criteria to t-020, not frontend/);
+    expect(r.message).toMatch(/only qa \(criteria author\), pm, pd or human can add criteria to t-020, not frontend/);
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "dev", task: "t-020", add: ["x"] }))).message).toMatch(/not dev/);
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["  "] }))).message).toMatch(/non-empty/);
     await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["a"] });
@@ -539,6 +539,15 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] });
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-x", add: ["z"] }))).message).toMatch(/is withdrawn/);
+  });
+
+  it("pd may add to a task it did not create (that is the point); pd then cannot verify it", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "t-020", add: ["空状态有一句话说明"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    expect((await task(store, c)).criteria_added.map((a) => a.by)).toEqual(["pd"]);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
   });
 
   it("whoever added a criterion cannot verify the task any more; the human still can", async () => {

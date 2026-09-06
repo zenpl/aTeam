@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR, PD_ACTOR } from "./events.js";
 import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -123,8 +123,8 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (!add.length || add.length !== (e.add ?? []).length) throw new Rejected("criteria", "give at least one non-empty criterion");
       if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
-      if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== human)
-        throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
+      if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
+        throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
       return;
     }
     case "withdraw":
