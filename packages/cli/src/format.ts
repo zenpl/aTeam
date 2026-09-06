@@ -105,7 +105,10 @@ export function board(b: Board, me: string): string {
   const valid = b.readings.filter((r) => r.valid);
   const stale = b.readings.filter((r) => !r.valid);
   out.push("", `READINGS (${valid.length} valid, ${stale.length} stale)`);
-  for (const r of valid) out.push(`  ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  (${r.by}, ${ago(r.at)} ago)${r.assumptions?.length ? `  assumes: ${r.assumptions.join("; ")}` : ""}`);
+  for (const r of valid) {
+    const when = r.recorded_after_s ? `测于 ${ago(r.measured_at)} 前，记于 ${ago(r.at)} 前${r.late ? "，记录晚了 ⚠" : ""}` : `${ago(r.at)} ago`;
+    out.push(`  ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  (${r.by}, ${when})${r.assumptions?.length ? `  assumes: ${r.assumptions.join("; ")}` : ""}`);
+  }
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
 
   out.push("", "PRESENCE");

@@ -38,8 +38,10 @@ export interface Reading extends Base {
   assumptions?: string[];
   /** `surface:key` entries; a later event that `writes` any of them invalidates this reading. */
   depends_on?: string[];
-  /** ISO timestamp after which the reading is expired. */
+  /** ISO timestamp after which the reading is expired. Counted from measured_at, not from when it was written. */
   valid_until?: string;
+  /** When the world was measured (t-051). Never later than the event; equal to it when absent. */
+  measured_at?: string;
   /** Declares, once per surface:key, what values it may take. Later readings of that surface:key that do not match are rejected. */
   shape?: ReadingShape;
 }
