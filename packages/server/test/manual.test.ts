@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, manualRoles } from "@ateam/core";
+import { readFileSync } from "node:fs";
 import { createApp } from "../src/app.js";
 
 let app: ReturnType<typeof createApp>;
@@ -158,5 +159,52 @@ describe("t-082 · the manual says how the first node declares the role set", ()
     }
     expect(welcome).toContain("职责 id 的全表由服务下发");
     expect(pm).toContain("职责 id 的全表在每个角色说明书末尾");
+  });
+});
+
+describe("t-090 · the 搬家 section, and every name in it really exists", () => {
+  /** The section as the service serves it, for any role. */
+  const section = (text: string) => {
+    const start = text.indexOf("## 搬家");
+    expect(start, "the manual has no 搬家 section").toBeGreaterThan(-1);
+    const rest = text.slice(start + 3);
+    const end = rest.indexOf("\n## ");
+    return rest.slice(0, end === -1 ? undefined : end);
+  };
+
+  it("says the four rules, does not describe the old format, and is there for every declared role", async () => {
+    const text = await (await fetch(`${base}/manual/dev`)).text();
+    const s = section(text);
+    for (const rule of ["只搬在途", "不搬历史", "每条都带 `from`", "先放核对卡", "邀请发回旧渠道"]) expect(s, rule).toContain(rule);
+    expect(s).toContain("读旧单据永远是你的事"); // criterion 2: reading the old records is the agent's, not ours
+    expect(s).toContain("不规定旧东西长什么样");
+    expect(s).toContain("他回答之前，不要动旧渠道");
+    // criterion 4: assembled the same way for a role this repository never heard of
+    await fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": "pm", "content-type": "application/json" }, body: JSON.stringify({ kind: "reading", surface: "project", key: "roles", value: { pm: ["R1"], "release-manager": ["R9"] } }) });
+    const other = await (await fetch(`${base}/manual/release-manager`)).text();
+    expect(section(other)).toBe(s);
+    for (const re of OVERFIT) expect(s, `搬家 leaks ${re}`).not.toMatch(re);
+  });
+
+  it("every field and command it names exists in the code today: writing something unimplemented turns this red", async () => {
+    const s = section(await (await fetch(`${base}/manual/dev`)).text());
+    const root = new URL("../../", import.meta.url); // packages/
+    const src = ["core/src/events.ts", "core/src/rules.ts", "core/src/reduce.ts", "core/src/board.ts", "cli/src/main.ts", "server/src/app.ts"]
+      .map((f) => readFileSync(new URL(f, root), "utf8")).join("\n");
+    // every backticked token, plus every JSON key in the commands the section shows: both are names it promises exist
+    const keys = [...s.matchAll(/"([a-z_]+)"\s*:/g)].map((m) => m[1]);
+    const names = [...new Set([...[...s.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]), ...keys])]
+      .flatMap((token) => {
+        if (/^(curl|#|\{|-)/.test(token) || token.includes(" ") === false && /^[a-z_]+$/i.test(token)) return [token];
+        const m = /^([a-z_]+):\s*"?([a-z_]+)"?$/i.exec(token); // `intent: "ask"` → both halves
+        return m ? [m[1], m[2]] : [];
+      })
+      .filter((t) => /^[a-z_]+$/i.test(t) && t.length > 1);
+    expect(names.length, "the section names nothing checkable").toBeGreaterThan(8);
+    for (const name of names) {
+      expect(src.includes(name), `the 搬家 section names "${name}", which nothing in core/cli/server implements`).toBe(true);
+    }
+    // the three the whole section rests on, spelled out so a rename cannot pass silently
+    for (const must of ["from", "measured_at", "supersedes", "options", "default", "criteria", "touches", "evidence"]) expect(names, must).toContain(must);
   });
 });
