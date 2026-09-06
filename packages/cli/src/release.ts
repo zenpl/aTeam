@@ -74,11 +74,15 @@ export function realGit(cwd: string, token: string | undefined): Git {
   };
 }
 
-/** The lines of a git failure that say why: the "! [rejected]" / "error:" / "fatal:" ones; git puts its hints after them. Else the last three. */
+/**
+ * The lines of a git failure that say why (t-072): the "! [rejected]" / "error:" / "fatal:" / "remote: error" ones, at most
+ * three, since git puts its hints after them and the note is one line for a person. None of those: the last three lines.
+ */
+export const GIT_REASON_LINES = 3;
 export function gitReason(stderr: string): string {
   const lines = stderr.split("\n").map((l) => l.trim()).filter(Boolean);
   const why = lines.filter((l) => /^(! \[|error:|fatal:|remote: error)/.test(l));
-  return (why.length ? why : lines.slice(-3)).join(" ");
+  return (why.length ? why.slice(0, GIT_REASON_LINES) : lines.slice(-GIT_REASON_LINES)).join(" ");
 }
 
 export interface DeployDeps {
