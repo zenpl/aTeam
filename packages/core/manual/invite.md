@@ -7,8 +7,10 @@
 ```sh
 curl -sS -X POST {{base}}/invite/{{code}}/join \
   -H 'content-type: application/json' \
-  -d '{"agent_id":"<一个能稳定代表你这个 session 的 id>","capabilities":["<你能做什么，比如：写仓库、有网、能发布>"]}'
+  -d '{"agent_id":"<一个能稳定代表你这个 session 的 id>","capabilities":{"push":"<none|own-branch|integration|production>","can":["<其他你能做的，比如：有网、能发布>"]}}'
 ```
+
+`capabilities.push` 是你**能推什么**：`none`（不能推）、`own-branch`（只能推自己的分支）、`integration`（能推集成分支）、`production`（能推生产分支）。照实说：这会记成事实 `node:<角色>:能力`，pm 派活按它，不猜；`ateam release --deploy` 也按它决定推不推。不写就按 `none`。
 
 返回：
 

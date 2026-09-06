@@ -3,7 +3,7 @@ import {
   FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
 } from "./events.js";
 
-export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn";
+export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
 export interface TaskState {
   id: string;
@@ -25,6 +25,8 @@ export interface TaskState {
   blocked_on?: string;
   /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
   withdrawn?: { by: string; at: string; reason: string };
+  /** Set once a decision made the finished task moot (terminal). What was done and judged stays on record. */
+  obsolete?: { by: string; at: string; decision: string; reason?: string };
   evidence?: string;
   /** How many times the owner has said done. Verifications belong to the round they were made in. */
   round: number;
@@ -32,16 +34,18 @@ export interface TaskState {
   verifications: TaskVerification[];
   /** Notes attached with `task`, in log order. */
   notes: Note[];
+  /** One sentence for the owner: what a person can now see (from the latest done or passing verify that said so). */
+  shows?: string;
   /** The task's rounds in order: every done (with its evidence), verify and reopen. Nothing is overwritten. */
   history: TaskHistoryEntry[];
 }
 
 export type TaskHistoryEntry =
-  | { op: "done"; by: string; at: string; round: number; evidence?: string }
-  | { op: "verify"; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string }
-  | { op: "reopen"; by: string; at: string; round: number; reason: string };
+  | { op: "done"; id: string; by: string; at: string; round: number; evidence?: string }
+  | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string }
+  | { op: "reopen"; id: string; by: string; at: string; round: number; reason: string };
 
-export interface TaskVerification { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
+export interface TaskVerification { id: string; surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
 
 /** Latest result per surface in the current round: what the board shows next to the task. */
 export function surfaceResults(t: TaskState): { surface: string; pass: boolean }[] {
@@ -275,20 +279,22 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       return;
     case "done":
       t.status = "done"; t.evidence = e.evidence; t.round += 1;
-      t.history.push({ op: "done", by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
+      if (e.shows?.trim()) t.shows = e.shows.trim();
+      t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
       t.status = "working"; t.blocked_on = undefined;
-      t.history.push({ op: "reopen", by: e.actor, at: e.at, round: t.round, reason: e.reason });
+      t.history.push({ op: "reopen", id: e.id, by: e.actor, at: e.at, round: t.round, reason: e.reason });
       detectSeams(s, t);
       return;
     case "verify": {
       // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
       // stands, per surface); a fail with nothing passed yet is a plain failed.
       const passedBefore = surfaceResults(t).some((r) => r.pass);
-      t.verifications.push({ surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
-      t.history.push({ op: "verify", by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence });
+      t.verifications.push({ id: e.id, surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
+      if (e.pass && e.shows?.trim()) t.shows = e.shows.trim();
+      t.history.push({ op: "verify", id: e.id, by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence });
       t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
     }
@@ -305,6 +311,12 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       // a withdrawn task touches nothing any more: its seams go with it
       for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
       return;
+    case "obsolete":
+      t.status = "obsolete"; t.blocked_on = undefined;
+      t.obsolete = { by: e.actor, at: e.at, decision: e.decision, reason: e.reason };
+      // nothing will be merged or verified: its seams go with it
+      for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
+      return;
   }
 }
 
@@ -314,7 +326,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  */
 function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
-    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || !other.touches.length) continue;
+    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);

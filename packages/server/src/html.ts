@@ -181,9 +181,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
   if (sha) {
     out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${shaReading ? ` <span class="meta">· ${esc(UI.checkedBy(shaReading.by, ago(shaReading.at)))}</span>` : ""}</div>`);
-    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul></details>` : "";
+    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
     if (b.live.recent.length) {
-      out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
+      out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
     } else {
       // Nothing verified on production since this sha was deployed: say so in words (t-060), never an empty heading.
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
@@ -213,7 +213,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     return r.undelivered ? `${state} · ${esc(UI.undelivered(r.undelivered))}` : state;
   };
   const whoChips = roles.length
-    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(r.role)}<span class="meta">${whoLabel(r)}</span></span>`).join("")
+    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(r.role)}<span class="meta">${whoLabel(r)}</span>${r.push === "production" ? `<span class="can-push">${UI.canPushProduction}</span>` : ""}</span>`).join("")
     : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
   out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
   out.push(`</section>`);
@@ -253,7 +253,7 @@ export function missingRole(i: { body: string; role?: string; about?: { role?: s
   return i.role ?? i.about?.role ?? missingRoleOf(i.body.trim()) ?? null;
 }
 
-interface RoleRow { role: string; status: "listening" | "deaf" | "missing"; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[]; undelivered: number }
+interface RoleRow { role: string; status: "listening" | "deaf" | "missing"; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[]; undelivered: number; /** what the node said it may push (t-058) */ push: string }
 
 /**
  * 谁在 by role (t-042/t-047/t-048): one presence row per declared role. listening = here; deaf = spoke but is not
@@ -267,7 +267,7 @@ export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
     const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : null;
     const overdue = status === "listening" ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
     const undelivered = (b.undelivered ?? []).find((u) => u.to === p.role)?.count ?? 0;
-    return { role: p.role!, status, present: status === "listening", last_seen: p.last_seen, since: p.since, minutes, overdue, undelivered };
+    return { role: p.role!, status, present: status === "listening", last_seen: p.last_seen, since: p.since, minutes, overdue, undelivered, push: p.push ?? "none" };
   });
 }
 
@@ -286,7 +286,7 @@ export function inFlightOf(b: Board): { key: string; label: string; total: numbe
     const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
     return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? whyLine(task.blocked_on) : undefined };
   });
-  const elsewhere = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production")).map((tk) => ({ title: tk.title, owner: tk.owner }));
+  const elsewhere = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production")).map((tk) => ({ title: tk.shows ?? tk.title, owner: tk.owner })); // t-056: the owner's sentence when there is one
   const groups = [
     { key: "working", label: UI.groups.working, items: sortRecent(b, "working", g("working")) },
     { key: "blocked", label: UI.groups.blocked, items: sortRecent(b, "blocked", g("blocked")) },
@@ -340,7 +340,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);
   d.push(`<section id="tasks"><h3>${UI.tasks} <span class="meta">${total}</span></h3>`);
-  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn"]) {
+  for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     const list = b.tasks[status] ?? [];
     if (!list.length) continue;
     d.push(`<h4>${esc(UI.taskStatus[status] ?? status)} <span class="meta">${list.length}</span></h4><ul class="tasks detail-tasks">`);
@@ -355,10 +355,12 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
         d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
         d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
         if (st.touches.length) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-        if (st.evidence) d.push(`<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
+        if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
+        if (st.evidence) d.push(st.shows ? `<details class="meta"><summary>${UI.evidence}</summary>${esc(st.evidence)}</details>` : `<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
         for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
         for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
         if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
+        if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
         if (st.notes.length) d.push(`<ul class="notes">${st.notes.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(n.body)}</li>`).join("")}</ul>`);
       }
       d.push(`</details></li>`);
@@ -496,6 +498,7 @@ li.warn .dot { background:var(--warn); }
 .who-chip i { width:.55rem; height:.55rem; border-radius:50%; background:var(--good); }
 .who-chip.away { color:var(--muted); } .who-chip.away i { background:var(--line); }
 .who-chip .meta { font-size:.78rem; }
+.who-chip .can-push { font-size:.72rem; border:1px solid currentColor; border-radius:999px; padding:0 .45em; }
 .rest { border-top:1px solid var(--line); padding-top:.75rem; }
 .rest > summary { cursor:pointer; color:var(--muted); font-size:.9rem; }
 .rest .report { margin:.5rem 0 .25rem; } .rest .report a { color:var(--accent); }

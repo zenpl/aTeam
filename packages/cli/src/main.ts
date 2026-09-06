@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -8,6 +8,7 @@ import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
+import { deploy, realGit } from "./release.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
@@ -15,7 +16,7 @@ import { decide } from "./decide.js";
 const HELP = `ateam — the shared log for a team of sessions
 
 setup
-  ateam join --me <role> [--url <server>] [--token <t>]   become a node: writes .ateam/config.json, syncs once, prints the role's manual (init is an alias)
+  ateam join --me <role> [--url <server>] [--token <t>] [--push none|own-branch|integration|production]   become a node: writes .ateam/config.json, syncs once, prints the role's manual (init is an alias); --push records what you may push as the fact node:<role>:能力
   ateam init --me <role> [--url <server>] [--token <t>]   writes the given fields to .ateam/config.json
                                                           precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
@@ -23,7 +24,7 @@ every turn
   ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam board [--json]           what is true, what is open, who is here
-  ateam release [--json]         what passed on repo and not yet on production: the deploy list for the human
+  ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
@@ -40,10 +41,11 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
-  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
+  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
+  ateam task obsolete <id> --by <decision note id> [--reason "..."]   terminal; a done/failed task a decision made moot, by the criteria author, pm, pd or human
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
   ateam task seam <a> <b> --resolution "..."
@@ -101,6 +103,12 @@ async function main(argv: string[]) {
     console.log(`configured as "${eff.me}" against ${eff.url} (wrote ${Object.keys(fields).join(", ")} to .ateam/config.json). Add .ateam/ to .gitignore.`);
     // join: one sync (delivery is recorded, your presence begins), then the manual for the role
     const client = new Client(eff);
+    const push = str(a, "push");
+    if (push !== undefined) {
+      if (!(PUSH_LEVELS as readonly string[]).includes(push)) throw new UsageError(`--push 只能是 ${PUSH_LEVELS.join(" | ")}`);
+      const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
+      console.log(fmt.event(e, eff.me));
+    }
     await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
     console.log(joinOutput(eff.me, await client.manual(eff.me)));
@@ -145,7 +153,15 @@ async function main(argv: string[]) {
     case "release": {
       exact(rest);
       const b = await client.board();
-      console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
+      const target = str(a, "deploy");
+      if (target === undefined) { console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b)); return; }
+      const outcome = await deploy(b, target, {
+        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN,
+        reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
+        note: async (body) => { await emit({ kind: "note", body }); },
+        print: console.log,
+      });
+      if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
       return;
     }
     case "trace": {
@@ -219,15 +235,16 @@ async function main(argv: string[]) {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else for (const w of seamWarnings(await client.board(), task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-          return emit({ kind: "task", op, task, evidence });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
-          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence") });
+          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "obsolete": return emit({ kind: "task", op, task: need(id, "<id>"), decision: str(a, "by") ?? "", reason: str(a, "reason") });
         case "reopen": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "criteria": {
           const [sub, task, text] = exact(given, "add", "id", "text");

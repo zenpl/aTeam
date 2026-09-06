@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -16,7 +16,11 @@ export interface BoardTask {
   touches: string[];
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
+  /** Set once a decision superseded the finished task (t-057). */
+  obsolete?: { by: string; at: string; decision: string; reason?: string };
   evidence?: string;
+  /** One sentence for the owner, above the evidence (t-056). */
+  shows?: string;
   verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
   /** Every done, verify and reopen in order, with the round each belongs to. */
   history: TaskHistoryEntry[];
@@ -104,10 +108,12 @@ export interface Board {
    */
   live: {
     deployed_sha: string | null;
+    /** Who recorded the current deployed sha: a role (the team pushed) or the human. */
+    deployed_by: string | null;
     since_sha: string | null;
-    verified_on_production: { id: string; title: string }[];
-    recent: { id: string; title: string }[];
-    earlier: { id: string; title: string }[];
+    verified_on_production: { id: string; title: string; shows?: string }[];
+    recent: { id: string; title: string; shows?: string }[];
+    earlier: { id: string; title: string; shows?: string }[];
   };
   /**
    * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
@@ -156,6 +162,8 @@ export interface BoardPresence {
   /** Same as listening: only a node that pulls counts as here (t-047). */
   present: boolean;
   listening: boolean;
+  /** What this node said it may push when it joined (fact node:<role>:能力 → push); none when it never said (t-058). */
+  push: PushLevel;
   last_pull: string | null;
   last_event: string | null;
   idle_pull_s: number | null;
@@ -168,6 +176,39 @@ export interface BoardPresence {
 }
 
 export interface BoardOptions { /** How long since the last pull a node still counts as listening; default 5 minutes. */ listenWindowMs?: number }
+
+/**
+ * A fail notice (t-054) or a verify ask (t-055) is about one round of one task; once the owner did the task again
+ * (a newer round) or the task is no longer waiting, the instruction is true no more and leaves the lists by itself.
+ */
+export function serviceNoticeStale(s: State, i: Instruction): boolean {
+  const ref = i.refs?.[0];
+  if (!ref) return false;
+  if (i.body.includes(FAIL_NOTICE)) {
+    for (const t of s.tasks.values()) {
+      const v = t.verifications.find((x) => x.id === ref);
+      if (v) return t.round !== v.round;
+    }
+    return false;
+  }
+  if (i.body.includes(VERIFY_ASK)) {
+    for (const t of s.tasks.values()) {
+      const d = t.history.find((h) => h.op === "done" && h.id === ref);
+      if (d) return t.round !== d.round || t.status !== "done";
+    }
+    return false;
+  }
+  return false;
+}
+
+/** The push level a role declared when it joined; "none" when the fact is missing, stale, or says something else. */
+export function pushLevelOf(s: State, role: string): PushLevel {
+  const id = s.latestReading.get(`${NODE_SURFACE}:${capabilityKey(role)}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const push = v && typeof v === "object" && !Array.isArray(v) ? (v as { push?: unknown }).push : undefined;
+  return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
+}
 
 /** The role a service card is about, from its first words; undefined for any other instruction. */
 export function missingRoleOf(body: string): string | undefined {
@@ -202,7 +243,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    live: { deployed_sha: null, deployed_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [] },
     said: [],
     seams: [],
@@ -227,6 +268,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (status === "acked") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
+    if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
@@ -261,6 +303,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
   if (current) {
     b.live.deployed_sha = current.value as string;
+    b.live.deployed_by = current.actor;
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
@@ -270,16 +313,16 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
     });
     if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
-      b.live.verified_on_production.push({ id: t.id, title: t.title });
+      b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
       const passedAt = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass).map((v) => v.at).sort().pop()!;
       const recent = b.live.since_sha === null || currentSince === undefined || passedAt >= currentSince;
-      (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title });
+      (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title, shows: t.shows });
     }
     const results = surfaceResults(t);
     // Only a task that is done or verified can ship: a reopened one is being changed, so its old repo pass is not a candidate.
@@ -292,7 +335,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         surfaces: results.filter((r) => r.pass).map((r) => r.surface), done_at: lastDone?.at ?? t.updated_at,
       });
     }
-    if (t.status !== "verified" && t.status !== "withdrawn") {
+    if (t.status !== "verified" && t.status !== "withdrawn" && t.status !== "obsolete") {
       const g = (b.in_flight[t.status] ??= { total: 0, shown: [], all: [] });
       g.all.push({ id: t.id, title: t.title, owner: t.owner, updated_at: t.updated_at });
     }
@@ -346,7 +389,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const listening = idle_pull_s !== null && idle_pull_s * 1000 <= listenWindow;
     const spoke = idle_event_s !== null && idle_event_s * 1000 <= PRESENCE_WINDOW_MS;
     const status = listening ? "listening" : spoke ? "deaf" : "missing";
-    return { actor, role, status, present: listening, listening, last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
+    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   for (const actor of [...s.presence.keys()].sort()) {

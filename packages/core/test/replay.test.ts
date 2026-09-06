@@ -1289,3 +1289,96 @@ describe("t-018 · notes attach to a task", () => {
     ]);
   });
 });
+
+describe("t-056 · evidence has a layer for the owner: shows", () => {
+  it("done and a passing verify may say what a person can now see; the board and live rows prefer it, and it is one sentence", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    for (const id of ["A", "B"]) {
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
+    }
+    const long = "字".repeat(121);
+    expect((await rejected(emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "sha1", shows: long }))).rule).toBe("done");
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234: 测试全绿", shows: "牌桌上多了一行「线上」" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234: 测试全绿" });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done.map((t) => [t.id, t.shows, t.evidence])).toEqual([["A", "牌桌上多了一行「线上」", "abc1234: 测试全绿"], ["B", undefined, "abc1234: 测试全绿"]]);
+
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, shows: long }))).rule).toBe("verify");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true, shows: "线上打开牌桌，第一行是部署 sha" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "production", pass: true });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    // a passing verify that said it replaces the owner's sentence; a task nobody described keeps its title on the live rows
+    expect(b.tasks.verified.map((t) => t.shows)).toEqual(["线上打开牌桌，第一行是部署 sha", undefined]);
+    expect(b.live.verified_on_production).toEqual([{ id: "A", title: "题 A", shows: "线上打开牌桌，第一行是部署 sha" }, { id: "B", title: "题 B", shows: undefined }]);
+    expect(b.live.recent.map((x) => x.shows ?? x.title)).toEqual(["线上打开牌桌，第一行是部署 sha", "题 B"]);
+    // a failing verify never speaks for the owner
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "staging", pass: false, shows: "不该显示" });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.shows).toBe("线上打开牌桌，第一行是部署 sha");
+  });
+});
+
+describe("t-057 · finished work a decision made moot ends as obsolete", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    const decision = await emit(store, c, { kind: "note", actor: "pd", body: "决策：按钮改为永远可点", decision: true });
+    const plain = await emit(store, c, { kind: "note", actor: "pd", body: "只是想法" });
+    for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    for (const id of ["A", "B", "C", "E"]) await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["packages/server/src/html.ts"] });
+    for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "不对" }); // B: failed
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "D", touches: ["packages/server/src/html.ts"] }); // D stacks on every dev task: a seam each
+    return { store, c, decision, plain };
+  };
+  const obsolete = (store: MemoryStore, c: ReturnType<typeof clock>, task: string, actor: string, decision: string, reason?: string) =>
+    emit(store, c, { kind: "task", op: "obsolete", actor, task, decision, reason });
+
+  it("done and failed become obsolete, pointing at a decision note; the id stays, further ops are rejected, seams go", async () => {
+    const { store, c, decision, plain } = await setup();
+    expect([...reduce(await store.read(), c.now()).seams.values()].filter((s) => s.tasks.includes("A")).length).toBeGreaterThan(0);
+    expect((await rejected(obsolete(store, c, "A", "pm", plain.id))).message).toMatch(/not a decision/);
+    expect((await rejected(obsolete(store, c, "A", "pm", "01NOPE"))).message).toMatch(/not a note/);
+    await obsolete(store, c, "A", "pm", decision.id, "按钮方案变了");
+    await obsolete(store, c, "B", "pd", decision.id);
+    const s = reduce(await store.read(), c.now());
+    expect(s.tasks.get("A")).toMatchObject({ status: "obsolete", obsolete: { by: "pm", decision: decision.id, reason: "按钮方案变了" }, evidence: "abc1234" });
+    expect(s.tasks.get("B")).toMatchObject({ status: "obsolete", obsolete: { by: "pd", decision: decision.id } });
+    expect(s.tasks.get("B")!.verifications).toHaveLength(1); // what was judged stays on record
+    expect([...s.seams.values()].some((x) => x.tasks.includes("A") || x.tasks.includes("B"))).toBe(false);
+    const b = board(s, HUMAN, c.now());
+    expect(b.tasks.obsolete.map((t) => t.id)).toEqual(["A", "B"]);
+    expect(b.tasks.obsolete[0].obsolete).toMatchObject({ decision: decision.id });
+    expect(Object.values(b.in_flight).flatMap((g) => g.all.map((t) => t.id))).not.toContain("A");
+    expect(b.release.candidates.map((x) => x.task)).not.toContain("A");
+    expect(b.seams.filter((x) => x.tasks.includes("A") || x.tasks.includes("B"))).toEqual([]);
+    for (const e of [
+      { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] },
+      { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再来" },
+      { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true },
+      { kind: "task", op: "obsolete", actor: "pm", task: "A", decision: decision.id },
+    ] as const) expect((await rejected(emit(store, c, e as never))).message).toMatch(/is obsolete/);
+  });
+
+  it("verified is final; open and blocked are for withdraw; working waits; only the scope owners may say it", async () => {
+    const { store, c, decision } = await setup();
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "C", surface: "repo", pass: true });
+    expect((await rejected(obsolete(store, c, "C", "pm", decision.id))).message).toMatch(/verified is final/);
+    const e = await rejected(obsolete(store, c, "E", "pm", decision.id)); // working
+    expect(e.rule).toBe("obsolete");
+    expect(e.message).toMatch(/is working/);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "F", title: "题 F", criteria: ["works"] });
+    expect((await rejected(obsolete(store, c, "F", "pm", decision.id))).message).toMatch(/is open.*task withdraw/);
+    expect((await rejected(obsolete(store, c, "A", "dev", decision.id))).message).toMatch(/only pm .*not dev/);
+    expect((await rejected(obsolete(store, c, "A", "qa", decision.id))).message).toMatch(/not qa/);
+    await obsolete(store, c, "A", HUMAN, decision.id);
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("obsolete");
+    // a criteria author who is not pm may do it too
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "G", title: "题 G", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "G", touches: ["g"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "G" });
+    await obsolete(store, c, "G", "qa", decision.id);
+    expect(reduce(await store.read(), c.now()).tasks.get("G")!.status).toBe("obsolete");
+  });
+});
