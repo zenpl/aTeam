@@ -1481,3 +1481,48 @@ describe("t-064 · the sender takes an instruction back", () => {
     expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).overdue.map((o) => o.instruction)).toEqual([]); // j acked, ask decided, i withdrawn
   });
 });
+
+describe("t-067 · the side that was done before the other claimed is never blocked by it, whoever owns them", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("cross-owner: A done, then B (another owner) claims the same files: verify A passes, and B may be verified too once done; both in flight still collide", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B"); await create(store, c, "C");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "aaaaaaa1 完成" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", stacked: { done: "A", on: "B" }, open: false });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // released by the rule, not by pm
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+    // C (dev) claims while B is in flight: a collision, same as ever
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
+    expect((await seams(store, c)).find((x) => x.id === "seam:B+C")).toMatchObject({ open: true, stacked: undefined });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "bbbbbbb1 合并了 aaaaaaa1" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }))).message).toMatch(/seam:B\+C/);
+  });
+
+  it("re-done after a reopen is judged on the newest done: a reopened A back in flight collides with B, and once A is done again it depends on who claimed when", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0].stacked).toEqual({ done: "A", on: "B" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补" });
+    expect((await seams(store, c))[0]).toMatchObject({ open: true, stacked: undefined }); // A is in flight again
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    expect((await seams(store, c))[0]).toMatchObject({ open: true }); // A's newest done is after B's claim: both were in flight
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    // B finishes first this time; then A reclaims after B's done: B is the earlier side now
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再补" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts", "html.ts"] });
+    expect((await seams(store, c))[0].stacked).toEqual({ done: "B", on: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
+  });
+});

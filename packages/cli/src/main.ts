@@ -6,7 +6,7 @@ import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamErrors, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { deploy, realGit } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -244,7 +244,12 @@ async function main(argv: string[]) {
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
-          else for (const w of seamWarnings(await client.board(), task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+          else {
+            const b = await client.board();
+            const errors = seamErrors(b, task, evidence);
+            if (errors.length) throw new UsageError(errors.join("\n"));
+            for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
+          }
           return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
         }
         case "verify": {

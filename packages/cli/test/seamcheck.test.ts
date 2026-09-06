@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore, append, reduce, board, type NewEvent } from "@ateam/core";
-import { seamWarnings, gitIsAncestor } from "../src/seamcheck.js";
+import { seamWarnings, seamErrors, gitIsAncestor } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -66,5 +66,29 @@ describe("t-037 · seamWarnings before task done", () => {
     expect(seamWarnings(await scenario(`${shaC}`, true, false), "t-b", `${shaB}`, gitIsAncestor(repo))).toEqual([]);
     // the injected judge is what decides: a fake one that always says no
     expect(seamWarnings(await scenario(`${shaA}`), "t-b", `${shaB}`, () => false)).toHaveLength(1);
+  });
+});
+
+describe("t-067 · a seam the rule released: the later side must name the merged sha in its evidence", () => {
+  const world = async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] });
+    return board(reduce(await store.read()), "human");
+  };
+  it("refuses an evidence that does not name the earlier side's sha; accepts the short or long form; the earlier side is never asked", async () => {
+    const b = await world();
+    expect(b.seams[0].stacked).toEqual({ done: "t-a", on: "t-b" });
+    const e = seamErrors(b, "t-b", "bbbbbbb2 做完了");
+    expect(e).toHaveLength(1);
+    expect(e[0]).toContain("写明合并了 aaaaaaa");
+    expect(seamErrors(b, "t-b", "bbbbbbb2：合并了 aaaaaaa1111111")).toEqual([]);
+    expect(seamErrors(b, "t-b", "bbbbbbb2 在 aaaaaaa1 之上")).toEqual([]);
+    expect(seamErrors(b, "t-b", undefined)).toHaveLength(1);
+    expect(seamErrors(b, "t-a", "aaaaaaa1111111")).toEqual([]);
   });
 });

@@ -20,6 +20,9 @@ export interface TaskState {
   /** Time of the last task event that touched it: what "most recent" means on the board. */
   updated_at: string;
   owner?: string;
+  /** When the current owner last claimed it, and that claim event's id (t-067: what a seam is judged against; ids order the log). */
+  claimed_at?: string;
+  claimed_id?: string;
   touches: string[];
   status: TaskStatus;
   blocked_on?: string;
@@ -212,6 +215,8 @@ export function reduce(log: Log, now: Date = new Date()): State {
     s.presence.set(c.actor, pc);
   }
 
+  for (const seam of s.seams.values()) judgeSeam(s, seam); // t-067: a seam is judged on the tasks as they stand now
+
   const nowIso = now.toISOString();
   for (const st of s.instructions.values()) {
     const i = st.instruction;
@@ -282,7 +287,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
-      t.owner = e.actor; t.status = "working";
+      t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
       return;
     case "done":
@@ -338,15 +343,34 @@ function detectSeams(s: State, t: TaskState) {
     const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) continue;
     const id = seamId(t.id, other.id);
-    const stacked = other.status === "done" ? { done: other.id, on: t.id } : undefined;
     const same_owner = !!t.owner && t.owner === other.owner;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.stacked = stacked; existing.same_owner = same_owner; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, stacked, same_owner });
+    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner });
   }
+  for (const seam of s.seams.values()) if (seam.tasks.includes(t.id)) judgeSeam(s, seam);
 }
 
-/** Seams that block verifying `task`: unresolved, not stacked, and between two different owners. */
+/** The latest done a task stands on: none while it is back in flight (reopened, reclaimed), so the seam is judged afresh (t-067). */
+function standingDone(t: TaskState): string | undefined {
+  if (t.status !== "done" && t.status !== "verified" && t.status !== "failed") return undefined;
+  return [...t.history].reverse().find((h) => h.op === "done")?.id; // the event id: log order, even inside one millisecond
+}
+
+/**
+ * t-067 (absorbing t-009): a side whose standing done precedes the other side's claim stacks; the later side builds
+ * on it and must merge it (the CLI checks that at done). Both in flight at the same time is a collision, whoever owns them.
+ */
+function judgeSeam(s: State, seam: SeamState) {
+  const [a, b] = seam.tasks.map((id) => s.tasks.get(id));
+  seam.stacked = undefined;
+  if (!a || !b) return;
+  const doneA = standingDone(a), doneB = standingDone(b);
+  if (doneA && b.claimed_id && doneA < b.claimed_id) seam.stacked = { done: a.id, on: b.id };
+  else if (doneB && a.claimed_id && doneB < a.claimed_id) seam.stacked = { done: b.id, on: a.id };
+}
+
+/** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */
 export function openSeamsFor(s: State, task: string): SeamState[] {
   return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && x.tasks.includes(task));
 }
