@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { MemoryStore, append, reduce, board, type NewEvent, type Board } from "@ateam/core";
-import { deploy, deploySetting, plan, gitReason, type Git } from "../src/release.js";
+import { deploy, deploySetting, plan, gitReason, containment, containmentFact, type Git } from "../src/release.js";
 
 const HUMAN = "human";
 const A = "aaaaaaa" + "1".repeat(33), B = "bbbbbbb" + "1".repeat(33), C = "ccccccc" + "1".repeat(33); // 40-char shas
@@ -146,5 +146,36 @@ describe("qa 21:22 · the failure note carries git's reason, not its hints", () 
     // branch protection says four things; the note keeps the first three (criterion 1: at most three lines)
     const protectedBranch = "remote: error: GH006: Protected branch update failed for refs/heads/production.\nremote: error: Required status check \"ci\" is expected.\nTo github.com:x/y.git\n ! [remote rejected] c029f47 -> production (protected branch hook declined)\nerror: failed to push some refs to 'github.com:x/y.git'";
     expect(gitReason(protectedBranch)).toBe("remote: error: GH006: Protected branch update failed for refs/heads/production. remote: error: Required status check \"ci\" is expected. ! [remote rejected] c029f47 -> production (protected branch hook declined)");
+  });
+});
+
+describe("t-078 · ateam release measures containment with git and shows three groups", () => {
+  it("only under git-ancestor and a known deployed sha; contained / not / unmeasured; the fact is written once and not rewritten unchanged", async () => {
+    const w = await world();
+    await w.emit({ kind: "reading", actor: "pm", key: "absorb.form", surface: "project", value: "git-ancestor" });
+    await w.ship("t-1", A);
+    await w.ship("t-2", X);
+    let b = await w.b();
+    expect(containment(b, fakeGit().isAncestor)).toBeNull(); // no deployed sha yet: nothing to measure
+    await w.emit({ kind: "reading", actor: "pm", key: "deployed.sha", surface: "production", value: B, method: "ateam release --deploy 推到 production", depends_on: ["production:deployed.sha"] });
+    b = await w.b();
+    const measured = containment(b, fakeGit().isAncestor)!;
+    expect(measured.sha).toBe(B);
+    expect(measured.contained).toEqual(["t-1"]); // A is an ancestor of B
+    expect(measured.not_contained).toEqual(["t-2"]); // X is unrelated
+    expect(measured.unmeasured).toEqual([]);
+    const fact = containmentFact(b, measured)!;
+    expect(fact).toMatchObject({ kind: "reading", surface: "production", key: "deployed.tasks", depends_on: ["production:deployed.sha"] });
+    await w.emit({ ...(fact as { key: string; value: unknown; surface: string }), actor: "pm" } as never);
+    expect(containmentFact(await w.b(), measured)).toBeNull(); // nothing changed: no second reading
+    // git that cannot tell leaves the task unmeasured, and the board will call it unknown
+    const blind = containment(await w.b(), () => null)!;
+    expect(blind.unmeasured.sort()).toEqual(["t-1", "t-2"]);
+    expect(blind.contained).toEqual([]);
+    // another absorb form: not our business to measure
+    const other = await world();
+    await other.emit({ kind: "reading", actor: "pm", key: "absorb.form", surface: "project", value: "named-sha" });
+    await other.emit({ kind: "reading", actor: "pm", key: "deployed.sha", surface: "production", value: B, method: "m", depends_on: ["production:deployed.sha"] });
+    expect(containment(await other.b(), fakeGit().isAncestor)).toBeNull();
   });
 });
