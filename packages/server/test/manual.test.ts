@@ -78,12 +78,14 @@ describe("t-059 · the manual ends with what this project says the role holds", 
   it("default packing for a plain role list; the project's own {role: [ids]} when declared; a role with nothing says so", async () => {
     const post = (actor: string, body: unknown) => fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
     let text = await (await fetch(`${base}/manual/qa`)).text();
-    expect(text).toContain("## 你在这个项目里持有的职责\n\n- R6 验收\n");
+    expect(text).toContain("## 你在这个项目里持有的职责\n\n- **R6 验收**：");
     text = await (await fetch(`${base}/manual/pm`)).text();
-    expect(text).toContain("- R1 定方向\n- R3 定验收标准\n- R4 拆分派活\n- R8 接缝与集成\n- R11 改进工具\n- R13 协作报告");
+    for (const id of ["R1 定方向", "R3 定验收标准", "R4 拆分派活", "R8 接缝与集成", "R11 改进工具", "R13 协作报告"]) expect(text).toContain(`- **${id}**：`);
     expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4", "R6"], dev: ["R5"], qa: [] } })).status).toBe(201);
     text = await (await fetch(`${base}/manual/pm`)).text();
-    expect(text.endsWith("## 你在这个项目里持有的职责\n\n- R1 定方向\n- R4 拆分派活\n- R6 验收\n")).toBe(true);
+    expect(text).toContain("- **R1 定方向**：");
+    expect(text).toContain("- **R4 拆分派活**：");
+    expect(text.trimEnd().endsWith("在指定表面上对照判据判 pass/fail 并带证据；不验自己写判据的任务；FAIL 要说清缺什么。")).toBe(true);
     text = await (await fetch(`${base}/manual/qa`)).text();
     expect(text).toContain("这个项目没有为 qa 声明任何职责");
     // the page lists what nobody holds, in the dig layer, and nothing goes to 需要你
@@ -108,5 +110,51 @@ describe("t-066 · the manual says how to write an instruction to the human", ()
     }
     const pm = await (await fetch(`${base}/manual/pm`)).text();
     expect(pm.split("第一句就是全部").length).toBe(3); // once in the common part, once in pm's own
+  });
+});
+
+describe("t-081 · any declared role has a manual, assembled from its responsibilities", () => {
+  const post = (actor: string, body: unknown) => fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const get = (role: string) => fetch(`${base}/manual/${encodeURIComponent(role)}`);
+  it("names this repository never heard of work once declared, their content follows the ids, and an undeclared name is still 404", async () => {
+    expect((await get("release-manager")).status).toBe(404);
+    expect((await (await get("release-manager")).json()).message).toContain("project:roles");
+    expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4"], be: ["R5", "R9"], fe: ["R5"], "release-manager": ["R9"], "ux-scanner": ["R12"] } })).status).toBe(201);
+    for (const [role, must, mustNot] of [
+      ["be", ["R5 做", "R9 上线", "claim 时把触点写宽"], ["R12"]],
+      ["release-manager", ["R9 上线", "推之前确认自己有许可和凭据"], ["R5 做"]],
+      ["ux-scanner", ["R12 看着跑起来的东西说哪里不对", "把观察写成 note 带证据"], ["R9"]],
+    ] as const) {
+      const text = await (await get(role)).text();
+      expect((await get(role)).status).toBe(200);
+      expect(text).toContain("# 说明书 · 通用核心"); // the common core, whatever the role is called
+      expect(text).toContain(`# 角色 · ${role}`);
+      for (const s of must) expect(text, `${role} lacks ${s}`).toContain(s);
+      for (const s of mustNot) expect(text, `${role} should not carry ${s}`).not.toContain(s);
+      for (const re of OVERFIT) expect(text, `${role} leaks ${re}`).not.toMatch(re);
+    }
+    // the five this repository ships with keep their written part, plus their declared responsibilities
+    const pm = await (await get("pm")).text();
+    expect(pm).toContain("# 角色 · pm");
+    expect(pm).toContain("- **R1 定方向**：");
+    expect(pm).not.toContain("R3 定验收标准"); // this project declared pm without R3 above
+    // a name nobody declared: still nothing
+    expect((await get("nobody")).status).toBe(404);
+  });
+});
+
+describe("t-082 · the manual says how the first node declares the role set", () => {
+  it("the newcomer's manual and pm's both show the {role: [ids]} form, say the ids come from the service, and stay project-neutral", async () => {
+    const welcome = await (await fetch(`${base}/manual`)).text();
+    const pm = await (await fetch(`${base}/manual/pm`)).text();
+    for (const [name, text] of [["welcome", welcome], ["pm", pm]] as const) {
+      expect(text, name).toContain(`"key":"roles"`.replace(/"/g, name === "welcome" ? '"' : '"')?.slice(0, 0) + "roles");
+      expect(text, name).toMatch(/\{"?[^"]*"?:\s*\[/); // the {role: [ids]} form, spelled out
+      expect(text, name).toContain("R5");
+      expect(text, name).toContain("默认");  // what happens when nobody declares
+      for (const re of OVERFIT) expect(text, `${name} leaks ${re}`).not.toMatch(re);
+    }
+    expect(welcome).toContain("职责 id 的全表由服务下发");
+    expect(pm).toContain("职责 id 的全表在每个角色说明书末尾");
   });
 });

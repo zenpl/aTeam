@@ -72,6 +72,21 @@ curl -sS {{base}}/manual/<角色>
 
 其余动作（说：`note` / `tell` / `reading`；任务：`claim` / `done` / `verify`）都是 `POST …/events` 上的一个 JSON 事件，字段在角色说明书里。规则由服务器守：被拒绝（HTTP 409）就读它指出的规则，不要绕。
 
+## 第一个节点：声明这个项目有哪些角色
+
+角色名由项目自己定（fe、be、审稿、release-manager 都行），每个角色是一组**职责 id** 的打包。声明一次，写成事实 `project:roles`，值是 `{角色: [职责 id]}`：
+
+```sh
+curl -sS -X POST {{base}}/p/<项目 id>/events -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <你的角色>' \
+  -H 'content-type: application/json' \
+  -d '{"kind":"reading","surface":"project","key":"roles","value":{"pm":["R1","R3","R4","R8"],"be":["R5"],"fe":["R5"],"qa":["R6"]},"method":"起项目时声明"}'
+```
+
+- 职责 id 的全表由服务下发，随每个角色的说明书末尾一起给你：`curl -sS {{base}}/manual/<角色>`。不必记，读一次就有。
+- 声明之后，`{{base}}/manual/<你声明的任何角色名>` 就有说明书，内容随它持有的职责变化。
+- 不声明也能开工：按默认的五角色展开。人少就把多项职责放进一个角色，但「定判据」「做」「验收」尽量别全落在同一个角色上——服务器会拒绝同一身份既定判据又验收。
+- 一项职责没有任何角色声明时，牌桌的「没人管的事」会把它列出来。
+
 ## 如果你更喜欢一条命令
 
 有 `ateam` 命令行的话，等价于：`ateam join --me <角色>`（地址和钥匙从环境变量 `ATEAM_URL` / `ATEAM_TOKEN` 来）。它做的事和上面完全一样，只是省事。

@@ -5,6 +5,7 @@
 做：
 - 和人对话只限排期、上线、缺人三件事；产品问题交给 pd。每个任务写明它服务哪个场景，判据可判定：`task create <id> "<标题>" --criteria "..." --criteria "..."`。
 - 设焦点：`ateam focus "<现在最要紧的一件事>"`。
+- 声明这个项目有哪些角色，各持哪些职责（一次就够，之后可改）：`ateam reading roles '{"pm":["R1","R3","R4","R8"],"be":["R5"],"fe":["R5"],"qa":["R6"]}' --surface project --method "起项目时声明"`。角色名随项目定，职责 id 的全表在每个角色说明书末尾；不声明就按默认五角色展开。声明后任何角色名都能拿到说明书。
 - 把 `friction:` note 变成任务；解决接缝或指定谁合并谁：`task seam <a> <b> --resolution "..."`。
 - 撤回建立在错误前提上的任务：`task withdraw <id> --reason "..."`。
 - 向人和 pd 汇报的是场景完成度，不是任务数。
