@@ -26,7 +26,12 @@ export interface Board {
   focus?: { body: unknown; set_by: string; at: string };
   /** Only things a human must act on: instructions to the human, overdue instructions, tasks awaiting verification with no eligible agent. */
   needs_human: { kind: "instruction" | "overdue" | "open_seam"; id: string; summary: string; since: string }[];
-  instructions: { id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue"; sent: string; delivered?: string; acked?: string }[];
+  instructions: {
+    id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue";
+    sent: string; delivered?: string; acked?: string;
+    /** present when the instruction asks the human to choose */
+    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+  }[];
   readings: { id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[] }[];
   tasks: Record<string, BoardTask[]>;
   seams: { id: string; tasks: [string, string]; overlap: string[]; resolved?: string }[];
@@ -50,9 +55,16 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
   for (const st of [...s.instructions.values()].sort(byId((x) => x.instruction.id))) {
     const i = st.instruction;
     const status = st.acked_at ? "acked" : st.overdue ? "overdue" : st.delivered_at ? "delivered" : "pending";
-    b.instructions.push({ id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at });
+    b.instructions.push({
+      id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
+      options: i.options, default: i.default,
+      chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
+    });
     if (status === "acked") continue;
-    if (i.to === human) b.needs_human.push({ kind: "instruction", id: i.id, summary: `${i.actor}: ${i.body}`, since: i.at });
+    if (i.to === human) {
+      const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
+      b.needs_human.push({ kind: "instruction", id: i.id, summary: `${i.actor}: ${i.body}${ask}`, since: i.at });
+    }
     else if (status === "overdue") b.needs_human.push({ kind: "overdue", id: i.id, summary: `${i.to} has not acked "${i.body}" from ${i.actor}`, since: i.ack_by });
   }
 

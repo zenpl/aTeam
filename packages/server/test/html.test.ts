@@ -72,9 +72,9 @@ describe("GET / · read-only HTML board", () => {
     expect(html).toContain("abc1234");                               // server sha in the footer
   });
 
-  it("is read-only: no forms, no script, and refreshes no more often than every 30 s", async () => {
+  it("is read-only: no script, no forms other than decision buttons, and refreshes no more often than every 30 s", async () => {
     const html = await (await api("/")).text();
-    expect(html).not.toMatch(/<form\b/i);
+    expect(html).not.toMatch(/<form\b/i);                           // no instruction with options yet
     expect(html).not.toMatch(/<script\b/i);
     expect(html).not.toMatch(/\bon[a-z]+\s*=/i);
     const m = html.match(/http-equiv="refresh" content="(\d+)"/);
@@ -83,10 +83,10 @@ describe("GET / · read-only HTML board", () => {
     expect(REFRESH_SECONDS).toBeGreaterThanOrEqual(30);
   });
 
-  it("needs the token: bearer header, or ?token= once which becomes a cookie", async () => {
+  it("is public read-only by default (decision 06:23); ?token= once still becomes a cookie, which the buttons need", async () => {
     const bare = await fetch(`${base}/`, { redirect: "manual" });
-    expect(bare.status).toBe(401);
-    expect(bare.headers.get("content-type")).toMatch(/^text\/html/);
+    expect(bare.status).toBe(200);
+    expect(await bare.text()).toContain("Cookie flags");
 
     const wrong = await fetch(`${base}/?token=nope`, { redirect: "manual" });
     expect(wrong.status).toBe(401);
@@ -121,5 +121,90 @@ describe("GET / · read-only HTML board", () => {
     expect(Object.keys(j).sort()).toEqual(["focus", "instructions", "needs_human", "now", "presence", "readings", "seams", "tasks"]);
     const noActor = await fetch(`${base}/board`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(noActor.status).toBe(400);
+  });
+});
+
+describe("GET / with boardPublic off · the pre-decision behaviour stays one switch away", () => {
+  let priv: ReturnType<typeof createApp>;
+  let purl: string;
+  beforeAll(async () => {
+    priv = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, boardPublic: false });
+    await new Promise<void>((r) => priv.listen(0, "127.0.0.1", r));
+    purl = `http://127.0.0.1:${(priv.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((r) => priv.close(() => r())));
+
+  it("needs the token: bearer header, or the cookie from ?token=", async () => {
+    const bare = await fetch(`${purl}/`, { redirect: "manual" });
+    expect(bare.status).toBe(401);
+    expect(bare.headers.get("content-type")).toMatch(/^text\/html/);
+    const bearer = await fetch(`${purl}/`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(bearer.status).toBe(200);
+    const once = await fetch(`${purl}/?token=${TOKEN}`, { redirect: "manual" });
+    expect(once.status).toBe(303);
+    const withCookie = await fetch(`${purl}/`, { headers: { cookie: (once.headers.get("set-cookie") ?? "").split(";")[0] } });
+    expect(withCookie.status).toBe(200);
+  });
+});
+
+describe("POST /decide · one click acks the instruction and records the decision, as the human", () => {
+  let ask: { id: string; body: string };
+  beforeAll(async () => {
+    ask = await post("pm", { kind: "instruction", to: HUMAN, body: "board auth: private (A) or public (B)?", ack_by: new Date(Date.now() + 60_000).toISOString(), options: ["A", "B"], default: "B" });
+  });
+
+  it("renders one button per option on the needs-human entry, default marked; buttons are disabled without the token", async () => {
+    const anon = await (await fetch(`${base}/`)).text();
+    const forms = anon.match(/<form\b[^>]*>/gi) ?? [];
+    expect(forms).toHaveLength(1);
+    expect(forms[0]).toContain('action="/decide"');
+    expect(anon).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
+    expect(anon).toMatch(/<button[^>]*name="option" value="A"[^>]*disabled>A<\/button>/);
+    expect(anon).toMatch(/<button[^>]*name="option" value="B"[^>]*class="default"[^>]*disabled>B <small>default<\/small><\/button>/);
+    expect(anon).toContain("open <code>/?token=…</code> once");
+    expect(anon).not.toMatch(/<script\b/i);
+
+    const authed = await (await api("/")).text();
+    expect(authed).toMatch(/<button[^>]*name="option" value="A"[^>]*>A<\/button>/);
+    expect(authed).not.toMatch(/<button[^>]*\bdisabled\b/);
+  });
+
+  it("rejects a wrong option and an anonymous click, emitting nothing", async () => {
+    const before = (await (await api("/log")).json()).events.length;
+    const anon = await fetch(`${base}/decide`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=B` });
+    expect(anon.status).toBe(401);
+    const wrong = await fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=C` });
+    expect(wrong.status).toBe(409);
+    expect(await wrong.json()).toMatchObject({ rule: "decide" });
+    const unknown = await fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/x-www-form-urlencoded" }, body: `id=nope&option=B` });
+    expect(unknown.status).toBe(404);
+    expect((await (await api("/log")).json()).events.length).toBe(before);
+  });
+
+  it("a browser click with the cookie emits ack + decision note by the human in one request and returns to /", async () => {
+    const before = (await (await api("/log")).json()).events.length;
+    const cookie = ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+    const click = await fetch(`${base}/decide`, { method: "POST", redirect: "manual",
+      headers: { cookie, accept: "text/html,*/*", "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=B` });
+    expect(click.status).toBe(303);
+    expect(click.headers.get("location")).toBe("/");
+
+    const events = (await (await api("/log")).json()).events.slice(before);
+    expect(events.map((e: { kind: string; actor: string }) => [e.kind, e.actor])).toEqual([["ack", HUMAN], ["note", HUMAN]]);
+    expect(events[0]).toMatchObject({ of: ask.id });
+    expect(events[1]).toMatchObject({ decision: true, decides: { of: ask.id, option: "B" }, body: `decision: ${ask.body} -> B`, refs: [ask.id] });
+
+    const b = await (await api("/board")).json();
+    const i = b.instructions.find((x: { id: string }) => x.id === ask.id);
+    expect(i).toMatchObject({ status: "acked", chosen: { option: "B", by: HUMAN } });
+    expect(b.needs_human.map((n: { id: string }) => n.id)).not.toContain(ask.id);
+
+    const page = await (await api("/")).text();
+    expect(page).not.toMatch(/<form\b/i);
+    expect(page).toContain("<b>⇒ B</b>");
+
+    const again = await fetch(`${base}/decide`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: `id=${ask.id}&option=A` });
+    expect(again.status).toBe(409);
+    expect((await again.json()).message).toContain("already decided");
   });
 });

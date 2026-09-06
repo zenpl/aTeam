@@ -19,6 +19,8 @@ every turn
 
 say things
   ateam tell <to> <body> [--ack-by 15m]                              instruction: one recipient, ≤280 chars, must be acked
+  ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
+  ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
   ateam focus <body>                                                 the one thing that matters most right now
   ateam note <body> [--decision] [--supersedes <id>]
@@ -114,7 +116,17 @@ async function main(argv: string[]) {
     case "tell": {
       const [to, ...body] = rest;
       return emit({ kind: "instruction", to: need(to, "<to>"), body: need(body.join(" "), "<body>"),
-        ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString() });
+        ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
+        options: list(a, "option"), default: str(a, "default") });
+    }
+    case "decide": {
+      const [id, ...option] = rest;
+      const of = need(id, "<id>"), choice = need(option.join(" "), "<option>");
+      const b = await client.board();
+      const i = b.instructions.find((x) => x.id === of);
+      if (!i) throw new Error(`no instruction "${of}" in the log`);
+      if (i.status !== "acked") await emit({ kind: "ack", of });
+      return emit({ kind: "note", body: `decision: ${i.body} -> ${choice}`, decision: true, decides: { of, option: choice } });
     }
     case "reading": {
       const [key, ...value] = rest;

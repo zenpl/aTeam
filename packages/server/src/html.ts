@@ -1,14 +1,14 @@
 import type { Board, State } from "@ateam/core";
 
 /**
- * The board as one static HTML page for the human. Read-only by construction:
- * no forms, no script. It re-fetches itself with a meta refresh, never faster than every 30 s.
+ * The board as one static HTML page for the human. No script; the only forms are the decision buttons
+ * on instructions that carry options. It re-fetches itself with a meta refresh, never faster than every 30 s.
  */
 export const REFRESH_SECONDS = 30;
 
 const STATUS_ORDER = ["blocked", "working", "done", "failed", "open", "verified"] as const;
 
-export function renderBoard(b: Board, s: State, opts: { sha?: string; refresh?: number } = {}): string {
+export function renderBoard(b: Board, s: State, opts: { sha?: string; refresh?: number; canDecide?: boolean } = {}): string {
   const refresh = Math.max(REFRESH_SECONDS, opts.refresh ?? REFRESH_SECONDS);
   const now = Date.parse(b.now);
   const ago = (iso: string) => {
@@ -24,12 +24,28 @@ export function renderBoard(b: Board, s: State, opts: { sha?: string; refresh?: 
     : `<p class="empty">no focus set</p>`);
   out.push(`</section>`);
 
+  const asks = new Map(b.instructions.filter((i) => i.options?.length).map((i) => [i.id, i]));
+  const decisionForm = (i: Board["instructions"][number]) => {
+    const buttons = i.options!.map((o) => `<button type="submit" name="option" value="${esc(o)}"${o === i.default ? ' class="default"' : ""}${opts.canDecide === false ? " disabled" : ""}>${esc(o)}${o === i.default ? " <small>default</small>" : ""}</button>`).join(" ");
+    const hint = opts.canDecide === false ? ` <span class="meta">to click, open <code>/?token=…</code> once</span>` : "";
+    return `<form class="decide" method="post" action="/decide"><input type="hidden" name="id" value="${esc(i.id)}">${buttons}${hint}</form>`;
+  };
   out.push(`<section id="needs-human"><h2>Needs human <span class="count">${b.needs_human.length}</span></h2>`);
   if (b.needs_human.length) {
     out.push(`<ul>`);
-    for (const n of b.needs_human) out.push(`<li><span class="tag ${esc(n.kind)}">${esc(n.kind)}</span> ${esc(n.summary)} <span class="meta">${t(n.since)} · <code>${esc(n.id)}</code></span></li>`);
+    for (const n of b.needs_human) {
+      const ask = n.kind === "instruction" ? asks.get(n.id) : undefined;
+      const summary = ask ? esc(n.summary.replace(/\s+\[[^\]]*\]$/, "")) : esc(n.summary);
+      out.push(`<li><span class="tag ${esc(n.kind)}">${esc(n.kind)}</span> ${summary} <span class="meta">${t(n.since)} · <code>${esc(n.id)}</code></span>${ask ? decisionForm(ask) : ""}</li>`);
+    }
     out.push(`</ul>`);
   } else out.push(`<p class="empty">nothing</p>`);
+  const decided = b.instructions.filter((i) => i.chosen);
+  if (decided.length) {
+    out.push(`<h3>Decided</h3><ul>`);
+    for (const i of decided.slice(-5)) out.push(`<li>${esc(i.from)} → ${esc(i.to)}: ${esc(i.body)} <b>⇒ ${esc(i.chosen!.option)}</b> <span class="meta">${esc(i.chosen!.by)}, ${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`);
+    out.push(`</ul>`);
+  }
   out.push(`</section>`);
 
   const open = b.instructions.filter((i) => i.status !== "acked");
@@ -37,7 +53,8 @@ export function renderBoard(b: Board, s: State, opts: { sha?: string; refresh?: 
   if (open.length) {
     out.push(`<table><thead><tr><th>status</th><th>from → to</th><th>body</th><th>sent</th><th>delivered</th></tr></thead><tbody>`);
     for (const i of open) {
-      out.push(`<tr class="${esc(i.status)}"><td><span class="tag ${esc(i.status)}">${esc(i.status)}</span></td><td>${esc(i.from)} → ${esc(i.to)}</td><td>${esc(i.body)}<div class="meta"><code>${esc(i.id)}</code></div></td><td>${t(i.sent)}</td><td>${i.delivered ? t(i.delivered) : "<span class=\"meta\">not yet pulled</span>"}</td></tr>`);
+      const ask = i.options?.length ? `<div class="meta">options: ${i.options.map((o) => esc(o)).join(" | ")}${i.default ? ` (default ${esc(i.default)})` : ""}</div>` : "";
+      out.push(`<tr class="${esc(i.status)}"><td><span class="tag ${esc(i.status)}">${esc(i.status)}</span></td><td>${esc(i.from)} → ${esc(i.to)}</td><td>${esc(i.body)}${ask}<div class="meta"><code>${esc(i.id)}</code></div></td><td>${t(i.sent)}</td><td>${i.delivered ? t(i.delivered) : "<span class=\"meta\">not yet pulled</span>"}</td></tr>`);
     }
     out.push(`</tbody></table>`);
   } else out.push(`<p class="empty">none</p>`);
@@ -143,11 +160,16 @@ ul.presence li.away { color: var(--muted); }
 .tag.instruction, .tag.pending, .tag.delivered { color: var(--accent); }
 .tag.overdue, .tag.open_seam, .tag.stale { color: var(--bad); }
 .tag.valid, .tag.acked { color: var(--good); }
+form.decide { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .35rem 0 .2rem 1.6rem; }
+form.decide button { font: inherit; padding: .3rem .8rem; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+form.decide button.default { border-color: var(--accent); color: var(--accent); }
+form.decide button:disabled { cursor: not-allowed; opacity: .55; }
+form.decide small { font-size: .7em; text-transform: uppercase; letter-spacing: .05em; }
 footer { color: var(--muted); font-size: .8rem; display: flex; gap: 1rem; flex-wrap: wrap; }
 </style>
 </head>
 <body>
-<header><h1>aTeam board</h1><span class="meta">read-only · refreshes every ${m.refresh}s · rendered <time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 19))}Z</time></span></header>
+<header><h1>aTeam board</h1><span class="meta">refreshes every ${m.refresh}s · rendered <time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 19))}Z</time></span></header>
 ${body}
 <footer><span>server sha <code>${esc(m.sha ?? "unknown")}</code></span><span>same data as <code>GET /board</code></span></footer>
 </body>

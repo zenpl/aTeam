@@ -53,6 +53,8 @@ export interface InstructionState {
   acked_by?: string;
   /** now > ack_by and not acked */
   overdue?: boolean;
+  /** For instructions with options: the option picked, by whom, and the decision note that records it. */
+  chosen?: { option: string; by: string; at: string; note: string };
 }
 
 export interface SeamState {
@@ -105,7 +107,12 @@ export function reduce(log: Log, now: Date = new Date()): State {
         if (st && !st.acked_at) { st.acked_at = e.at; st.acked_by = e.actor; }
         break;
       }
-      case "note": s.notes.push(e); break;
+      case "note": {
+        s.notes.push(e);
+        const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
+        if (st && !st.chosen) st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+        break;
+      }
       case "task": applyTask(s, e); break;
     }
   }

@@ -4,7 +4,7 @@ export interface Args {
 }
 
 const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet"]);
-const REPEATABLE = new Set(["criteria", "assumes"]);
+const REPEATABLE = new Set(["criteria", "assumes", "option"]);
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };

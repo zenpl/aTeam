@@ -37,6 +37,10 @@ export interface Instruction extends Base {
   body: string;
   /** ISO timestamp; unacked past this is overdue and escalates to the human. */
   ack_by: string;
+  /** Only for the human: the choices this instruction asks for. The board renders one button per option. */
+  options?: string[];
+  /** One of `options`; what happens if nobody chooses. */
+  default?: string;
 }
 
 export interface Ack extends Base {
@@ -51,6 +55,8 @@ export interface Note extends Base {
   decision?: boolean;
   /** Event id of the decision this one replaces. */
   supersedes?: string;
+  /** This note answers an instruction that carried options: which one was chosen. */
+  decides?: { of: string; option: string };
 }
 
 export type TaskOp =

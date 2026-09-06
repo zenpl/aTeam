@@ -12,12 +12,15 @@ export interface ServerOptions {
   maxWaitMs?: number;
   /** Git commit the running image was built from; "unknown" when the build did not say. */
   sha?: string;
+  /** GET / without the token. Default true (decision 06:23). Writing (POST /decide) always needs the token. */
+  boardPublic?: boolean;
 }
 
 /** One project, one log, one shared token. Identity is the X-Actor header. */
 export function createApp(opts: ServerOptions) {
   const { store, token, human } = opts;
   const sha = opts.sha?.trim() || "unknown";
+  const boardPublic = opts.boardPublic ?? true;
   const maxWait = opts.maxWaitMs ?? 30_000;
   const bus = new EventEmitter();
   bus.setMaxListeners(1000);
@@ -33,8 +36,10 @@ export function createApp(opts: ServerOptions) {
       const url = new URL(req.url ?? "/", "http://x");
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
 
-      // The human's page. Same data as /board, no identity needed, read-only.
-      // Browsers cannot send the Bearer header, so the token may arrive once as ?token= and is then kept in a cookie.
+      // The human's page. Same data as /board, no identity needed. Reading is public unless boardPublic is off;
+      // the decision buttons POST as the human and always need the token. Browsers cannot send the Bearer header,
+      // so the token may arrive once as ?token= and is then kept in a cookie.
+      const authed = () => !token || req.headers.authorization === `Bearer ${token}` || cookie(req, COOKIE) === token;
       if (req.method === "GET" && url.pathname === "/") {
         const given = url.searchParams.get("token");
         if (token && given !== null) {
@@ -43,9 +48,30 @@ export function createApp(opts: ServerOptions) {
           res.writeHead(303, { location: "/", "set-cookie": `${COOKIE}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}` });
           return res.end();
         }
-        if (token && req.headers.authorization !== `Bearer ${token}` && cookie(req, COOKIE) !== token) return html(res, 401, unauthorizedPage());
+        if (!boardPublic && !authed()) return html(res, 401, unauthorizedPage());
         const state = reduce(await store.read());
-        return html(res, 200, renderBoard(board(state, human), state, { sha }));
+        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: authed() }));
+      }
+
+      // One click on the board: ack the instruction and record the decision, as the human, in one request.
+      if (req.method === "POST" && url.pathname === "/decide") {
+        if (!authed()) return html(res, 401, unauthorizedPage());
+        const form = new URLSearchParams(await readText(req));
+        const of = form.get("id") ?? "", option = form.get("option") ?? "";
+        const st = reduce(await store.read()).instructions.get(of);
+        if (!st) return json(res, 404, { error: "not found", message: `${of} is not an instruction` });
+        const i = st.instruction;
+        if (!i.options?.includes(option)) return json(res, 409, { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` });
+        if (st.chosen) return json(res, 409, { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` });
+        // Inside the write lock, look again: a click that raced another one must not half-apply.
+        const note = await serialize(async () => {
+          const fresh = reduce(await store.read()).instructions.get(of)!;
+          if (!fresh.acked_at) bus.emit("append", await append(store, { kind: "ack", actor: human, of }, { human }));
+          return append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
+        });
+        bus.emit("append", note);
+        if (String(req.headers.accept ?? "").includes("text/html")) { res.writeHead(303, { location: "/" }); return res.end(); }
+        return json(res, 201, note);
       }
 
       if (token && req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: "unauthorized" });
@@ -119,12 +145,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(s);
 }
 
-function readJson(req: IncomingMessage): Promise<unknown> {
+function readText(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
     req.setEncoding("utf8");
     req.on("data", (c) => { data += c; if (data.length > 1_000_000) reject(new SyntaxError("too large")); });
-    req.on("end", () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); } });
+    req.on("end", () => resolve(data));
     req.on("error", reject);
   });
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const data = await readText(req);
+  return data ? JSON.parse(data) : {};
 }
