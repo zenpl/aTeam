@@ -65,7 +65,7 @@ describe("t-003 · ateam task show", () => {
 
   it("degrades to placeholders when the server is older than this CLI and omits the new fields", () => {
     const old = { id: "t-old", title: "Old", owner: "dev", verified_on: [] } as unknown as Parameters<typeof fmt.task>[0];
-    const text = fmt.task(old, []);
+    const text = fmt.task(old, [], []); // an older server sends no omitted: the caller says "nothing", explicitly
     expect(text).toContain("criteria   (not reported by this server; read them with ateam log)");
     expect(text).toContain("touches    —");
   });
@@ -106,8 +106,8 @@ describe("t-057 · task show and the board say what superseded an obsolete task"
     const b = board(reduce(await store.read()), HUMAN);
     const t = boardTask(b, "t-001")!;
     expect(t.status).toBe("obsolete");
-    expect(fmt.task(t, b.seams)).toContain(`status     obsolete  已被 ${d.id} 取代（pm `);
-    expect(fmt.task(t, b.seams)).toContain("：端点换了）");
+    expect(fmt.task(t, b.seams, b.omitted)).toContain(`status     obsolete  已被 ${d.id} 取代（pm `);
+    expect(fmt.task(t, b.seams, b.omitted)).toContain("：端点换了）");
     expect(fmt.board(b)).toContain(`obsolete  t-001          Server reports which commit is deployed  @dev  已被 ${d.id} 取代`);
   });
 });
