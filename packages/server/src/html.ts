@@ -217,15 +217,17 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
  * one (pd, t-034 review). Null when there is none, or when it would be the current sha again.
  */
 export function previousSha(b: Board): string | null {
-  const current = b.live.deployed_sha ? String(b.live.deployed_sha) : null;
+  // Shas compare by their 7-char prefix: the same build recorded long and short is one version (pd review of t-026).
+  const short = (v: unknown) => String(v).slice(0, 7);
+  const current = b.live.deployed_sha ? short(b.live.deployed_sha) : null;
   if (!current) return null;
   const prev = b.readings
     .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
     .sort((x, y) => y.at.localeCompare(x.at))
-    .find((r) => (r.value as string) !== current);
-  const fallback = b.live.since_sha ? String(b.live.since_sha) : null;
-  const value = prev ? (prev.value as string) : fallback;
-  return value && value !== current ? value.slice(0, 7) : null;
+    .find((r) => short(r.value) !== current);
+  const fallback = b.live.since_sha ? short(b.live.since_sha) : null;
+  const value = prev ? short(prev.value) : fallback;
+  return value && value !== current ? value : null;
 }
 
 /** The invite link, once the board carries one (t-041): board.invite_url, or board.project.invite_url. */

@@ -450,8 +450,8 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08" });
       await ship("t-1", "登录修复");
       expect(await v.authedPage()).not.toContain("自上一版");
-      await v.post("human", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d04c79" });
-      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d04c79" });   // the same sha recorded twice
+      await v.post("human", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d04c7956ce5c328efb4d7c05c62271c3f2" });
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d" });   // the same build, long then short
       await ship("t-2", "牌桌 v2");
       const html = await v.authedPage();
       expect(html).toContain("自上一版 ede0f06 以来");
