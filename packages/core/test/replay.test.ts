@@ -902,6 +902,55 @@ describe("t-039 · the manual is a resource of the platform, per role", () => {
   });
 });
 
+describe("t-045 · a seam between two tasks of one owner is sequential work, not a collision", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+
+  it("same owner: the seam is recorded and visible, but blocks neither verify", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["reduce.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["reduce.ts"] });
+    const s = await seams(store, c);
+    expect(s).toHaveLength(1);
+    expect(s[0]).toMatchObject({ id: "seam:A+B", same_owner: true, open: false });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    const st = reduce(await store.read(), c.now());
+    expect(st.tasks.get("A")!.status).toBe("verified");
+    expect(st.tasks.get("B")!.status).toBe("verified");
+  });
+
+  it("different owners still collide; a reopened task keeps its owner so the seam stays same-owner", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await create(store, c, "A"); await create(store, c, "B"); await create(store, c, "C");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", open: true });
+    expect((await seams(store, c))[0].same_owner).toBeUndefined();
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    // C is dev's too; A fails and dev reopens it: A+C stays same-owner and never blocks
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "B 合并 A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "x" });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "修" });
+    const s = await seams(store, c);
+    expect(s.find((x) => x.id === "seam:A+C")).toMatchObject({ same_owner: true, open: false });
+    expect(s.find((x) => x.id === "seam:B+C")).toMatchObject({ open: true });
+    // a failed task taken over by someone else turns the seam into a collision
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "y" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["app.ts"] });
+    expect((await seams(store, c)).find((x) => x.id === "seam:A+C")).toMatchObject({ open: true });
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();
