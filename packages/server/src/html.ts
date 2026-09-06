@@ -35,7 +35,12 @@ export function cardKind(i: { body: string; options?: string[]; kind?: string })
 
 /** The board's title/detail (t-036); an empty title means the first sentence was too long, so the whole text is the title. */
 export function cardTitle(i: { body: string; title?: string; detail?: string }): { title: string; detail: string } {
-  if (i.title !== undefined && i.detail !== undefined) return i.title ? { title: i.title, detail: i.detail } : { title: i.detail || i.body, detail: "" };
+  if (i.title !== undefined && i.detail !== undefined) {
+    if (!i.title) return { title: i.detail || i.body, detail: "" };
+    // The board drops the mark that ended the first sentence; a question keeps its 「？」 (pd review of t-034).
+    const mark = i.body.trim().startsWith(i.title) ? i.body.trim().slice(i.title.length, i.title.length + 1) : "";
+    return { title: /[！？!?]/.test(mark) ? i.title + mark : i.title, detail: i.detail };
+  }
   return splitTitle(i.body);
 }
 
@@ -59,7 +64,12 @@ export function splitTitle(body: string): { title: string; detail: string } {
 
 /** A blocked reason on the first screen: ids, paths and long shas become 「…」, then clipped (board.md: 60 chars). */
 export function whyLine(reason: string, max = 60): string {
-  const masked = reason.replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…");
+  const masked = reason
+    .replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…")
+    // a bracket left with nothing but 「…」 and separators goes away entirely (pd review of t-034)
+    .replace(/[（(]\s*(?:…\s*[，,、;；]?\s*)+[)）]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
   return clip(masked, max);
 }
 

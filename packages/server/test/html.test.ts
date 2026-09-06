@@ -159,7 +159,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const a = card(ask.id), d = card(doIt.id), tl = card(tell.id);
     expect(a).toContain('data-kind="ask"');
     expect(a).toContain('<span class="kind">问你</span>');
-    expect(a).toContain('<p class="q">看板认证选私有还是公开</p>');           // the board's title (t-036) drops the closing mark
+    expect(a).toContain('<p class="q">看板认证选私有还是公开？</p>');         // the board's title drops the mark; the page puts 「？」 back
     expect(a).toMatch(/<details class="detail"><summary>细节<\/summary><p>细节：私有要每次带 token，公开谁都能看。<\/p><\/details>/);
     expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，到期按 公开<\/span><\/form>/);
     expect(d).toContain('<span class="kind">请你做</span>');
@@ -209,7 +209,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
 
     // now with the cookie the page shows 你刚定了 and the card is gone
     const after = await w.page({ cookie: cookie.split(";")[0] });
-    expect(after).toMatch(/<p class="recent">你刚定了：看板认证选私有还是公开 → <b>公开<\/b>/);
+    expect(after).toMatch(/<p class="recent">你刚定了：看板认证选私有还是公开？ → <b>公开<\/b>/);
     expect(section(after, "needs-you", "say")).not.toContain(ask.id);
     expect(after).toMatch(/<span class="count">2<\/span>/);
     expect(section(after, "needs-you", "say")).not.toMatch(/action="\/token"/);
@@ -258,6 +258,9 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(cardKind({ body: "今天不再部署", kind: "do" })).toBe("do");
     expect(cardTitle({ body: "x", title: "", detail: "全文太长没有标题" })).toEqual({ title: "全文太长没有标题", detail: "" });
     expect(cardTitle({ body: "x", title: "标题", detail: "细节" })).toEqual({ title: "标题", detail: "细节" });
+    expect(cardTitle({ body: "用哪种字体？细节见文档。", title: "用哪种字体", detail: "细节见文档。" })).toEqual({ title: "用哪种字体？", detail: "细节见文档。" });
+    expect(cardTitle({ body: "部署第 3 批：把 x 合进 y。", title: "部署第 3 批", detail: "把 x 合进 y。" })).toEqual({ title: "部署第 3 批", detail: "把 x 合进 y。" });
+    expect(whyLine("等 pm 定（01M1TP818FWVXP1YQV31X092RR，packages/cli/src/config.ts）再说")).toBe("等 pm 定再说");
     expect(kindOf({ body: "x", options: ["a", "b"] })).toBe("ask");
     expect(kindOf({ body: "请把分支合进去" })).toBe("do");
     expect(kindOf({ body: "今天不再部署了" })).toBe("tell");
