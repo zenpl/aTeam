@@ -49,9 +49,12 @@ export function board(b: Board, me: string): string {
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${b.focus.set_by}, ${ago(b.focus.at)} ago)` : "—"}`);
 
   if (b.live) {
-    const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${b.live.deployed_by ? ` (${b.live.deployed_by === "human" ? "human 推的" : `${b.live.deployed_by} 推的`})` : ""}` : "sha unknown"}`;
+    // t-083: 推的 only when release --deploy wrote the reading; 核对的 when someone measured it; nothing when the source is unsaid
+    const by = b.live.deployed_by ? ` (${b.live.deployed_by} 推的)` : b.live.checked_by ? ` (${b.live.checked_by} 核对的)` : "";
+    const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${by}` : "sha unknown"}`;
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
+    if (b.alert?.status === "misconfigured" && b.alert.line) out.push(`           ${b.alert.line}`); // t-084
     out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.shows ? `${t.id} ${t.shows}` : t.id).join(", ") || "—"}${earlier}` : live);
   }
 

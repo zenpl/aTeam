@@ -47,7 +47,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       }
       const shape = e.shape ?? declared;
       if (shape && !matchesShape(shape, e.value))
-        throw new Rejected("reading", `${e.surface}:${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
+        throw new Rejected("reading", e.key === "alert.webhook" ? `外呼只支持 https webhook，收到的是${valueForm(e.value)}；不写入` : `${e.surface}:${e.key} = ${JSON.stringify(e.value)} does not match shape ${describeShape(shape)}`);
       return;
     }
 
@@ -233,6 +233,15 @@ export function matchesShape(shape: ReadingShape, value: unknown): boolean {
   if (shape.regex !== undefined && !new RegExp(shape.regex).test(typeof value === "string" ? value : JSON.stringify(value))) return false;
   if (shape.enum?.length && !shape.enum.some((v) => JSON.stringify(v) === JSON.stringify(value))) return false;
   return true;
+}
+
+/** t-084: what kind of thing a rejected value looks like, for a message a person can act on. */
+export function valueForm(v: unknown): string {
+  if (typeof v !== "string") return `一个${Array.isArray(v) ? "数组" : typeof v === "object" && v ? "对象" : typeof v}`;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "一个邮箱";
+  if (/^http:\/\//.test(v)) return "一个 http 地址（不是 https）";
+  if (/^https:\/\//.test(v)) return "一个带空白的 https 地址";
+  return `一段文本「${v.length > 40 ? v.slice(0, 40) + "…" : v}」`;
 }
 
 export function describeShape(shape: ReadingShape): string {

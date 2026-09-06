@@ -124,6 +124,8 @@ export interface Board {
     deployed_sha: string | null;
     /** Who recorded the current deployed sha: a role (the team pushed) or the human. */
     deployed_by: string | null;
+    /** t-083: who recorded the sha by hand (a measurement, not a push); null when the push recorded it or the source is unknown. */
+    checked_by: string | null;
     since_sha: string | null;
     verified_on_production: { id: string; title: string; shows?: string }[];
     recent: { id: string; title: string; shows?: string }[];
@@ -182,7 +184,13 @@ export interface Board {
   /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
   coverage: BoardCoverage[];
   /** t-069: how to reach the human when away. set: the fact exists (however it got there); skipped: 先不要 and no fact; else unanswered. */
-  alert: { status: "unanswered" | "set" | "skipped"; value?: string; source?: "given" };
+  alert: {
+    status: "unanswered" | "set" | "skipped" | "misconfigured";
+    value?: string;
+    source?: "given";
+    /** t-084: one line for the board when the address is set but cannot be called (not https). */
+    line?: string;
+  };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
   allocation: { warnings: AllocationWarning[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
@@ -273,7 +281,11 @@ export function alertContact(s: State): Board["alert"] {
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
-  if (typeof v === "string" && v.trim()) return { status: "set", value: v.trim(), source: "given" };
+  if (typeof v === "string" && v.trim()) {
+    // t-084: a value that is there but is not an https webhook (recorded before the shape was declared): said, not hidden
+    if (!/^https:\/\/\S+$/.test(v.trim())) return { status: "misconfigured", value: v.trim(), source: "given", line: `外呼地址配了但发不出去：不是 https（${v.trim()}）` };
+    return { status: "set", value: v.trim(), source: "given" };
+  }
   const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && st.chosen?.option === CONTACT_SKIP);
   return { status: skipped ? "skipped" : "unanswered" };
 }
@@ -379,7 +391,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, deployed_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    live: { deployed_sha: null, deployed_by: null, checked_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     said: [],
     seams: [],
@@ -444,7 +456,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
   if (current) {
     b.live.deployed_sha = current.value as string;
-    b.live.deployed_by = current.actor;
+    // t-083: the one who pushed is the one whose `release --deploy` wrote the reading; anyone else who wrote it measured it.
+    // A reading with no method at all says nothing about its source: neither.
+    const source = deploySource(current);
+    b.live.deployed_by = source === "pushed" ? current.actor : null;
+    b.live.checked_by = source === "checked" ? current.actor : null;
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
@@ -624,6 +640,13 @@ export function omittedPaths(full: unknown, slim: unknown, path = ""): string[] 
   };
   walk(full, slim, path);
   return [...out].filter((x) => x !== "omitted" && x !== "shape").sort();
+}
+
+/** t-083: how a production:deployed.sha reading came to be: written by `ateam release --deploy`, measured by someone, or unsaid. */
+export function deploySource(r: Reading): "pushed" | "checked" | "unknown" {
+  const m = r.method?.trim() ?? "";
+  if (m.startsWith("ateam release --deploy")) return "pushed";
+  return m ? "checked" : "unknown";
 }
 
 const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);

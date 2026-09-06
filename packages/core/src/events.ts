@@ -24,6 +24,8 @@ export interface ReadingShape { regex?: string; enum?: unknown[] }
  */
 export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
   "deployed.sha": { regex: "^([0-9a-f]{7,40}|unknown)$" },
+  /** t-084: the call-out address is an https webhook, nothing else; t-050 can only POST to https. */
+  "alert.webhook": { regex: "^https://\\S+$" },
 };
 
 /** A measurement of the world at one moment. Never a constant. */

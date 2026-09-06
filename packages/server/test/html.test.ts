@@ -821,14 +821,14 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       const before = (await (await v.api("/events")).json()).events.length;
       expect((await v.form("/decide", { id, option: "填写", value: "  " }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await (await v.api("/events")).json()).events.length).toBe(before);
-      const r = await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" });
+      const r = await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" });
       expect(r.status).toBe(303);
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
-      expect(html).toContain('<p class="recent">你刚定了：<b>找你用 me@example.org</b>');
-      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时发到 me@example.org</a></p>');
+      expect(html).toContain('<p class="recent">你刚定了：<b>找你用 https://hooks.example/me</b>');
+      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时发到 https://hooks.example/me</a></p>');
       const readings = (await (await v.api("/board")).json()).readings;
-      expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("me@example.org");
+      expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("https://hooks.example/me");
     } finally { await v.stop(); }
   });
 
@@ -863,8 +863,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "x@y.z", token: TOKEN })).status).toBe(303);
-      expect((await v.page({ cookie })).includes("你不在时发到 x@y.z")).toBe(true);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
+      expect((await v.page({ cookie })).includes("你不在时发到 https://hooks.example/xyz")).toBe(true);
     } finally { await v.stop(); }
   });
 
@@ -881,13 +881,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect(html).toContain('<section class="needs empty" id="needs-you">');
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).not.toContain("你不在时怎么找你");
-      expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(404);
+      expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(404);
       // one fact turns it on, no release needed: the card the data side already sent appears, and the address can be set
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
-      expect((await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(303);
-      expect(await v.page({ cookie })).toContain("你不在时发到 me@example.org");
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect(await v.page({ cookie })).toContain("你不在时发到 https://hooks.example/me");
       // an address recorded any other way also counts as on
       const u = server();
       await u.start();
