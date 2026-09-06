@@ -165,11 +165,13 @@ describe("t-015 · ateam watch survives transient fetch errors", () => {
 });
 
 describe("t-046 · watch keeps listening after an instruction", () => {
-  /** Two instructions for me, published in two separate pulls, with quiet pulls between. */
+  /** Two instructions for me, published in two separate pulls, with quiet pulls between. Times are relative to now. */
+  const now = Date.now();
+  const sent = new Date(now).toISOString(), ackBy = new Date(now + 15 * 60_000).toISOString();
   const LOG2: Event[] = [
-    { id: "02A", actor: "pm", at, kind: "instruction", to: ME, body: "第一条", ack_by: "2026-09-06T06:27:00.000Z" },
-    { id: "02B", actor: "pm", at, kind: "note", body: "中间的 note" },
-    { id: "02C", actor: "pm", at, kind: "instruction", to: ME, body: "第二条", ack_by: "2026-09-06T06:27:00.000Z" },
+    { id: "02A", actor: "pm", at: sent, kind: "instruction", to: ME, body: "第一条", ack_by: ackBy },
+    { id: "02B", actor: "pm", at: sent, kind: "note", body: "中间的 note" },
+    { id: "02C", actor: "pm", at: sent, kind: "instruction", to: ME, body: "第二条", ack_by: ackBy },
   ];
   function server2(slices: number[], onDrained: () => void): Puller & { pulls: (string | null)[] } {
     let released = 0;
