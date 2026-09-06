@@ -355,7 +355,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       try {
         await f.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
         const first = section(await f.authedPage(), "now", "rest");
-        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<p class="meta contact-line">.*?<\/p>\s*<\/div>/);
+        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<\/div>/);
         expect(first).not.toContain("更早的");
       } finally { await f.stop(); }
       // 3. something verified on this version: the list is back, the sentence is gone
@@ -793,7 +793,11 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
 
 describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08）", () => {
   const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
-  const ask = (v: ReturnType<typeof server>) => v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+  // The feature is off by default (pm 22:39 after the human's 「外呼地址先不做」): a fact turns it on
+  const ask = async (v: ReturnType<typeof server>) => {
+    await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+    return v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+  };
 
   it("the card is 请你做 with pd's title and body, an input, 记下 (primary) and 先不要; anonymous goes through the token page; 记下 sets the address and the page says so", async () => {
     const v = server();
@@ -864,8 +868,33 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
     } finally { await v.stop(); }
   });
 
-  it("a project that was never asked still gets the grey line, and nothing on the card page mentions the option names", async () => {
-    const html = await w.authedPage();
-    expect(html).toContain('<a href="/?ask=alert">你不在时，我们找不到你。</a>');
+  it("off by default: without the fact the card is hidden, there is no grey line, no reopen page and no /fact route", async () => {
+    expect(await w.authedPage()).not.toContain('<p class="meta contact-line">');
+    const v = server();
+    await v.start();
+    try {
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      let html = await v.page({ cookie });
+      expect(html).not.toContain("你不在时怎么找你");
+      expect(html).not.toContain('<p class="meta contact-line">');
+      expect(html).toContain('<section class="needs empty" id="needs-you">');
+      html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
+      expect(html).not.toContain("你不在时怎么找你");
+      expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(404);
+      // one fact turns it on, no release needed: the card the data side already sent appears, and the address can be set
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      html = await v.page({ cookie });
+      expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
+      expect((await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect(await v.page({ cookie })).toContain("你不在时发到 me@example.org");
+      // an address recorded any other way also counts as on
+      const u = server();
+      await u.start();
+      try {
+        await u.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/x" });
+        expect(await u.authedPage()).toContain('<a href="/?ask=alert">你不在时发到 https://hooks.example/x</a>');
+      } finally { await u.stop(); }
+    } finally { await v.stop(); }
   });
 });
