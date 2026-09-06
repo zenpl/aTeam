@@ -23,6 +23,7 @@ export function event(e: Event, me: string): string {
         case "block": return `${t} ${who} task ${e.task} blocked on ${e.on}`;
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
         case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
+        case "criteria": return `${t} ${who} task ${e.task} criteria added: ${e.add.join(" | ")}`;
         case "seam": return `${t} ${who} seam ${e.tasks.join("+")} resolved: ${e.resolution}`;
       }
   }
@@ -116,7 +117,10 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   else {
     out.push(`criteria   (by ${t.criteria_by})`);
     if (!t.criteria.length) out.push("  (none)");
-    t.criteria.forEach((c, i) => out.push(`  ${i + 1}. ${c}`));
+    t.criteria.forEach((c, i) => {
+      const added = t.criteria_added?.find((a) => a.index === i);
+      out.push(`  ${i + 1}. ${c}${added ? `  (added by ${added.by} ${hhmm(added.at)})` : ""}`);
+    });
   }
   out.push(`touches    ${touches.length ? touches.join(", ") : "—"}`);
   out.push(`evidence   ${t.evidence ?? "—"}`);

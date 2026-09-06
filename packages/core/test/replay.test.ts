@@ -489,6 +489,74 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
   });
 });
 
+describe("t-025 · criteria can be added to an unfinished task; the adder becomes a criteria author", () => {
+  const setup = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "t-020", title: "牌桌卡片页", criteria: ["GET / 是卡片页"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-020", touches: ["html.ts"] });
+    return { store, c };
+  };
+  const task = async (store: MemoryStore, c: ReturnType<typeof clock>) => reduce(await store.read(), c.now()).tasks.get("t-020")!;
+
+  it("the author, pm and the human may add while open/working/done; numbering continues; the create event is untouched", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "criteria", actor: "qa", task: "t-020", add: ["空状态有一句话说明"] });
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["标签全部中文"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    c.tick(min(3));
+    const added = await emit(store, c, { kind: "task", op: "criteria", actor: HUMAN, task: "t-020", add: ["时间用相对时间", "空列表也有说明"] });
+    const t = await task(store, c);
+    expect(t.criteria).toEqual(["GET / 是卡片页", "空状态有一句话说明", "标签全部中文", "时间用相对时间", "空列表也有说明"]);
+    expect(t.criteria_added).toEqual([
+      { index: 1, by: "qa", at: expect.any(String) }, { index: 2, by: "pm", at: expect.any(String) },
+      { index: 3, by: HUMAN, at: added.at }, { index: 4, by: HUMAN, at: added.at },
+    ]);
+    expect(t.criteria_by).toBe("qa");
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.tasks.done[0].criteria).toHaveLength(5);
+    expect(b.tasks.done[0].criteria_added.map((a) => a.by)).toEqual(["qa", "pm", HUMAN, HUMAN]);
+    const create = (await store.read()).events.find((e) => e.kind === "task" && e.op === "create")!;
+    expect((create as { criteria: string[] }).criteria).toEqual(["GET / 是卡片页"]);
+  });
+
+  it("anyone else is refused, empty additions too; once pm has added, pm is an author as well", async () => {
+    const { store, c } = await setup();
+    const r = await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "frontend", task: "t-020", add: ["我自己定的标准"] }));
+    expect(r.rule).toBe("criteria");
+    expect(r.message).toMatch(/only qa \(criteria author\), pm or human can add criteria to t-020, not frontend/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "dev", task: "t-020", add: ["x"] }))).message).toMatch(/not dev/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["  "] }))).message).toMatch(/non-empty/);
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["a"] });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "dev", task: "t-020", add: ["c"] }))).message).toMatch(/only qa\/pm/);
+  });
+
+  it("verified is final: no more criteria; withdrawn too", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["再加一条"] }))).message).toMatch(/t-020 is verified; its criteria are what was judged/);
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-x", add: ["z"] }))).message).toMatch(/is withdrawn/);
+  });
+
+  it("whoever added a criterion cannot verify the task any more; the human still can", async () => {
+    const { store, c } = await setup();
+    await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["空状态有一句话说明"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    expect((await task(store, c)).status).toBe("verified");
+    // the human is the policy authority even when they added a criterion
+    const s2 = await setup();
+    await emit(s2.store, s2.c, { kind: "task", op: "criteria", actor: HUMAN, task: "t-020", add: ["x"] });
+    await emit(s2.store, s2.c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
+  });
+});
+
 describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly", () => {
   it("a reading is invalidated by a later write to what it depends on; building on it is rejected", async () => {
     const store = new MemoryStore();

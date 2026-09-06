@@ -36,6 +36,7 @@ tasks
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
+  ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm or human; not once verified
   ateam task seam <a> <b> --resolution "..."
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
@@ -147,7 +148,7 @@ async function main(argv: string[]) {
     case "task": {
       const [op, id, ...more] = rest;
       const given = [id, ...more].filter((x): x is string => x !== undefined);
-      if (op !== "create" && op !== "seam") exact(given, "id"); // every other task op takes the id and nothing else
+      if (op !== "create" && op !== "seam" && op !== "criteria") exact(given, "id"); // every other task op takes the id and nothing else
       switch (op) {
         case "show": {
           const b = await client.board();
@@ -172,6 +173,11 @@ async function main(argv: string[]) {
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "criteria": {
+          const [sub, task, text] = exact(given, "add", "id", "text");
+          if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);
+          return emit({ kind: "task", op, task, add: [text] });
+        }
         case "seam": { const [x, y] = exact([id, ...more].filter((v) => v !== undefined), "a", "b"); return emit({ kind: "task", op, tasks: [x, y], resolution: str(a, "resolution") ?? "" }); }
         default: throw new Error(`unknown task op "${op}"`);
       }

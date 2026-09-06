@@ -8,6 +8,8 @@ export interface BoardTask {
   status: string;
   criteria: string[];
   criteria_by: string;
+  /** Criteria added after creation: index into `criteria`, by whom, when. */
+  criteria_added: { index: number; by: string; at: string }[];
   created_at: string;
   owner?: string;
   touches: string[];
@@ -103,7 +105,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     (b.tasks[t.status] ??= []).push({
-      id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, created_at: t.created_at,
+      id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, evidence: t.evidence, verifications: t.verifications,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),

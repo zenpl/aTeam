@@ -1,5 +1,5 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, PM_ACTOR } from "./events.js";
-import { type State, openSeamsFor, passedOn, shapeFor, DEFAULT_DECIDER } from "./reduce.js";
+import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -117,6 +117,16 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
   switch (e.op) {
     // R6: a task created on a false premise ends without anyone pretending to do it. Only before work starts
     // (open or blocked), only by whoever owns its scope: the criteria author, pm, or the human.
+    // R7: criteria can grow while the task is unfinished, only from those who own its scope; the adder then owns it too.
+    case "criteria": {
+      const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
+      if (!add.length || add.length !== (e.add ?? []).length) throw new Rejected("criteria", "give at least one non-empty criterion");
+      if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
+      const authors = criteriaAuthors(t);
+      if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== human)
+        throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
+      return;
+    }
     case "withdraw":
       if (!e.reason?.trim()) throw new Rejected("withdraw", "say why (--reason)");
       if (t.status !== "open" && t.status !== "blocked")
@@ -146,7 +156,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (passedOn(t, e.surface))
         throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; verify on a surface it has not passed on`);
       if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
-      if (e.actor === t.criteria_by && e.actor !== human)
+      if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
         throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");
       const seams = openSeamsFor(state, t.id);
       if (seams.length)

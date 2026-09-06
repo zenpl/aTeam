@@ -98,7 +98,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       d.push(`<li><details><summary><code>${esc(task.id)}</code> ${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
       if (st) {
         d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
-        d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
+        d.push(`<ol class="criteria">${st.criteria.map((c, i) => {
+          const added = (st.criteria_added ?? []).find((a) => a.index === i);
+          return `<li>${esc(c)}${added ? ` <span class="meta">+ ${esc(added.by)} · ${esc(ago(added.at))}</span>` : ""}</li>`;
+        }).join("")}</ol>`);
         if (st.touches.length) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
         if (st.evidence) d.push(`<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
         for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);

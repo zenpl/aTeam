@@ -84,6 +84,8 @@ export type TaskOp =
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
   | { op: "withdraw"; task: string; reason: string }
+  /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
+  | { op: "criteria"; task: string; add: string[] }
   | { op: "seam"; tasks: [string, string]; resolution: string };
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;

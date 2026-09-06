@@ -8,8 +8,12 @@ export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | 
 export interface TaskState {
   id: string;
   title: string;
+  /** All criteria in order: the ones from create, then every addition. */
   criteria: string[];
+  /** Who created the task (and its first criteria). */
   criteria_by: string;
+  /** Criteria added after creation: which index in `criteria`, by whom, when. */
+  criteria_added: { index: number; by: string; at: string }[];
   created_at: string;
   owner?: string;
   touches: string[];
@@ -33,6 +37,11 @@ export function surfaceResults(t: TaskState): { surface: string; pass: boolean }
   const latest = new Map<string, boolean>();
   for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, v.pass);
   return [...latest].map(([surface, pass]) => ({ surface, pass }));
+}
+
+/** Everyone who wrote a criterion of this task: none of them may judge it met. */
+export function criteriaAuthors(t: TaskState): string[] {
+  return [...new Set([t.criteria_by, ...t.criteria_added.map((a) => a.by)])];
 }
 
 /** Has this surface already passed in the current round? A second pass there says nothing new. */
@@ -214,7 +223,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   switch (e.op) {
     case "create":
       s.tasks.set(e.task, {
-        id: e.task, title: e.title, criteria: e.criteria, criteria_by: e.actor,
+        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [],
         created_at: e.at, touches: [], status: "open", round: 0, verifications: [], notes: [],
       });
       return;
@@ -249,6 +258,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "blocked"; t.blocked_on = e.on; return;
     case "unblock":
       t.status = t.owner ? "working" : "open"; t.blocked_on = undefined; return;
+    case "criteria":
+      for (const text of e.add) { t.criteria.push(text); t.criteria_added.push({ index: t.criteria.length - 1, by: e.actor, at: e.at }); }
+      return;
     case "withdraw":
       t.status = "withdrawn"; t.blocked_on = undefined;
       t.withdrawn = { by: e.actor, at: e.at, reason: e.reason };
