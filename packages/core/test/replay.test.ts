@@ -1845,6 +1845,13 @@ describe("t-088 · an event can say where it came from, and the same source land
     const s = reduce(await store.read(), c.now());
     expect(s.from.get("tracker#12")!.id).toBe(one.event.id);
     expect(s.from.size).toBe(2);
+    // qa 23:37: a task carried in says so on the board and through GET /task/<id>, not only inside the event
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "im-1", title: "搬来的", criteria: ["x"], from: "tracker#20" });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "loc-1", title: "本地建的", criteria: ["x"] });
+    const bb = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(boardTask(bb, "im-1")!.from).toBe("tracker#20");
+    expect(boardTask(bb, "loc-1")!.from).toBeUndefined();
+    expect(boardTask(slimBoard(bb), "im-1")!.from).toBe("tracker#20");
     // two writers racing on the same from: the log still holds one
     const race = new MemoryStore();
     const results = await Promise.all([1, 2, 3].map((i) => appendFrom(race, { kind: "note", actor: "pm", body: `第 ${i} 次`, from: "同一处" }, { human: HUMAN, now: c.now() })

@@ -9,6 +9,8 @@ export interface BoardTask {
   title: string;
   /** t-096: what people call it (an old number, say); absent when nobody set one. References are always by id. */
   label?: string;
+  /** t-088: where this task came from when it was carried in; absent for one created here. */
+  from?: string;
   status: string;
   /** Absent on the slim board (t-070): GET /task/<id> has them. */
   criteria?: string[];
@@ -522,7 +524,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       : results0.length ? results0.map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ") : t.status;
     (b.tasks[t.status] ??= []).push({
       era, summary,
-      id: t.id, title: t.title, label: t.label, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
+      id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
@@ -628,7 +630,7 @@ export function slimBoard(b: Board): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
-      id: t.id, title: t.title, label: t.label, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
+      id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));

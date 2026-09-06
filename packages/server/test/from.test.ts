@@ -36,6 +36,12 @@ describe("t-088 · POST /events with from", () => {
     const events = await log();
     expect(events.filter((e) => e.from === "tracker#7")).toHaveLength(1);
     expect(events.filter((e) => e.from === "tracker#8")).toHaveLength(1);
+    // qa 23:37: the board and GET /task/<id> carry from, not just the raw event
+    await post("pm", { kind: "task", op: "create", task: "f-1", title: "搬来的任务", criteria: ["x"], from: "tracker#42" });
+    const one = await (await fetch(`${base}/task/f-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect(one.task.from).toBe("tracker#42");
+    const board = await (await fetch(`${base}/board`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect((board.tasks.open as { id: string; from?: string }[]).find((t) => t.id === "f-1")!.from).toBe("tracker#42");
     // an event without from is unaffected: two writes, two events
     await post("pm", { kind: "note", body: "普通" });
     await post("pm", { kind: "note", body: "普通" });
@@ -69,8 +75,13 @@ describe("t-092 · the check card over the API", () => {
     const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
     expect(card).toBeTruthy();
     // this file's earlier test imported a reading too, so the fact count comes from the board, not from a number typed here
+    // the counts come from the board, because earlier tests in this file imported things into the same server too
     const facts = b.readings.filter((r: { why?: string }) => r.why === "搬进来的数字：在这里没有测过，谁用谁重测").length;
-    expect(card.body).toBe(`搬过来了，对吗？在途 1 件、1 条现行决定、${facts} 个数字、0 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`);
+    const inflight = Object.entries(b.tasks as Record<string, { from?: string }[]>)
+      .filter(([status]) => !["verified", "withdrawn", "obsolete"].includes(status))
+      .reduce((n, [, xs]) => n + xs.filter((t) => t.from).length, 0);
+    expect(card.body).toBe(`搬过来了，对吗？在途 ${inflight} 件、1 条现行决定、${facts} 个数字、0 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`);
+    expect(inflight).toBeGreaterThan(0);
     expect(facts).toBeGreaterThan(0);
     expect(card.options).toEqual(["对", "有漏"]);
     // answering it sends the importer one instruction
