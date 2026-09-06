@@ -199,6 +199,7 @@ Overfit 的具体表现，也是拆分的清单：说明书里的 `pnpm build`�
 ## 相关文档
 
 - 用例全文（两族）：`docs/usecases.md`
+- 职责与系统要求（低一层：每项工作职责对 owner、持有者、协作方、通讯与牌桌的要求；角色 = 职责的打包；说明书按职责拼装）：`docs/responsibilities.md`
 - 牌桌的视觉与信息结构：`docs/board.md`
 - 本项目档案：`docs/self.md`
 
