@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent } from "@ateam/core";
+import { renderBoard } from "./html.js";
+
+const COOKIE = "ateam_token";
 
 export interface ServerOptions {
   store: EventStore;
@@ -29,6 +32,21 @@ export function createApp(opts: ServerOptions) {
     try {
       const url = new URL(req.url ?? "/", "http://x");
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
+
+      // The human's page. Same data as /board, no identity needed, read-only.
+      // Browsers cannot send the Bearer header, so the token may arrive once as ?token= and is then kept in a cookie.
+      if (req.method === "GET" && url.pathname === "/") {
+        const given = url.searchParams.get("token");
+        if (token && given !== null) {
+          if (given !== token) return html(res, 401, unauthorizedPage());
+          const secure = String(req.headers["x-forwarded-proto"] ?? "").includes("https");
+          res.writeHead(303, { location: "/", "set-cookie": `${COOKIE}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}` });
+          return res.end();
+        }
+        if (token && req.headers.authorization !== `Bearer ${token}` && cookie(req, COOKIE) !== token) return html(res, 401, unauthorizedPage());
+        const state = reduce(await store.read());
+        return html(res, 200, renderBoard(board(state, human), state, { sha }));
+      }
 
       if (token && req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: "unauthorized" });
       const actor = String(req.headers["x-actor"] ?? "").trim();
@@ -76,6 +94,23 @@ export function createApp(opts: ServerOptions) {
       return json(res, 500, { error: "internal", message: (err as Error).message });
     }
   });
+}
+
+function html(res: ServerResponse, status: number, body: string) {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "content-length": Buffer.byteLength(body), "cache-control": "no-store" });
+  res.end(body);
+}
+
+function cookie(req: IncomingMessage, name: string): string | undefined {
+  for (const part of String(req.headers.cookie ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return undefined;
+}
+
+function unauthorizedPage(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>aTeam board</title></head><body style="font:15px system-ui;padding:2rem"><h1>aTeam board</h1><p>This page needs the project token. Open <code>/?token=&lt;ATEAM_TOKEN&gt;</code> once; it is then kept in a cookie.</p></body></html>`;
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {

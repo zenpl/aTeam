@@ -57,6 +57,7 @@ Rejections are exit code 2 with the rule that fired. `ateam help` lists everythi
 |---|---|
 | `GET /events?after=<id>&wait=<ms>` | pull since cursor (records delivery, advances cursor); long-polls up to 30 s |
 | `POST /events` | append one event; 409 with `{rule, message}` when a rule rejects it |
+| `GET /` | the board as read-only HTML for the human; refreshes every 30 s. Browsers cannot send the header, so open `/?token=<ATEAM_TOKEN>` once and it is kept in a cookie |
 | `GET /board` | the derived board |
 | `GET /log?after=<id>` | raw events, no side effects |
 
