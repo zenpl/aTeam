@@ -74,7 +74,7 @@ export const UI = {
   waitingUnknown: (why: string) => `不知道有多少件在等上线：${why}`,
   // t-095 (S9/M4): the migration check card's result lines; the card itself is worded by the service (t-092)
   migrationOk: "清单对",
-  migrationMissing: "清单有漏",
+  migrationMissing: (who: string | null) => who ? `清单有漏，已让 ${who} 回去补` : "清单有漏",
   migrationPatching: (who: string) => `等 ${who} 补漏`,
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,

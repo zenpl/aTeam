@@ -1023,7 +1023,7 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
       expect(c).toContain('<span class="kind">问你</span>');
       expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
       // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
-      expect(c).toContain('<p class="body">在途 1 件事、1 条现行决定、1 个数字（都标了要重测）、1 个等你答的问题。旧的那边一条没删。</p>');
+      expect(c).toContain('<p class="body">在途 1 件、1 条现行决定、1 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。</p>');
       expect(c).not.toContain("99");
       expect(c).not.toContain("88");
       expect(c).not.toContain("<details");
@@ -1056,7 +1056,7 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
         expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(303);
         const h2 = await w.page({ cookie: c2 });
         expect(card(h2)).toBe("");
-        expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏</b>');
+        expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏，已让 dev 回去补</b>');
         expect(h2).toContain('<p class="meta patching">等 dev 补漏</p>');
       } finally { await w.stop(); }
       expect(note).toBeTruthy();
