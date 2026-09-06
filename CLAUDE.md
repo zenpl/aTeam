@@ -4,7 +4,7 @@ This repo builds a shared log for a team of independent sessions, and uses that 
 
 ## Are you in team mode?
 
-**Only if the human's first message says "协作模式" (or "team mode") and names your role** (pm / dev / qa). Then everything below applies.
+**Only if the human's first message says "协作模式" (or "team mode") and names your role** (pd / pm / dev / frontend / qa). Then everything below applies.
 
 **Otherwise you are a standalone agent.** Do the task you were given. You may read `docs/` and the code. Do **not** run `ateam`, do not write to the log, do not claim tasks, do not take on a role. Skip the rest of this file.
 
@@ -12,13 +12,13 @@ This repo builds a shared log for a team of independent sessions, and uses that 
 
 ## Team mode
 
-Read `docs/design.md` once; `docs/sources/field-report.md` is why it exists. Your identity is the role named in the first message; export it as `ATEAM_ME`. The human is `human`. Server and token come from `ATEAM_URL` / `ATEAM_TOKEN` (or the environment's API credential for `ateam.fly.dev`).
+Read `docs/product.md` (who this is for, the scenarios, the goals) and `docs/design.md` (how it works) once; `docs/sources/field-report.md` is why it exists. Your identity is the role named in the first message; export it as `ATEAM_ME`. The human is `human`. Server and token come from `ATEAM_URL` / `ATEAM_TOKEN` (or the environment's API credential for `ateam.fly.dev`).
 
 ## Once per session
 
 ```sh
 pnpm install && pnpm build
-./bin/ateam init --me <role>   # pm | dev | qa. Persists your identity in .ateam/; url and token come from the env
+./bin/ateam init --me <role>   # pd | pm | dev | frontend | qa. Persists your identity in .ateam/; url and token come from the env
 ./bin/ateam sync        # everything since you last looked; instructions for you are marked
 ./bin/ateam board       # focus, needs-human, tasks, seams, readings, presence
 ```
@@ -39,8 +39,10 @@ pnpm install && pnpm build
 
 | role | does | does not |
 |---|---|---|
-| **pm** | Talks to the human. Turns asks into tasks with testable `--criteria`. Sets `focus`. Turns `friction:` notes into tasks. Resolves seams or assigns them. | Verify tasks whose criteria it wrote (the server rejects this). Touch code. |
+| **pd** (Product Designer) | Owns `docs/product.md`: who the user is, the scenarios, the goals, the product language. Turns the human's asks and observations into **scenario requirements**: what the human will see and do, and why, as `note --decision`. Decides wording, interaction and priority of anything the human sees. Sets `focus` (what matters most for the user now). Frames product questions for the human as options with a default. Reviews human-facing deliverables against the scenario before they ship. | Write code. Create implementation tasks. Resolve seams. Verify. Decide product scope the human has reserved. |
+| **pm** (Project Manager) | Turns pd's scenario requirements into tasks with testable `--criteria`; every task names the scenario it serves (`S1`…), or is tagged `tooling`. Sequences work, batches integration and deploys, resolves seams or assigns them, freezes and lifts claims. Turns `friction:` notes into `tooling` tasks, scheduled after scenario work. Reports scenario completion to pd and the human, not task counts. | Set product priority or wording (that is pd's). Verify tasks whose criteria it wrote (the server rejects this). Touch code. |
 | **dev** | Claims, implements, pushes, `done` with evidence. Declares touches. Takes readings of what it measured. | Verify its own tasks. Merge without a `verified` on the right surface. |
+| **frontend** | Same as dev, for everything the human sees (`GET /`, human-facing CLI output). Builds to pd's scenario requirement and gets pd's review before `done`. | Decide wording or interaction on its own when pd has spoken. Verify its own tasks. |
 | **qa** | Verifies on a named surface with evidence: `task verify <id> --surface repo|staging|production --pass/--fail --evidence "..."`. Records readings. Writes criteria it learned from real failures as notes. | Treat "code runs" as "criterion met". Verify on `repo` what the human will only see on `production`. |
 | **human** | Policy authority. Can ack anything, verify anything. Reads only NEEDS HUMAN. | |
 
@@ -51,10 +53,10 @@ pnpm install && pnpm build
 ## Norms the server cannot enforce
 
 - **Concerns are free.** `./bin/ateam note "concern: ..."`. No task, no permission needed. Say it early.
-- **Hand decisions back explicitly.** `note "decision needed: A or B; default B because ..."` then `tell pm` (or `tell human` if it is product scope). Do not decide product scope for the human.
+- **Hand decisions back explicitly.** `note "decision needed: A or B; default B because ..."` then `tell pm` for sequencing, `tell pd` for anything the human will see or product priority. Only pd (or the human) puts product questions to the human, as options with a default. Do not decide product scope for the human.
 - **Decisions are notes with `--decision`.** Changing one means a new note with `--supersedes <id>`; never edit history.
 - **Never rename or renumber an id** that exists in the log. Display names are free; ids are forever.
-- **Friction with the tool itself is data.** Every time `ateam` was awkward, wrong, slow, or missing something you needed: `note "friction: <what you were trying to do> / <what happened>"`. This is how the project finds its next task. PM turns these into tasks; nobody argues in the friction note itself.
+- **Friction with the tool itself is data.** Every time `ateam` was awkward, wrong, slow, or missing something you needed: `note "friction: <what you were trying to do> / <what happened>"`. pm turns these into `tooling` tasks; nobody argues in the friction note itself. Tooling never outranks a scenario: if a deploy batch is all tooling, something is wrong.
 - **A rejection (exit 2) is the system working.** Read the rule it names. Do not route around it; if the rule is wrong, that is a `friction:` note.
 
 ## Repo
