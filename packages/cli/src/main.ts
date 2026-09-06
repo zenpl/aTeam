@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardTask, type ClientEvent } from "@ateam/core";
+import { boardTask, Rejected, type ClientEvent } from "@ateam/core";
 import { parse, str, list, bool, duration, type Args } from "./args.js";
 import { Client, ClientError } from "./client.js";
 import { resolveConfig, initFields, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { sync, watch, type CursorStore } from "./loop.js";
+import { decide } from "./decide.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -121,12 +122,9 @@ async function main(argv: string[]) {
     }
     case "decide": {
       const [id, ...option] = rest;
-      const of = need(id, "<id>"), choice = need(option.join(" "), "<option>");
-      const b = await client.board();
-      const i = b.instructions.find((x) => x.id === of);
-      if (!i) throw new Error(`no instruction "${of}" in the log`);
-      if (i.status !== "acked") await emit({ kind: "ack", of });
-      return emit({ kind: "note", body: `decision: ${i.body} -> ${choice}`, decision: true, decides: { of, option: choice } });
+      const events = await decide({ board: () => client.board(), emit: (e) => client.emit({ ...e, ...common(a) } as ClientEvent) }, need(id, "<id>"), need(option.join(" "), "<option>"));
+      for (const ev of events) console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+      return;
     }
     case "reading": {
       const [key, ...value] = rest;
@@ -170,6 +168,7 @@ main(process.argv.slice(2)).catch((err) => {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
     process.exit(err.status === 409 ? 2 : 1);
   }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
 });
