@@ -48,8 +48,10 @@ describe("t-069 · the second card of a new project", () => {
     const card = (await cards(w.project, w.key)).find((x) => x.body === CONTACT_ASK)!;
     expect((await decide(w.project, w.admin, card.id, "填写")).status).toBe(400);
     expect((await decide(w.project, w.admin, card.id, "填写", "  ")).status).toBe(400);
+    expect((await (await api(w.project, "/board", w.key)).json()).alert).toEqual({ status: "unanswered" });
     expect((await decide(w.project, w.admin, card.id, "填写", "https://hooks.example/team")).status).toBe(201);
     const b = await (await api(w.project, "/board", w.key)).json();
+    expect(b.alert).toEqual({ status: "set", value: "https://hooks.example/team", source: "given" });
     const fact = b.readings.find((r: { surface: string; key: string }) => r.surface === "project" && r.key === "alert.webhook");
     expect(fact).toMatchObject({ value: "https://hooks.example/team", valid: true, by: "human" });
     expect(b.needs_human.map((x: { body: string }) => x.body)).not.toContain(CONTACT_ASK);
@@ -62,11 +64,13 @@ describe("t-069 · the second card of a new project", () => {
     const card = (await cards(w.project, w.key)).find((x) => x.body === CONTACT_ASK)!;
     expect((await decide(w.project, w.admin, card.id, "先不要")).status).toBe(201);
     expect((await cards(w.project, w.key)).map((x) => x.body)).not.toContain(CONTACT_ASK);
+    expect((await (await api(w.project, "/board", w.key)).json()).alert).toEqual({ status: "skipped" });
     const events = (await (await api(w.project, "/log", w.key)).json()).events as Event[];
     expect(events.some((e) => e.kind === "note" && e.decision && e.body === `decision: ${CONTACT_ASK} -> 先不要`)).toBe(true);
     expect(events.some((e) => e.kind === "reading" && e.key === "alert.webhook")).toBe(false);
     await api(w.project, "/events", w.key, { method: "POST", body: JSON.stringify({ kind: "reading", key: "alert.webhook", surface: "project", value: "https://hooks.example/later" }) });
     expect((await cards(w.project, w.key)).map((x) => x.body)).not.toContain(CONTACT_ASK);
+    expect((await (await api(w.project, "/board", w.key)).json()).alert.status).toBe("set"); // skipped, then given later
   });
 
   it("a fact recorded by a node before the human answers closes the card by itself", async () => {
