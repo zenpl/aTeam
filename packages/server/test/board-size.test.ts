@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { Builder, board, slimBoard, evidenceSha, type Board } from "@ateam/core";
+import { Builder, board, slimBoard, omittedPaths, evidenceSha, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 
 let app: ReturnType<typeof createApp> | undefined;
@@ -54,7 +54,8 @@ describe("t-070 · GET /board is slim by default", () => {
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
     expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
     expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha }); // derived from tasks: the full board has it; absent, not empty (t-077)
-    expect(slim.omitted.length).toBeGreaterThan(10);
+    expect(slim.omitted).toEqual(omittedPaths(full, slim)); // computed, not written; the recursive walk itself is proven in core
+    expect(slim.omitted).toContain("tasks.done[].criteria");
     expect(full.omitted).toEqual([]);
     // what stays: every task with the fields the board and CLI read
     const tasks = Object.values(slim.tasks).flat();
@@ -91,7 +92,7 @@ describe("t-070 · GET /board is slim by default", () => {
     delete servedFull.invite_url;
     expect(servedFull).toEqual(expected);
     expect(JSON.parse(served).tasks.done[0].criteria).toBeUndefined();
-    expect(JSON.parse(served).omitted).toContain("tasks[].criteria");
+    expect(JSON.parse(served).omitted).toContain("tasks.done[].criteria");
     expect(servedFull.omitted).toEqual([]);
     expect(servedFull.tasks.done[0].criteria.length).toBe(3);
   }, 30_000); // building ~600 events through append is quadratic; a real server pays this once per event, not per test

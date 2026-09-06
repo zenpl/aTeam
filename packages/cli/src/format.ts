@@ -154,9 +154,9 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[] = []
   out.push(`owner      ${t.owner ?? "—"}`);
   // The default board (t-070) leaves fields out and says which in board.omitted (t-077): an absent field is "not sent",
   // never "empty". A server older than this CLI sends neither the fields nor the list.
-  const left = (field: string) => omitted.includes(`tasks[].${field}`);
-  const slim = left("criteria");
-  const seamsCut = omitted.includes("seams[both sides final]");
+  // Paths follow the board's real shape (t-077 round 2): tasks.<status>[].<field>, seams[].overlap, seams[<n> of <m>].
+  const left = (field: string) => omitted.some((p) => p === `tasks.${t.status}[].${field}` || p === `tasks[].${field}`);
+  const seamsCut = omitted.some((p) => /^seams\[\d+ of \d+\]$/.test(p));
   if (left("criteria")) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
   else if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {

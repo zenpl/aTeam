@@ -573,14 +573,40 @@ export function slimBoard(b: Board): Board {
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
   const release: Board["release"] = { deployed_sha: b.release.deployed_sha };
-  // t-077: what this response left out, as paths. Omitted fields are absent, never empty; a real empty stays [] / null.
-  const omitted = [
-    "tasks[].criteria", "tasks[].criteria_by", "tasks[].criteria_added", "tasks[].created_at", "tasks[].touches", "tasks[].evidence",
-    "tasks[].verifications", "tasks[].history", "tasks[].notes",
-    `instructions[acked, decided beyond the last ${SLIM_DECIDED}]`, "seams[both sides final]", "seams[!open].overlap",
-    `readings[stale beyond the last ${SLIM_DECIDED}]`, "needs_human[].detail", "in_flight[].shown", "release.candidates",
-  ];
-  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted };
+  // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
+  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted: [] };
+  slim.omitted = omittedPaths(b, slim);
+  return slim;
+}
+
+/**
+ * t-077: the field paths present in `full` and absent in `slim`, and the lists `slim` cut short. Recursive and name-blind:
+ * a key that is in the full value and not in the slim one is "<path>.<key>"; list elements are matched by `id` when they
+ * have one, else by position, and their missing keys appear once as "<path>[].<key>"; a list that lost elements appears
+ * as "<path>[<n> of <m>]". Anything undefined on both sides is not a difference.
+ */
+export function omittedPaths(full: unknown, slim: unknown, path = ""): string[] {
+  const out = new Set<string>();
+  const walk = (f: unknown, s: unknown, p: string) => {
+    if (Array.isArray(f) && Array.isArray(s)) {
+      if (s.length < f.length) out.add(`${p}[${f.length - s.length} of ${f.length}]`);
+      const byId = (xs: unknown[]) => new Map(xs.filter((x): x is { id: string } => !!x && typeof x === "object" && typeof (x as { id?: unknown }).id === "string").map((x) => [x.id, x]));
+      const fi = byId(f), si = byId(s);
+      if (fi.size === f.length && si.size === s.length) { for (const [id, fx] of fi) { const sx = si.get(id); if (sx) walk(fx, sx, `${p}[]`); } }
+      else for (let i = 0; i < Math.min(f.length, s.length); i++) walk(f[i], s[i], `${p}[]`);
+      return;
+    }
+    if (f && s && typeof f === "object" && typeof s === "object") {
+      for (const k of Object.keys(f as object)) {
+        const fv = (f as Record<string, unknown>)[k], sv = (s as Record<string, unknown>)[k];
+        if (fv === undefined) continue;
+        if (sv === undefined) out.add(`${p ? p + "." : ""}${k}`);
+        else walk(fv, sv, `${p ? p + "." : ""}${k}`);
+      }
+    }
+  };
+  walk(full, slim, path);
+  return [...out].filter((x) => x !== "omitted").sort();
 }
 
 export function boardTask(b: Board, id: string): BoardTask | undefined {
