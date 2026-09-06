@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage } from "../src/html.js";
+import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -429,6 +429,29 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     } finally { await z.stop(); }
+  });
+
+  it("「自上一版 X 以来」names the previous deployed sha, never the current one; hidden when there is none", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const ship = async (id: string, title: string) => {
+        await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+        await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+        await v.post("dev", { kind: "task", op: "done", task: id, evidence: "提交" });
+        await v.post("qa", { kind: "task", op: "verify", task: id, surface: "production", pass: true, evidence: "线上看到" });
+      };
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08" });
+      await ship("t-1", "登录修复");
+      expect(await v.authedPage()).not.toContain("自上一版");
+      await v.post("human", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d04c79" });
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "085624d04c79" });   // the same sha recorded twice
+      await ship("t-2", "牌桌 v2");
+      const html = await v.authedPage();
+      expect(html).toContain("自上一版 ede0f06 以来");
+      expect(html).not.toContain("自上一版 085624d");
+      expect(previousSha(await (await v.api("/board")).json())).toBe("ede0f06");
+    } finally { await v.stop(); }
   });
 
   it("an instruction decided by timeout reads 已按默认「X」执行（你仍可改）; tokenPage escapes its fields", async () => {

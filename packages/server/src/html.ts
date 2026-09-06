@@ -153,12 +153,13 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
 
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
   const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");
+  const since = previousSha(b);
   const onProd = b.live.verified_on_production.length;
   out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
   if (sha) {
     out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ` <span class="meta">${UI.noneOnProduction}</span>`}${shaReading ? ` <span class="meta">· ${esc(UI.checkedBy(shaReading.by, ago(shaReading.at)))}</span>` : ""}</div>`);
     if (b.live.recent.length || b.live.earlier.length) {
-      out.push(`<details class="more-list"><summary>${UI.thisVersion}${b.live.since_sha ? ` <span class="meta">${esc(UI.sinceLast(String(b.live.since_sha).slice(0, 7)))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>${b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul></details>` : ""}</details>`);
+      out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>${b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul></details>` : ""}</details>`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
   out.push(`</div></div>`);
@@ -185,6 +186,22 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   out.push(renderRest(b, s, human, t, ago));
 
   return page(out.join("\n"), { now: b.now, refresh, sha: opts.sha });
+}
+
+/**
+ * The version before this one: the latest production:deployed.sha reading whose value differs from the current
+ * one (pd, t-034 review). Null when there is none, or when it would be the current sha again.
+ */
+export function previousSha(b: Board): string | null {
+  const current = b.live.deployed_sha ? String(b.live.deployed_sha) : null;
+  if (!current) return null;
+  const prev = b.readings
+    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .sort((x, y) => y.at.localeCompare(x.at))
+    .find((r) => (r.value as string) !== current);
+  const fallback = b.live.since_sha ? String(b.live.since_sha) : null;
+  const value = prev ? (prev.value as string) : fallback;
+  return value && value !== current ? value.slice(0, 7) : null;
 }
 
 interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
