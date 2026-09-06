@@ -54,7 +54,8 @@ export function board(b: Board, me: string): string {
   out.push("", "TASKS");
   for (const status of ["blocked", "working", "done", "failed", "open", "verified"]) {
     for (const t of b.tasks[status] ?? []) {
-      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "verified" ? ` ✓ ${t.verified_on?.join(",")}` : "";
+      const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
+      const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : results ? `  ${results}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
     }
   }

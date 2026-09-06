@@ -1,5 +1,5 @@
 import type { Reading } from "./events.js";
-import type { State, TaskState, InstructionState, ReadingState, SeamState } from "./reduce.js";
+import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
 export interface BoardTask {
@@ -13,8 +13,10 @@ export interface BoardTask {
   touches: string[];
   blocked_on?: string;
   evidence?: string;
-  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string }[];
-  /** Surfaces with a passing verification. */
+  verifications: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
+  surfaces: { surface: string; pass: boolean }[];
+  /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
 }
 
@@ -69,7 +71,8 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
     (b.tasks[t.status] ??= []).push({
       id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, evidence: t.evidence, verifications: t.verifications,
-      verified_on: t.verifications.filter((v) => v.pass).map((v) => v.surface),
+      surfaces: surfaceResults(t),
+      verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
     });
   }
 
