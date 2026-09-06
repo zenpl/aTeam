@@ -5,7 +5,7 @@ The project is built by the thing it builds. Three cloud sessions plus the human
 ## Setup (human, once)
 
 1. Cloud environment: **Custom** network access with `ateam.fly.dev` allowed, plus the default package registries. `ATEAM_URL=https://ateam.fly.dev` as an environment variable. The token either as `ATEAM_TOKEN` env var, or better as an API credential on host `ateam.fly.dev` (header `Authorization`, prefix `Bearer`) so sessions never see it.
-2. Start three sessions on this repo. First message to each: `You are pm.` / `You are dev.` / `You are qa.` (`CLAUDE.md` does the rest.)
+2. Start three sessions on this repo. First message to each: `协作模式，你是 pm。` / `协作模式，你是 dev。` / `协作模式，你是 qa。` (`CLAUDE.md` does the rest.) A session whose first message does not say 协作模式 is a standalone agent and never touches the log.
 3. As the human, read only `NEEDS HUMAN` on the board. Ack instructions addressed to you with `./bin/ateam ack <id>` from any session as `ATEAM_ME=human`, or tell pm.
 
 ## Loop

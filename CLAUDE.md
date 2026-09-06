@@ -1,8 +1,18 @@
 # Working in aTeam
 
-This repo builds a shared log for a team of independent sessions, and uses that log to build itself. You are one session in that team. Read `docs/design.md` once; `docs/sources/field-report.md` is why it exists.
+This repo builds a shared log for a team of independent sessions, and uses that log to build itself.
 
-Your identity is `$ATEAM_ME`. If it is unset, the human's first message tells you who you are. The human is `human`. Server and token come from `ATEAM_URL` / `ATEAM_TOKEN` (or the environment's API credential for `ateam.fly.dev`).
+## Are you in team mode?
+
+**Only if the human's first message says "协作模式" (or "team mode") and names your role** (pm / dev / qa). Then everything below applies.
+
+**Otherwise you are a standalone agent.** Do the task you were given. You may read `docs/` and the code. Do **not** run `ateam`, do not write to the log, do not claim tasks, do not take on a role. Skip the rest of this file.
+
+---
+
+## Team mode
+
+Read `docs/design.md` once; `docs/sources/field-report.md` is why it exists. Your identity is the role named in the first message; export it as `ATEAM_ME`. The human is `human`. Server and token come from `ATEAM_URL` / `ATEAM_TOKEN` (or the environment's API credential for `ateam.fly.dev`).
 
 ## Once per session
 
