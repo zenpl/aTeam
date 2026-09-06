@@ -54,7 +54,7 @@ export const UI = {
   verifiedCount: (n: number) => `在生产上验过 ${n} 件`,
   checkedBy: (who: string, when: string) => `${who} ${when}核对`,
   noDeployReading: "还没人核对过线上是哪一版",
-  noneOnProduction: "还没有在生产上验过的任务",
+  thisVersionUnverified: "这一版的改动还没在生产验过",
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,
   sinceLast: (sha: string) => `自上一版 ${sha} 以来`,

@@ -330,6 +330,42 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     } finally { await v.stop(); }
   });
 
+  it("线上 has three states: no sha reading; sha with nothing verified on it yet says so in words; sha with recent items lists them (t-060)", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // 1. nobody checked which version is live
+      expect(section(await v.authedPage(), "now", "rest")).toContain('<span class="quiet">还没人核对过线上是哪一版</span>');
+      // 2. a sha is deployed, one task verified on the previous version, nothing yet on this one: a sentence, not an empty heading
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["可用"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/1.ts"] });
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交" });
+      await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
+      let now = section(await v.authedPage(), "now", "rest");
+      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版的改动还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
+      expect(now).not.toContain("这一版带来了什么");
+      // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
+      const f = server();
+      await f.start();
+      try {
+        await f.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
+        const first = section(await f.authedPage(), "now", "rest");
+        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版的改动还没在生产验过<\/span><\/div>\s*<\/div>/);
+        expect(first).not.toContain("更早的");
+      } finally { await f.stop(); }
+      // 3. something verified on this version: the list is back, the sentence is gone
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["可用"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-2", touches: ["src/2.ts"] });
+      await v.post("dev", { kind: "task", op: "done", task: "t-2", evidence: "提交" });
+      await v.post("qa", { kind: "task", op: "verify", task: "t-2", surface: "production", pass: true, evidence: "线上看到" });
+      now = section(await v.authedPage(), "now", "rest");
+      expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 1 件<\/summary>/);
+      expect(now).not.toContain("这一版的改动还没在生产验过");
+    } finally { await v.stop(); }
+  });
+
   it("empty states are the board.md sentences, and there is no 你说过的 section", async () => {
     const e = server();
     await e.start();
