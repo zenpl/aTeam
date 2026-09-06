@@ -79,7 +79,13 @@ export function renderBoard(b: Board, s: State, opts: { sha?: string; refresh?: 
         out.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
         if (st.touches.length) out.push(`<div class="meta">touches: ${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
         if (st.evidence) out.push(`<div class="meta">evidence: ${esc(st.evidence)}</div>`);
+        for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) out.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">(${esc(n.actor)}, ${t(n.at)})</span></div>`);
         for (const v of st.verifications) out.push(`<div class="meta">${v.pass ? "✓ verified" : "✗ failed"} on <b>${esc(v.surface)}</b> by ${esc(v.by)} ${t(v.at)}${v.evidence ? `: ${esc(v.evidence)}` : ""}</div>`);
+        if (st.notes.length) {
+          out.push(`<ul class="notes">`);
+          for (const n of st.notes) out.push(`<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ' <span class="tag acked">decision</span>' : ""}: ${esc(n.body)}</li>`);
+          out.push(`</ul>`);
+        }
       }
       out.push(`</details></li>`);
     }
@@ -153,6 +159,8 @@ ul.tasks, ul.presence { list-style: none; padding: 0; }
 ul.tasks li { padding: .25rem 0; border-top: 1px solid var(--line); }
 ul.tasks summary { cursor: pointer; }
 ol.criteria { margin: .25rem 0 .5rem; padding-left: 1.5rem; }
+ul.notes { margin: .35rem 0 .25rem; padding-left: 1rem; font-size: .9rem; border-left: 2px solid var(--line); list-style: none; }
+ul.notes li { padding: .15rem 0; }
 ul.presence { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
 ul.presence li.away { color: var(--muted); }
 #needs-human li { padding: .2rem 0; }

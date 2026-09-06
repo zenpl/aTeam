@@ -43,6 +43,8 @@ beforeAll(async () => {
   await post("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, method: "select count(*)", depends_on: ["production:users"] });
   await post("dev", { kind: "note", body: "imported batch 3", writes: ["production:users"] });
   await post("qa", { kind: "reading", surface: "production", key: "health", value: "ok" });
+  await post("qa", { kind: "note", body: "concern: <flag> may be stripped by the proxy", task: "t-1" });
+  await post("dev", { kind: "note", body: "evidence: also on the default branch as 7654321", task: "t-1" });
 });
 
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
@@ -64,6 +66,9 @@ describe("GET / · read-only HTML board", () => {
     expect(html).toContain(esc("no <script> on the page"));
     expect(html).toContain("429 after 100 rps");
     expect(html).toContain("sha 1234567");                           // evidence
+    expect(html).toContain("+ also on the default branch as 7654321"); // evidence update from a note --task
+    expect(html).toMatch(/<ul class="notes">.*<b>qa<\/b>.*concern: &lt;flag&gt; may be stripped by the proxy.*<b>dev<\/b>.*evidence: also on the default branch/s);
+    expect(html.match(/<ul class="notes">/g)).toHaveLength(1);     // only t-1 has notes
     expect(html).toMatch(/verified on <b>repo<\/b> by qa/);          // verification
     expect(html).toContain("production:health");                     // valid reading
     expect(html).toContain("production:users.count");                // stale reading, with why

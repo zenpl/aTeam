@@ -18,6 +18,8 @@ export interface BoardTask {
   surfaces: { surface: string; pass: boolean }[];
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
+  /** Notes attached with --task, in log order. */
+  notes: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
 }
 
 /** What every session reads first. Derived; nobody moves cards. */
@@ -86,6 +88,7 @@ export function board(s: State, human: string, now: Date = new Date()): Board {
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, evidence: t.evidence, verifications: t.verifications,
       surfaces: surfaceResults(t),
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
+      notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
     });
   }
 

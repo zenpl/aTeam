@@ -26,7 +26,7 @@ say things
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
   ateam focus <body>                                                 the one thing that matters most right now
-  ateam note <body> [--decision] [--supersedes <id>]
+  ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
 tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
@@ -138,7 +138,7 @@ async function main(argv: string[]) {
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : undefined, shape });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: need(rest.join(" "), "<body>") });
-    case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes") });
+    case "note": return emit({ kind: "note", body: need(rest.join(" "), "<body>"), decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
       switch (op) {
