@@ -4,7 +4,8 @@ const { DatabaseSync } = (process as unknown as { getBuiltinModule(id: string): 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EventStore, Event, Log, Cursor, Delivery } from "@ateam/core";
-import { hashKey, newKey, newCode, projectId, INVITE_TTL_MS, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
+import { randomBytes } from "node:crypto";
+import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
 
 /**
  * One SQLite file holds every project. Rows carry a `project` column; a log that predates projects (t-041) is
@@ -21,7 +22,7 @@ export class SqliteDb {
       CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, at TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cursors (actor TEXT PRIMARY KEY, last_event_id TEXT, at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS deliveries (event_id TEXT NOT NULL, to_actor TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (event_id, to_actor));
-      CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, node_secret TEXT NOT NULL DEFAULT '');
       CREATE TABLE IF NOT EXISTS keys (hash TEXT PRIMARY KEY, project TEXT NOT NULL, role TEXT, agent_id TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, project TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
     `);
@@ -38,6 +39,7 @@ export class SqliteDb {
         ALTER TABLE cursors_v2 RENAME TO cursors;
       `);
     }
+    if (!cols("projects").includes("node_secret")) this.db.exec(`ALTER TABLE projects ADD COLUMN node_secret TEXT NOT NULL DEFAULT ''`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS events_project ON events (project, id)`);
   }
 }
@@ -80,15 +82,16 @@ export class SqliteRegistry implements Registry {
   private get db() { return this.sdb.db; }
 
   async create(name: string, now = new Date()) {
-    const project: Project = { id: projectId(name), name: name.trim() || "未命名", created_at: now.toISOString() };
-    this.db.prepare("INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)").run(project.id, project.name, project.created_at);
+    const project: Project = { id: projectId(name), name: name.trim() || "未命名", created_at: now.toISOString(), node_secret: randomBytes(24).toString("base64url") };
+    this.db.prepare("INSERT INTO projects (id, name, created_at, node_secret) VALUES (?, ?, ?, ?)").run(project.id, project.name, project.created_at, project.node_secret);
     const admin_key = await this.addKey(project.id, null, undefined, now);
     const invite = await this.createInvite(project.id, now);
     return { project, admin_key, invite };
   }
-  async get(id: string) { return (this.db.prepare("SELECT id, name, created_at FROM projects WHERE id = ?").get(id) as Project | undefined) ?? null; }
+  async get(id: string) { return (this.db.prepare("SELECT id, name, created_at, node_secret FROM projects WHERE id = ?").get(id) as Project | undefined) ?? null; }
   async ensure(id: string, name: string, adminKey: string | undefined, now = new Date()) {
-    this.db.prepare("INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, ?)").run(id, name, now.toISOString());
+    this.db.prepare("INSERT OR IGNORE INTO projects (id, name, created_at, node_secret) VALUES (?, ?, ?, ?)").run(id, name, now.toISOString(), randomBytes(24).toString("base64url"));
+    this.db.prepare("UPDATE projects SET node_secret = ? WHERE id = ? AND node_secret = ''").run(randomBytes(24).toString("base64url"), id);
     if (adminKey) this.db.prepare("INSERT OR IGNORE INTO keys (hash, project, role, agent_id, created_at) VALUES (?, ?, NULL, NULL, ?)").run(hashKey(adminKey), id, now.toISOString());
     return (await this.get(id))!;
   }
@@ -107,4 +110,20 @@ export class SqliteRegistry implements Registry {
     return invite;
   }
   async getInvite(code: string) { return (this.db.prepare("SELECT code, project, created_at, expires_at FROM invites WHERE code = ?").get(code) as Invite | undefined) ?? null; }
+  async currentInvite(project: string, now = new Date()) {
+    const live = this.db.prepare("SELECT code, project, created_at, expires_at FROM invites WHERE project = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1").get(project, now.toISOString()) as Invite | undefined;
+    return live ?? this.createInvite(project, now);
+  }
+  async nodes(project: string) {
+    return (this.db.prepare("SELECT project, role, agent_id, created_at FROM keys WHERE project = ? AND role IS NOT NULL").all(project) as unknown as (KeyRecord & { agent_id: string | null })[])
+      .map((r) => ({ project: r.project, role: r.role, agent_id: r.agent_id ?? undefined, created_at: r.created_at }));
+  }
+  async nodeKey(project: string, agentId: string, role: string, now = new Date()) {
+    const p = (await this.get(project))!;
+    const key = deriveNodeKey(p.node_secret, agentId);
+    const existing = await this.lookup(key);
+    if (existing) return { key, record: existing, created: false };
+    this.db.prepare("INSERT INTO keys (hash, project, role, agent_id, created_at) VALUES (?, ?, ?, ?, ?)").run(hashKey(key), project, role, agentId, now.toISOString());
+    return { key, record: { project, role, agent_id: agentId, created_at: now.toISOString() }, created: true };
+  }
 }

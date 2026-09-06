@@ -24,3 +24,10 @@ export function manual(role: string): string | null {
 export function welcome(base: string): string {
   return readFileSync(join(DIR, "welcome.md"), "utf8").replaceAll("{{base}}", base.replace(/\/$/, ""));
 }
+
+/** The invite page: what an agent with the link does to join. Placeholders: base, code, project, name, expires. */
+export function inviteManual(fill: { base: string; code: string; project: string; name: string; expires: string }): string {
+  let text = readFileSync(join(DIR, "invite.md"), "utf8");
+  for (const [k, v] of Object.entries(fill)) text = text.replaceAll(`{{${k}}}`, k === "base" ? v.replace(/\/$/, "") : v);
+  return text;
+}

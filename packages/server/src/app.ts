@@ -1,8 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, welcome, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX } from "@ateam/core";
+import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
+
+/** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
+export const REMIND_COOLDOWN_MS = 15 * 60_000;
 
 const COOKIE = "ateam_token";
 
@@ -87,6 +90,48 @@ export function createApp(opts: ServerOptions) {
         });
       }
 
+      // Invite links (t-042): the page explains how to join; POST .../join exchanges the code for a node key.
+      const inv = /^\/invite\/([^/]+)(\/join)?$/.exec(url.pathname);
+      if (inv) {
+        const invite = await registry.getInvite(decodeURIComponent(inv[1]));
+        if (!invite) return json(res, 404, { error: "not found", message: "没有这个邀请链接" });
+        const owner = (await registry.get(invite.project))!;
+        if (invite.expires_at <= new Date().toISOString()) return json(res, 410, { error: "expired", message: "邀请链接已过期；向项目的管理者要一个新的（POST /p/<project>/invites）" });
+        if (req.method === "GET" && !inv[2]) return markdown(res, inviteManual({ base: origin, code: invite.code, project: owner.id, name: owner.name, expires: invite.expires_at }));
+        if (req.method === "POST" && inv[2]) {
+          const body = (await readJson(req)) as { agent_id?: unknown; role?: unknown; capabilities?: unknown };
+          const agentId = typeof body.agent_id === "string" ? body.agent_id.trim() : "";
+          if (!agentId) return json(res, 400, { error: "agent_id", message: "给一个能稳定代表你这个 session 的 agent_id" });
+          const pstore = storeFor(owner.id);
+          const result = await serialize(async () => {
+            const state = reduce(await pstore.read());
+            const roles = projectRoles(state);
+            const nodes = await registry.nodes(owner.id);
+            const mine = nodes.find((n) => n.agent_id === agentId);
+            let role = mine?.role ?? (typeof body.role === "string" ? body.role.trim() : "");
+            if (role && !roles.includes(role)) return { status: 409, body: { error: "role", message: `${role} 不是这个项目的角色`, available: roles } };
+            const first = nodes.length === 0;
+            if (!role) {
+              // the first node is pm (Q15); after that, the first role nobody present holds
+              role = first && roles.includes("pm") ? "pm" : roles.find((r) => isMissing(state, r, new Date())) ?? "";
+              if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
+            }
+            const { key, created } = await registry.nodeKey(owner.id, agentId, role);
+            const caps = Array.isArray(body.capabilities) ? body.capabilities.filter((c): c is string => typeof c === "string" && !!c.trim()) : [];
+            const out: unknown[] = [];
+            if (caps.length) out.push(await append(pstore, { kind: "reading", actor: role, surface: "node", key: `${role}:能力`, value: caps, method: "节点加入时自报" }, { human }));
+            if (first && created) {
+              out.push(await append(pstore, { kind: "reading", actor: role, surface: "team", key: "focus", value: "等 human 说这个项目是什么" }, { human }));
+              out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human }));
+            }
+            for (const e of out) bus.emit("append", { project: owner.id, e });
+            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ?? "", first, created } };
+          });
+          return json(res, result.status, result.body);
+        }
+        return json(res, 404, { error: "not found" });
+      }
+
       const project = await registry.get(projectId);
       if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
       const store = storeFor(projectId);
@@ -100,6 +145,39 @@ export function createApp(opts: ServerOptions) {
       const isAdmin = !!record && record.role === null;
       const authed = () => isAdmin || !!record;
 
+      // A role that has gone quiet with work in its hands: a card for the human, at most one per role per absence (pm 14:15).
+      const remind = async () => {
+        const events = await serialize(async () => {
+          const state = reduce(await store.read());
+          const now = new Date();
+          const out: unknown[] = [];
+          for (const role of projectRoles(state)) {
+            if (!isMissing(state, role, now)) continue;
+            const overdue = [...state.instructions.values()].filter((st) => st.instruction.to === role && !st.acked_at && st.overdue);
+            if (!overdue.length) continue;
+            const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
+            if (cards.some((st) => !st.acked_at)) continue;
+            const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
+            if (lastAck && now.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
+            const last = state.presence.get(role);
+            const minutes = last ? Math.round((now.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
+            out.push(await append(store, {
+              kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do",
+              body: `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`,
+              ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: overdue.map((st) => st.instruction.id),
+            }, { human }));
+          }
+          return out;
+        });
+        for (const e of events) bus.emit("append", { project: projectId, e });
+      };
+
+      if (req.method === "POST" && path === "/invites") {
+        if (!isAdmin) return json(res, 401, { error: "unauthorized", message: "重新签发邀请链接需要管理钥匙" });
+        const invite = await registry.createInvite(projectId);
+        return json(res, 201, { invite_url: `${origin}/invite/${invite.code}`, expires_at: invite.expires_at });
+      }
+
       if (req.method === "GET" && path === "/") {
         const given = url.searchParams.get("token");
         if (given !== null) {
@@ -110,8 +188,11 @@ export function createApp(opts: ServerOptions) {
           return res.end();
         }
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
+        await remind();
         const state = reduce(await store.read());
-        return html(res, 200, renderBoard(board(state, human), state, { sha, canDecide: isAdmin, human, base }));
+        const b = board(state, human);
+        if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
+        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base }));
       }
 
       const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };
@@ -175,7 +256,12 @@ export function createApp(opts: ServerOptions) {
       if (!actor) return json(res, 400, { error: "X-Actor header is required" });
       if (record.role !== null && actor !== record.role) return json(res, 403, { error: "forbidden", message: `这把钥匙是 ${record.role} 的，不能以 ${actor} 说话` });
 
-      if (req.method === "GET" && path === "/board") return json(res, 200, board(reduce(await store.read()), human));
+      if (req.method === "GET" && path === "/board") {
+        await remind();
+        const b = board(reduce(await store.read()), human);
+        if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
+        return json(res, 200, b);
+      }
 
       if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
 
