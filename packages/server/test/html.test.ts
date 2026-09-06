@@ -256,10 +256,12 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(splitTitle("首屏能否不滚动看到需要你和现状？上一条可忽略。")).toEqual({ title: "首屏能否不滚动看到需要你和现状？", detail: "上一条可忽略。" });
     expect(splitTitle("这一句没有标点也没有细节")).toEqual({ title: "这一句没有标点也没有细节", detail: "" });
     const long = "这一句实在太长了远远超过了三十个字所以整句都必须当作标题来显示不能拆开：细节";
-    expect(splitTitle(long)).toEqual({ title: long, detail: "" });
+    expect(splitTitle(long)).toEqual({ title: "这一句实在太长了远远超过了三十个字所以整句都必须当作标题来显…", detail: long });
+    expect([...splitTitle(long).title].length).toBe(31);
     expect(cardKind({ body: "今天不再部署", kind: "info" })).toBe("tell");
     expect(cardKind({ body: "今天不再部署", kind: "do" })).toBe("do");
     expect(cardTitle({ body: "x", title: "", detail: "全文太长没有标题" })).toEqual({ title: "全文太长没有标题", detail: "" });
+    expect(cardTitle({ body: "x", title: "", detail: long })).toEqual({ title: "这一句实在太长了远远超过了三十个字所以整句都必须当作标题来显…", detail: long });
     expect(cardTitle({ body: "x", title: "标题", detail: "细节" })).toEqual({ title: "标题", detail: "细节" });
     expect(cardTitle({ body: "用哪种字体？细节见文档。", title: "用哪种字体", detail: "细节见文档。" })).toEqual({ title: "用哪种字体？", detail: "细节见文档。" });
     expect(cardTitle({ body: "部署第 3 批：把 x 合进 y。", title: "部署第 3 批", detail: "把 x 合进 y。" })).toEqual({ title: "部署第 3 批", detail: "把 x 合进 y。" });
@@ -344,7 +346,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       let now = section(await v.authedPage(), "now", "rest");
-      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版的改动还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
+      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
       expect(now).not.toContain("这一版带来了什么");
       // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
       const f = server();
@@ -352,7 +354,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       try {
         await f.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
         const first = section(await f.authedPage(), "now", "rest");
-        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版的改动还没在生产验过<\/span><\/div>\s*<\/div>/);
+        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<\/div>/);
         expect(first).not.toContain("更早的");
       } finally { await f.stop(); }
       // 3. something verified on this version: the list is back, the sentence is gone
@@ -362,7 +364,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("qa", { kind: "task", op: "verify", task: "t-2", surface: "production", pass: true, evidence: "线上看到" });
       now = section(await v.authedPage(), "now", "rest");
       expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 1 件<\/summary>/);
-      expect(now).not.toContain("这一版的改动还没在生产验过");
+      expect(now).not.toContain("这一版刚上线，还没在生产验过");
     } finally { await v.stop(); }
   });
 
@@ -472,7 +474,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "验过了，还没上线", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     } finally { await z.stop(); }

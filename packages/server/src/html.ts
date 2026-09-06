@@ -34,10 +34,10 @@ export function cardKind(i: { body: string; options?: string[]; kind?: string })
   return kindOf(i);
 }
 
-/** The board's title/detail (t-036); an empty title means the first sentence was too long, so the whole text is the title. */
+/** The board's title/detail (t-036); an empty title means the first sentence was too long, so the title is clipped and the whole text is the detail. */
 export function cardTitle(i: { body: string; title?: string; detail?: string }): { title: string; detail: string } {
   if (i.title !== undefined && i.detail !== undefined) {
-    if (!i.title) return { title: i.detail || i.body, detail: "" };
+    if (!i.title) return tooLong(i.detail || i.body);
     // The board drops the mark that ended the first sentence; a question keeps its 「？」 (pd review of t-034).
     const mark = i.body.trim().startsWith(i.title) ? i.body.trim().slice(i.title.length, i.title.length + 1) : "";
     return { title: /[！？!?]/.test(mark) ? i.title + mark : i.title, detail: i.detail };
@@ -60,7 +60,12 @@ export function splitTitle(body: string): { title: string; detail: string } {
     if (!head || !rest || [...head].length > TITLE_MAX) return null;
     return { title: head + (keepMark && /[！？]/.test(m[0]) ? m[0] : ""), detail: rest };
   };
-  return tryAt(ENDERS, true) ?? tryAt(COLONS, false) ?? { title: text, detail: "" };
+  return tryAt(ENDERS, true) ?? tryAt(COLONS, false) ?? tooLong(text);
+}
+
+/** No short first sentence: the first 30 characters and 「…」 are the title, the whole text is the detail (pd decision, 15:57). */
+function tooLong(text: string): { title: string; detail: string } {
+  return [...text].length <= TITLE_MAX ? { title: text, detail: "" } : { title: clip(text, TITLE_MAX), detail: text };
 }
 
 /** A blocked reason on the first screen: ids, paths and long shas become 「…」, then clipped (board.md: 60 chars). */
