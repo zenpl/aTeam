@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, slimBoard, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -107,6 +107,11 @@ export function createApp(opts: ServerOptions) {
           : `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`;
         const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
+      }
+      // t-069 / pm 22:39: the contact card exists only when the project asked for it (fact project:alert.ask) and no
+      // address is known yet; once, never repeated. 填写 / 先不要 on it work as before (t-071).
+      if (contactWanted(state) && !alertContact(state).value && ![...state.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK)) {
+        out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() }));
       }
       // t-061: the allocation warnings as a fact, at most one entry per pattern per period
       const fact = allocationFact(state, human, at);
@@ -391,7 +396,10 @@ export function createApp(opts: ServerOptions) {
         await remind();
         const b = board(reduce(await store.read(), now()), human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
-        return json(res, 200, url.searchParams.get("full") ? b : slimBoard(b)); // t-070: the whole thing only on request
+        // t-070/t-080 (pm 22:45): the slim board goes to a client that says it knows it (X-Ateam-Client: <shape it speaks>);
+        // a client without the header — an older CLI — gets the full board and never breaks. ?full=1 always means full.
+        const knowsSlim = Number(req.headers["x-ateam-client"]) >= 2;
+        return json(res, 200, url.searchParams.get("full") || !knowsSlim ? b : slimBoard(b));
       }
 
       if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
@@ -404,7 +412,7 @@ export function createApp(opts: ServerOptions) {
         const b = board(state, human, now());
         const task = Object.values(b.tasks).flat().find((t) => t.id === id);
         if (!task) return json(res, 404, { error: "not found", message: `日志里没有任务 ${id}` });
-        return json(res, 200, { task, seams: b.seams.filter((x) => x.tasks.includes(id)), refs: state.tasks.get(id)?.refs ?? [] });
+        return json(res, 200, { shape: b.shape, task, seams: b.seams.filter((x) => x.tasks.includes(id)), refs: state.tasks.get(id)?.refs ?? [] });
       }
 
       if (req.method === "GET" && path === "/events") {
@@ -421,7 +429,7 @@ export function createApp(opts: ServerOptions) {
           });
           result = await pull(store, actor, after, real());
         }
-        return json(res, 200, result);
+        return json(res, 200, { shape: BOARD_SHAPE, ...result }); // t-080: sync checks the shape before reading fields
       }
 
       if (req.method === "POST" && path === "/events") {
@@ -470,6 +478,14 @@ export function parseOffset(raw: unknown): number {
   if (!m) return NaN;
   const n = Number(m[1]);
   return n * ({ ms: 1, s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 } as Record<string, number>)[m[2] ?? "ms"];
+}
+
+/** t-069 / pm 22:39: does the project want the contact card? A valid project:alert.ask fact with any non-empty value. */
+function contactWanted(s: ReturnType<typeof reduce>): boolean {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_ASK_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  return v !== undefined && v !== null && v !== false && v !== "" && v !== 0;
 }
 
 function bearer(req: IncomingMessage): string | undefined {

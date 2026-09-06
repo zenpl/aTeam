@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -133,7 +133,21 @@ export interface Board {
    * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
    * oldest done first, each with the sha its evidence names and who verified it where. The human reads this before a deploy.
    */
-  release: { deployed_sha: string | null; /** absent on the slim board: derived from the tasks (t-070/t-077) */ candidates?: BoardRelease[] };
+  release: {
+    deployed_sha: string | null;
+    /** absent on the slim board: derived from the tasks (t-070/t-077) */
+    candidates?: BoardRelease[];
+    /** t-078: candidates whose code is not in production yet (by the containment fact). Absent on the slim board. */
+    pending_deploy?: BoardRelease[];
+    /** t-078: candidates whose code runs in production with no production verification yet. Absent on the slim board. */
+    deployed_unverified?: BoardRelease[];
+    /** t-078: candidates the board cannot place, each with why. Absent on the slim board. */
+    unknown?: (BoardRelease & { reason: string })[];
+    /** t-078: the three counts, on every board. */
+    counts: { pending_deploy: number; deployed_unverified: number; unknown: number };
+    /** t-078: what the split rests on: the containment fact used, or why there is none. */
+    basis: string;
+  };
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
@@ -178,6 +192,8 @@ export interface Board {
    * absent (undefined), never an empty value; a field that is really empty is sent as [] or null as always. Full board: [].
    */
   omitted: string[];
+  /** t-080: the shape version of this board (BOARD_SHAPE). */
+  shape: number;
 }
 
 export type CoverageStatus = "held" | "unheld" | "unclaimed" | "blocked";
@@ -364,7 +380,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
-    release: { deployed_sha: null, candidates: [] },
+    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     said: [],
     seams: [],
     presence: [],
@@ -373,6 +389,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     allocation: { warnings: [], summary: "" },
     alert: { status: "unanswered" },
     omitted: [],
+    shape: BOARD_SHAPE,
   };
 
   if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
@@ -425,7 +442,6 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
-  const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
   if (current) {
     b.live.deployed_sha = current.value as string;
     b.live.deployed_by = current.actor;
@@ -495,6 +511,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
 
   b.release.deployed_sha = b.live.deployed_sha;
   b.release.candidates!.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
+  splitRelease(s, b);
   for (const g of Object.values(b.in_flight)) {
     g.total = g.all.length;
     g.shown = [...g.all].sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).slice(0, IN_FLIGHT_SHOWN);
@@ -572,7 +589,7 @@ export function slimBoard(b: Board): Board {
   const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted: [] };
   slim.omitted = omittedPaths(b, slim);
@@ -606,7 +623,43 @@ export function omittedPaths(full: unknown, slim: unknown, path = ""): string[] 
     }
   };
   walk(full, slim, path);
-  return [...out].filter((x) => x !== "omitted").sort();
+  return [...out].filter((x) => x !== "omitted" && x !== "shape").sort();
+}
+
+const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
+
+/** The containment fact as written by `ateam release` (t-078), if valid. */
+export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; method?: string; at: string } | null {
+  const id = s.latestReading.get(`production:${DEPLOYED_TASKS_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  if (!r || !r.valid || r.expired) return null;
+  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; method?: unknown };
+  if (!v || typeof v !== "object" || typeof v.sha !== "string" || !Array.isArray(v.contained) || !Array.isArray(v.not_contained)) return null;
+  return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String), method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
+}
+
+/**
+ * t-078: pending_deploy (code not in production) vs deployed_unverified (code in production, nobody verified it there) vs
+ * unknown, each with why. The board has no git: it reads the containment fact a node measured against the deployed sha.
+ */
+function splitRelease(s: State, b: Board) {
+  const r = b.release;
+  r.pending_deploy = []; r.deployed_unverified = []; r.unknown = [];
+  const fact = deployedTasksFact(s);
+  const deployed = r.deployed_sha;
+  let why: string | null = null;
+  if (!deployed) why = "生产没有有效的 production:deployed.sha 事实";
+  else if (!fact) why = `没有针对生产 ${deployed.slice(0, 7)} 的包含事实 production:${DEPLOYED_TASKS_KEY}（跑一次 ateam release，它用 git 逐件测并记下来）`;
+  else if (!sameSha(fact.sha, deployed)) why = `包含事实是对 ${fact.sha.slice(0, 7)} 测的，生产已是 ${deployed.slice(0, 7)}（重跑 ateam release）`;
+  r.basis = why ?? `按事实 production:${DEPLOYED_TASKS_KEY}（${fact!.method ?? "?"}，对 ${fact!.sha.slice(0, 7)} 测于 ${fact!.at}）`;
+  for (const c of r.candidates!) {
+    if (why) { r.unknown.push({ ...c, reason: why }); continue; }
+    if (!c.evidence_sha) { r.unknown.push({ ...c, reason: "证据里没有 sha，无从比对" }); continue; }
+    if (fact!.contained.includes(c.task)) r.deployed_unverified.push(c);
+    else if (fact!.not_contained.includes(c.task)) r.pending_deploy.push(c);
+    else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
+  }
+  r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
 }
 
 export function boardTask(b: Board, id: string): BoardTask | undefined {

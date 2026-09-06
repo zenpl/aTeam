@@ -84,7 +84,15 @@ describe("t-070 · GET /board is slim by default", () => {
     app = createApp({ store: b.store, token: "k", human: "human", sha: "abc1234", alertIntervalMs: 0, clock: () => new Date(t) });
     await new Promise<void>((r) => app!.listen(0, "127.0.0.1", r));
     const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
-    const get = (p: string) => fetch(`${base}${p}`, { headers: { authorization: "Bearer k", "x-actor": "qa" } });
+    const get = (p: string, client: string | null = "2") => fetch(`${base}${p}`, { headers: { authorization: "Bearer k", "x-actor": "qa", ...(client ? { "x-ateam-client": client } : {}) } });
+    // t-080: a client that does not say it knows the slim shape (an older CLI) gets the full board, so a server upgrade never breaks it
+    const old = await (await get("/board", null)).json();
+    expect(old.shape).toBe(2);
+    expect(old.omitted).toEqual([]);
+    expect(old.tasks.done[0].criteria.length).toBe(3);
+    expect((await (await get("/board", "1")).json()).omitted).toEqual([]);
+    expect((await (await get("/task/t-000")).json()).shape).toBe(2);
+    expect((await (await get("/events")).json()).shape).toBe(2);
     const served = await (await get("/board")).text();
     expect(Buffer.byteLength(served) / Buffer.byteLength(JSON.stringify(await (await get("/board?full=1")).json()))).toBeLessThan(0.12);
     const servedFull = await (await get("/board?full=1")).json();

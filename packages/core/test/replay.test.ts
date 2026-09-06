@@ -726,7 +726,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });
-    expect(await release(store, c)).toEqual({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
+    expect(await release(store, c)).toMatchObject({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
     expect((await release(store, c)).candidates).toEqual([]);
   });

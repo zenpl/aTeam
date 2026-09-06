@@ -1,4 +1,17 @@
-import type { Event, ClientEvent, Board, BoardTask, PullResult } from "@ateam/core";
+import { BOARD_SHAPE, type Event, type ClientEvent, type Board, type BoardTask, type PullResult } from "@ateam/core";
+
+/** t-080: the server speaks a newer shape than this CLI knows. One sentence, exit 2; never a field error. */
+export class ShapeError extends Error {
+  constructor(public readonly server: number, public readonly mine: number) {
+    super(`服务端的看板结构比你的 CLI 新（服务 ${server} / 你 ${mine}），请 git pull && pnpm build`);
+  }
+}
+
+/** t-080: a response that names a shape newer than BOARD_SHAPE is refused whole, before any field is read. */
+export function checkShape(data: unknown): void {
+  const shape = data && typeof data === "object" ? (data as { shape?: unknown }).shape : undefined;
+  if (typeof shape === "number" && shape > BOARD_SHAPE) throw new ShapeError(shape, BOARD_SHAPE);
+}
 
 export interface Config { url: string; token?: string; me: string }
 
@@ -12,7 +25,8 @@ export class Client {
   constructor(private cfg: Config) {}
 
   private headers(): Record<string, string> {
-    const h: Record<string, string> = { "x-actor": this.cfg.me, "content-type": "application/json" };
+    // X-Ateam-Client says which board shape this CLI speaks (t-080): the server sends the slim board only to a client that knows it
+    const h: Record<string, string> = { "x-actor": this.cfg.me, "content-type": "application/json", "x-ateam-client": String(BOARD_SHAPE) };
     if (this.cfg.token) h.authorization = `Bearer ${this.cfg.token}`;
     return h;
   }
@@ -23,6 +37,7 @@ export class Client {
     });
     const data = (await res.json().catch(() => ({ error: res.statusText }))) as never;
     if (!res.ok) throw new ClientError(res.status, data);
+    checkShape(data);
     return data as T;
   }
 
