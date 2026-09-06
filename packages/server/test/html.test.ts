@@ -369,3 +369,72 @@ describe("t-021 · the interface is Chinese; the team's content is rendered as w
     expect(html).not.toContain("<b>选择了");
   });
 });
+
+describe("t-026 · 线上只列这一版带来的，历史折叠；在途各组超过 5 项折叠", () => {
+  async function fresh() {
+    const app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN });
+    await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    const post = async (actor: string, body: unknown) => {
+      const r = await fetch(`${url}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (r.status !== 201) throw new Error(`append ${r.status}: ${await r.text()}`);
+      return r.json();
+    };
+    const page = async () => (await fetch(`${url}/`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
+    const close = () => new Promise<void>((r) => app.close(() => r()));
+    const ship = async (id: string, title: string) => {
+      await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+      await post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+      await post("dev", { kind: "task", op: "done", task: id, evidence: "提交" });
+      await post("qa", { kind: "task", op: "verify", task: id, surface: "production", pass: true, evidence: "线上看到" });
+    };
+    return { post, page, close, ship };
+  }
+
+  it("没有上一次部署时全部列出，不折叠；有上一次部署后只列其后验过的，更早的折叠为「还有 N 项」", async () => {
+    const w = await fresh();
+    try {
+      await w.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+      await w.ship("t-1", "登录修复");
+      await w.ship("t-2", "导出报表");
+      let fold = aboveTheFold(await w.page());
+      expect(fold).toContain("登录修复");
+      expect(fold).toContain("导出报表");
+      expect(fold).not.toContain("还有");
+      expect(fold).not.toContain("自上一版");
+
+      await w.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
+      await w.ship("t-3", "限流");
+      const html = await w.page();
+      fold = aboveTheFold(html);
+      expect(fold).toContain("bbbbbbb");
+      expect(fold).toContain("自上一版 aaaaaaa 以来");
+      expect(fold).toContain("限流");
+      expect(html).toMatch(/<details class="fold"><summary>还有 2 项<\/summary><ul class="plain"><li>登录修复<\/li><li>导出报表<\/li><\/ul><\/details>/);
+      // the folded titles are inside a closed details, not in the visible list of this version
+      const liveRow = html.slice(html.indexOf("<dt>线上</dt>"), html.indexOf("<dt>在途</dt>"));
+      expect(liveRow.indexOf("限流")).toBeLessThan(liveRow.indexOf('<details class="fold">'));
+      expect(fold).not.toMatch(/\b[0-9a-f]{8,}\b/);
+    } finally { await w.close(); }
+  });
+
+  it("在途某组超过 5 项时只列最近 5 项，其余折叠并显示总数", async () => {
+    const w = await fresh();
+    try {
+      for (let i = 1; i <= 7; i++) {
+        await w.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: ["可用"] });
+        await w.post("dev", { kind: "task", op: "claim", task: `t-${i}`, touches: [`src/${i}.ts`] });
+      }
+      const html = await w.page();
+      const flight = html.slice(html.indexOf("<dt>在途</dt>"), html.indexOf("<dt>谁在线</dt>"));
+      expect(flight).toContain('正在做 <span class="count">7</span>');
+      expect(flight).toMatch(/<details class="fold"><summary>还有 2 项<\/summary>/);
+      expect(flight.match(/<li>任务\d（dev）<\/li>/g)).toHaveLength(7);
+      const shown = flight.slice(0, flight.indexOf('<details class="fold">'));
+      expect(shown.match(/<li>任务\d（dev）<\/li>/g)).toHaveLength(5);
+      expect(shown).toContain("任务7（dev）");                       // most recently touched come first
+      expect(shown).not.toContain("任务1（dev）");
+      expect(flight.slice(flight.indexOf('<details class="fold">'))).toContain("任务1（dev）");
+    } finally { await w.close(); }
+  });
+});

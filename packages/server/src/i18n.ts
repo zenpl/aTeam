@@ -39,6 +39,8 @@ export const UI = {
     failed: "验收未通过，待修",
   } as Record<string, string>,
   onSurface: (s: string) => `（已验收：${s}）`,
+  moreItems: (n: number) => `还有 ${n} 项`,
+  sinceLast: (sha: string) => `自上一版 ${sha} 以来`,
   who: "谁在线",
   nobody: "还没有人",
 

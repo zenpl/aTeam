@@ -49,8 +49,12 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   fold.push(`<section id="status" class="card"><h2>${UI.status}</h2>`);
   fold.push(`<dl>`);
   fold.push(`<dt>${UI.focus}</dt><dd>${b.focus ? `${esc(str(b.focus.body))} <span class="meta">（${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}）</span>` : `<span class="empty">${UI.noFocus}</span>`}</dd>`);
-  fold.push(`<dt>${UI.live}</dt><dd>${sha ? `${UI.build} <code>${esc(sha)}</code>${shaReading ? ` <span class="meta">（${esc(UI.checked(ago(shaReading.at)))}）</span>` : ""}` : `<span class="empty">${UI.noDeployReading}</span>`}${b.live.verified_on_production.length ? `<ul class="plain">${b.live.verified_on_production.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>` : `<div class="meta">${UI.noneOnProduction}</div>`}</dd>`);
-  fold.push(`<dt>${UI.inFlight}</dt><dd>${flight.some((g) => g.items.length) ? flight.filter((g) => g.items.length).map((g) => `<div class="group"><span class="label">${esc(g.label)}</span><ul class="plain">${g.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`).join("") : `<span class="empty">${UI.nothingInFlight}</span>`}</dd>`);
+  // What this version brought: tasks verified on production since the current sha was recorded; older ones fold.
+  const liveList = b.live.recent.length || b.live.earlier.length
+    ? `${b.live.since_sha ? `<div class="meta">${esc(UI.sinceLast(String(b.live.since_sha).slice(0, 7)))}</div>` : ""}${b.live.recent.length ? `<ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.title)}</li>`).join("")}</ul>` : ""}${folded(b.live.earlier.map((x) => x.title))}`
+    : `<div class="meta">${UI.noneOnProduction}</div>`;
+  fold.push(`<dt>${UI.live}</dt><dd>${sha ? `${UI.build} <code>${esc(sha)}</code>${shaReading ? ` <span class="meta">（${esc(UI.checked(ago(shaReading.at)))}）</span>` : ""}` : `<span class="empty">${UI.noDeployReading}</span>`}${liveList}</dd>`);
+  fold.push(`<dt>${UI.inFlight}</dt><dd>${flight.some((g) => g.total) ? flight.filter((g) => g.total).map((g) => `<div class="group"><span class="label">${esc(g.label)}${g.total > g.shown.length ? ` <span class="count">${g.total}</span>` : ""}</span><ul class="plain">${g.shown.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>${folded(g.rest)}</div>`).join("") : `<span class="empty">${UI.nothingInFlight}</span>`}</dd>`);
   fold.push(`<dt>${UI.who}</dt><dd>${b.presence.length ? `<ul class="presence">${b.presence.map((p) => `<li class="${p.idle_s > 600 ? "away" : "here"}"><b>${esc(p.actor)}</b> <span class="meta">${t(p.last_seen)}</span></li>`).join("")}</ul>` : `<span class="empty">${UI.nobody}</span>`}</dd>`);
   fold.push(`</dl></section>`);
 
@@ -149,19 +153,34 @@ ${d.join("\n")}
   return page(body, { now: b.now, refresh, sha: opts.sha });
 }
 
-/** In flight, as titles, from board.in_flight plus tasks verified somewhere other than production. */
-export function inFlightOf(b: Board): { label: string; items: string[] }[] {
+/** How many items a group shows before folding the rest; the board folds in_flight at the same count. */
+export const SHOWN = 5;
+
+/** In flight, as titles: what the board shows per group, and the rest to fold. */
+export function inFlightOf(b: Board): { label: string; total: number; shown: string[]; rest: string[] }[] {
   const title = (t: { title: string; owner?: string }) => `${t.title}${t.owner ? `（${t.owner}）` : ""}`;
-  const g = (k: string) => (b.in_flight[k]?.all ?? []).map(title);
-  const verifiedElsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
+  const g = (k: string) => {
+    const grp = b.in_flight[k];
+    if (!grp) return { total: 0, shown: [], rest: [] };
+    const shownIds = new Set(grp.shown.map((t) => t.id));
+    return { total: grp.total, shown: grp.shown.map(title), rest: grp.all.filter((t) => !shownIds.has(t.id)).map(title) };
+  };
+  const elsewhere = (b.tasks.verified ?? []).filter((t) => !t.verified_on?.includes("production")).map((t) => `${t.title}${UI.onSurface(t.verified_on?.map(surface).join("、") || "?")}`);
+  const verifiedElsewhere = { total: elsewhere.length, shown: elsewhere.slice(-SHOWN).reverse(), rest: elsewhere.slice(0, Math.max(0, elsewhere.length - SHOWN)).reverse() };
   return [
-    { label: UI.groups.working, items: g("working") },
-    { label: UI.groups.blocked, items: g("blocked") },
-    { label: UI.groups.done, items: g("done") },
-    { label: UI.groups.verifiedElsewhere, items: verifiedElsewhere },
-    { label: UI.groups.failed, items: g("failed") },
-    { label: UI.groups.open, items: g("open") },
+    { label: UI.groups.working, ...g("working") },
+    { label: UI.groups.blocked, ...g("blocked") },
+    { label: UI.groups.done, ...g("done") },
+    { label: UI.groups.verifiedElsewhere, ...verifiedElsewhere },
+    { label: UI.groups.failed, ...g("failed") },
+    { label: UI.groups.open, ...g("open") },
   ];
+}
+
+/** The rest of a list behind a one-line toggle: 「还有 N 项」. Empty when there is nothing to fold. */
+function folded(items: string[]): string {
+  if (!items.length) return "";
+  return `<details class="fold"><summary>${esc(UI.moreItems(items.length))}</summary><ul class="plain">${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`;
 }
 
 export function unauthorizedPage(): string {
@@ -224,6 +243,8 @@ form.decide button { font: inherit; padding: .45rem 1rem; border-radius: 8px; bo
 form.decide button.default { border-color: var(--accent); color: var(--accent); }
 form.decide button:disabled { cursor: not-allowed; opacity: .55; }
 form.decide small { font-size: .75em; letter-spacing: .05em; }
+details.fold { margin: .1rem 0 .2rem 1.1rem; }
+details.fold > summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 details.more > summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 details.more[open] > summary { margin-bottom: .75rem; }
 details.more section { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; padding: 1rem 0; }
