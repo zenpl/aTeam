@@ -108,7 +108,7 @@ export interface Board {
   /** Only what the human must answer: open instructions addressed to the human. Nothing else, ever. */
   needs_human: {
     /** ask: answer it; do: do it and say "done"; info: read it. */
-    kind: InstructionIntent; id: string; from: string; body: string; title: string; detail: string; summary: string; since: string;
+    kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
@@ -133,11 +133,11 @@ export interface Board {
    * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
    * oldest done first, each with the sha its evidence names and who verified it where. The human reads this before a deploy.
    */
-  release: { deployed_sha: string | null; candidates: BoardRelease[] };
+  release: { deployed_sha: string | null; /** absent on the slim board: derived from the tasks (t-070/t-077) */ candidates?: BoardRelease[] };
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
-  in_flight: Record<string, { total: number; shown: BoardInFlight[]; all: BoardInFlight[] }>;
+  in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
     /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
@@ -160,7 +160,7 @@ export interface Board {
   }[];
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
-  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string } }[];
+  seams: { id: string; tasks: [string, string]; /** absent on the slim board for seams that are not open (t-077) */ overlap?: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string } }[];
   /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
@@ -173,6 +173,11 @@ export interface Board {
   allocation: { warnings: AllocationWarning[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
   invite_url?: string;
+  /**
+   * t-077: field paths this response left out (the slim board), so "not there" can be told from "empty". An omitted field is
+   * absent (undefined), never an empty value; a field that is really empty is sent as [] or null as always. Full board: [].
+   */
+  omitted: string[];
 }
 
 export type CoverageStatus = "held" | "unheld" | "unclaimed" | "blocked";
@@ -367,6 +372,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     coverage: [],
     allocation: { warnings: [], summary: "" },
     alert: { status: "unanswered" },
+    omitted: [],
   };
 
   if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
@@ -460,7 +466,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       const verified_by: Record<string, string> = {};
       for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
       const lastDone = [...t.history].reverse().find((h) => h.op === "done");
-      b.release.candidates.push({
+      b.release.candidates!.push({
         task: t.id, title: t.title, evidence_sha: evidenceSha(t.evidence), verified_by,
         surfaces: results.filter((r) => r.pass).map((r) => r.surface), done_at: lastDone?.at ?? t.updated_at,
       });
@@ -488,7 +494,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   b.said.sort((x, y) => y.id.localeCompare(x.id));
 
   b.release.deployed_sha = b.live.deployed_sha;
-  b.release.candidates.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
+  b.release.candidates!.sort((x, y) => x.done_at.localeCompare(y.done_at) || x.task.localeCompare(y.task));
   for (const g of Object.values(b.in_flight)) {
     g.total = g.all.length;
     g.shown = [...g.all].sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).slice(0, IN_FLIGHT_SHOWN);
@@ -559,15 +565,22 @@ export function slimBoard(b: Board): Board {
   const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));
   const seams = b.seams
     .filter((x) => x.open || ((x.resolved || x.stacked) && !x.tasks.every((id) => final.has(id))))
-    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed }));
+    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed }));
   const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
   const readings = b.readings.filter((r) => r.valid || stale.includes(r));
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]
-  const needs_human = b.needs_human.map((c) => ({ ...c, detail: "" }));
-  const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, shown: [], all: g.all }]));
+  const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
+  const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, candidates: [] };
-  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha };
+  // t-077: what this response left out, as paths. Omitted fields are absent, never empty; a real empty stays [] / null.
+  const omitted = [
+    "tasks[].criteria", "tasks[].criteria_by", "tasks[].criteria_added", "tasks[].created_at", "tasks[].touches", "tasks[].evidence",
+    "tasks[].verifications", "tasks[].history", "tasks[].notes",
+    `instructions[acked, decided beyond the last ${SLIM_DECIDED}]`, "seams[both sides final]", "seams[!open].overlap",
+    `readings[stale beyond the last ${SLIM_DECIDED}]`, "needs_human[].detail", "in_flight[].shown", "release.candidates",
+  ];
+  return { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted };
 }
 
 export function boardTask(b: Board, id: string): BoardTask | undefined {

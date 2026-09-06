@@ -95,7 +95,7 @@ export function board(b: Board, me: string): string {
   const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
     out.push("", "SEAMS (open: nobody owns these; they block verify)");
-    for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
+    for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${(s.overlap ?? []).join(", ")}`);
   }
   const absorbed = b.seams.filter((s) => s.absorbed);
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked && !s.absorbed);
@@ -103,8 +103,8 @@ export function board(b: Board, me: string): string {
   if (stacked.length || sameOwner.length || absorbed.length) {
     out.push("", "STACKED (informational, blocks nothing)");
     for (const s of absorbed) out.push(`  ${s.absorbed!.later} absorbed ${s.absorbed!.earlier}: ${s.absorbed!.basis}${s.absorbed!.by ? `  (recorded by ${s.absorbed!.by}'s CLI)` : ""}`);
-    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
-    for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner at ${s.overlap.join(", ")}: sequential work, land them in order`);
+    for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first)${s.overlap ? ` at ${s.overlap.join(", ")}` : ""}: merge ${s.stacked!.done} first`);
+    for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner${s.overlap ? ` at ${s.overlap.join(", ")}` : ""}: sequential work, land them in order`);
   }
 
   const valid = b.readings.filter((r) => r.valid);
@@ -179,7 +179,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
     const state = s.absorbed ? `absorbed: ${s.absorbed.basis}` : s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
-    out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
+    out.push(`  ${state}  with ${other}${s.overlap ? `: ${s.overlap.join(", ")}` : ""}`);
   }
   out.push("notes");
   if (!notes.length) out.push("  (none)");
@@ -203,6 +203,7 @@ export function release(b: Board): string {
   const r = b.release ?? { deployed_sha: b.live?.deployed_sha ?? null, candidates: [] };
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
+  if (!r.candidates) { out.push("  （默认板省略了待上线清单：用 ateam release 或 board --full）"); return out.join("\n"); }
   if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
   out.push(`  任务      证据 sha   验收（表面：谁）              标题`);
   for (const c of r.candidates) {
