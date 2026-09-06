@@ -100,17 +100,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const asks = b.needs_human.filter((n) => !n.chosen);
   const invite = inviteUrl(b);
   const roles = rolesOf(b);
-  const missing = roles.filter((r) => !r.present && r.overdue.length);
-  if (asks.length || missing.length) {
-    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + missing.length}</span></h2>`);
-    // UC-S7: a role that is missing while instructions pile up on it becomes a 请你做 card; 起好了 acks those instructions.
-    for (const r of missing) {
-      const ids = r.overdue.map((o) => `<input type="hidden" name="id" value="${esc(o)}">`).join("");
-      out.push(`<article class="ask" data-kind="do" data-role="${esc(r.role)}"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.missing(r.minutes))}</span></div>`);
-      out.push(`<p class="q">${esc(UI.missingCard(r.role, r.minutes, r.overdue.length))}</p>`);
-      out.push(form("/ack", "actions", ids, `<button class="btn primary" type="submit">${UI.started}</button>${invite ? `<span class="hint">${UI.inviteLine}<code>${esc(invite)}</code></span>` : ""}`));
-      out.push(`</article>`);
-    }
+  if (asks.length) {
+    out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length}</span></h2>`);
     for (const i of asks) {
       const kind = cardKind(i);
       // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
@@ -126,6 +117,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       } else if (kind === "ask") {
         const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
+      } else if (kind === "do" && missingRole(i)) {
+        // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
+        // the role's own instructions stay unacked for the node that comes up.
+        out.push(form("/ack", "actions", id, `<button class="btn primary" type="submit">${UI.started}</button>${invite ? `<span class="hint">${UI.inviteLine}<code>${esc(invite)}</code></span>` : ""}`));
       } else if (kind === "do") {
         // 做好了 = ack; 先不做 = ack with a note (POST /ack, t-036). Both go through the token page when anonymous.
         out.push(form("/ack", "actions", id, `<button class="btn primary" type="submit">${UI.didIt}</button><button class="btn" type="submit" name="note" value="${esc(UI.notNowWhy)}">${UI.notNow}</button>`));
@@ -227,6 +222,11 @@ export function previousSha(b: Board): string | null {
 export function inviteUrl(b: Board): string | null {
   const x = b as Board & { invite_url?: string; project?: { invite_url?: string } };
   return x.invite_url ?? x.project?.invite_url ?? null;
+}
+
+/** The role a missing-role instruction is about (t-042 will name it in a field; until then the sentence itself says). */
+export function missingRole(i: { body: string; role?: string; about?: { role?: string } }): string | null {
+  return i.role ?? i.about?.role ?? /^(\S+) 已经缺了 \d+ 分钟/.exec(i.body.trim())?.[1] ?? null;
 }
 
 interface RoleRow { role: string; present: boolean; last_seen?: string; since?: string; minutes: number; overdue: string[] }

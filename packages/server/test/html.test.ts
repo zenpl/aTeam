@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha } from "../src/html.js";
+import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -521,29 +521,31 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
     expect(renderBoard(old, state, { human: HUMAN })).toMatch(/<span class="who-chip"><i><\/i>frontend<span class="meta"><time[^>]*>1 分钟前<\/time>/);
   });
 
-  it("缺人卡：某角色缺人且手里有逾期指令 → 「请你做」卡「qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？」，「起好了」把这些指令一并 ack", async () => {
+  it("缺人卡（决策 B）：服务生成的「qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？」指令是一张请你做卡，「起好了」只 ack 它；页面不再自己合成卡", async () => {
     const { state, b } = await fresh();
     b.presence = [
       { actor: "pm", role: "pm", present: true, last_seen: b.now, idle_s: 0 },
       { actor: "", role: "qa", present: false, last_seen: "", since: minutesAgo(b, 20), idle_s: 0 },
-      { actor: "", role: "pd", present: false, last_seen: "", since: minutesAgo(b, 5), idle_s: 0 },   // missing, but nothing waits on pd
     ];
-    b.overdue.push(
-      { instruction: "01OVER1", to: "qa", from: "pm", body: "验 t-1", ack_by: minutesAgo(b, 15), age_s: 900 },
-      { instruction: "01OVER2", to: "qa", from: "pm", body: "验 t-2", ack_by: minutesAgo(b, 3), age_s: 180 },
-      { instruction: "01OVER3", to: "dev", from: "pm", body: "修 t-3", ack_by: minutesAgo(b, 3), age_s: 180 },
-    );
+    b.overdue.push({ instruction: "01OVER1", to: "qa", from: "pm", body: "验 t-1", ack_by: minutesAgo(b, 15), age_s: 900 });
     b.invite_url = "https://ateam.fly.dev/invite/abc123";
+    // a missing role with overdue instructions alone makes no card: the server decides when to ask the human
+    expect(renderBoard(b, state, { human: HUMAN })).not.toMatch(/<article class="ask"/);
+
+    b.needs_human.push({ kind: "do", id: "01MISS", from: "pm", body: "qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？", title: "qa 已经缺了 20 分钟，手里有 2 条指令", detail: "起一个 qa？", summary: "", since: minutesAgo(b, 1) } as Board["needs_human"][number]);
     const html = renderBoard(b, state, { human: HUMAN });
     expect(html.match(/<article class="ask"/g)).toHaveLength(1);
-    const card = html.slice(html.indexOf('<article class="ask" data-kind="do" data-role="qa">'), html.indexOf("</article>"));
-    expect(card).toContain('<span class="kind">请你做</span><span class="meta">缺人 20 分钟</span>');
-    expect(card).toContain('<p class="q">qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？</p>');
-    expect(card).toMatch(/<form class="actions" method="post" action="\/ack"><input type="hidden" name="id" value="01OVER1"><input type="hidden" name="id" value="01OVER2"><button class="btn primary" type="submit">起好了<\/button><span class="hint">要更多 agent，把这个链接给它们：<code>https:\/\/ateam\.fly\.dev\/invite\/abc123<\/code><\/span><\/form>/);
+    const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
+    expect(card).toContain('<span class="kind">请你做</span>');
+    expect(card).toContain('<p class="q">qa 已经缺了 20 分钟，手里有 2 条指令</p>');
+    expect(card).toMatch(/<form class="actions" method="post" action="\/ack"><input type="hidden" name="id" value="01MISS"><button class="btn primary" type="submit">起好了<\/button><span class="hint">要更多 agent，把这个链接给它们：<code>https:\/\/ateam\.fly\.dev\/invite\/abc123<\/code><\/span><\/form>/);
+    expect(card).not.toContain("先不做");
+    expect(card).not.toContain("01OVER1");                                   // the role's own instructions are not touched
     expect(html).toContain('<span class="count">1</span>');
     expect((html.match(/class="btn primary"/g) ?? []).length).toBe(1);
-    const anon = renderBoard(b, state, { human: HUMAN, canDecide: false });
-    expect(anon).toContain('<form class="actions" method="post" action="/token"><input type="hidden" name="then" value="/ack"><input type="hidden" name="id" value="01OVER1"><input type="hidden" name="id" value="01OVER2">');
+    expect(missingRole({ body: "qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？" })).toBe("qa");
+    expect(missingRole({ body: "请部署", role: "dev" })).toBe("dev");
+    expect(missingRole({ body: "请部署" })).toBeNull();
 
     // the server acks every id in one request
     const v = server();
