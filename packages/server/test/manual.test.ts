@@ -151,6 +151,8 @@ describe("t-082 · the manual says how the first node declares the role set", ()
       expect(text, name).toContain(`"key":"roles"`.replace(/"/g, name === "welcome" ? '"' : '"')?.slice(0, 0) + "roles");
       expect(text, name).toMatch(/\{"?[^"]*"?:\s*\[/); // the {role: [ids]} form, spelled out
       expect(text, name).toContain("R5");
+      expect(text, name).toContain("R5:后端"); // pd 23:01: two roles on one responsibility must say where the boundary is
+      expect(text, name).toContain("分界");
       expect(text, name).toContain("默认");  // what happens when nobody declares
       for (const re of OVERFIT) expect(text, `${name} leaks ${re}`).not.toMatch(re);
     }
