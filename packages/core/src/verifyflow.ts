@@ -1,4 +1,8 @@
-import { append, reduce, projectRoles, Rejected, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, type Event, type NewEvent, type EventStore, type State } from "@ateam/core";
+import { append, type EventStore, type AppendOptions } from "./store.js";
+import { reduce, type State } from "./reduce.js";
+import { projectRoles } from "./board.js";
+import { Rejected } from "./rules.js";
+import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -62,7 +66,7 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
 }
 
 /** Append `e`'s follow-ups, and theirs, until nothing follows. A rejected follow-up becomes a note saying why, not a crash. */
-export async function runFollowUps(store: EventStore, e: Event, human: string, now: Date = new Date()): Promise<Event[]> {
+export async function runFollowUps(store: EventStore, e: Event, human: string, now: Date = new Date(), mint?: AppendOptions["mint"]): Promise<Event[]> {
   const out: Event[] = [];
   const queue: Event[] = [e];
   while (queue.length) {
@@ -70,13 +74,13 @@ export async function runFollowUps(store: EventStore, e: Event, human: string, n
     const state = reduce(await store.read(), now);
     for (const ne of followUps(state, x, human, now)) {
       try {
-        const appended = await append(store, ne, { human, now });
+        const appended = await append(store, ne, { human, now, mint });
         out.push(appended);
         queue.push(appended);
       } catch (err) {
         if (!(err instanceof Rejected)) throw err;
         const task = ne.kind === "task" && ne.op === "verify" ? ne.task : undefined;
-        out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `human 判了，但 verify 被拒（${err.rule}）：${err.message}`, task, refs: [x.id] }, { human }));
+        out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `human 判了，但 verify 被拒（${err.rule}）：${err.message}`, task, refs: [x.id] }, { human, now, mint }));
       }
     }
   }

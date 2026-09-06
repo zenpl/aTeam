@@ -1382,3 +1382,43 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     expect(reduce(await store.read(), c.now()).tasks.get("G")!.status).toBe("obsolete");
   });
 });
+
+describe("t-059 · who holds what: the board says which responsibilities nobody holds", () => {
+  it("a plain role list expands to the default packing; {role: [ids]} is taken as said; held / unheld / unclaimed / blocked", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    const cov = async () => Object.fromEntries(board(reduce(await store.read(), c.now()), HUMAN, c.now()).coverage.map((x) => [x.responsibility, x]));
+    // nobody has pulled yet: everything declared by default is unheld
+    let x = await cov();
+    expect(Object.keys(x)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R8", "R9", "R11", "R12", "R13"]); // only what a role can hold: R7/R10 everyone, R14–R18 service/owner/none
+    expect(x.R6).toMatchObject({ status: "unheld", holders: ["qa"], present: [], line: "没人管验收：qa 声明了但没在场" });
+    expect(x.R5).toMatchObject({ status: "unheld", holders: ["dev", "frontend"] });
+    // qa and dev pull: R6 held; R9 (dev, frontend) is held by dev but blocked until someone present may push production
+    await pull(store, "qa", null, c.now());
+    await pull(store, "dev", null, c.now());
+    x = await cov();
+    expect(x.R6).toMatchObject({ status: "held", present: ["qa"], reason: "", line: "验收：qa" });
+    expect(x.R9).toMatchObject({ status: "blocked", present: ["dev"], line: "没人管上线：dev 声明了但缺推送许可或凭据（能力事实 push=none）" });
+    await emit(store, c, { kind: "reading", actor: "dev", surface: "node", key: "dev:能力", value: { push: "production" } });
+    x = await cov();
+    expect(x.R9).toMatchObject({ status: "held", line: "上线：dev" });
+    // the project says which role holds what: a writing project with two roles and no verifier
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { 写手: ["R5", "R9"], 审稿: ["R1", "R2", "R3", "R4", "R8", "R12"] } });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.roles).toEqual(["写手", "审稿"]);
+    x = await cov();
+    expect(x.R6).toMatchObject({ status: "unclaimed", holders: [], line: "没人管验收：没有角色声明" });
+    expect(x.R5).toMatchObject({ status: "unheld", holders: ["写手"], line: "没人管做：写手 声明了但没在场" });
+    await pull(store, "写手", null, c.now());
+    x = await cov();
+    expect(x.R5.status).toBe("held");
+    expect(x.R9).toMatchObject({ status: "blocked", present: ["写手"] });
+    // a role name outside the default packing, declared as a plain list, holds nothing until the project says
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "writer"] });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.coverage.find((r) => r.responsibility === "R5")).toMatchObject({ status: "unclaimed" });
+    expect(b.coverage.find((r) => r.responsibility === "R1")).toMatchObject({ holders: ["pm"] });
+    // the gaps never become cards for the human
+    expect(b.needs_human).toEqual([]);
+  });
+});

@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { RESPONSIBILITIES } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -18,6 +19,13 @@ export function manual(role: string): string | null {
   const file = join(DIR, "roles", `${role}.md`);
   if (!/^[a-z][a-z0-9_-]*$/.test(role) || !existsSync(file)) return null;
   return `${readFileSync(join(DIR, "common.md"), "utf8").trimEnd()}\n\n---\n\n${readFileSync(file, "utf8").trimEnd()}\n`;
+}
+
+/** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */
+export function responsibilityAppendix(role: string, ids: string[]): string {
+  const names = new Map(RESPONSIBILITIES.map((r) => [r.id, r.name]));
+  const lines = ids.map((id) => `- ${id} ${names.get(id) ?? "（这个项目自定义的职责）"}`);
+  return `\n---\n\n## 你在这个项目里持有的职责\n\n${lines.length ? lines.join("\n") : `这个项目没有为 ${role} 声明任何职责；问 pm 或 human 你该管什么。`}\n`;
 }
 
 /** The manual for an agent that has not joined yet: what this is, how to start a project, how to join. `base` fills the address. */

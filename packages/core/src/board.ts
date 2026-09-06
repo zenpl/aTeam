@@ -1,5 +1,6 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen } from "./reduce.js";
+import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
@@ -149,8 +150,27 @@ export interface Board {
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
   roles: string[];
+  /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
+  coverage: BoardCoverage[];
+  /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
+  allocation: { warnings: AllocationWarning[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
   invite_url?: string;
+}
+
+export type CoverageStatus = "held" | "unheld" | "unclaimed" | "blocked";
+export interface BoardCoverage {
+  responsibility: string;
+  name: string;
+  /** held: a present role holds it. unheld: declared, nobody present. unclaimed: no role declares it. blocked: held, but a precondition fails. */
+  status: CoverageStatus;
+  /** Roles that declare it, and those of them present (listening) now. */
+  holders: string[];
+  present: string[];
+  /** Why it is not held, in the team's words; empty when held. */
+  reason: string;
+  /** One sentence for the human, e.g. 没人管上线：pm 声明了但缺推送许可. */
+  line: string;
 }
 
 export interface BoardPresence {
@@ -228,7 +248,67 @@ export function projectRoles(s: State): string[] {
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   if (Array.isArray(v) && v.every((x) => typeof x === "string") && v.length) return v as string[];
   if (typeof v === "string" && v.trim()) return v.split(",").map((x) => x.trim()).filter(Boolean);
+  if (v && typeof v === "object" && Object.keys(v).length) return Object.keys(v as object); // t-059: {role: [responsibility ids]}
   return DEFAULT_ROLES;
+}
+
+/**
+ * Which responsibilities each role holds (t-059). A `project:roles` fact shaped {role: [ids]} says so itself; a plain list of
+ * role names expands to the default packing of responsibilities.md, and a name outside it holds nothing until the project says.
+ */
+export function roleResponsibilities(s: State): Record<string, string[]> {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const out: Record<string, string[]> = {};
+  if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) {
+    for (const [role, ids] of Object.entries(v as Record<string, unknown>)) out[role] = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string").map((x) => responsibilityId(x)) : [];
+    return out;
+  }
+  for (const role of projectRoles(s)) out[role] = DEFAULT_RESPONSIBILITIES[role] ?? [];
+  return out;
+}
+
+/** An entry may carry a boundary after the id ("R5:数据侧", "R6 自定标准的退化给 owner"): the id is the first word. */
+export function responsibilityId(entry: string): string { return entry.trim().split(/[\s:：]+/)[0]; }
+
+/** The boundary text each role declared next to a responsibility id, keyed `${role}:${id}` (t-061 静态检查). */
+export function responsibilityBoundaries(s: State): Map<string, string> {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const out = new Map<string, string>();
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [role, ids] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(ids)) continue;
+    for (const x of ids) {
+      if (typeof x !== "string") continue;
+      const rest = x.trim().slice(responsibilityId(x).length).replace(/^[\s:：]+/, "").trim();
+      if (rest) out.set(`${role}:${responsibilityId(x)}`, rest);
+    }
+  }
+  return out;
+}
+
+/** Who holds what right now: one row per responsibility a role can hold; the page and the CLI show the ones nobody holds. */
+export function coverage(s: State, now: Date, listenWindowMs = LISTEN_WINDOW_MS): BoardCoverage[] {
+  const packing = roleResponsibilities(s);
+  const rows: BoardCoverage[] = [];
+  for (const r of RESPONSIBILITIES) {
+    if (r.holder !== "role") continue;
+    const holders = Object.keys(packing).filter((role) => packing[role].includes(r.id));
+    const present = holders.filter((role) => !isMissing(s, role, now, listenWindowMs));
+    let status: CoverageStatus = "held", reason = "";
+    if (!holders.length) { status = "unclaimed"; reason = "没有角色声明"; }
+    else if (!present.length) { status = "unheld"; reason = `${holders.join("、")} 声明了但没在场`; }
+    else if (r.id === "R9" && !present.some((role) => pushLevelOf(s, role) === "production")) {
+      status = "blocked";
+      reason = `${present.join("、")} 声明了但缺推送许可或凭据（能力事实 push=${present.map((role) => pushLevelOf(s, role)).join("/")}）`;
+    }
+    const line = status === "held" ? `${r.name}：${present.join("、")}` : `没人管${r.name}：${reason}`;
+    rows.push({ responsibility: r.id, name: r.name, status, holders, present, reason, line });
+  }
+  return rows;
 }
 
 export function board(s: State, human: string, now: Date = new Date(), opts: BoardOptions = {}): Board {
@@ -249,6 +329,8 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     seams: [],
     presence: [],
     roles: projectRoles(s),
+    coverage: [],
+    allocation: { warnings: [], summary: "" },
   };
 
   if (s.focus) b.focus = { body: s.focus.value, set_by: s.focus.actor, at: s.focus.at };
@@ -392,6 +474,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
+  b.coverage = coverage(s, now, listenWindow);
+  b.allocation.warnings = allocation(s, now, human);
+  b.allocation.summary = allocationSummary(b.allocation.warnings);
   for (const actor of [...s.presence.keys()].sort()) {
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));

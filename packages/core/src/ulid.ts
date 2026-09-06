@@ -19,6 +19,14 @@ let lastRandom: number[] = [];
  * two ids minted in the same millisecond still sort in minting order.
  * The log is ordered by id, so this is what makes "append order" meaningful.
  */
+/**
+ * An id whose time bits are exactly `ms`, with a fresh random tail: for building a log at chosen times (t-062), where
+ * the process-wide monotonic guard would otherwise carry a later time forward. Not for a live server.
+ */
+export function ulidAt(ms: number): string {
+  return encodeTime(ms, 10) + Array.from(randomBytes(16), (b) => ALPHABET[b % 32]).join("");
+}
+
 export function ulid(now: number = Date.now()): string {
   if (now <= lastTime) {
     now = lastTime;

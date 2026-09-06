@@ -120,6 +120,15 @@ export function board(b: Board, me: string): string {
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
     out.push(`  ${p.actor.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
   }
+  const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
+  if (gaps.length) {
+    out.push("", "COVERAGE (responsibilities nobody holds right now)");
+    for (const c of gaps) out.push(`  ${c.responsibility.padEnd(4)} ${c.line}`);
+  }
+  if (b.allocation?.warnings?.length) {
+    out.push("", `TEAM  ${b.allocation.summary}`);
+    for (const w of b.allocation.warnings) out.push(`  ${w.pattern}  ${w.hint}`);
+  }
 
   return out.join("\n");
 }

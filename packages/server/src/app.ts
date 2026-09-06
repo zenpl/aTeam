@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, welcome, inviteManual, projectRoles, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
-import { runFollowUps } from "./verifyflow.js";
+import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
 
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
@@ -30,6 +30,14 @@ export interface ServerOptions {
   publicUrl?: string;
   /** How often the call-out check runs; 0 disables the timer (tests call runAlerts directly). Default 60s. */
   alertIntervalMs?: number;
+  /** t-063: the clock the whole server reads (tests inject one); default the real one. Events are stamped from it too. */
+  clock?: () => Date;
+  /** t-063: shift every *reading* of the current time by this much; never stamps an event. Only with testHooks. */
+  clockOffsetMs?: number;
+  /** t-063: expose POST /_test/clock and POST /_test/run. Off by default; production never sets it. */
+  testHooks?: boolean;
+  /** The fetch the call-outs use; default the global one (tests inject a fake). */
+  fetchImpl?: typeof fetch;
 }
 
 /** Many projects, each one log and its own keys; the unprefixed address is the default project. Identity is the X-Actor header. */
@@ -48,12 +56,19 @@ export function createApp(opts: ServerOptions) {
     return s;
   });
   const ready = registry.ensure(defaultProject, defaultProject, token);
+  // t-063: `real()` stamps records (events, cursors, deadlines); `now()` is what the server believes the time is when it
+  // reads the world (overdue, presence, call-outs). They differ only by the test offset, which production cannot set.
+  const testHooks = !!opts.testHooks;
+  let offsetMs = testHooks ? (opts.clockOffsetMs ?? 0) : 0;
+  const real = () => (opts.clock ? opts.clock() : new Date());
+  const now = () => new Date(real().getTime() + offsetMs);
+  const doFetch: typeof fetch = opts.fetchImpl ?? ((u, i) => fetch(u, i));
   let lastOrigin = opts.publicUrl ?? "";
   const boardUrl = (p: string) => `${(opts.publicUrl ?? lastOrigin) || "http://localhost"}${p === defaultProject ? "/" : `/p/${encodeURIComponent(p)}/`}`;
   // t-050: the service calls out on its own clock; no node needs to be online for this
   const alertInterval = opts.alertIntervalMs ?? 60_000;
   const timer = alertInterval > 0 ? setInterval(async () => {
-    try { for (const p of await registry.list()) await runAlerts(p.id, storeFor(p.id), { fetch: (u, i) => fetch(u, i), human, boardUrl }); }
+    try { await runPeriodic(); }
     catch (err) { console.error("alerts:", err); }
   }, alertInterval) : undefined;
   timer?.unref();
@@ -65,6 +80,52 @@ export function createApp(opts: ServerOptions) {
     const p = chain.then(fn, fn);
     chain = p.catch(() => {});
     return p;
+  };
+
+  // A role that has gone quiet with work in its hands: a card for the human, at most one per role per absence (pm 14:15).
+  const remindFor = async (projectId: string, store: EventStore): Promise<unknown[]> => {
+    const events = await serialize(async () => {
+      const at = now();
+      const state = reduce(await store.read(), at);
+      const out: unknown[] = [];
+      const b = board(state, human, at);
+      for (const role of projectRoles(state)) {
+        if (!isMissing(state, role, at)) continue;
+        const overdue = [...state.instructions.values()].filter((st) => st.instruction.to === role && !st.acked_at && st.overdue);
+        const undelivered = b.undelivered.find((u) => u.to === role);
+        if (!overdue.length && !undelivered) continue;
+        const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
+        if (cards.some((st) => !st.acked_at)) continue;
+        const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
+        if (lastAck && at.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
+        const last = state.presence.get(role)?.last_pull;
+        const minutes = last ? Math.round((at.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
+        // one card per role: "not receiving" when instructions never arrived, else "missing with work in hand"
+        // pd's three words: 在听 / 没在听 / 缺人. A role that stopped pulling with work undelivered is 没在听; one with nothing arriving at all is 缺人.
+        const body = undelivered
+          ? `${role} 没在听了 ${minutes} 分钟，${undelivered.count} 条指令没送到。起一个 ${role}？`
+          : `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`;
+        const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
+        out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
+      }
+      // t-061: the allocation warnings as a fact, at most one entry per pattern per period
+      const fact = allocationFact(state, human, at);
+      if (fact) out.push(await append(store, fact, { human, now: real() }));
+      return out;
+    });
+    for (const e of events) bus.emit("append", { project: projectId, e });
+    return events;
+  };
+
+  /** t-063: everything the service does on its own clock, once, for every project: reminders, the allocation fact, call-outs. */
+  const runPeriodic = async (): Promise<{ project: string; reminded: number; alerts: number }[]> => {
+    const out: { project: string; reminded: number; alerts: number }[] = [];
+    for (const p of await registry.list()) {
+      const reminded = (await remindFor(p.id, storeFor(p.id))).length;
+      const alerts = (await runAlerts(p.id, storeFor(p.id), { fetch: doFetch, human, boardUrl, now, real })).length;
+      out.push({ project: p.id, reminded, alerts });
+    }
+    return out;
   };
 
   const server = createServer(async (req, res) => {
@@ -79,6 +140,23 @@ export function createApp(opts: ServerOptions) {
 
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
 
+      // t-063: test hooks, only when the environment says so; otherwise these paths are nothing (404 like any unknown path).
+      if (url.pathname.startsWith("/_test/")) {
+        if (!testHooks) return json(res, 404, { error: "not found" }); // production: these paths do not exist, whoever asks
+        if (token && bearer(req) !== token) return json(res, 401, { error: "unauthorized", message: "测试入口要默认项目的管理钥匙" });
+        if (url.pathname === "/_test/clock" && (req.method === "GET" || req.method === "POST")) {
+          if (req.method === "POST") {
+            const body = (await readJson(req)) as { offset?: unknown; offset_ms?: unknown };
+            const ms = body.offset_ms !== undefined ? Number(body.offset_ms) : parseOffset(body.offset);
+            if (!Number.isFinite(ms)) return json(res, 400, { error: "offset", message: "offset 写成 16m / 2h / 90s，或 offset_ms 毫秒数；0 关闭" });
+            offsetMs = ms;
+          }
+          return json(res, 200, { offset_ms: offsetMs, real: real().toISOString(), now: now().toISOString() });
+        }
+        if (url.pathname === "/_test/run" && req.method === "POST") return json(res, 200, { now: now().toISOString(), ran: await runPeriodic() });
+        return json(res, 404, { error: "not found" });
+      }
+
       // Which project, and what path inside it. /p/<id>/... names one; anything else is the default project.
       const m = /^\/p\/([^/]+)(\/.*)?$/.exec(url.pathname);
       const projectId = m ? decodeURIComponent(m[1]) : defaultProject;
@@ -88,9 +166,13 @@ export function createApp(opts: ServerOptions) {
       // Global: the newcomer's manual, and the role manuals. Generic by construction, so they need no key.
       if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
       if (req.method === "GET" && path.startsWith("/manual/")) {
-        const text = manual(decodeURIComponent(path.slice("/manual/".length)));
+        const role = decodeURIComponent(path.slice("/manual/".length));
+        const text = manual(role);
         if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
-        return markdown(res, text);
+        // t-059: the project's own packing at the end, when the project exists
+        const known = await registry.get(projectId);
+        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read())) : null;
+        return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
       // A new project: one board, one log, one key. The key is in this response and nowhere else.
@@ -112,7 +194,7 @@ export function createApp(opts: ServerOptions) {
         const invite = await registry.getInvite(decodeURIComponent(inv[1]));
         if (!invite) return json(res, 404, { error: "not found", message: "没有这个邀请链接" });
         const owner = (await registry.get(invite.project))!;
-        if (invite.expires_at <= new Date().toISOString()) return json(res, 410, { error: "expired", message: "邀请链接已过期；向项目的管理者要一个新的（POST /p/<project>/invites）" });
+        if (invite.expires_at <= now().toISOString()) return json(res, 410, { error: "expired", message: "邀请链接已过期；向项目的管理者要一个新的（POST /p/<project>/invites）" });
         if (req.method === "GET" && !inv[2]) return markdown(res, inviteManual({ base: origin, code: invite.code, project: owner.id, name: owner.name, expires: invite.expires_at }));
         if (req.method === "POST" && inv[2]) {
           const body = (await readJson(req)) as { agent_id?: unknown; role?: unknown; capabilities?: unknown };
@@ -122,7 +204,7 @@ export function createApp(opts: ServerOptions) {
           if (caps instanceof Error) return json(res, 400, { error: "capabilities", message: caps.message });
           const pstore = storeFor(owner.id);
           const result = await serialize(async () => {
-            const state = reduce(await pstore.read());
+            const state = reduce(await pstore.read(), now());
             const roles = projectRoles(state);
             const nodes = await registry.nodes(owner.id);
             const mine = nodes.find((n) => n.agent_id === agentId);
@@ -131,20 +213,20 @@ export function createApp(opts: ServerOptions) {
             const first = nodes.length === 0;
             if (!role) {
               // the first node is pm (Q15); after that, the first role nobody present holds
-              role = first && roles.includes("pm") ? "pm" : roles.find((r) => isMissing(state, r, new Date())) ?? "";
+              role = first && roles.includes("pm") ? "pm" : roles.find((r) => isMissing(state, r, now())) ?? "";
               if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
             }
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
             // joining is the first pull: the node is listening as of now (its own sync starts from its local cursor)
-            await pstore.setCursor({ actor: role, last_event_id: null, at: new Date().toISOString() });
+            await pstore.setCursor({ actor: role, last_event_id: null, at: real().toISOString() });
             const out: unknown[] = [];
-            if (caps !== null) out.push(await append(pstore, { kind: "reading", actor: role, surface: NODE_SURFACE, key: capabilityKey(role), value: caps, method: "节点加入时自报" }, { human }));
+            if (caps !== null) out.push(await append(pstore, { kind: "reading", actor: role, surface: NODE_SURFACE, key: capabilityKey(role), value: caps, method: "节点加入时自报" }, { human, now: real() }));
             if (first && created) {
-              out.push(await append(pstore, { kind: "reading", actor: role, surface: "team", key: "focus", value: "等 human 说这个项目是什么" }, { human }));
-              out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human }));
+              out.push(await append(pstore, { kind: "reading", actor: role, surface: "team", key: "focus", value: "等 human 说这个项目是什么" }, { human, now: real() }));
+              out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human, now: real() }));
             }
             for (const e of out) bus.emit("append", { project: owner.id, e });
-            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ?? "", first, created } };
+            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, roleResponsibilities(state)[role] ?? []) : "", first, created } };
           });
           return json(res, result.status, result.body);
         }
@@ -164,36 +246,7 @@ export function createApp(opts: ServerOptions) {
       const isAdmin = !!record && record.role === null;
       const authed = () => isAdmin || !!record;
 
-      // A role that has gone quiet with work in its hands: a card for the human, at most one per role per absence (pm 14:15).
-      const remind = async () => {
-        const events = await serialize(async () => {
-          const state = reduce(await store.read());
-          const now = new Date();
-          const out: unknown[] = [];
-          const b = board(state, human, now);
-          for (const role of projectRoles(state)) {
-            if (!isMissing(state, role, now)) continue;
-            const overdue = [...state.instructions.values()].filter((st) => st.instruction.to === role && !st.acked_at && st.overdue);
-            const undelivered = b.undelivered.find((u) => u.to === role);
-            if (!overdue.length && !undelivered) continue;
-            const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
-            if (cards.some((st) => !st.acked_at)) continue;
-            const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
-            if (lastAck && now.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
-            const last = state.presence.get(role)?.last_pull;
-            const minutes = last ? Math.round((now.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
-            // one card per role: "not receiving" when instructions never arrived, else "missing with work in hand"
-            // pd's three words: 在听 / 没在听 / 缺人. A role that stopped pulling with work undelivered is 没在听; one with nothing arriving at all is 缺人.
-            const body = undelivered
-              ? `${role} 没在听了 ${minutes} 分钟，${undelivered.count} 条指令没送到。起一个 ${role}？`
-              : `${role} 已经缺了 ${minutes} 分钟，手里有 ${overdue.length} 条指令。起一个 ${role}？`;
-            const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
-            out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs }, { human }));
-          }
-          return out;
-        });
-        for (const e of events) bus.emit("append", { project: projectId, e });
-      };
+      const remind = () => remindFor(projectId, store);
 
       if (req.method === "POST" && path === "/invites") {
         if (!isAdmin) return json(res, 401, { error: "unauthorized", message: "重新签发邀请链接需要管理钥匙" });
@@ -212,8 +265,8 @@ export function createApp(opts: ServerOptions) {
         }
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
         await remind();
-        const state = reduce(await store.read());
-        const b = board(state, human);
+        const state = reduce(await store.read(), now());
+        const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base }));
       }
@@ -230,16 +283,16 @@ export function createApp(opts: ServerOptions) {
           // when the instruction names a task, the note hangs on that task too. Several ids ack together (t-043).
           const ids = form.getAll("id").filter(Boolean), of = ids[0] ?? "", why = (form.get("note") ?? "").trim();
           const events = await serialize(async () => {
-            const st = reduce(await store.read()).instructions.get(of);
-            const out = [await append(store, { kind: "ack", actor: human, of }, { human })];
+            const st = reduce(await store.read(), now()).instructions.get(of);
+            const out = [await append(store, { kind: "ack", actor: human, of }, { human, now: real() })];
             for (const more of ids.slice(1)) {
-              const fresh = reduce(await store.read()).instructions.get(more);
-              if (fresh && !fresh.acked_at) out.push(await append(store, { kind: "ack", actor: human, of: more }, { human }));
+              const fresh = reduce(await store.read(), now()).instructions.get(more);
+              if (fresh && !fresh.acked_at) out.push(await append(store, { kind: "ack", actor: human, of: more }, { human, now: real() }));
             }
             if (why) {
               const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
-              const known = task && reduce(await store.read()).tasks.has(task) ? task : undefined;
-              out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human }));
+              const known = task && reduce(await store.read(), now()).tasks.has(task) ? task : undefined;
+              out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human, now: real() }));
             }
             return out;
           });
@@ -251,24 +304,24 @@ export function createApp(opts: ServerOptions) {
           const text = (form.get("text") ?? "").trim();
           if (!text) return { status: 400, body: { error: "empty", message: "说点什么再点「说」" } };
           if (text.length > SAID_MAX_CHARS) return { status: 400, body: { error: "too long", message: `一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.length}）；不够就再说一句` } };
-          const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human }));
+          const note = await serialize(() => append(store, { kind: "note", actor: human, body: `${SAID_PREFIX}${text}` }, { human, now: real() }));
           emitAll([note]);
           return { status: 201, body: note };
         }
         if (then === "/decide") {
           // One click: ack the instruction and record the decision, in one request.
           const of = form.get("id") ?? "", option = form.get("option") ?? "";
-          const st = reduce(await store.read()).instructions.get(of);
+          const st = reduce(await store.read(), now()).instructions.get(of);
           if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
           const i = st.instruction;
           if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
           if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           const [note, ...followed] = await serialize(async () => {
-            const fresh = reduce(await store.read()).instructions.get(of)!;
-            if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human })]);
-            const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human });
-            return [n, ...(await runFollowUps(store, n, human))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
+            const fresh = reduce(await store.read(), now()).instructions.get(of)!;
+            if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human, now: real() })]);
+            const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human, now: real() });
+            return [n, ...(await runFollowUps(store, n, human, real()))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
           });
           emitAll([note, ...followed]);
           return { status: 201, body: note };
@@ -310,7 +363,7 @@ export function createApp(opts: ServerOptions) {
 
       if (req.method === "GET" && path === "/board") {
         await remind();
-        const b = board(reduce(await store.read()), human);
+        const b = board(reduce(await store.read(), now()), human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         return json(res, 200, b);
       }
@@ -320,7 +373,7 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "GET" && path === "/events") {
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
-        let result = await pull(store, actor, after);
+        let result = await pull(store, actor, after, real());
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, wait);
@@ -329,7 +382,7 @@ export function createApp(opts: ServerOptions) {
             bus.on("append", onAppend);
             req.on("close", done);
           });
-          result = await pull(store, actor, after);
+          result = await pull(store, actor, after, real());
         }
         return json(res, 200, result);
       }
@@ -337,7 +390,7 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "POST" && path === "/events") {
         const body = (await readJson(req)) as NewEvent;
         const ne = { ...body, actor } as NewEvent;
-        const [e, ...followed] = await serialize(async () => { const x = await append(store, ne, { human }); return [x, ...(await runFollowUps(store, x, human))]; });
+        const [e, ...followed] = await serialize(async () => { const x = await append(store, ne, { human, now: real() }); return [x, ...(await runFollowUps(store, x, human, real()))]; });
         emitAll([e, ...followed]);
         return json(res, 201, e);
       }
@@ -370,6 +423,16 @@ export function capabilitiesOf(raw: unknown): Record<string, unknown> | string[]
   if (typeof push !== "string" || !(PUSH_LEVELS as readonly string[]).includes(push))
     return new Error(`capabilities.push 只能是 ${PUSH_LEVELS.join(" | ")}，不是 ${JSON.stringify(o.push)}`);
   return { ...o, push };
+}
+
+/** "16m", "2h", "90s", "500ms" or a plain number of milliseconds; NaN when it is none of those. */
+export function parseOffset(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?\s*$/.exec(raw);
+  if (!m) return NaN;
+  const n = Number(m[1]);
+  return n * ({ ms: 1, s: 1000, m: 60_000, h: 3600_000, d: 86_400_000 } as Record<string, number>)[m[2] ?? "ms"];
 }
 
 function bearer(req: IncomingMessage): string | undefined {
