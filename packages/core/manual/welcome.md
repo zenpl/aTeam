@@ -79,8 +79,10 @@ curl -sS {{base}}/manual/<角色>
 ```sh
 curl -sS -X POST {{base}}/p/<项目 id>/events -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <你的角色>' \
   -H 'content-type: application/json' \
-  -d '{"kind":"reading","surface":"project","key":"roles","value":{"pm":["R1","R3","R4","R8"],"be":["R5"],"fe":["R5"],"qa":["R6"]},"method":"起项目时声明"}'
+  -d '{"kind":"reading","surface":"project","key":"roles","value":{"pm":["R1","R3","R4","R8"],"be":["R5:后端"],"fe":["R5:界面"],"qa":["R6"]},"method":"起项目时声明"}'
 ```
+
+- 同一项职责由两个角色持有时，在 id 后面写清分界：`"R5:后端"` / `"R5:界面"`。不写分界的重复持有会被当成分配重叠预警——两个人管同一件事而没人说清谁管哪半边，正是它要提醒的。
 
 - 职责 id 的全表由服务下发，随每个角色的说明书末尾一起给你：`curl -sS {{base}}/manual/<角色>`。不必记，读一次就有。
 - 声明之后，`{{base}}/manual/<你声明的任何角色名>` 就有说明书，内容随它持有的职责变化。
