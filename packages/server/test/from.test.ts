@@ -36,6 +36,12 @@ describe("t-088 · POST /events with from", () => {
     const events = await log();
     expect(events.filter((e) => e.from === "tracker#7")).toHaveLength(1);
     expect(events.filter((e) => e.from === "tracker#8")).toHaveLength(1);
+    // qa 23:37: the board and GET /task/<id> carry from, not just the raw event
+    await post("pm", { kind: "task", op: "create", task: "f-1", title: "搬来的任务", criteria: ["x"], from: "tracker#42" });
+    const one = await (await fetch(`${base}/task/f-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect(one.task.from).toBe("tracker#42");
+    const board = await (await fetch(`${base}/board`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    expect((board.tasks.open as { id: string; from?: string }[]).find((t) => t.id === "f-1")!.from).toBe("tracker#42");
     // an event without from is unaffected: two writes, two events
     await post("pm", { kind: "note", body: "普通" });
     await post("pm", { kind: "note", body: "普通" });
@@ -69,8 +75,13 @@ describe("t-092 · the check card over the API", () => {
     const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
     expect(card).toBeTruthy();
     // this file's earlier test imported a reading too, so the fact count comes from the board, not from a number typed here
+    // the counts come from the board, because earlier tests in this file imported things into the same server too
     const facts = b.readings.filter((r: { why?: string }) => r.why === "搬进来的数字：在这里没有测过，谁用谁重测").length;
-    expect(card.body).toBe(`搬过来了，对吗？在途 1 件、1 条现行决定、${facts} 个数字、0 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`);
+    const inflight = Object.entries(b.tasks as Record<string, { from?: string }[]>)
+      .filter(([status]) => !["verified", "withdrawn", "obsolete"].includes(status))
+      .reduce((n, [, xs]) => n + xs.filter((t) => t.from).length, 0);
+    expect(card.body).toBe(`搬过来了，对吗？在途 ${inflight} 件、1 条现行决定、${facts} 个数字、0 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。`);
+    expect(inflight).toBeGreaterThan(0);
     expect(facts).toBeGreaterThan(0);
     expect(card.options).toEqual(["对", "有漏"]);
     // answering it sends the importer one instruction
@@ -96,5 +107,31 @@ describe("t-096 · display names over the API", () => {
     expect((await post("dev", { kind: "task", op: "label", task: "L-1", label: "T-07 登录" })).status).toBe(201);
     const after = await (await fetch(`${base}/task/L-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
     expect(after.task).toMatchObject({ id: "L-1", label: "T-07 登录", title: "登录超时" });
+  });
+});
+
+describe("t-098 · over the API, 迁移完成 waits for the human", () => {
+  it("is refused with the rule name until the check card is answered 对, then accepted", async () => {
+    // its own server: an earlier test in this file already answered a card, and this one is about the state before that
+    const own = createApp({ store: new MemoryStore(), token: "k2", human: "human", sha: "abc1234", alertIntervalMs: 0 });
+    await new Promise<void>((r) => own.listen(0, "127.0.0.1", r));
+    const at = `http://127.0.0.1:${(own.address() as AddressInfo).port}`;
+    const post = async (actor: string, body: unknown) => {
+      const r = await fetch(`${at}/events`, { method: "POST", headers: { authorization: "Bearer k2", "x-actor": actor, "content-type": "application/json", "x-ateam-client": "2" }, body: JSON.stringify(body) });
+      return { status: r.status, body: await r.json() };
+    };
+    const base = at; // the rest of this test talks to its own server
+    const fact = () => post("pm", { kind: "reading", surface: "project", key: "migration.done", value: true, from: "pm/广播.md#最后一条", measured_at: new Date(Date.now() - 60_000).toISOString() });
+    const early = await fact();
+    expect(early.status).toBe(409);
+    expect(early.body).toMatchObject({ error: "rejected", rule: "migration" });
+    expect(early.body.message).toContain("点「对」");
+    await post("pm", { kind: "note", body: "导入完成：走完了" });
+    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: "Bearer k2", "x-actor": "qa", "x-ateam-client": "2" } })).json();
+    const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
+    expect((await fact()).status).toBe(409); // a card the human has not answered is not permission
+    await fetch(`${base}/decide`, { method: "POST", headers: { authorization: "Bearer k2", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
+    expect((await fact()).status).toBe(201);
+    await new Promise<void>((r) => own.close(() => r()));
   });
 });

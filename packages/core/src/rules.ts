@@ -1,5 +1,10 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
 import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+
+/** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
+export function migrationApproved(s: State): boolean {
+  return [...s.instructions.values()].some((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(MIGRATION_ASK_TITLE) && st.chosen?.option === MIGRATION_OK && st.chosen.by !== DEFAULT_DECIDER);
+}
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -32,6 +37,11 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
     // it never leaks to another surface (staging:users.count is not production:users.count).
     case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      // t-098 (M7): "the move is finished" may not be recorded before the human said 对 on the check card. The button is the
+      // authorisation to touch the old channel; without it, nothing may claim the move is over.
+      if (e.key === MIGRATION_DONE_KEY && !migrationApproved(state)) {
+        throw new Rejected("migration", "human 还没在核对卡上点「对」；在他点之前不要动旧渠道，也不能记「迁移完成」");
+      }
       // t-089 (M4): a reading carried in from somewhere else says when it was measured there; without that it is a number
       // with no time and nobody can tell what it is worth. It lands expired either way — whoever needs it measures again.
       if (e.from && !e.measured_at) throw new Rejected("reading", "搬进来的事实必须带 measured_at（它在原处是什么时候测的）；缺 measured_at，不写入");
