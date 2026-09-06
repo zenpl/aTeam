@@ -81,8 +81,8 @@ describe("GET / · read-only HTML board", () => {
   it("is read-only: no script, no forms other than answer buttons, and refreshes no more often than every 30 s", async () => {
     const html = await (await api("/")).text();
     const forms = html.match(/<form\b[^>]*>/gi) ?? [];
-    expect(forms).toHaveLength(1);                                   // one open instruction to human, without options: a "Got it" form
-    for (const f of forms) expect(f).toMatch(/action="\/(decide|ack)"/);
+    expect(forms).toHaveLength(2);                                   // one open instruction to human, without options: a "Got it" form; plus the say box
+    for (const f of forms) expect(f).toMatch(/action="\/(decide|ack|say)"/);
     expect(html).not.toMatch(/<script\b/i);
     expect(html).not.toMatch(/\bon[a-z]+\s*=/i);
     const m = html.match(/http-equiv="refresh" content="(\d+)"/);
@@ -436,5 +436,59 @@ describe("t-026 · 线上只列这一版带来的，历史折叠；在途各组�
       expect(shown).not.toContain("任务1（dev）");
       expect(flight.slice(flight.indexOf('<details class="fold">'))).toContain("任务1（dev）");
     } finally { await w.close(); }
+  });
+});
+
+describe("t-031 · 牌桌上「说一句」：输入框与「你说过的」列表", () => {
+  it("「需要你」下方有输入框与「说」按钮，POST /say；无作答 cookie 时禁用并给出同样的提示", async () => {
+    const anon = await (await fetch(`${base}/`)).text();
+    const needs = anon.slice(anon.indexOf('id="needs-you"'), anon.indexOf('id="status"'));
+    expect(needs).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="body" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off" disabled><button type="submit" disabled>说<\/button> <span class="meta">要回答，请先打开一次/);
+    const authed = await (await api("/")).text();
+    const needs2 = authed.slice(authed.indexOf('id="needs-you"'), authed.indexOf('id="status"'));
+    expect(needs2).toMatch(/<form class="say" method="post" action="\/say"><input type="text" name="body" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了" autocomplete="off"><button type="submit">说<\/button><\/form>/);
+    expect(needs2).not.toContain("你说过的");                       // nothing said yet on this board
+    expect(authed).not.toMatch(/<script\b/i);
+  });
+
+  it("「你说过的」列最近 5 句，其余折叠为「还有 N 句」；去向文案来自 board.said", async () => {
+    const state = reduce(await new MemoryStore().read());
+    const b = board(state, HUMAN) as Board & { said?: unknown[] };
+    const at = (m: number) => new Date(Date.parse(b.now) - m * 60_000).toISOString();
+    b.said = [
+      { id: "S1", body: "登录页太慢", at: at(50), status: "received" },
+      { id: "S2", body: "想要导出报表", at: at(40), status: "requirement", links: [{ kind: "note", id: "N1" }] },
+      { id: "S3", body: "限流要可配", at: at(30), status: "task", links: [{ kind: "task", id: "t-7", title: "限流阈值可配置" }, { kind: "task", id: "t-8", title: "限流有日志" }] },
+      { id: "S4", body: "邮箱别进日志", at: at(20), status: "live", links: [{ kind: "task", id: "t-9", title: "日志脱敏" }] },
+      { id: "S5", body: "牌桌要中文", at: at(10), status: "已成为任务：牌桌中文化" },
+      { id: "S6", body: "按钮太小", at: at(5), status: "received" },
+      { id: "S7", body: "最新的一句", at: at(0.5), status: "received" },
+    ];
+    const html = renderBoard(b, state, { human: HUMAN });
+    const needs = html.slice(html.indexOf('id="needs-you"'), html.indexOf('id="status"'));
+    expect(needs).toContain("<h3>你说过的</h3>");
+    const shown = needs.slice(needs.indexOf("<h3>你说过的</h3>"), needs.indexOf('<details class="fold">'));
+    expect(shown.match(/<li>/g)).toHaveLength(5);
+    expect(shown.indexOf("最新的一句")).toBeLessThan(shown.indexOf("按钮太小"));     // newest first
+    expect(shown).not.toContain("登录页太慢");
+    expect(shown).not.toContain("想要导出报表");
+    const rest = needs.slice(needs.indexOf('<details class="fold">'));
+    expect(rest).toContain("<summary>还有 2 句</summary>");
+    expect(rest).toContain("登录页太慢");
+    expect(rest).toContain("· 已收到</span>");
+    expect(rest).toContain("· 已成为需求</span>");
+    expect(shown).toContain("· 已成为任务：限流阈值可配置；限流有日志</span>");
+    expect(shown).toContain("· 已上线：日志脱敏</span>");
+    expect(shown).toContain("· 已成为任务：牌桌中文化</span>");            // a status the board already worded
+    expect(shown).toContain("刚刚");
+    expect(shown).toContain("5 分钟前");
+    expect(aboveTheFold(html)).not.toMatch(/\bS\d\b|\bt-\d+\b|\bN1\b/);     // no ids above the fold
+  });
+
+  it("board 没有 said 字段（老服务器）时页面照常渲染，没有「你说过的」", async () => {
+    const state = reduce(await new MemoryStore().read());
+    const html = renderBoard(board(state, HUMAN), state, { human: HUMAN });
+    expect(html).toContain('action="/say"');
+    expect(html).not.toContain("你说过的");
   });
 });

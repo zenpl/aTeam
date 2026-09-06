@@ -41,6 +41,14 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     }
     fold.push(`</div>`);
   }
+  // 说一句：the human's one line to the team, and what became of the earlier ones (board.said, t-030).
+  fold.push(`<form class="say" method="post" action="/say"><input type="text" name="body" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" autocomplete="off"${disabled}><button type="submit"${disabled}>${UI.say}</button>${hint}</form>`);
+  const said = saidOf(b);
+  if (said.length) {
+    const recent = said.slice(0, SAID_SHOWN), rest = said.slice(SAID_SHOWN);
+    const line = (x: Said) => `<li><span class="said-body">${esc(x.body)}</span> <span class="meta">${t(x.at)} · ${esc(saidStatus(x))}</span></li>`;
+    fold.push(`<div class="said"><h3>${UI.said}</h3><ul class="plain">${recent.map(line).join("")}</ul>${rest.length ? `<details class="fold"><summary>${esc(UI.moreSaid(rest.length))}</summary><ul class="plain">${rest.map(line).join("")}</ul></details>` : ""}</div>`);
+  }
   fold.push(`</section>`);
 
   const flight = inFlightOf(b);
@@ -153,6 +161,34 @@ ${d.join("\n")}
   return page(body, { now: b.now, refresh, sha: opts.sha });
 }
 
+/** One thing the human said on the board (board.said, from t-030): the line, when, and what became of it. */
+export interface Said {
+  id: string;
+  body: string;
+  at: string;
+  /** received | requirement | task | live, or already a sentence; rendered through UI.saidStatus when it is a key */
+  status: string;
+  /** what it turned into: the tasks (title) or the requirement note */
+  links?: { kind?: string; id?: string; title?: string }[];
+}
+export const SAID_SHOWN = 5;
+
+/** Newest first. Tolerates a board without `said` (a server older than t-030). */
+export function saidOf(b: Board): Said[] {
+  const list = ((b as Board & { said?: Said[] }).said ?? []).slice();
+  return list.sort((x, y) => y.at.localeCompare(x.at));
+}
+
+/** The status sentence: 「已收到」「已成为需求」「已成为任务：<标题>」「已上线」. The board decides; this only words it. */
+export function saidStatus(x: Said): string {
+  const base = UI.saidStatus[x.status] ?? x.status;
+  if (x.status === "task" || x.status === "live") {
+    const titles = (x.links ?? []).filter((l) => l.title).map((l) => l.title!);
+    return titles.length ? `${base}：${titles.join("；")}` : base;
+  }
+  return base;
+}
+
 /** How many items a group shows before folding the rest; the board folds in_flight at the same count. */
 export const SHOWN = 5;
 
@@ -243,6 +279,12 @@ form.decide button { font: inherit; padding: .45rem 1rem; border-radius: 8px; bo
 form.decide button.default { border-color: var(--accent); color: var(--accent); }
 form.decide button:disabled { cursor: not-allowed; opacity: .55; }
 form.decide small { font-size: .75em; letter-spacing: .05em; }
+form.say { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 1rem 0 0; padding-top: .75rem; border-top: 1px solid var(--line); }
+form.say input { flex: 1 1 18rem; font: inherit; padding: .5rem .75rem; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+form.say button { font: inherit; padding: .5rem 1.1rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+form.say input:disabled, form.say button:disabled { cursor: not-allowed; opacity: .55; }
+.said h3 { margin: .75rem 0 .25rem; }
+.said .said-body { font-size: 1rem; }
 details.fold { margin: .1rem 0 .2rem 1.1rem; }
 details.fold > summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 details.more > summary { cursor: pointer; color: var(--muted); font-size: .9rem; }

@@ -17,6 +17,11 @@ export const UI = {
   defaultTag: "默认",
   gotIt: "知道了",
   toAnswer: "要回答，请先打开一次",
+  say: "说",
+  sayPlaceholder: "跟团队说一句：想要什么、什么坏了",
+  said: "你说过的",
+  moreSaid: (n: number) => `还有 ${n} 句`,
+  saidStatus: { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" } as Record<string, string>,
   toAnswerTail: "",
 
   status: "现状",
