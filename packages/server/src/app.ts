@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, Rejected, type EventStore, type NewEvent, DEFAULT_DECIDER } from "@ateam/core";
-import { renderBoard } from "./html.js";
+import { renderBoard, unauthorizedPage } from "./html.js";
 
 const COOKIE = "ateam_token";
 
@@ -145,9 +145,6 @@ function cookie(req: IncomingMessage, name: string): string | undefined {
   return undefined;
 }
 
-function unauthorizedPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>aTeam board</title></head><body style="font:15px system-ui;padding:2rem"><h1>aTeam board</h1><p>This page needs the project token. Open <code>/?token=&lt;ATEAM_TOKEN&gt;</code> once; it is then kept in a cookie.</p></body></html>`;
-}
 
 function json(res: ServerResponse, status: number, body: unknown) {
   const s = JSON.stringify(body);
