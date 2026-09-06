@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -224,6 +224,8 @@ export function createApp(opts: ServerOptions) {
             if (first && created) {
               out.push(await append(pstore, { kind: "reading", actor: role, surface: "team", key: "focus", value: "等 human 说这个项目是什么" }, { human, now: real() }));
               out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: "这个项目是什么？说一句。", intent: "ask", ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human, now: real() }));
+              // t-069: the second card, optional; 填写 records project:alert.webhook (t-050 reads it), 先不要 closes it for good
+              out.push(await append(pstore, { kind: "instruction", actor: role, to: human, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: new Date(Date.now() + 24 * 3600_000).toISOString() }, { human, now: real() }));
             }
             for (const e of out) bus.emit("append", { project: owner.id, e });
             return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, roleResponsibilities(state)[role] ?? []) : "", first, created } };
@@ -317,11 +319,16 @@ export function createApp(opts: ServerOptions) {
           if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
           if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
           // Inside the write lock, look again: a click that raced another one must not half-apply.
+          // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
+          const contact = i.body === CONTACT_ASK && option === CONTACT_FILL ? (form.get("value") ?? "").trim() : "";
+          if (i.body === CONTACT_ASK && option === CONTACT_FILL && !contact) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址；不想填就选「先不要」" } };
           const [note, ...followed] = await serialize(async () => {
             const fresh = reduce(await store.read(), now()).instructions.get(of)!;
             if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human, now: real() })]);
-            const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}`, decision: true, decides: { of, option }, refs: [of] }, { human, now: real() });
-            return [n, ...(await runFollowUps(store, n, human, real()))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
+            const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}${contact ? `：${contact}` : ""}`, decision: true, decides: { of, option }, refs: [of] }, { human, now: real() });
+            const out = [n, ...(await runFollowUps(store, n, human, real()))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
+            if (contact) out.push(await append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key: ALERT_WEBHOOK_KEY, value: contact, method: "牌桌上填写（起项目第二张卡）", refs: [n.id] }, { human, now: real() }));
+            return out;
           });
           emitAll([note, ...followed]);
           return { status: 201, body: note };
