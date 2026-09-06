@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, unauthorizedPage, tokenPage } from "./html.js";
+import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -269,6 +269,14 @@ export function createApp(opts: ServerOptions) {
         const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base }));
+      }
+
+      // t-065: one task in full, same rules as the board (public unless the board is private).
+      if (req.method === "GET" && path.startsWith("/task/")) {
+        if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
+        const state = reduce(await store.read());
+        const out = renderTask(board(state, human), state, decodeURIComponent(path.slice("/task/".length)), { sha, human, base });
+        return out ? html(res, 200, out) : html(res, 404, notFoundPage(base));
       }
 
       const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };

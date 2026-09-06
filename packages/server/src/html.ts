@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -102,7 +102,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const now = Date.parse(b.now);
   const secAgo = (iso: string) => Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   const ago = (iso: string) => UI.ago(secAgo(iso));
-  const t = (iso: string) => `<time datetime="${esc(iso)}" title="${esc(iso)}">${esc(ago(iso))}</time>`;
+  const t = (iso: string) => `<time datetime="${esc(iso)}">${esc(ago(iso))}</time>`;
   const canDecide = opts.canDecide !== false;
   const base = opts.base ?? "";
   // Buttons are always clickable. Without the cookie, a form posts to the token page, which does the action after the key.
@@ -224,7 +224,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   out.push(`</section>`);
 
   // ---------- 其余 ----------
-  out.push(renderRest(b, s, human, t, ago));
+  // The dig layer keeps its times short: the exact stamps are on the task page and in the API (t-065).
+  out.push(renderRest(b, s, human, (iso) => esc(ago(iso)), ago, base));
 
   return page(out.join("\n") + (out.some((x) => x.includes('class="btn copy"')) ? "\n" + COPY_SCRIPT : ""), { now: b.now, refresh, sha: opts.sha });
 }
@@ -320,7 +321,7 @@ function fold(rows: string[], label: (n: number) => string, listClass = "plain")
   return `<details class="more-list"><summary>${esc(label(rows.length))}</summary><ul class="${listClass}">${rows.join("")}</ul></details>`;
 }
 
-function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string): string {
+function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = ""): string {
   const d: string[] = [];
   const open = b.instructions.filter((i) => i.status !== "acked" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
@@ -345,10 +346,11 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   d.push(`<section id="instructions"><h3>${UI.agentInstructions} <span class="meta">${open.length}</span></h3>`);
   d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(UI.instrStatus[i.status] ?? i.status)}</span> ${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
-  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-5).map((i) => `<li>${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(i.chosen!.by, i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
+  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(i.chosen!.by, i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
   d.push(`</section>`);
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);
+  const inline = inlinedTasks(b);
   d.push(`<section id="tasks"><h3>${UI.tasks} <span class="meta">${total}</span></h3>`);
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     const list = b.tasks[status] ?? [];
@@ -360,36 +362,123 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
       if (task.owner) bits.push(`@${esc(task.owner)}`);
       if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
       if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
-      d.push(`<li><details><summary><code>${esc(task.id)}</code> ${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
-      if (st) {
-        d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
-        d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
-        if (st.touches.length) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-        if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
-        if (st.evidence) d.push(st.shows ? `<details class="meta"><summary>${UI.evidence}</summary>${esc(st.evidence)}</details>` : `<div class="meta">${UI.evidence}：${esc(st.evidence)}</div>`);
-        for (const n of st.notes.filter((n) => /^\s*evidence:/i.test(n.body))) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
-        for (const v of st.verifications) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(v.evidence)}` : ""}</div>`);
-        if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
-        if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
-        if (st.notes.length) d.push(`<ul class="notes">${st.notes.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(n.body)}</li>`).join("")}</ul>`);
+      const href = `${base}/task/${encodeURIComponent(task.id)}`;
+      if (st && inline.has(task.id)) {
+        // This version's and still-moving tasks carry their criteria and evidence inline (t-065).
+        d.push(`<li><details><summary>${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
+        d.push(taskDetail(st, t, ago, href, MOVING.has(status)));
+        d.push(`</details></li>`);
+      } else {
+        // Earlier tasks: the title and one line; everything else lives on the task page.
+        d.push(`<li class="brief"><a href="${esc(href)}">${esc(task.title)}</a>${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</li>`);
       }
-      d.push(`</details></li>`);
     }
     d.push(`</ul>`);
   }
-  if (!total) d.push(`<p class="quiet">${UI.none}</p>`);
   d.push(`</section>`);
 
   d.push(`<section id="seams"><h3>${UI.seams} <span class="meta">${esc(UI.openCount(openSeams.length))}</span></h3>`);
-  d.push(b.seams.length ? `<ul class="plain">${[...openSeams, ...b.seams.filter((x) => !x.open)].map((x) => `<li><span class="tag${x.open ? " warn" : ""}">${x.open ? UI.seamOpen : x.resolved ? esc(UI.seamResolvedBy(x.resolved)) : UI.seamStacked}</span> <code>${esc(x.tasks[0])}</code> + <code>${esc(x.tasks[1])}</code> ${UI.bothTouch} ${x.overlap.map((o) => `<code>${esc(o)}</code>`).join(", ")}</li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const closedSeams = b.seams.length - openSeams.length;
+  d.push(openSeams.length ? `<ul class="plain">${openSeams.map((x) => seamLine(x, base)).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  if (closedSeams) d.push(`<p class="meta">${esc(UI.seamsElsewhere(closedSeams))}</p>`);
   d.push(`</section>`);
 
   d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(valid.length, stale.length))}</span></h3>`);
-  d.push(b.readings.length ? `<ul class="plain">${[...valid, ...stale].map((r) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(str(r.value))} <span class="meta">${esc(r.by)}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} <span class="meta">${esc(r.by)}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`;
+  const staleShown = stale.slice().sort((x, y) => y.at.localeCompare(x.at)).slice(0, STALE_SHOWN);
+  d.push(b.readings.length ? `<ul class="plain">${[...valid, ...staleShown].map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  if (stale.length > staleShown.length) d.push(`<p class="meta">${esc(UI.olderStale(stale.length - staleShown.length))}</p>`);
   d.push(`</section>`);
 
   d.push(`</details>`);
   return d.join("\n");
+}
+
+type Seam = Board["seams"][number];
+
+function seamLine(x: Seam, base: string): string {
+  const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}"><code>${esc(id)}</code></a>`;
+  return `<li><span class="tag${x.open ? " warn" : ""}">${x.open ? UI.seamOpen : x.resolved ? esc(UI.seamResolvedBy(x.resolved)) : UI.seamStacked}</span> ${link(x.tasks[0])} + ${link(x.tasks[1])} ${UI.bothTouch} ${x.overlap.map((o) => `<code>${esc(o)}</code>`).join(", ")}</li>`;
+}
+
+/**
+ * Which tasks the dig layer inlines (t-065): the ones this version brought (t-026's recent) and the ones still
+ * moving. Everything older is a title and a line; its criteria, evidence and notes are on GET /task/<id>.
+ */
+export function inlinedTasks(b: Board): Set<string> {
+  const ids = new Set(b.live.recent.map((x) => x.id));
+  for (const status of MOVING) for (const task of b.tasks[status] ?? []) ids.add(task.id);
+  return ids;
+}
+
+/** The last verdict on each surface, in order of first appearance: what the board shows for a finished task. */
+function latestPerSurface<V extends { surface: string }>(vs: V[]): V[] {
+  const last = new Map<string, V>();
+  for (const v of vs) last.set(v.surface, v);
+  return [...last.values()];
+}
+
+/** On the board, a finished task's evidence and each verdict show this much; the task page has all of it (t-065). */
+const EVIDENCE_MAX = 160;
+/** Stale readings listed on the board: the latest few; older ones are a count (t-065). */
+const STALE_SHOWN = 8;
+/** Settled questions listed in the dig layer: the latest few. */
+const DECIDED_SHOWN = 3;
+/** A reading's value on the board is clipped; the API has the whole thing. */
+const VALUE_MAX = 80;
+const VERDICT_MAX = 80;
+/** Statuses that are still moving: their notes are the working conversation and stay inline. */
+const MOVING = new Set(["open", "working", "blocked", "done", "failed"]);
+
+/** A task's criteria, evidence, verdicts and notes; the same block inline on the board and on the task page. */
+function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string) => string, href: string | null, withNotes = true): string {
+  const d: string[] = [];
+  d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
+  d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
+  if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
+  const evidence = st.evidence && href && !withNotes ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;
+  if (evidence) d.push(st.shows ? `<details class="meta"><summary>${UI.evidence}</summary>${esc(evidence)}</details>` : `<div class="meta">${UI.evidence}：${esc(evidence)}</div>`);
+  const evidenceNotes = st.notes.filter((n) => /^\s*evidence:/i.test(n.body));
+  if (withNotes) for (const n of evidenceNotes) d.push(`<div class="meta">+ ${esc(n.body.replace(/^\s*evidence:\s*/i, ""))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
+  // On the board a finished task's verdicts keep their first line; the verifier's full evidence is on the task page.
+  const verdicts = href && !withNotes ? latestPerSurface(st.verifications) : st.verifications;
+  for (const v of verdicts) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(href && !withNotes ? clip(v.evidence, VERDICT_MAX) : v.evidence)}` : ""}</div>`);
+  if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
+  if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
+  const other = withNotes ? st.notes.filter((n) => !/^\s*evidence:/i.test(n.body)) : st.notes;
+  if (st.touches.length && (withNotes || !href)) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
+  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(n.body)}</li>`).join("")}</ul>`);
+  // On the board, a finished task's notes are a count and a link: they are what made the page grow with the log (t-065).
+  if (href) d.push(`<div class="meta">${other.length && !withNotes ? esc(UI.notesCount(other.length)) + " · " : ""}<a href="${esc(href)}">${UI.details}</a></div>`);
+  return d.join("\n");
+}
+
+/**
+ * GET /task/<id> (t-065): one task in full, in the board's clothes: criteria, evidence, verdicts, seams and notes.
+ * Null when the log has no such task. The raw id stays in the URL and in the 「给 agent 看的」 fold.
+ */
+export function renderTask(b: Board, s: State, id: string, opts: RenderOptions = {}): string | null {
+  const st = s.tasks.get(id);
+  const task = boardTask(b, id);
+  if (!st || !task) return null;
+  const base = opts.base ?? "";
+  const now = Date.parse(b.now);
+  const ago = (iso: string) => UI.ago(Math.max(0, Math.round((now - Date.parse(iso)) / 1000)));
+  const t = (iso: string) => `<time datetime="${esc(iso)}">${esc(ago(iso))}</time>`;
+  const out: string[] = [];
+  const bits: string[] = [esc(UI.taskStatus[task.status] ?? task.status)];
+  if (task.owner) bits.push(`@${esc(task.owner)}`);
+  if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
+  if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
+  out.push(`<p class="meta"><a href="${esc(base)}/">${UI.backToBoard}</a></p>`);
+  out.push(`<section class="now task-page"><h2>${esc(task.shows ?? task.title)}</h2>`);
+  out.push(`<p class="meta">${bits.join(" · ")}</p>`);
+  out.push(taskDetail(st, t, ago, null));
+  const seams = b.seams.filter((x) => x.tasks.includes(id));
+  if (seams.length) out.push(`<h3>${UI.taskSeams} <span class="meta">${seams.length}</span></h3><ul class="plain">${seams.map((x) => seamLine(x, base)).join("")}</ul>`);
+  out.push(`<details class="meta"><summary>${UI.forAgents}</summary><code>${esc(task.id)}</code> · <code>ateam task show ${esc(task.id)}</code></details>`);
+  out.push(`</section>`);
+  return page(out.join("\n"), { now: b.now, refresh: 0, sha: opts.sha, title: `${esc(task.shows ?? task.title)} · ${UI.header}` });
 }
 
 /**
@@ -410,6 +499,10 @@ export function latestReport(s: State, b: Board): { path: string; when: string; 
   const repo = b.readings.find((r) => r.valid && r.surface === "repo" && r.key === "url" && typeof r.value === "string");
   const href = repo ? `${String(repo.value).replace(/\/$/, "")}/blob/${best.sha ?? "HEAD"}/${best.path}` : undefined;
   return { path: best.path, when, sha: best.sha, href };
+}
+
+export function notFoundPage(base = ""): string {
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>${UI.taskNotFound} · ${UI.title}</title></head><body style="font:15px/1.7 system-ui;padding:2rem"><h1>${UI.taskNotFound}</h1><p><a href="${esc(base)}/">${UI.backToBoard}</a></p></body></html>`;
 }
 
 export function unauthorizedPage(): string {
@@ -524,19 +617,19 @@ footer { color:var(--muted); font-size:.8rem; display:flex; gap:1rem; flex-wrap:
 @media (max-width:540px) { .row, .focus { grid-template-columns:1fr; } .focus .meta { grid-column:1; } }
 `;
 
-function page(body: string, m: { now: string; refresh: number; sha?: string }): string {
+function page(body: string, m: { now: string; refresh: number; sha?: string; title?: string }): string {
   return `<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${m.refresh}">
-<title>${UI.header}</title>
+${m.refresh ? `<meta http-equiv="refresh" content="${m.refresh}">` : ""}
+<title>${m.title ?? UI.header}</title>
 <style>${CSS}</style>
 </head>
 <body>
 <main>
-<header><h1>${UI.header}</h1><span class="meta">${UI.refreshes(m.refresh)} · <time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 16))}Z</time></span></header>
+<header><h1>${UI.header}</h1><span class="meta">${m.refresh ? `${UI.refreshes(m.refresh)} · ` : ""}<time datetime="${esc(m.now)}">${esc(m.now.replace("T", " ").slice(0, 16))}Z</time></span></header>
 ${body}
 <footer><span>${UI.buildLabel} <code class="sha">${esc((m.sha ?? "unknown").slice(0, 7))}</code></span><span>${UI.sameAs} <code>GET /board</code> ${UI.sameAsTail}</span></footer>
 </main>

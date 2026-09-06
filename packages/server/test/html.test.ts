@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -104,11 +104,12 @@ describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句�
     expect(rest).toContain("claim t-1 now");
     expect(rest).toMatch(/逾期[\s\S]*dev 还没有确认来自 pm 的「claim t-5 now/);
     expect(rest).toContain("production:deployed.sha");
-    expect(rest).toContain("<code>t-3</code>");
+    expect(rest).toContain("Card page for the human");
     expect(rest).toContain("cookie is SameSite=Lax");
     expect(rest).toContain(esc("no <script> on the page"));
     expect(rest).toContain("sha 1234567");
-    expect(rest).toContain("+ also on the default branch as 7654321");
+    expect(rest).toContain("2 条留言 · <a href=\"/task/t-1\">看详情</a>");   // t-065: a finished task's notes are read on its page
+    expect(rest).not.toContain("+ also on the default branch as 7654321");
     expect(rest).toMatch(/验过，在 <b>仓库<\/b>，由 qa/);
     expect(rest).toMatch(/已失效，原因 <code>/);
     expect(rest).toContain("packages/server/src/html.ts");
@@ -469,7 +470,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
 
       for (const html of [await z.authedPage(), await z.page()]) {
         const ui = html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<code[^>]*>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ");
-        for (const c of ["看板认证", "私有还是公开？", "请读部署说明", "今天不再部署", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "导入了第三批", "SameSite=Lax", "按钮太小"]) expect(ui).toContain(c);
+        for (const c of ["看板认证", "私有还是公开？", "请读部署说明", "今天不再部署", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "SameSite=Lax", "按钮太小"]) expect(ui).toContain(c);
         const words = ui.replace(/\b[0-9a-f]{7,}\b/g, "")
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
@@ -477,6 +478,10 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
         for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
+    // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)
+      const tp = await (await fetch(`${z.base}/task/t-1`, { headers: { accept: "text/html" } })).text();
+      expect(tp).toContain("导入了第三批");
+      expect(tp.replace(/<style[\s\S]*?<\/style>/, "").replace(/<code>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ")).not.toMatch(/\b(status|criteria|evidence|notes|task|by|seam)\b/i);
     } finally { await z.stop(); }
   });
 
@@ -674,6 +679,114 @@ describe("t-056 · the page shows the owner's sentence, and folds the evidence u
     const at = html.indexOf("<div>线上牌桌第一行是部署 sha</div>"); // in the task's details: shows first
     expect(at).toBeGreaterThan(0);
     expect(html.slice(at).replace(/\s+/g, " ")).toContain("<div>线上牌桌第一行是部署 sha</div> <details class=\"meta\"><summary>证据</summary>abc1234: &lt;ul&gt; 全绿</details>"); // then the evidence, folded
-    expect(html).toContain("<div class=\"meta\">证据：abc1234: 全绿</div>"); // no shows: evidence as before
+    // B was verified on staging only: on the board it is a title and a line (t-065); its evidence is on the task page
+    expect(html).toContain('<li class="brief"><a href="/task/B">限流</a> <span class="meta">@dev · ✓ staging</span></li>');
+    expect(html).not.toContain("证据：abc1234: 全绿");
+    const pageB = renderTask(board(state, HUMAN), state, "B", { sha: "abc1234", human: HUMAN, base: "" })!;
+    expect(pageB).toContain("<div class=\"meta\">证据：abc1234: 全绿</div>"); // no shows: evidence as before
+  });
+});
+
+describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
+  it("earlier tasks are a title and a line linking to their page; this version's and moving tasks keep criteria inline", async () => {
+    const html = await w.authedPage();
+    const rest = html.slice(html.indexOf('<details class="rest"'));
+    // t-3 is working: criteria, touches inline
+    expect(rest).toContain("<summary>Card page for the human <span class=\"meta\">@frontend</span></summary>");
+    expect(rest).toContain("no ids above the fold");
+    // the shared fixture verifies t-1 on production after the sha reading, so it is this version's: inline too
+    expect(inlinedTasks(JSON.parse(await (await w.api("/board")).text()))).toContain("t-1");
+    expect(rest).toMatch(/<a href="\/task\/t-\d+">看详情<\/a>/);
+  });
+
+  it("an earlier task is brief on the board and full on its page; unknown id is 404; a private board keeps the page private", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录", "记住我"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567：两条都过" });
+      await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上登录成功" });
+      await v.post("qa", { kind: "note", body: "concern: 记住我在无痕窗口失效", task: "t-1" });
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
+      // two moving tasks on the same file: an open seam, listed; once pm resolves it, only a count remains
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "导出", criteria: ["可用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-3", title: "导入", criteria: ["可用"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-2", touches: ["src/io.ts"] });
+      await v.post("frontend", { kind: "task", op: "claim", task: "t-3", touches: ["src/io.ts"] });
+      let html = await v.page();
+      let rest = html.slice(html.indexOf('<details class="rest"'));
+      expect(rest).toContain('<li class="brief"><a href="/task/t-1">登录修复</a> <span class="meta">@dev · ✓ 生产</span></li>');
+      for (const gone of ["能登录", "记住我", "提交 1234567", "线上登录成功", "无痕窗口"]) expect(rest).not.toContain(gone);
+      expect(rest).toContain('<span class="tag warn">未解决</span> <a href="/task/t-3"><code>t-3</code></a> + <a href="/task/t-2"><code>t-2</code></a> 都涉及 <code>src/io.ts</code>');
+      expect(rest).not.toContain("另有");
+      await v.post("pm", { kind: "task", op: "seam", tasks: ["t-2", "t-3"], resolution: "frontend 合 dev" });
+      html = await v.page();
+      rest = html.slice(html.indexOf('<details class="rest"'));
+      expect(rest).toMatch(/<section id="seams"><h3>接缝 <span class="meta">0 条未解决<\/span><\/h3>\n<p class="quiet">无<\/p>\n<p class="meta">另有 1 条已解决或叠放，在各任务页里<\/p>/);
+      expect(rest).not.toContain("都涉及");
+      // the seam is on both task pages
+      const t2 = await (await fetch(`${v.base}/task/t-2`, { headers: { accept: "text/html" } })).text();
+      expect(t2).toContain('<h3>接缝 <span class="meta">1</span></h3>');
+      expect(t2).toContain('<span class="tag">pm 已解决</span> <a href="/task/t-3"><code>t-3</code></a> + <a href="/task/t-2"><code>t-2</code></a> 都涉及 <code>src/io.ts</code>');
+
+      const r = await fetch(`${v.base}/task/t-1`, { headers: { accept: "text/html" } });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-type")).toContain("text/html");
+      const tp = await r.text();
+      expect(tp).toContain("<title>登录修复 · aTeam · 牌桌</title>");
+      expect(tp).not.toContain('http-equiv="refresh"');
+      expect(tp).toContain('<a href="/">← 回牌桌</a>');
+      expect(tp).toContain("<h2>登录修复</h2>");
+      expect(tp).toContain('<p class="meta">验过 · @dev · ✓ 生产</p>');
+      expect(tp).toContain("<ol class=\"criteria\"><li>能登录</li><li>记住我</li></ol>");
+      expect(tp).toContain("证据：提交 1234567：两条都过");
+      expect(tp).toMatch(/✓ 验过，在 <b>生产<\/b>，由 qa，<time[^>]*>刚刚<\/time>：线上登录成功/);
+      expect(tp).toContain("涉及：<code>src/login.ts</code>");
+      expect(tp).toContain("<b>qa</b>");
+      expect(tp).toContain("concern: 记住我在无痕窗口失效");
+      // the raw id only inside the fold for agents
+      const above = tp.slice(0, tp.indexOf("<details"));
+      expect(above.replace(/<style[\s\S]*?<\/style>/, "").replace(/<a [^>]*>/g, "")).not.toMatch(/\bt-1\b/);
+      expect(tp).toContain("<summary>给 agent 看的</summary><code>t-1</code>");
+
+      const missing = await fetch(`${v.base}/task/t-9`, { headers: { accept: "text/html" } });
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).toContain("没有这个任务");
+    } finally { await v.stop(); }
+
+    const p = server({ boardPublic: false });
+    await p.start();
+    try {
+      await p.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] });
+      expect((await fetch(`${p.base}/task/t-1`, { headers: { accept: "text/html" } })).status).toBe(401);
+      expect((await fetch(`${p.base}/task/t-1`, { headers: { accept: "text/html", authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
+    } finally { await p.stop(); }
+  });
+
+  it("the page does not grow with the log: 60 finished tasks with long notes and evidence render under 80KB, and only open seams are listed", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+      const long = (n: number) => `第${n}条：${"这是一段很长的判据或证据文字，用来撑大页面。".repeat(8)}`;
+      for (let i = 1; i <= 60; i++) {
+        await v.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: [long(1), long(2), long(3), long(4), long(5)] });
+        await v.post("dev", { kind: "task", op: "claim", task: `t-${i}`, touches: [`src/${i}.ts`, "src/shared.ts"] });
+        await v.post("dev", { kind: "task", op: "done", task: `t-${i}`, evidence: long(6) + long(7) });
+        for (let k = 0; k < 5; k++) await v.post("qa", { kind: "note", body: long(10 + k), task: `t-${i}` });
+        await v.post("qa", { kind: "task", op: "verify", task: `t-${i}`, surface: "production", pass: true, evidence: long(8) });
+      }
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
+      const html = await v.page();
+      expect(Buffer.byteLength(html)).toBeLessThan(80 * 1024);
+      const rest = html.slice(html.indexOf('<details class="rest"'));
+      expect(rest.match(/<li class="brief">/g)).toHaveLength(60);
+      expect(rest).not.toContain("这是一段很长的判据或证据文字");
+      // the log is long; the task page still has everything
+      const tp = await (await fetch(`${v.base}/task/t-60`, { headers: { accept: "text/html" } })).text();
+      expect(tp.match(/这是一段很长的判据或证据文字/g)!.length).toBeGreaterThan(10);
+    } finally { await v.stop(); }
   });
 });
