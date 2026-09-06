@@ -158,7 +158,7 @@ export interface Board {
   }[];
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
-  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean }[];
+  seams: { id: string; tasks: [string, string]; overlap: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string } }[];
   /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
@@ -493,7 +493,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined });
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed });
   }
 
   // who is not receiving: pending (never pulled) instructions older than 5 minutes, by recipient
@@ -557,7 +557,7 @@ export function slimBoard(b: Board): Board {
   const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));
   const seams = b.seams
     .filter((x) => x.open || ((x.resolved || x.stacked) && !x.tasks.every((id) => final.has(id))))
-    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner }));
+    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, overlap: [], open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed }));
   const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
   const readings = b.readings.filter((r) => r.valid || stale.includes(r));
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]

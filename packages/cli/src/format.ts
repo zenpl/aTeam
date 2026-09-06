@@ -96,10 +96,12 @@ export function board(b: Board, me: string): string {
     out.push("", "SEAMS (open: nobody owns these; they block verify)");
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${s.overlap.join(", ")}`);
   }
-  const stacked = b.seams.filter((s) => !s.resolved && s.stacked);
+  const absorbed = b.seams.filter((s) => s.absorbed);
+  const stacked = b.seams.filter((s) => !s.resolved && s.stacked && !s.absorbed);
   const sameOwner = b.seams.filter((s) => !s.resolved && !s.stacked && s.same_owner);
-  if (stacked.length || sameOwner.length) {
+  if (stacked.length || sameOwner.length || absorbed.length) {
     out.push("", "STACKED (informational, blocks nothing)");
+    for (const s of absorbed) out.push(`  ${s.absorbed!.later} absorbed ${s.absorbed!.earlier}: ${s.absorbed!.basis}${s.absorbed!.by ? `  (recorded by ${s.absorbed!.by}'s CLI)` : ""}`);
     for (const s of stacked) out.push(`  ${s.stacked!.on} stacks on ${s.stacked!.done} (done first) at ${s.overlap.join(", ")}: merge ${s.stacked!.done} first`);
     for (const s of sameOwner) out.push(`  ${s.tasks.join(" + ")} same owner at ${s.overlap.join(", ")}: sequential work, land them in order`);
   }
@@ -174,7 +176,7 @@ export function task(t: BoardTask, seams: Board["seams"]): string {
   if (!mine.length) out.push("  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
-    const state = s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
+    const state = s.absorbed ? `absorbed: ${s.absorbed.basis}` : s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
     out.push(`  ${state}  with ${other}: ${s.overlap.join(", ")}`);
   }
   out.push("notes");

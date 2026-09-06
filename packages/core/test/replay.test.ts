@@ -1557,3 +1557,60 @@ describe("t-068 · every task says which layer it belongs to: this version, or e
     expect(Object.values(b.tasks).flat().find((t) => t.id === "C")!.summary).toBe("working");
   });
 });
+
+describe("t-073 · both sides done and the later absorbed the earlier: the seam settles by itself, by the declared form", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+  /** A and B in flight at once (a collision), both done; B's evidence names A's sha. */
+  const collide = async (store: MemoryStore, c: ReturnType<typeof clock>, bEvidence = "bbbbbbb2 合并了 aaaaaaa1") => {
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "aaaaaaa1 完成" });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: bEvidence });
+  };
+
+  it("no form declared: today's behaviour, the seam stays open and verify waits for a person", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await collide(store, c);
+    expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", open: true, absorbed: undefined });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }))).message).toMatch(/seam/);
+  });
+
+  it("named-sha form: judged from the log — the later side's evidence names the earlier's sha; not named, still open; both in flight, unchanged", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "named-sha" });
+    await collide(store, c);
+    const s = (await seams(store, c))[0];
+    expect(s).toMatchObject({ open: false, absorbed: { later: "B", earlier: "A", basis: "后者证据写明含前者 aaaaaaa（named-sha）" } });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    // not named: open
+    const store2 = new MemoryStore();
+    await emit(store2, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "named-sha" });
+    await collide(store2, c, "bbbbbbb2 做完了");
+    expect((await seams(store2, c))[0]).toMatchObject({ open: true, absorbed: undefined });
+    // both in flight: nothing to judge
+    const store3 = new MemoryStore();
+    await emit(store3, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "named-sha" });
+    await create(store3, c, "A"); await create(store3, c, "B");
+    await emit(store3, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store3, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seams(store3, c))[0]).toMatchObject({ open: true });
+  });
+
+  it("git-ancestor form: the doer's CLI records the resolution the rule wrote; the board shows the basis and who recorded it", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
+    await collide(store, c);
+    expect((await seams(store, c))[0].open).toBe(true); // the log alone cannot tell: git can
+    await emit(store, c, { kind: "task", op: "seam", actor: "frontend", tasks: ["A", "B"], resolution: "absorbed: 后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）" });
+    const s = (await seams(store, c))[0];
+    expect(s).toMatchObject({ open: false, resolved: "frontend", absorbed: { later: "B", earlier: "A", basis: "后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）", by: "frontend" } });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+  });
+});

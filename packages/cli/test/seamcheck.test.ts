@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore, append, reduce, board, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, gitIsAncestor } from "../src/seamcheck.js";
+import { seamWarnings, seamErrors, absorbEvents, gitIsAncestor } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -90,5 +90,32 @@ describe("t-067 · a seam the rule released: the later side must name the merged
     expect(seamErrors(b, "t-b", "bbbbbbb2 在 aaaaaaa1 之上")).toEqual([]);
     expect(seamErrors(b, "t-b", undefined)).toHaveLength(1);
     expect(seamErrors(b, "t-a", "aaaaaaa1111111")).toEqual([]);
+  });
+});
+
+describe("t-073 · absorbEvents at done: git-ancestor form", () => {
+  const world = async (form?: string) => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    if (form) await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: form });
+    for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] }); // both in flight: a collision
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" });
+    return board(reduce(await store.read()), "human");
+  };
+  it("records one resolution with the basis when git says my sha contains theirs; nothing when git cannot tell, the form is unset, or the other side is not done", async () => {
+    const yes = () => true, no = () => false, unknown = () => null;
+    let b = await world("git-ancestor");
+    expect(b.seams[0].open).toBe(true);
+    expect(absorbEvents(b, "t-b", "bbbbbbb2222222 在 A 之上", yes)).toEqual([{ kind: "task", op: "seam", tasks: ["t-b", "t-a"], resolution: "absorbed: 后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）" }]);
+    expect(absorbEvents(b, "t-b", "bbbbbbb2222222", no)).toEqual([]);
+    expect(absorbEvents(b, "t-b", "bbbbbbb2222222", unknown)).toEqual([]);
+    expect(absorbEvents(b, "t-b", "没有 sha 的证据", yes)).toEqual([]);
+    b = await world();
+    expect(absorbEvents(b, "t-b", "bbbbbbb2222222", yes)).toEqual([]); // no form declared
+    b = await world("named-sha");
+    expect(absorbEvents(b, "t-b", "bbbbbbb2222222", yes)).toEqual([]); // that form is judged from the log, not by git
   });
 });

@@ -1,7 +1,6 @@
 import {
   type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
-  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES,
-} from "./events.js";
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
@@ -113,6 +112,8 @@ export interface SeamState {
   /** Both sides belong to the same owner: sequential work by one hand, visible but never a collision (t-045). */
   same_owner?: boolean;
   resolution?: { by: string; at: string; text: string };
+  /** t-073: both sides done and the later absorbed the earlier, by the project's declared form; blocks nothing. */
+  absorbed?: { later: string; earlier: string; basis: string; by?: string };
 }
 
 export interface State {
@@ -364,13 +365,43 @@ function standingDone(t: TaskState): string | undefined {
 function judgeSeam(s: State, seam: SeamState) {
   const [a, b] = seam.tasks.map((id) => s.tasks.get(id));
   seam.stacked = undefined;
+  seam.absorbed = undefined;
   if (!a || !b) return;
   const doneA = standingDone(a), doneB = standingDone(b);
   if (doneA && b.claimed_id && doneA < b.claimed_id) seam.stacked = { done: a.id, on: b.id };
   else if (doneB && a.claimed_id && doneB < a.claimed_id) seam.stacked = { done: b.id, on: a.id };
+  // t-073: a resolution the rule wrote (the doer's CLI checked git) says who absorbed whom
+  const written = seam.resolution && seam.resolution.text.startsWith(ABSORB_PREFIX) ? /后者 (\S+) 含前者 (\S+)/.exec(seam.resolution.text) : null;
+  if (written && doneA && doneB) {
+    const later = doneA > doneB ? a : b, earlier = later === a ? b : a;
+    seam.absorbed = { later: later.id, earlier: earlier.id, basis: seam.resolution!.text.slice(ABSORB_PREFIX.length), by: seam.resolution!.by };
+    return;
+  }
+  // t-073, named-sha form: judged from the log alone — the later side's evidence names the earlier side's sha
+  if (!seam.resolution && doneA && doneB && absorbForm(s) === "named-sha") {
+    const later = doneA > doneB ? a : b, earlier = later === a ? b : a;
+    const theirs = evidenceShaOf(earlier.evidence);
+    if (theirs && namesSha(later.evidence ?? "", theirs)) seam.absorbed = { later: later.id, earlier: earlier.id, basis: `后者证据写明含前者 ${theirs.slice(0, 7)}（named-sha）` };
+  }
+}
+
+/** The project's declared absorb form (fact project:absorb.form), or null. */
+export function absorbForm(s: State): AbsorbForm | null {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ABSORB_FORM_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  return typeof v === "string" && (ABSORB_FORMS as readonly string[]).includes(v) ? (v as AbsorbForm) : null;
+}
+function evidenceShaOf(evidence: string | undefined): string | null {
+  const m = /(?:^|[^0-9a-zA-Z])([0-9a-f]{7,40})(?![0-9a-zA-Z])/.exec(evidence ?? "");
+  return m ? m[1] : null;
+}
+/** The evidence names `sha` in short or long form. */
+export function namesSha(evidence: string, sha: string): boolean {
+  return [...evidence.matchAll(/[0-9a-f]{7,40}/g)].some((m) => sha.startsWith(m[0]) || m[0].startsWith(sha));
 }
 
 /** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && x.tasks.includes(task));
 }
