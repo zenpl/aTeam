@@ -1063,3 +1063,94 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
     } finally { await v.stop(); }
   });
 });
+
+describe("t-099 · 搬来的东西看得见来自哪一条", () => {
+  const page = async (v: ReturnType<typeof server>, id: string) => (await fetch(`${v.base}/task/${id}`, { headers: { accept: "text/html" } })).text();
+
+  it("a carried-in task and its decision note say where they came from, in code, after the criteria and the evidence", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "https://tracker.example.com/PROJ-42" });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" });
+      await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, task: "t-1", from: "chat://msg/998" });
+      const html = await page(v, "t-1");
+      // the source is a link only because this one is a URL; it sits after the criteria and the evidence
+      expect(html).toContain('<div class="meta from">来自 <a href="https://tracker.example.com/PROJ-42"><code>https://tracker.example.com/PROJ-42</code></a></div>');
+      expect(html.indexOf("能登录")).toBeLessThan(html.indexOf('class="meta from"'));
+      expect(html.indexOf("提交 1234567")).toBeLessThan(html.indexOf('class="meta from"'));
+      // the decision note carries its own source, in the same shape, right after the note
+      expect(html).toContain('决定：先做登录<div class="meta from">来自 <code>chat://msg/998</code></div>');
+      expect(html).not.toContain('<a href="chat://msg/998"'); // not a link one can follow: not a link
+    } finally { await v.stop(); }
+  });
+
+  it("a source that is not a URL is code and not clickable; a task created here renders exactly as before", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "导出报表", criteria: ["能导出"], from: "docs/plan.md#L20" });
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次"] });
+      for (const id of ["t-1", "t-2"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+      const carried = await page(v, "t-1"), local = await page(v, "t-2");
+      expect(carried).toContain('<div class="meta from">来自 <code>docs/plan.md#L20</code></div>');
+      expect(carried).not.toContain('<a href="docs/plan.md#L20"');
+      // nothing at all for something created here: no label, no placeholder, no empty element
+      expect(local).not.toContain("来自");
+      expect(local).not.toContain('class="meta from"');
+      expect(local).not.toContain("<div class=\"meta from\"></div>");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-100 · 显示名撞了才附真 id", () => {
+  const setup = async (v: ReturnType<typeof server>) => {
+    // T-99 is another task's display name AND the third task's id: two different kinds of collision at once
+    await v.post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "T-99", title: "限流", criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-4", title: "本地建的", criteria: ["可用"] });
+    for (const id of ["L-1", "L-2", "T-99", "L-3", "L-4"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+  };
+  const rest = (html: string) => html.slice(html.indexOf('<details class="rest"'));
+
+  it("two rows sharing a display name, and a display name that is another row's id, carry the real id; the rest stay clean", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const r = rest(await v.page());
+      // both T-99 rows are ambiguous twice over: same name as each other, and the name is a real id
+      expect(r).toContain("T-99 登录超时 (L-1)");
+      expect(r).toContain("T-99 导出乱码 (L-2)");
+      // a display name nobody else uses stays clean, and so does a task with no display name
+      expect(r).toContain("T-07 日志脱敏");
+      expect(r).not.toContain("T-07 日志脱敏 (L-3)");
+      expect(r).toContain("本地建的");
+      expect(r).not.toContain("本地建的 (L-4)");
+      // the task whose id is T-99 has no display name of its own: it is not ambiguous, so nothing is appended
+      expect(r).toContain("限流");
+      expect(r).not.toContain("限流 (T-99)");
+    } finally { await v.stop(); }
+  });
+
+  it("the task page uses the same heading, and nothing about the log changes", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const page = await (await fetch(`${v.base}/task/L-1`, { headers: { accept: "text/html" } })).text();
+      expect(page).toContain("<h2>T-99 登录超时 (L-1)</h2>");
+      const clean = await (await fetch(`${v.base}/task/L-3`, { headers: { accept: "text/html" } })).text();
+      expect(clean).toContain("<h2>T-07 日志脱敏</h2>");
+      // ids and display names are untouched: the collision only changes what is printed
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      const byId = Object.fromEntries(Object.values(b.tasks).flat().map((t) => [t.id, t]));
+      expect(byId["L-1"].label).toBe("T-99");
+      expect(byId["L-2"].label).toBe("T-99");
+      expect(byId["T-99"].id).toBe("T-99");
+    } finally { await v.stop(); }
+  });
+});
