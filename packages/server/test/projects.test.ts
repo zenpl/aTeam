@@ -69,8 +69,8 @@ describe("t-041 · isolation", () => {
     const boardB = (await j(await api(`/p/${b.project}/board`, b.admin_key))).body;
     expect(boardA.instructions.find((i: { id: string }) => i.id === ia.id).status).toBe("delivered");
     expect(boardB.instructions).toEqual([]);
-    expect(boardB.presence).toEqual([]);
-    expect(boardA.presence.map((p: { actor: string }) => p.actor)).toContain("dev");
+    expect(boardB.presence.every((p: { present: boolean }) => !p.present)).toBe(true);
+    expect(boardA.presence.find((p: { actor: string }) => p.actor === "dev").present).toBe(true);
   });
 
   it("a key of another project is 403; no key is 401; an unknown project is 404", async () => {

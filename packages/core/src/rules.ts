@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR } from "./events.js";
 import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 
 export class Rejected extends Error {
@@ -69,7 +69,8 @@ export function validate(state: State, e: NewEvent, human: string): void {
     case "ack": {
       const st = state.instructions.get(e.of);
       if (!st) throw new Rejected("ack", `${e.of} is not an instruction`);
-      if (st.instruction.to !== e.actor && e.actor !== human)
+      // the service may ack what it wrote itself (a missing-role card that is no longer true)
+      if (st.instruction.to !== e.actor && e.actor !== human && !(e.actor === SERVICE_ACTOR && st.instruction.actor === SERVICE_ACTOR))
         throw new Rejected("ack", `${e.of} is addressed to ${st.instruction.to}, not ${e.actor}`);
       if (st.acked_at) throw new Rejected("ack", `${e.of} already acked at ${st.acked_at}`);
       return;

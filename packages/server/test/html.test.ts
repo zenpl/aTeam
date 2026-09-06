@@ -276,7 +276,8 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(now).toMatch(/<div class="grp-h">卡住<\/div><ul class="tasks"><li class="warn"><span class="dot"><\/span><span class="ttl">Env beats config file<\/span><span class="who">dev<\/span><span class="why">premise was wrong, see … and …, waiting for pm to decide whe…<\/span>/);
     expect(now).toMatch(/<details class="grp"><summary class="grp-h">做完了，等验 <span class="meta">1 件<\/span><\/summary>/);
     expect(now).toMatch(/<details class="grp"><summary class="grp-h">没开始 <span class="meta">1 件<\/span><\/summary>/);
-    expect(now).toMatch(/<span class="who-chip"><i><\/i>frontend<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
+    expect(now).toMatch(/<span class="who-chip" data-role="frontend"><i><\/i>frontend<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
+    expect(now).toContain('<span class="who-chip away" data-role="pd"><i></i>pd<span class="meta">缺人</span></span>');   // declared, never seen
   });
 
   it("more than 5 in an expanded group folds into 「还有 N 件」; 你说过的 folds into 「还有 N 句」; earlier versions nest under 这一版带来了什么", async () => {
@@ -335,7 +336,8 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(html).toContain('<p class="focus-text quiet">还没有焦点</p>');
       expect(html).toContain('<span class="quiet">还没人核对过线上是哪一版</span>');
       expect(html).toContain('<span class="quiet">没有在途的事</span>');
-      expect(html).toContain('<span class="quiet">还没有人</span>');
+      // the declared roles are listed even on an empty board, all missing and never seen (t-042)
+      for (const r of ["pd", "pm", "dev", "frontend", "qa"]) expect(html).toContain(`<span class="who-chip away" data-role="${r}"><i></i>${r}<span class="meta">缺人</span></span>`);
       expect(html).not.toContain('<div class="grp-h">你说过的</div>');
       expect(html).toContain("你说过的会出现在这里");
       expect(html).not.toContain('<span class="count">');
@@ -506,10 +508,12 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
   it("谁在按角色：在的绿点 + 多久前，缺的灰 + 「缺人 N 分钟」；老 board 没有角色字段时照旧按 actor", async () => {
     const { state, b } = await fresh();
     b.presence = [
-      { actor: "pm", role: "pm", present: true, last_seen: minutesAgo(b, 2), idle_s: 120 },
-      { actor: "dev", role: "dev", present: true, last_seen: minutesAgo(b, 0.2), idle_s: 12 },
-      { actor: "", role: "qa", present: false, last_seen: minutesAgo(b, 12), since: minutesAgo(b, 12), idle_s: 720 },
-      { actor: "", role: "pd", present: false, last_seen: "", since: minutesAgo(b, 45), idle_s: 0 },
+      { actor: "pm", role: "pm", present: true, last_seen: minutesAgo(b, 2), idle_s: 120, since: minutesAgo(b, 2) },
+      { actor: "dev", role: "dev", present: true, last_seen: minutesAgo(b, 0.2), idle_s: 12, since: minutesAgo(b, 0.2) },
+      { actor: "qa", role: "qa", present: false, last_seen: minutesAgo(b, 12), since: minutesAgo(b, 12), idle_s: 720 },
+      { actor: "pd", role: "pd", present: false, last_seen: minutesAgo(b, 45), since: minutesAgo(b, 45), idle_s: 2700 },
+      { actor: "frontend", role: "frontend", present: false, last_seen: null, since: null, idle_s: null },
+      { actor: "human", present: true, last_seen: minutesAgo(b, 1), idle_s: 60, since: minutesAgo(b, 1) },   // outside the role set: not a chip
     ];
     const html = renderBoard(b, state, { human: HUMAN });
     const who = html.slice(html.indexOf('<span class="label">谁在</span>'), html.indexOf("</section>", html.indexOf('<span class="label">谁在</span>')));
@@ -517,18 +521,20 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
     expect(who).toMatch(/<span class="who-chip" data-role="dev"><i><\/i>dev<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
     expect(who).toContain('<span class="who-chip away" data-role="qa"><i></i>qa<span class="meta">缺人 12 分钟</span></span>');
     expect(who).toContain('<span class="who-chip away" data-role="pd"><i></i>pd<span class="meta">缺人 45 分钟</span></span>');
+    expect(who).toContain('<span class="who-chip away" data-role="frontend"><i></i>frontend<span class="meta">缺人</span></span>');
+    expect(who).not.toContain("human");
     expect(html).not.toContain('<span class="count">');                         // nobody is waiting on the human: no card, no red
 
     const old = (await fresh()).b;
-    old.presence = [{ actor: "frontend", last_seen: minutesAgo(old, 1), idle_s: 60 }];
+    old.presence = [{ actor: "frontend", present: true, last_seen: minutesAgo(old, 1), idle_s: 60, since: null }];
     expect(renderBoard(old, state, { human: HUMAN })).toMatch(/<span class="who-chip"><i><\/i>frontend<span class="meta"><time[^>]*>1 分钟前<\/time>/);
   });
 
   it("缺人卡（决策 B）：服务生成的「qa 已经缺了 20 分钟，手里有 2 条指令。起一个 qa？」指令是一张请你做卡，「起好了」只 ack 它；页面不再自己合成卡", async () => {
     const { state, b } = await fresh();
     b.presence = [
-      { actor: "pm", role: "pm", present: true, last_seen: b.now, idle_s: 0 },
-      { actor: "", role: "qa", present: false, last_seen: "", since: minutesAgo(b, 20), idle_s: 0 },
+      { actor: "pm", role: "pm", present: true, last_seen: b.now, idle_s: 0, since: b.now },
+      { actor: "qa", role: "qa", present: false, last_seen: minutesAgo(b, 20), since: minutesAgo(b, 20), idle_s: 1200 },
     ];
     b.overdue.push({ instruction: "01OVER1", to: "qa", from: "pm", body: "验 t-1", ack_by: minutesAgo(b, 15), age_s: 900 });
     b.invite_url = "https://ateam.fly.dev/invite/abc123";

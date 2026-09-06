@@ -1044,10 +1044,32 @@ describe("S8 · presence is an environment property", () => {
     await pull(store, "backend", null, c.now());
     c.tick(min(7));
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.presence).toEqual([
-      { actor: "backend", last_seen: c.iso(-min(7)), idle_s: 420 },
-      { actor: "pm", last_seen: c.iso(-min(10)), idle_s: 600 },
-    ]);
+    // the declared roles come first (default five), then anyone else heard from; within the window is present (t-042)
+    expect(b.presence.map((p) => p.actor)).toEqual(["pd", "pm", "dev", "frontend", "qa", "backend"]);
+    expect(b.presence.find((p) => p.actor === "backend")).toEqual({ actor: "backend", role: undefined, present: true, last_seen: c.iso(-min(7)), idle_s: 420, since: c.iso(-min(7)) });
+    expect(b.presence.find((p) => p.actor === "pm")).toMatchObject({ role: "pm", present: true, last_seen: c.iso(-min(10)), idle_s: 600 });
+    expect(b.presence.find((p) => p.actor === "dev")).toEqual({ actor: "dev", role: "dev", present: false, last_seen: null, idle_s: null, since: null });
+    c.tick(min(1));
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.actor === "pm")!.present).toBe(false); // 11 minutes: missing
+  });
+
+  it("t-042: the role set is a fact of the project; a missing role's service card leaves needs_human when the role is back", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.roles).toEqual(["pm", "dev"]);
+    expect(b.presence.map((p) => [p.actor, p.present])).toEqual([["pm", true], ["dev", false]]);
+    // the service notices dev missing and asks the human; the service may later ack its own card
+    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 已经缺了 12 分钟，手里有 1 条指令。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]);
+    await pull(store, "dev", null, c.now()); // dev is back: the card is no longer true, no ack needed
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.needs_human).toEqual([]);
+    expect(b.instructions[0].status).not.toBe("acked");
+    await emit(store, c, { kind: "ack", actor: "ateam", of: card.id });
+    expect((await rejected(emit(store, c, { kind: "ack", actor: "ateam", of: (await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "x", ack_by: c.iso(min(5)) })).id }))).rule).toBe("ack");
   });
 });
 

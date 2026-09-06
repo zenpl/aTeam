@@ -108,6 +108,14 @@ export const DEFER_PREFIX = "先不做：";
 export const PM_ACTOR = "pm";
 /** The identity that owns scenarios and wording (decision 07:02). It may add criteria to any task. */
 export const PD_ACTOR = "pd";
+/** The service itself, when it speaks (a missing-role card). It may ack what it wrote. */
+export const SERVICE_ACTOR = "ateam";
+/** Reading key that declares a project's role set; value is an array of role names. */
+export const ROLES_KEY = "roles";
+export const PROJECT_SURFACE = "project";
+export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
+/** A role with no event or pull for this long is missing (S7). */
+export const PRESENCE_WINDOW_MS = 10 * 60_000;
 /** A note from the human on the board starts with this; the board derives where each such sentence went. */
 export const SAID_PREFIX = "human 说：";
 export const SAID_MAX_CHARS = 500;

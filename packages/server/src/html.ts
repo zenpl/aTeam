@@ -203,8 +203,8 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   out.push(`</div></div>`);
 
   const whoChips = roles.length
-    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}"><i></i>${esc(r.role)}<span class="meta">${r.present ? (r.last_seen ? t(r.last_seen) : "") : esc(UI.missing(r.minutes))}</span></span>`).join("")
-    : b.presence.map((p) => `<span class="who-chip${p.idle_s > 600 ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${t(p.last_seen)}</span></span>`).join("");
+    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}"><i></i>${esc(r.role)}<span class="meta">${r.present ? (r.last_seen ? t(r.last_seen) : "") : esc(r.minutes === null ? UI.missingNever : UI.missing(r.minutes))}</span></span>`).join("")
+    : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
   out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
   out.push(`</section>`);
 
@@ -243,20 +243,19 @@ export function missingRole(i: { body: string; role?: string; about?: { role?: s
   return i.role ?? i.about?.role ?? /^(\S+) 已经缺了 \d+ 分钟/.exec(i.body.trim())?.[1] ?? null;
 }
 
-interface RoleRow { role: string; present: boolean; last_seen?: string; since?: string; minutes: number; overdue: string[] }
+interface RoleRow { role: string; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[] }
 
 /**
- * 谁在 by role (t-042): presence entries that carry role/present/since. Returns [] on a board without them,
- * so the page falls back to plain presence. `overdue` lists the ids of instructions waiting on a missing role.
+ * 谁在 by role (t-042): one presence row per declared role. Returns [] on a board without role rows, so the
+ * page falls back to plain presence. `minutes` is how long the role has been missing (null when never seen);
+ * `overdue` lists the ids of instructions waiting on a missing role.
  */
 export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
-  const rows = (b.presence as (Board["presence"][number] & { role?: string; present?: boolean; since?: string })[])
-    .filter((p) => p.role !== undefined && p.present !== undefined);
-  return rows.map((p) => {
-    const since = p.since ?? p.last_seen;
-    const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : 0;
+  return b.presence.filter((p) => p.role !== undefined).map((p) => {
+    const since = p.since ?? (p.present ? p.last_seen : null);
+    const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : null;
     const overdue = p.present ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
-    return { role: p.role!, present: !!p.present, last_seen: p.last_seen, since: p.since, minutes, overdue };
+    return { role: p.role!, present: p.present, last_seen: p.last_seen, since: p.since, minutes, overdue };
   });
 }
 
