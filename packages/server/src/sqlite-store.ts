@@ -1,8 +1,9 @@
 import type { DatabaseSync as Db } from "node:sqlite";
 // node:sqlite is newer than the bundlers' list of built-ins; ask Node for it directly so tests can load this file too.
 const { DatabaseSync } = (process as unknown as { getBuiltinModule(id: string): typeof import("node:sqlite") }).getBuiltinModule("node:sqlite");
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync, statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
+import { append, SERVICE_ACTOR, PROJECT_SURFACE } from "@ateam/core";
 import type { EventStore, Event, Log, Cursor, Delivery } from "@ateam/core";
 import { randomBytes } from "node:crypto";
 import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
@@ -11,12 +12,31 @@ import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, type
  * One SQLite file holds every project. Rows carry a `project` column; a log that predates projects (t-041) is
  * migrated on open into `defaultProject`, so the first project keeps its events, cursors and deliveries.
  */
+export interface SqliteDbOptions {
+  now?: () => Date;
+  /** Free bytes on the volume holding `dir` (default: statfs). */
+  freeBytes?: (dir: string) => number;
+  /** Copy the live database to `target` (default: VACUUM INTO, a consistent copy even with a WAL). */
+  copy?: (db: Db, target: string) => void;
+}
+
+/** What a migration wrote before it ran (t-053): where the copy is and how big; recorded in the default project's log. */
+export interface BackupRecord { migration: string; path: string; bytes: number }
+
 export class SqliteDb {
   readonly db: Db;
+  /** Set when opening this file required a schema migration: the backup taken first. */
+  readonly backup?: BackupRecord;
 
-  constructor(path: string, defaultProject = "ateam") {
+  constructor(path: string, defaultProject = "ateam", opts: SqliteDbOptions = {}) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
+    const cols0 = (table: string) => (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    const hasTable = (t: string) => !!this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    // t-041's migration: rows gain a project column. Before touching an existing file, copy it (t-053): the team deploys
+    // without a way to snapshot the volume, so a migration must carry its own way back.
+    const needsProjects = path !== ":memory:" && hasTable("events") && !cols0("events").includes("project");
+    if (needsProjects) this.backup = backupBefore(this.db, path, "projects", opts);
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, at TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL, json TEXT NOT NULL);
@@ -42,6 +62,33 @@ export class SqliteDb {
     if (!cols("projects").includes("node_secret")) this.db.exec(`ALTER TABLE projects ADD COLUMN node_secret TEXT NOT NULL DEFAULT ''`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS events_project ON events (project, id)`);
   }
+}
+
+/** Take the copy, or throw: no backup, no migration. */
+function backupBefore(db: Db, path: string, migration: string, opts: SqliteDbOptions): BackupRecord {
+  const now = opts.now?.() ?? new Date();
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const base = `${path}.pre-${migration}-${stamp}.bak`;
+  let target = base;
+  for (let n = 1; existsSync(target); n++) target = `${base}.${n}`;
+  const size = statSync(path).size + (existsSync(`${path}-wal`) ? statSync(`${path}-wal`).size : 0);
+  const free = (opts.freeBytes ?? ((dir) => { const f = statfsSync(dir); return Number(f.bavail) * Number(f.bsize); }))(dirname(path));
+  if (free < size) throw new Error(`refusing to migrate ${path} (${migration}): a backup needs ${size} bytes, the volume has ${free} free`);
+  try {
+    (opts.copy ?? ((d, t) => d.exec(`VACUUM INTO '${t.replace(/'/g, "''")}'`)))(db, target);
+  } catch (err) {
+    throw new Error(`refusing to migrate ${path} (${migration}): backup to ${target} failed: ${(err as Error).message}`);
+  }
+  if (!existsSync(target) || statSync(target).size === 0) throw new Error(`refusing to migrate ${path} (${migration}): backup ${target} is missing or empty`);
+  return { migration, path: target, bytes: statSync(target).size };
+}
+
+/** After a migration ran, tell the log where the copy is, so anyone can check it later. */
+export async function recordBackup(store: EventStore, backup: BackupRecord, human: string, now?: Date): Promise<void> {
+  await append(store, {
+    kind: "reading", actor: SERVICE_ACTOR, surface: PROJECT_SURFACE, key: "backup.path", value: { path: backup.path, bytes: backup.bytes, migration: backup.migration },
+    method: `服务启动时在 schema 迁移（${backup.migration}）之前用 VACUUM INTO 复制到同一卷`,
+  }, { human, now });
 }
 
 export class SqliteStore implements EventStore {

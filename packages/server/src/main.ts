@@ -1,5 +1,5 @@
 import { createApp } from "./app.js";
-import { SqliteDb, SqliteStore, SqliteRegistry } from "./sqlite-store.js";
+import { SqliteDb, SqliteStore, SqliteRegistry, recordBackup } from "./sqlite-store.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const db = process.env.ATEAM_DB ?? "./data/ateam.db";
@@ -13,7 +13,13 @@ const defaultProject = process.env.ATEAM_DEFAULT_PROJECT ?? "ateam";
 
 if (!token) console.warn("ATEAM_TOKEN is not set: the default project is open. Fine locally, not on the internet.");
 
-const sdb = new SqliteDb(db, defaultProject);
+let sdb: SqliteDb;
+try { sdb = new SqliteDb(db, defaultProject); }
+catch (err) { console.error(String((err as Error).message)); process.exit(1); }
+if (sdb.backup) {
+  console.log(`backup before migration ${sdb.backup.migration}: ${sdb.backup.path} (${sdb.backup.bytes} bytes)`);
+  await recordBackup(new SqliteStore(sdb, defaultProject), sdb.backup, human);
+}
 const app = createApp({
   registry: new SqliteRegistry(sdb), storeFor: (project) => new SqliteStore(sdb, project),
   defaultProject, token, human, sha, boardPublic,
