@@ -639,6 +639,11 @@ export function contactAskAnswered(s: State, i: Instruction): boolean {
  * a node that is alive but no longer pulling has to be listening again, and starting a second one is the crude way.
  */
 export function missingCard(role: string, status: "missing" | "deaf", awayMin: number | null, count: number): string {
+  // t-202：**`deaf` 那一支此刻走不到了，而我没有删它——删掉一句人看得见的话是 pd 的决定，不是我的。**
+  // 这张卡从此只在 `missing` 那一态起（起一个新的确实是出路的那一态）；deaf 的节点人仍然看得到，在
+  // 分组那一层（overdue_by_presence.deaf），只是不再以「起一个 X？」的形状进首屏。
+  // **停在这一步等 pd**（判据 3）：deaf 那一态到底要不要单独对人说一句、说什么，是措辞，冻结之下不自拟。
+  // 若 pd 说不必说，那时这一支连同它这句话一起退役；若 pd 要另说一句，它落在这儿。
   // The card asks the human for the one thing a human can do. What separates the two states is what is *true*, not a
   // second instruction: this node is still writing, and saying so is what stops the reader concluding it has died.
   // pd 06:04 retired 「没在听」 for the verb we can actually observe — whether it has come and read the log.
@@ -665,6 +670,27 @@ export function missingRoleOf(body: string): string | undefined {
 export function isMissing(s: State, role: string, now: Date, listenWindowMs = LISTEN_WINDOW_MS): boolean {
   const last = s.presence.get(role)?.last_pull;
   return !last || now.getTime() - Date.parse(last) > listenWindowMs;
+}
+
+/**
+ * t-202：**「没在听」的三态，一处算出来。**
+ *
+ * t-137 早就说过不许把两者合并成一个布尔：`missing` 是没人在跑这个角色，出路是起一个新的；`deaf` 是**它还
+ * 活着、还在写，只是没来读日志**，出路是让它去读，起第二个解决不了。分组那一层（t-139 的 `overdue_by_presence`）
+ * 照这三态分了，可**用它的那一层还是一个布尔**：那张「起一个 X？」的卡活在 `isMissing` 上，而 `isMissing` 只
+ * 读 `last_pull`——「从没拉过」与「还在写但不拉」对它是同一个 true。
+ *
+ * 后果是人的首屏上出现过一句假话：12:46:06 那份牌桌上 dev 6.8 分钟没拉、2.6 分钟前刚写过东西（`deaf`），卡却
+ * 说「dev 没在听了 13 分钟，起一个 dev？」——而它 12:42、12:46 各交了一件活。人被叫去起一个正在交活的节点。
+ *
+ * 所以判定只此一处：`row()` 里那三行原地展开的算法搬到这里，卡与分组读同一份。`isMissing` 留着不动——它问的
+ * 是「此刻听不听得见」（覆盖率、未送达都该用它），那个问题的答案确实是个布尔。
+ */
+export function presenceStatus(s: State, role: string, now: Date, listenWindowMs = LISTEN_WINDOW_MS): "listening" | "deaf" | "missing" {
+  const p = s.presence.get(role);
+  const within = (iso: string | null | undefined, ms: number) => !!iso && now.getTime() - Date.parse(iso) <= ms;
+  if (within(p?.last_pull, listenWindowMs)) return "listening";
+  return within(p?.last_event, PRESENCE_WINDOW_MS) ? "deaf" : "missing";
 }
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
@@ -826,7 +852,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // 这一行原来把它一并拿掉，于是一次签收就替他把问题从桌上收走了。
     if ((status === "acked" && !i.options?.length) || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
-    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
+    // t-202：这张卡问的是「要不要起一个新的」，所以它只在起一个新的**真能解决问题**的那一态活着。
+    // 回来了（listening）当然撤；**还在写只是没读（deaf）也撤**——起第二个解决不了它，而人照着卡去起，
+    // 结果是起一个正在交活的节点。deaf 那一态人仍然看得到，在分组那一层（NOBODY HAS ACTED ON），
+    // 只是不再以「起一个 X？」的形状进首屏。
+    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && presenceStatus(s, missingRoleOf(i.body)!, now, listenWindow) !== "missing") continue;
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
     if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
@@ -981,9 +1011,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const idleOf = (iso: string | null) => (iso ? Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 1000)) : null);
     const last_pull = p?.last_pull ?? null, last_event = p?.last_event ?? null, last = lastSeen(p);
     const idle_pull_s = idleOf(last_pull), idle_event_s = idleOf(last_event);
-    const listening = idle_pull_s !== null && idle_pull_s * 1000 <= listenWindow;
-    const spoke = idle_event_s !== null && idle_event_s * 1000 <= PRESENCE_WINDOW_MS;
-    const status = listening ? "listening" : spoke ? "deaf" : "missing";
+    // t-202：三态从 presenceStatus 来，卡那一层读的是同一份——这里原本自己算一遍，于是两层各算各的
+    const status = presenceStatus(s, actor, now, listenWindow);
+    const listening = status === "listening";
     return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
