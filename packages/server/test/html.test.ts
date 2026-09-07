@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
@@ -796,7 +796,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
 });
 
 describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08）", () => {
-  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const CONTACT = CONTACT_ASK;
   // The feature is off by default (pm 22:39 after the human's 「外呼地址先不做」): a fact turns it on
   const ask = async (v: ReturnType<typeof server>) => {
     await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
@@ -811,7 +811,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       let html = await v.page();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<span class="kind">请你做</span>');
-      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
+      // t-117 · pd 01:17: the body ends by saying what the button does, so the two read as one thing
+      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
       expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
       expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
@@ -1202,7 +1203,9 @@ describe("t-107 · 人看到的角色一律显示名", () => {
 });
 
 describe("t-111 · 按钮说出后果", () => {
-  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const CONTACT = CONTACT_ASK;
+  // an old card carries the words of its own time, body included (t-117)
+  const CONTACT_OLD = CONTACT_ASK_WAS;
   const card = (html: string) => {
     const needs = section(html, "needs-you", "say");
     const i = needs.indexOf("你不在时怎么找你");
@@ -1242,7 +1245,7 @@ describe("t-111 · 按钮说出后果", () => {
     try {
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       // an old card: its options are the words of its own time
-      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_OLD, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
       const cookie = await v.cookie();
       expect(card(await v.page({ cookie }))).toContain('value="先不要">先不要</button>'); // its own word, not today's
       expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
@@ -1310,5 +1313,141 @@ describe("t-110 · 钥匙三分后人看到的四处文字", () => {
       expect(html).not.toMatch(/k=[A-Za-z0-9]/);
       expect(html).not.toContain("secret");
     }
+  });
+});
+
+describe("t-114 · 轻接缝在牌桌上说一句", () => {
+  /** Two in-flight tasks on one file. Symbols disjoint => light; symbols absent or meeting => a real seam. */
+  const pair = async (v: ReturnType<typeof server>, a: string, b: string, ta: string[], tb: string[]) => {
+    await v.post("pm", { kind: "task", op: "create", task: a, title: `任务 ${a}`, criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: b, title: `任务 ${b}`, criteria: ["可用"] });
+    await v.post("dev", { kind: "task", op: "claim", task: a, touches: ta });
+    await v.post("frontend", { kind: "task", op: "claim", task: b, touches: tb });
+  };
+  const seamSection = (html: string) => {
+    const i = html.indexOf('<section id="seams">');
+    expect(i).toBeGreaterThan(0);
+    return html.slice(i, html.indexOf("</section>", i));
+  };
+
+  it("the dig layer splits seams in two groups, in pd's words; a light one carries no button, no red, and no count", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // 只有轻接缝: both sides named symbols in the same file and they do not meet.
+      await pair(v, "t-1", "t-2", ["packages/core/test/replay.test.ts#seams"], ["packages/core/test/replay.test.ts#readings"]);
+      let html = await v.page();
+      let seams = seamSection(html);
+      expect(seams).toContain("都动了同一个文件");
+      expect(seams).toContain("都动了 <code>packages/core/test/replay.test.ts</code>，各自的符号不相交，验收不挡。");
+      // pd 01:01 ①②: no button, no red tag, and it is not one of the "N 条未解决"
+      expect(seams).not.toContain("<form");
+      expect(seams).not.toContain("tag warn");
+      expect(seams).not.toContain("等人裁决");
+      expect(seams).toContain("0 条未解决");
+      expect(seams).not.toContain("另有");
+      // never above the fold, never a thing the human is asked to do
+      expect(fold(html)).not.toContain("都动了同一个文件");
+      const b = await (await fetch(`${v.base}/board`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa" } })).json() as Board;
+      expect(b.needs_human.map((x) => x.body).join(" ")).not.toContain("都动了");
+      expect(b.seams.filter((x) => x.open)).toHaveLength(0);
+
+      // 两组都有: a second pair on one file with nobody saying which half of it.
+      await pair(v, "t-3", "t-4", ["src/io.ts"], ["src/io.ts"]);
+      seams = seamSection(await v.page());
+      expect(seams).toContain("等人裁决");
+      expect(seams).toContain("都动了同一个文件");
+      expect(seams).toContain("1 条未解决");
+      expect(seams.indexOf("等人裁决")).toBeLessThan(seams.indexOf("都动了同一个文件"));
+
+      // 任务页: the same sentence, not a second wording of it (criterion 3)
+      const page1 = await (await fetch(`${v.base}/task/t-1`, { headers: { accept: "text/html" } })).text();
+      expect(page1).toContain("都动了同一个文件");
+      expect(page1).toContain("都动了 <code>packages/core/test/replay.test.ts</code>，各自的符号不相交，验收不挡。");
+      expect(page1).not.toContain("接缝 <span class=\"meta\">1</span>");
+      const page3 = await (await fetch(`${v.base}/task/t-3`, { headers: { accept: "text/html" } })).text();
+      expect(page3).toContain("接缝 <span class=\"meta\">1</span>");
+      expect(page3).not.toContain("都动了同一个文件");
+
+      // pd 01:18: a sentence that tells someone something gets a test that does it literally. This one ends
+      // 「验收不挡」, so verify one side of the light seam and assert it goes through — and that the heavy seam
+      // next to it still blocks, or the sentence would be true of everything and mean nothing.
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "1111111：可用" });
+      const ok = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "跑过了" }) });
+      expect(ok.status).toBe(201);
+      await v.post("dev", { kind: "task", op: "done", task: "t-3", evidence: "3333333：可用" });
+      const blocked = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-3", surface: "repo", pass: true, evidence: "跑过了" }) });
+      expect(blocked.status).toBe(409);
+    } finally { await v.stop(); }
+  });
+
+  it("只有等人裁决的、以及两组都没有: the light group leaves nothing behind when there is none", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // 两组都没有
+      expect(seamSection(await v.page())).toContain("无");
+      expect(seamSection(await v.page())).not.toContain("都动了同一个文件");
+
+      // 只有等人裁决的
+      await pair(v, "t-1", "t-2", ["src/io.ts"], ["src/io.ts"]);
+      const seams = seamSection(await v.page());
+      expect(seams).toContain("等人裁决");
+      expect(seams).toContain("1 条未解决");
+      expect(seams).not.toContain("都动了同一个文件");
+      expect(seams).not.toContain("<h4 class=\"seam-group\">都动了");
+      expect(seams).not.toContain("light-seams");
+      expect(seams).not.toContain("无");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say");
+    const i = needs.indexOf("你不在时怎么找你");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  // pd 01:18 / pm 01:19: a sentence that tells someone what a button does gets a test that does it, word for word.
+  // The words are 「不想要就点不要了，之后不再问你」, so: press 不要了, then give the service every chance to ask again.
+  it("点了「不要了」之后确实不再问：the card does not come back, on this page or the next one the service builds", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
+      const cookie = await v.cookie();
+      expect(card(await v.page({ cookie }))).toContain("不想要就点不要了，之后不再问你。");
+      expect(card(await v.page({ cookie }))).toContain('value="不要了">不要了</button>');
+
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      // every path that could put the card back: the page, a fresh append, a pull by a node
+      expect(card(await v.page({ cookie }))).toBe("");
+      await v.post("pm", { kind: "note", body: "随便记一句，让服务再跑一遍 follow-ups" });
+      await v.api("/pull?since=");
+      expect(card(await v.page({ cookie }))).toBe("");
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string; to?: string }[];
+      expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(1);
+    } finally { await v.stop(); }
+  });
+
+  it("a card already on the board carries the old question and still counts as answered (t-111's rule, for the body)", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK_WAS, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      // it keeps its own words and its own input box — it is the contact card, not a generic one
+      expect(card(await v.page({ cookie }))).toContain('name="value"');
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      await v.post("pm", { kind: "note", body: "让服务再跑一遍 follow-ups" });
+      await v.api("/pull?since=");
+      // answering the old card is answering the question: the service must not send today's card on top of it
+      expect(card(await v.page({ cookie }))).toBe("");
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
+      expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(0);
+    } finally { await v.stop(); }
   });
 });

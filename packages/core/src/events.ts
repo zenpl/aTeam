@@ -227,8 +227,24 @@ export const VERIFY_RESPONSIBILITY = "R6";
 /** Body prefixes of the instructions the service writes on behalf of the verification flow. */
 export const FAIL_NOTICE = " 验收未过：";
 export const VERIFY_ASK = " 做完了，验不验得过？";
-/** S0's second card (t-069, pd 21:07): how to reach the human when they are away. Optional; 先不要 skips it for good. */
-export const CONTACT_ASK = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+/**
+ * S0's second card (t-069, pd 21:07): how to reach the human when they are away. Optional; 不要了 skips it for good.
+ * pd 01:19 (t-117): the question the log records says the same thing the page shows — it used to offer an 邮箱 the
+ * service cannot send to, and to end in 「也可以先不要」 while the button under it says 「不要了」.
+ */
+export const CONTACT_ASK = "你不在时怎么找你？给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。";
+/**
+ * What the same question said before t-117. A card already on someone's board carries it, and it must keep its input
+ * box and its buttons — the same reason CONTACT_SKIP_WAS exists (t-111). New cards are never sent with this.
+ */
+export const CONTACT_ASK_WAS = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+/**
+ * Is this card the contact ask? Answering the old one must count as answering it — otherwise rewording the question
+ * (t-117) silently re-asks everyone who already said 不要了.
+ */
+export function isContactAsk(body: string): boolean {
+  return body === CONTACT_ASK || body === CONTACT_ASK_WAS;
+}
 export const CONTACT_FILL = "填写";
 /** t-111 (pd 00:39): a button says what it costs — this one closes the question for good, so it is not 「先不做」. */
 export const CONTACT_SKIP = "不要了";

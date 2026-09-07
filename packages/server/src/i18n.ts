@@ -1,3 +1,4 @@
+import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -24,7 +25,9 @@ export const UI = {
   youJust: "你刚定了：",
   // 起项目第二张卡：你不在时怎么找你 (t-069, pd 21:08)
   contactTitle: "你不在时怎么找你？",
-  contactBody: "给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。",
+  // t-117 · pd 01:17: the body ends by saying what the button does. A card whose body teaches the opposite
+  // of the button right above it undoes the button (pd: 正文与按钮是一体的，改了一个必须回头读另一个).
+  contactBody: "给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。",
   contactPlaceholder: "https://…",
   contactSave: "记下",
   contactSkip: "不要了", // t-111 (pd 00:39): this one closes the question for good
@@ -138,6 +141,12 @@ export const UI = {
   seamOpen: "未解决",
   olderStale: (n: number) => `另有 ${n} 条更早的已失效`,
   seamsElsewhere: (n: number) => `另有 ${n} 条已解决或先后落地，见各任务页`,
+  // t-114 · pd 01:01: the dig layer splits seams in two. A light seam is a heads-up for whoever merges second,
+  // never a thing to do — no button, no red, and it is not counted in "N 条未解决".
+  // The words live in core (SEAM_UNDECIDED / SEAM_SAME_FILE / lightSeamLine): the CLI says the same thing (pm 01:20).
+  seamsUndecided: SEAM_UNDECIDED,
+  seamsSameFile: SEAM_SAME_FILE,
+  seamLight: lightSeamLine,
   // 任务页 (t-065)
   taskPage: "任务",
   backToBoard: "← 回牌桌",

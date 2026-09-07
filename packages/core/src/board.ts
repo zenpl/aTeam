@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -344,13 +344,13 @@ export function alertContact(s: State): Board["alert"] {
     return { status: "set", value: v.trim(), source: "given" };
   }
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
-  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
+  const skipped = [...s.instructions.values()].some((st) => isContactAsk(st.instruction.body) && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
 }
 
 /** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
 export function contactAskAnswered(s: State, i: Instruction): boolean {
-  if (i.body !== CONTACT_ASK) return false;
+  if (!isContactAsk(i.body)) return false;
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   return !!r && r.valid && !r.expired && typeof r.reading.value === "string" && !!r.reading.value.trim();
@@ -785,6 +785,28 @@ function splitRelease(s: State, b: Board) {
  * t-100 (display only, changes nothing in the log): the ids whose display name a reader could mistake for another row —
  * because it is another row's id, or because two rows carry the same display name. Rows outside this set stay clean.
  */
+/**
+ * A light seam, in one sentence (t-114 · pd 01:01). The page and the CLI say it identically — pm 01:20: a reader
+ * of `ateam board` and a reader of the board should not see two different pictures of the same thing.
+ *
+ * Callers pass whatever their surface makes a name look like (the page passes links, the CLI passes bare ids), so
+ * this holds the words and nothing else.
+ */
+export const SEAM_UNDECIDED = "等人裁决";
+export const SEAM_SAME_FILE = "都动了同一个文件";
+
+export function lightSeamLine(a: string, b: string, files: string): string {
+  return `${a} 与 ${b} 都动了 ${files}，各自的符号不相交，验收不挡。`;
+}
+
+/**
+ * The files a light seam's two sides share. Its overlap is symbol-level (`a.ts#x`, `a.ts#y`) and the two sides
+ * touched *different* symbols, so the sentence names the file — printing the overlap verbatim would say they met.
+ */
+export function seamFiles(overlap: string[] | undefined): string[] {
+  return [...new Set((overlap ?? []).map((o) => o.split("#")[0]))];
+}
+
 export function ambiguousLabels(b: Board): Set<string> {
   const tasks = Object.values(b.tasks).flat();
   const ids = new Set(tasks.map((t) => t.id));
