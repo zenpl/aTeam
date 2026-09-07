@@ -135,6 +135,9 @@ export function board(b: Board, me: string): string {
     }
   }
 
+  // t-149 判据 3：闸的实话在挖层，不在首屏，也不是一张卡。它只在完整板上有；瘦身板里没有它。
+  for (const g of b.gate_honesty ?? []) out.push("", `GATE ${g.gate}`, `  ${g.line}`);
+
   const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
     out.push("", `SEAMS (open: nobody owns these; they block verify) · ${SEAM_UNDECIDED}`);

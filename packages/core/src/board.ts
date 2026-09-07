@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -209,6 +209,11 @@ export interface Board {
    * because they need opposite things done. On every board — a batch nobody can act on is the thing that goes wrong.
    */
   batches: BoardBatch[];
+  /**
+   * t-149: 每一道**此刻不可信**的闸的那一句实话。可信的闸不在这里，也不留占位符（判据 4）。
+   * 判据 3：它的位置是挖层与报告——不进首屏、不生成给人的卡，所以瘦身板里没有它。
+   */
+  gate_honesty: GateHonesty[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
@@ -621,6 +626,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     undelivered: [],
     overdue: [],
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
+    gate_honesty: [],
     instructions: [],
     readings: [],
     tasks: {},
@@ -824,6 +830,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     b.presence.push(row(actor, undefined));
   }
   // The human is not grouped by presence: NEEDS HUMAN is its own list, and 「起一个 human」 is not a thing to say.
+  b.gate_honesty = GATES.map((g) => gateHonesty(s, g)).filter((x): x is GateHonesty => x !== null);
   b.overdue_by_presence = overdueByPresence(b, owedTo(s).filter((st) => st.instruction.to !== human).map((st) => ({ instruction: st.instruction.id, to: st.instruction.to })));
   return b;
 }
@@ -845,6 +852,75 @@ export function owedTo(s: State, to?: string): InstructionState[] {
       (to === undefined || st.instruction.to === to) &&
       (st.instruction.actor !== SERVICE_ACTOR || !noticeStaleness(s, st.instruction)),
   );
+}
+
+/**
+ * t-149: 一道闸知道自己不可信时，它的每条结论都要带上实话。
+ *
+ * 「不可信」不是一个手写的开关，也不是谁的印象：它由日志算出来——这道闸报过的结论里，有多少条被人核对之后
+ * 判为误报或漏报，以及是否存在一件以它为成因、还没在生产上验过的修法。两个条件都成立，这句话才出现；任何一个
+ * 不成立，它就不出现，也不留占位符（判据 4：今晚 t-139 那种「两处各编一个数」的形状不许再有）。
+ *
+ * 数只数**被声明过的判决**（seam 事件上的 verdict/missed 字段）。没判过的既不算真也不算假，句子里如实说还有
+ * 几条没判——一道自陈不可信的闸，绝不该顺手替谁编一个数。
+ */
+export interface GateHonesty {
+  gate: Gate;
+  /** 这道闸至今产生过多少条结论（接缝闸：它检出的每一条接缝）。 */
+  reported: number;
+  /** 其中被人核对并声明过判决的。 */
+  judged: number;
+  /** 判为误报的。 */
+  false_positives: number;
+  /** 声明过「它还漏报了」的。与判决正交：真接缝也可能同时是一次漏报。 */
+  missed: number;
+  /** 还没有人判过的。 */
+  unjudged: number;
+  /** 修法：`project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。 */
+  fix?: { task: string; status: string; verified_on: string[]; in_production: boolean };
+  /** 判据 1 的那一句，core 一处算出，唯一 key。 */
+  line: string;
+}
+
+/** t-149 判据 1 的那一句。措辞待 pd 定稿（我已发给它）；在那之前这是唯一一处出处，改也只改这里。 */
+function honestyLine(h: Omit<GateHonesty, "line">): string {
+  const what = h.false_positives || h.missed
+    ? `${h.judged} 条经核对，其中 ${h.false_positives} 条是误报${h.missed ? `、${h.missed} 条还漏报了` : ""}`
+    : `${h.judged} 条经核对`;
+  const rest = h.unjudged ? `，另有 ${h.unjudged} 条没人判过` : "";
+  const fix = h.fix
+    ? `修法在 ${h.fix.task}，${h.fix.in_production ? "已在生产上" : h.fix.verified_on.length ? `已验（${h.fix.verified_on.join("、")}），还没上生产` : `此刻 ${h.fix.status}`}`
+    : "还没有一件任务认领它的修法";
+  return `这道闸至今报过 ${h.reported} 条，${what}${rest}；${fix}。据它下的结论，先自己核一遍。`;
+}
+
+/** t-149: `project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。事实无效或指向不存在的任务时，当作没有。 */
+function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${gateFixKey(gate)}`);
+  const rs = id ? s.readings.get(id) : undefined;
+  const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
+  if (!rs || !rs.valid || rs.expired || !task) return undefined;
+  const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
+  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes("production") };
+}
+
+export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
+  if (gate !== "seam") return null;   // 今天只有接缝闸产生可被核对的结论
+  const seams = [...s.seams.values()];
+  const judged = seams.filter((x) => x.resolution?.verdict);
+  const h = {
+    gate,
+    reported: seams.length,
+    judged: judged.length,
+    false_positives: judged.filter((x) => x.resolution!.verdict === "false").length,
+    missed: seams.filter((x) => x.resolution?.missed).length,
+    unjudged: seams.length - judged.length,
+    fix: gateFix(s, gate),
+  };
+  // 判据 2：两个条件都成立才叫「已知缺陷」——有被判过的错，且修法还没在生产上。都不成立就没有这句话。
+  const broken = h.false_positives > 0 || h.missed > 0;
+  if (!broken || !h.fix || h.fix.in_production) return null;
+  return { ...h, line: honestyLine(h) };
 }
 
 /**
@@ -954,7 +1030,8 @@ export function slimBoard(b: Board): Board {
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
   const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
-  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted: [] };
+  // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
+  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
   slim.omitted = omittedPaths(b, slim);
   return slim;
 }

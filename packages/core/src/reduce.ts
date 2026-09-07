@@ -1,6 +1,6 @@
 import {
   type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
-  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm } from "./events.js";
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm, type SeamVerdict } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
@@ -139,7 +139,8 @@ export interface SeamState {
   stacked?: { done: string; on: string };
   /** Both sides belong to the same owner: sequential work by one hand, visible but never a collision (t-045). */
   same_owner?: boolean;
-  resolution?: { by: string; at: string; text: string };
+  /** t-149: `verdict`/`missed` judge the *gate*, not the two tasks: was this one real, and did it also miss something. */
+  resolution?: { by: string; at: string; text: string; verdict?: SeamVerdict; missed?: boolean };
   /** t-073: both sides done and the later absorbed the earlier, by the project's declared form; blocks nothing. */
   absorbed?: { later: string; earlier: string; basis: string; by?: string };
   /**
@@ -503,7 +504,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "seam": {
       const id = seamId(e.tasks[0], e.tasks[1]);
       const seam = s.seams.get(id) ?? { id, tasks: e.tasks, overlap: [] };
-      seam.resolution = { by: e.actor, at: e.at, text: e.resolution };
+      seam.resolution = { by: e.actor, at: e.at, text: e.resolution, verdict: e.verdict, missed: e.missed || undefined };
       s.seams.set(id, seam);
       return;
     }

@@ -120,7 +120,13 @@ export type TaskOp =
   | { op: "reopen"; task: string; reason: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
   | { op: "criteria"; task: string; add: string[] }
-  | { op: "seam"; tasks: [string, string]; resolution: string };
+  | {
+      op: "seam"; tasks: [string, string]; resolution: string;
+      /** t-149: 对闸本身的判决——这条是真撞车（real）还是它报错了（false）。不写就是没判过，句子里如实说。 */
+      verdict?: SeamVerdict;
+      /** t-149: 这一次闸还漏掉了它该报的东西。与 verdict 正交：真接缝也可以同时是一次漏报。 */
+      missed?: boolean;
+    };
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
@@ -340,6 +346,32 @@ export const REACH_RULE =
   "发给你的指令，服务从你的拉取自己知道你读没读到，不必回执。你欠的只有两件：带选项的卡要一个答案；不打算办的写一句「不办：原因」。沉默不是答案——发的人会一直以为你还没读到。";
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";
+
+/**
+ * t-149: 一道闸（一条自动判断，做出结论并据此挡人）的名字。判决与「修哪道闸」都指它，所以两边说的是同一道闸。
+ * 今天只有接缝闸有过被人核对的历史；再加一道闸，就在这里加一个名字，不在别处另起一套。
+ */
+export const GATES = ["seam"] as const;
+export type Gate = (typeof GATES)[number];
+
+/**
+ * t-149: 一条接缝解决对**闸本身**的判决，与它对两件任务的处置分开。
+ *
+ * 今晚 pm 每一次都做了这个判断，但只写在解决的正文里，于是它算不出来——而且按词去猜会数反：
+ * 01M1XAN1V2Z150HBEYY6RQQCGX 的正文同时含「真接缝」和「假接缝」，后者出现在「不属于今晚那八条假接缝」
+ * 这句否定里。所以判决是一个声明的字段，不是从散文里认出来的词。
+ *
+ * `missed` 与判决正交：t-139+t-140 是真接缝，闸同时还漏报了两个真撞的文件。真与漏可以同时成立。
+ */
+export const SEAM_VERDICTS = ["real", "false"] as const;
+export type SeamVerdict = (typeof SEAM_VERDICTS)[number];
+export const SEAM_VERDICT_WORDS: Record<SeamVerdict, string> = { real: "真接缝", false: "误报" };
+
+/**
+ * t-149: 「这道闸的修法在哪一件任务上」——一条事实，`project:gate.<闸>.fix`，值是任务 id。
+ * 它只是个指针；「这道闸此刻可不可信」不由它决定，由被判过的结论算出来（见 gateHonesty）。
+ */
+export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
