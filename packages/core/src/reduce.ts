@@ -688,8 +688,32 @@ function standingDone(t: TaskState): string | undefined {
 }
 
 /**
- * t-067 (absorbing t-009): a side whose standing done precedes the other side's claim stacks; the later side builds
+ * t-160：`t` 有没有**任何一次** done 早于 `claimId`。
+ *
+ * 原来这里读的是 `standingDone`——最新的那一次。于是一件做完的活只要再交一次（reopen 之后重 done，今晚我为了
+ * 换一个 sha 就做了两回），它与「在它第一次 done 之后才 claim 的那件」之间的接缝就重新变成开的，**它的验收当场
+ * 被一件还没写代码的任务挡住**。今晚这一幕花掉三次：每次都是 qa 一次自查、pm 一次裁定、两条 tell。
+ *
+ * 时序说的是「那一刻这块地是不是已经有主」：后者按下 claim 的时候，前者已经是一件交出去的活——这件事**后来
+ * 发生什么都不会改变它**。所以读的是历史，不是当下。后者的合并义务一点没变（判据 2）：CLI 那头对的是前者
+ * **此刻**的证据 sha，前者又交了一轮，后者要合的就是新的那一轮。
+ */
+function doneBefore(t: TaskState, claimId: string | undefined): string | undefined {
+  if (!claimId) return undefined;
+  return t.history.find((h) => h.op === "done" && h.id < claimId)?.id;
+}
+
+/**
+ * t-067 (absorbing t-009): a side whose done precedes the other side's claim stacks; the later side builds
  * on it and must merge it (the CLI checks that at done). Both in flight at the same time is a collision, whoever owns them.
+ *
+ * **t-160 判据 4：这里有两条各自独立的放行，它们不互相取代，也不互为退路。**
+ * · **按时序放行**（这里的 `stacked`）：后者按下 claim 的那一刻，前者已经是一件交出去的活。放行的理由是**先后**，
+ *   与两边碰了多少东西无关——重叠得再多也放行，因为后者是在一个已完成的东西上面开工的。
+ * · **按重叠程度放行**（t-113 的 `light`）：两边都在途，但各自声明到了符号一级且不撞在同一个符号上。放行的理由是
+ *   **粒度**，与谁先谁后无关。
+ * 一条接缝可能只满足其中一条，`openSeamsFor` 对两者都放行。把它们合成一条会同时弄坏两边：只按时序，两个同时
+ * 在途、明明不碰同一处的人会被无谓地挡住；只按重叠，一件做完的活又会被一件还没写代码的活挡住——那正是 t-160。
  */
 function judgeSeam(s: State, seam: SeamState) {
   const [a, b] = seam.tasks.map((id) => s.tasks.get(id));
@@ -697,8 +721,11 @@ function judgeSeam(s: State, seam: SeamState) {
   seam.absorbed = undefined;
   if (!a || !b) return;
   const doneA = standingDone(a), doneB = standingDone(b);
-  if (doneA && b.claimed_id && doneA < b.claimed_id) seam.stacked = { done: a.id, on: b.id };
-  else if (doneB && a.claimed_id && doneB < a.claimed_id) seam.stacked = { done: b.id, on: a.id };
+  // t-160：**时序按历史判，在途与否按当下判。**两半缺一不可：
+  // · `doneA` 还是当下的——一件被 reopen、此刻又回到在途的活，不是「已经交出去的东西」，那是真碰车（t-009/t-028）。
+  // · 时序用 `doneBefore` 读历史——后者按下 claim 的那一刻这块地已经有主，前者后来又交了一轮不改变那一刻。
+  if (doneA && doneBefore(a, b.claimed_id)) seam.stacked = { done: a.id, on: b.id };
+  else if (doneB && doneBefore(b, a.claimed_id)) seam.stacked = { done: b.id, on: a.id };
   // t-073: a resolution the rule wrote (the doer's CLI checked git) says who absorbed whom
   const written = seam.resolution && seam.resolution.text.startsWith(ABSORB_PREFIX) ? /后者 (\S+) 含前者 (\S+)/.exec(seam.resolution.text) : null;
   if (written && doneA && doneB) {

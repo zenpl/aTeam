@@ -1618,8 +1618,11 @@ describe("t-067 · the side that was done before the other claimed is never bloc
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补" });
     expect((await seams(store, c))[0]).toMatchObject({ open: true, stacked: undefined }); // A is in flight again
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" , no_human_impact: true});
-    expect((await seams(store, c))[0]).toMatchObject({ open: true }); // A's newest done is after B's claim: both were in flight
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    // t-160 改了这两行。原来的规则读的是 A **最新**那次 done：它晚于 B 的 claim，于是接缝重新变成开的，A 的验收
+    // 被一件还没写代码的任务挡住。可 B 按下 claim 的那一刻 A 已经是一件交出去的活——**A 后来又交了一轮，改变不了
+    // 那一刻**。今晚这一幕花掉三次（qa 一次自查 + pm 一次裁定 + 两条 tell）。B 的合并义务一点没少（判据 2）：
+    // CLI 那头对的是 A **此刻**的证据 sha，A 又交了一轮，B 要合的就是新的那一轮。
+    expect((await seams(store, c))[0]).toMatchObject({ stacked: { done: "A", on: "B" }, open: false });   // 不再挡 A 的验收
     // B finishes first this time; then A reclaims after B's done: B is the earlier side now
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再补" });
@@ -2767,5 +2770,76 @@ describe("t-119 · a fallback's state is proved by reaching, not by a string bei
     // 它只读日志：没有任何发请求的东西（https:// 是形状检查里的字面量，不是一次调用）
     for (const forbidden of ["fetch(", "request(", "probe", "ping", "node:http"]) expect(fn.toLowerCase(), forbidden).not.toContain(forbidden);
     expect(readFileSync(new URL("../src/board.ts", import.meta.url), "utf8")).not.toContain("node:http");
+  });
+});
+
+/**
+ * t-160：**一件做完的活，不该被一件在它之后才开工的活挡住验收。**
+ *
+ * t-009 定的原则是「先 done 的一方不被后来 claim 的一方阻塞」，但它读的是**最新**那次 done。于是一件交完又重交
+ * 一轮的活（reopen 之后换个 sha 重 done，今晚很常见）当场掉出这条原则：接缝重新变开，验收被挡。今晚花掉三次，
+ * 每次都是 qa 一次自查、pm 一次裁定、两条 tell。判据 5 把根量到了这一行。
+ */
+describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"], no_human_impact: true });
+  const seamOf = async (store: MemoryStore, c: ReturnType<typeof clock>) =>
+    board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams[0];
+
+  it("判据 1、3 正例：A 先 done、B 后 claim 且触点相交——A 可以落 pass；A 再交一轮也还是可以", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    expect((await seamOf(store, c)).overlap).toEqual(["app.ts"]);          // 触点真的相交
+    // 重交一轮：今晚我为了换一个 sha 就这么做过两回
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "换个 sha 重交" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb" });
+    expect((await seamOf(store, c)).stacked).toEqual({ done: "A", on: "B" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+  });
+
+  it("判据 3 反例：B 先 claim，两边同时在途——仍然挡住", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa" });
+    expect((await seamOf(store, c)).stacked).toBeUndefined();
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    expect(r.message).toMatch(/unresolved seam/);
+  });
+
+  it("判据 1 的「不论触点是否相交」：时序说了算，重叠多少不改变结论", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts", "html.ts", "board.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts", "html.ts", "board.ts"] });
+    expect([...(await seamOf(store, c)).overlap].sort()).toEqual(["app.ts", "board.ts", "html.ts"]);
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+  });
+
+  it("判据 2：放行的是前者的验收，不是后者的合并责任——B 那头对的仍是 A 此刻的证据 sha", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(30));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa: 第一轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb: 第二轮" });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    // A 的验收放行了，而 B 要合的是 A **此刻**那一轮：接缝仍然指着 A 的新证据，不是第一轮那个 sha
+    expect(boardTask(b, "A")!.evidence).toContain("bbbbbbb");
+    expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
   });
 });
