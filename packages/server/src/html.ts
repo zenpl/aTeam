@@ -74,9 +74,14 @@ export function waitingLine(b: Board): string {
 }
 
 /** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
-export function contactLine(address: string | null): string {
-  if (!address) return UI.contactNone;
-  return /^https?:\/\//i.test(address) ? UI.contactTo(address) : UI.contactEmail;
+export function contactLine(alert: Board["alert"], address: string | null): string {
+  // t-126: core already worked out whether we can actually reach them (t-119's four states) and pd's sentence for
+  // each. The page says that sentence and does not re-derive one from the shape of the string: "there is an address"
+  // was never evidence that a call-out arrives, and 「你不在时发到这里」 promises exactly that.
+  if (alert?.line) return alert.line;
+  if (alert) return UI.contactNone;   // unanswered / skipped: core has no sentence, and there is nothing to promise
+  // An older server sends no alert at all (t-080's lesson): say the one thing that is true without it.
+  return address ? UI.contactUnknown : UI.contactNone;
 }
 
 /** The address the call-outs use, when the fact is valid. */
@@ -325,7 +330,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   if (waiting) out.push(`<p class="meta waiting">${machineWords(waiting)}</p>`);
   // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
   // no address or skipped; an email that nothing sends to; an https address that gets the call.
-  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
+  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(b.alert, contact))}</p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);

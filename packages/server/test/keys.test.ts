@@ -237,3 +237,4 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect((await fetch(`${base}/owner-url`, { headers: { authorization: `Bearer ${nodeKey}` } })).status).toBe(401);
   });
 });
+
