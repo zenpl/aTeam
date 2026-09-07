@@ -46,3 +46,40 @@ export function deafNotice(st: WatchState): string | null {
   const when = st.kind === "stopped" ? `在 ${howLong(st.sinceMs)}前停了` : "停了（心跳文件读不出来，说不出多久）";
   return `⚠ 你的监听${when}，期间可能漏了指令，重挂：${st.cmd}`;
 }
+
+/**
+ * t-137: how long the *server* has gone without seeing this node pull, from the `x-ateam-pull-idle` header every
+ * answer carries. `null` when the server did not say (an older service, or a command that made no request).
+ */
+export type PullIdle = { kind: "seconds"; s: number } | { kind: "never" } | null;
+
+export function pullIdle(header: string | null | undefined): PullIdle {
+  if (header === undefined || header === null || header === "") return null;
+  if (header === "never") return { kind: "never" };
+  const s = Number(header);
+  return Number.isFinite(s) && s >= 0 ? { kind: "seconds", s } : null;
+}
+
+/**
+ * t-137: the second way of not listening, which nothing used to say. Your heartbeat is beating — the watch process is
+ * alive — and the server has still not seen you pull. Its remedy is not the other one's: re-arming a watch that never
+ * stopped fixes nothing; what you need is to go and read what you missed.
+ */
+export function behindNotice(idle: PullIdle, windowMs = LISTEN_WINDOW_MS): string | null {
+  if (!idle) return null;
+  if (idle.kind === "never") return "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync";
+  if (idle.s * 1000 <= windowMs) return null;
+  return `⚠ 服务端说你 ${howLong(idle.s * 1000)}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`;
+}
+
+/**
+ * Both kinds, in one place, never merged into one (t-137 判据 3). They have different causes and opposite remedies:
+ * a stopped watch is re-armed, a lagging cursor is caught up. When the watch has stopped, the cursor stopped moving
+ * *because of that* — so only the line with the remedy is said, rather than the same news twice in two voices.
+ */
+export function listeningNotices(st: WatchState, idle: PullIdle, windowMs = LISTEN_WINDOW_MS): string[] {
+  const deaf = deafNotice(st);
+  if (deaf) return [deaf];
+  const behind = behindNotice(idle, windowMs);
+  return behind ? [behind] : [];
+}

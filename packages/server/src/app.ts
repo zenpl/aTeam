@@ -530,6 +530,14 @@ export function createApp(opts: ServerOptions) {
       if (actor === human && !isOwner && await ownerArrived())
         return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
 
+      // t-137: the two ways of not listening are not one thing. A node can already tell that its own watch died
+      // (t-102, from its heartbeat file); it cannot tell that the *server* has stopped seeing it pull, because a
+      // heartbeat that is still beating says nothing about a cursor that has stopped moving. So every answer carries
+      // how long it has been, in seconds, since this actor last pulled — a number, not a verdict, because the node is
+      // the one that knows whether its watch is alive and the two want opposite remedies.
+      const pulled = (await stateFor(projectId, store)).presence.get(actor)?.last_pull ?? null;
+      res.setHeader("x-ateam-pull-idle", pulled ? String(Math.max(0, Math.round((now().getTime() - Date.parse(pulled)) / 1000))) : "never");
+
       if (req.method === "GET" && path === "/board") {
         await remind();
         const b = board(await stateFor(projectId, store), human, now());

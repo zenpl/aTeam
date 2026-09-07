@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { Client, ClientError, ShapeError } from "./client.js";
+import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
-import { watchState, deafNotice } from "./deaf.js";
+import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
@@ -407,8 +407,10 @@ function sayIfDeaf(argv: string[]): void {
     const me = process.env.ATEAM_ME || stored.me;   // just the identity: a half-configured node still deserves the reminder
     if (!me) return;
     const path = join(process.cwd(), ".ateam", `watch.${me}.lock`);
-    const line = deafNotice(watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date()));
-    if (line) console.error(line);
+    // t-137: two ways of not listening, told apart. The heartbeat file says whether this node's own watch died; the
+    // header the server sent says whether the server has seen it pull. Same place, same shape, never one verdict.
+    const st = watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date());
+    for (const line of listeningNotices(st, pullIdle(seen.pullIdle))) console.error(line);
   } catch { /* never let the reminder break the command that carried it */ }
 }
 
