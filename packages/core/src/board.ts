@@ -880,7 +880,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     (b.tasks[t.status] ??= []).push({
       era, summary,
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
+      // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
+      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1421,7 +1423,7 @@ export function slimBoard(b: Board): Board {
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       // t-164: 在途那几件的触点留在瘦身板里——「这块地上还有谁」只需要它们，而在途的从来只有几件。
       // 已经 done 的不留：那是接缝在 done 时判的事，不是「还有谁在」。
-      touches: t.status === "working" ? t.touches : undefined,
+      touches: t.status === "working" ? t.touches : undefined,   // t-164 只看在途那一份：那是「这块地上还有谁」，不是「这件碰过什么」
       claimed_at: t.status === "working" ? t.claimed_at : undefined,   // t-191: 与 touches 同去同留，它们是同一个问题的两半
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,

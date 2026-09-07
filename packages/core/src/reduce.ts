@@ -30,6 +30,18 @@ export interface TaskState {
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
+  /**
+   * t-157：**这件任务一共碰过什么**——各轮的并集。
+   *
+   * `touches` 按 t-135 的定义只算**本轮**（那条是对的，不要推翻它：一轮的账从这一轮的起点算起，否则一件
+   * reopen 过的活会被记上它 owner 在两轮之间做的一切）。但「这件任务碰了什么」这个**对外**的答案不是最后一轮，
+   * 是全部——dev 07:22 实测：t-147 两轮碰了 17 个文件，done 之后记录上只剩 3 个，而它真正与 t-152 相撞的
+   * html.ts / i18n.ts / app.ts / format.ts / loop.ts 全在第一轮里。那次没漏挡是因为接缝当时已经解决过，
+   * 不是因为规则挡住了它。
+   *
+   * 所以接缝检测与触点索引都读这一份；每一轮自己那一份仍然只算本轮。
+   */
+  touched_all: string[];
   status: TaskStatus;
   blocked_on?: string;
   /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
@@ -596,7 +608,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
-        created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
         // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
@@ -624,6 +636,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      // t-157：**claim 不并进去。**并集攒的是「已经交出去的那些轮」，而本轮的声明随时可能被改窄——
+      // t-105 与 t-113 靠的正是改窄（done 时按事实取代声明、把粗粒度的声明收细成符号）。把本轮也并进去，
+      // 那两条当场坏掉：一条接缝再也细不下去，一次更正再也收不回来。本轮那一份在下面用的时候现并。
       indexTouches(s, t);   // t-121: the index follows the declaration, always
       t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
@@ -634,7 +649,13 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
       // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
-      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; indexTouches(s, t); detectSeams(s, t); }
+      if (e.touches !== undefined) {
+        t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))];
+        // t-157：**一轮结束时才并进去。**done 那一份是本轮的事实，它取代本轮的声明；并进并集之后只增不减——
+        // 上一轮碰过的东西，不会因为这一轮没再碰它就变成「这件任务没碰过」。
+        t.touched_all = [...new Set([...t.touched_all, ...t.touches])];
+        indexTouches(s, t); detectSeams(s, t);
+      }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
@@ -679,9 +700,14 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
  */
 function detectSeams(s: State, t: TaskState) {
-  for (const other of seamCandidates(s, t.id, t.touches)) {
-    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
-    const overlap = overlapOf(t.touches, other.touches);
+  // t-157 判据 4：接缝读的是**并集**，不是最后一轮。第一轮碰 A、第二轮碰 B，另一件碰 A——这条接缝必须报出来。
+  // 已经交出去的那几轮（`touched_all`）加上本轮此刻的声明（`touches`）。本轮的不写进 `touched_all`，
+  // 所以改窄本轮的声明仍然生效（t-105、t-113）；而前几轮的不会因为本轮没碰而消失（t-157）。
+  const mineAll = [...new Set([...t.touched_all, ...t.touches])];
+  for (const other of seamCandidates(s, t.id, mineAll)) {
+    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !(other.touched_all.length + other.touches.length)) continue;
+    const theirsAll = [...new Set([...other.touched_all, ...other.touches])];
+    const overlap = overlapOf(mineAll, theirsAll);
     if (!overlap.length) {
       // t-105: recomputing is not only "find more". A revision that narrows the touches can leave a seam describing an
       // overlap that no longer exists, and a seam nobody actually has is one more thing blocking a verify for nothing.
@@ -690,7 +716,7 @@ function detectSeams(s: State, t: TaskState) {
     }
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
-    const light = overlapIsLight(t.touches, other.touches) || undefined;
+    const light = overlapIsLight(mineAll, theirsAll) || undefined;
     const existing = s.seams.get(id);
     if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
     s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
@@ -739,7 +765,7 @@ function indexTouches(s: State, t: TaskState) {
   }
   const mine = new Set<string>();
   s.dirTouchers.delete(t.id);
-  for (const touch of t.touches) {
+  for (const touch of new Set([...t.touched_all, ...t.touches])) {
     const path = touchPath(touch);
     mine.add(path);
     let ids = s.byTouch.get(path);

@@ -387,7 +387,15 @@ async function main(argv: string[]) {
           return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
-        case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
+        case "unblock": {
+          // t-157 判据 3：**unblock 与 reopen 一视同仁——都是新的一轮，都要移动本轮起点。**
+          // 之前它落在 claim 那一边（baseAt("claim", …) 保留原来的起点），于是解除阻塞之后那一轮的账从上一轮的
+          // 起点算起，出路只有手改 .ateam/base.<id>；而 t-135 自己说过：只能靠手改的闸，是人学会绕开的闸。
+          const t = need(id, "<id>");
+          const e = await emit({ kind: "task", op, task: t });
+          stampBase(t, "reopen");
+          return e;
+        }
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "obsolete": return emit({ kind: "task", op, task: need(id, "<id>"), decision: str(a, "by") ?? "", reason: str(a, "reason") });
         case "reopen": {
