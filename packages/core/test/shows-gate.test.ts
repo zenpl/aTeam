@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, reduce, board, Rejected, NO_HUMAN_IMPACT, touchesHumanVisible, SERVICE_ACTOR, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, manual, Rejected, NO_HUMAN_IMPACT, touchesHumanVisible, KEY_SYMBOLS, SERVICE_ACTOR, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -110,10 +110,13 @@ describe("t-151 · 判据 4：存量只减不增，而且没有任何界面催�
 describe("t-151 · pd 07:49 的三条", () => {
   it("措辞是 pd 定的那一句，core 一处，拒绝话与说明书都引它、不各写一份", () => {
     expect(NO_HUMAN_IMPACT).toBe("不改变人看到的东西");
-    const manual = readFileSync(new URL("../manual/common.md", import.meta.url), "utf8");
+    const md = readFileSync(new URL("../manual/common.md", import.meta.url), "utf8");
     const rules = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
-    expect(manual).not.toContain(NO_HUMAN_IMPACT);          // 说明书不抄那句话，它教的是那个开关
-    expect(manual).toContain("--no-human-impact");
+    expect(md).not.toContain(NO_HUMAN_IMPACT);              // 说明书不抄那句话，它教的是那个开关
+    // t-179：第 6 步与第 3.5 步现在是 {{shows_rule}} / {{promise_rule}} 填进来的，所以「教那个开关」这件事
+    // 要在**填好的**说明书上看，不在 markdown 源文件上看——源文件里那两步只剩占位符，这正是这条改动的目的。
+    expect(md).toContain("{{shows_rule}}");
+    expect(manual("dev")!).toContain("--no-human-impact");
     expect(rules).not.toContain(`"${NO_HUMAN_IMPACT}"`);     // 规则里也不抄，引的是常量
     expect(rules).toContain("NO_HUMAN_IMPACT");
   });
@@ -292,8 +295,13 @@ describe("t-171 · 建任务时也要说清它对人有什么影响", () => {
 
   it("判据 2：同一句拒绝话——两头只写一遍，改一处两头一起变", () => {
     const rules = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
-    // 这句话只有一个出处（humanImpactPromised），两头都调它；rules.ts 里搜不到第二份「空着不算」
-    expect([...rules.matchAll(/空着不算/g)]).toHaveLength(1);
+    // 这句话只有一个出处，两头都调它。t-179 之后那个出处从 humanImpactPromised 的模板串搬到了
+    // events.ts 的 EMPTY_IS_NOT_NO_IMPACT——说明书也要引它，一句话不能同时住在 rules.ts 和 markdown 里。
+    // 所以现在 rules.ts 里一个「空着不算」都搜不到，它引的是常量；那句字本身在 events.ts 里恰好一份。
+    expect([...rules.matchAll(/空着不算/g)]).toHaveLength(0);
+    expect([...rules.matchAll(/EMPTY_IS_NOT_NO_IMPACT/g)].length).toBeGreaterThanOrEqual(1);
+    const events = readFileSync(new URL("../src/events.ts", import.meta.url), "utf8");
+    expect([...events.matchAll(/空着不算/g)]).toHaveLength(1);
     expect([...rules.matchAll(/humanImpactPromised\(/g)].length).toBe(3);   // 一处定义 + create 与 done 各调一次
   });
 
@@ -308,5 +316,51 @@ describe("t-171 · 建任务时也要说清它对人有什么影响", () => {
     expect(t.status).toBe("working");
     expect(t.promise).toBeUndefined();
     expect(t.promise_none).toBeUndefined();   // 它没有承诺，但也不因此变成不合格
+  });
+});
+
+/**
+ * t-178：qa 08:54 那次构造的重放。
+ *
+ * 那次它没有读代码就下判断，而是把 d85abbf 合进 664ee6c，在合并后的树上拿 t-163 的**真实触点**去交活——
+ * `board.ts#inFlightGroups` 决定牌桌在途那几行印 `shows` 还是印 `title`，改的是人看到的字，可当时光说一句
+ * 「不改变人看到的东西」就过了。名单是手数的，它不在里面。
+ *
+ * 这个 describe 把那一刻钉住：同一个触点，现在拦得下，而且拦下之后也不能用具名出路解释掉——`board.ts` 不在
+ * `RENDERING_FILES` 里，它被拦是因为符号本身就是一个 key，那一档从来不接受「只动了内部符号」这句话。
+ *
+ * **顺带把这道闸此刻还看不见的那一半也钉住**（最后一条）：只写路径、不写符号，仍然过得去。写在这里不是为了
+ * 让它一直这样，是不想让它在没人注意的时候变成一句「已经全都拦得住了」。
+ */
+describe("t-178 · qa 08:54 构造的那一刻：inFlightGroups 不能再光说一句就过", () => {
+  const donex = async (touches: string[], internal_only?: string[]) => {
+    const w = await world();
+    return w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches, ...(internal_only ? { internal_only } : {}) }, -10)
+      .then(() => "过" as const)
+      .catch((e) => (e as Rejected).message);
+  };
+  const TOUCH = "packages/core/src/board.ts#inFlightGroups";
+
+  it("t-163 的真实触点：光说「不改变人看到的东西」被拦，并指得出是哪一处", async () => {
+    const r = await donex([TOUCH]);
+    expect(r).not.toBe("过");
+    expect(r).toContain(TOUCH);
+    expect(r).toContain("--shows");
+  });
+
+  it("也不能用具名出路解释掉：它被拦不是因为文件，是因为那个符号本身就是一个 key", async () => {
+    const r = await donex([TOUCH], [TOUCH]);
+    expect(r).not.toBe("过");
+    expect(r).toContain("不能用 --internal-only 解释掉");
+  });
+
+  it("这个符号是量出来的、不是数出来的：它就在 KEY_SYMBOLS 里，而判定按符号走", () => {
+    expect(KEY_SYMBOLS).toContain("inFlightGroups");
+    expect(touchesHumanVisible(TOUCH)).toBe("human_visible");
+  });
+
+  it("还看不见的那一半：只写路径不写符号，照样过——这是留在明处的缺口，不是已经修好的东西", async () => {
+    expect(touchesHumanVisible("packages/core/src/board.ts")).toBe("internal");
+    expect(await donex(["packages/core/src/board.ts"])).toBe("过");
   });
 });

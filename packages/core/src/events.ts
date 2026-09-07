@@ -278,16 +278,17 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
  * t-143 把人可见的每句话收进唯一 key 之后，这份名单该由那张表取代；在那之前，这条闸让它不会悄悄过时。
  */
 export const KEY_SYMBOLS = [
-  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
-  "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
-  "PASSTHROUGH_IS_NOT_A_LITERAL", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING",
-  "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago",
-  "alertContact", "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine",
-  "blockedWhy", "board", "capabilityKey", "coverage", "deployHistory", "exampleLine", "followUps",
+  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE",
+  "FORWARD_LINK", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH",
+  "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PROMISE_RULE", "REACH_RULE", "REACH_WORDS",
+  "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND",
+  "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago", "alertContact",
+  "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine", "blockedWhy",
+  "board", "capabilityKey", "coverage", "deployHistory", "exampleLine", "followUps",
   "gateHonesty", "honestyLine", "inFlightGroups", "judgeSeam", "lightSeamLine", "manualFor",
   "missingCard", "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix",
-  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard", "span", "splitRelease",
-  "standIns", "staticAllocation", "taskHeading", "whoElseTouches",
+  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard", "span",
+  "splitRelease", "standIns", "staticAllocation", "taskHeading", "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -425,6 +426,37 @@ export const REACH_WORDS: Record<Reach, string> = { unread: "还没读到", read
  */
 export const REACH_RULE =
   "发给你的指令，服务从你的拉取自己知道你读没读到，不必回执。你欠的只有两件：带选项的卡要一个答案；不打算办的写一句「不办：原因」。沉默不是答案——发的人会一直以为你还没读到。";
+/**
+ * t-179：**说明书第 6 步那一段，与拒绝话共用同一批句子。**
+ *
+ * 这两句先前各有两份：一份长在 `rules.ts` 的拒绝话里，一份手抄在 `manual/common.md` 第 6 步。今晚这已经是第三处
+ * （t-141 的「你欠什么」、t-145 的间隔，现在这条）——同一条毛病：**一份名单/一句话与它描述的东西分开手工维护，
+ * 必然漂移**。改了行为忘了说明书，说明书就在教旧话，而没有任何东西会红。
+ *
+ * 所以句子只在这里，拒绝话引它、说明书填它（`{{shows_rule}}`），两边都不抄。谁要改措辞，改这里一处。
+ */
+export const EMPTY_IS_NOT_NO_IMPACT = "空着不算「没影响」，只说明没人问过这个问题";
+/** t-179: 同上。具名出路要的不是一个开关，是一次注意；写不出符号名，说明这次改动自己还没看清。 */
+export const NO_SYMBOL_MEANS_UNCLEAR = "写不出符号名，就说明还没看清自己改了什么";
+/**
+ * t-179：说明书第 6 步「交活」那一段的正文。说明书填它，不抄它的字（同 t-141 的 `{{reach_rule}}`）。
+ * 它引用上面那两句，所以改那两句，拒绝话与说明书一起变。
+ */
+export const SHOWS_RULE =
+  `并且说一句这件对人有什么影响：\`--shows "<人现在能看到什么>"\`；确实什么都没变就明写 \`--no-human-impact\`。` +
+  `两句都不给会被拒绝——**${EMPTY_IS_NOT_NO_IMPACT}**；碰了人看得到的东西（页面、页面的词、说明书）还写这句，` +
+  `会被拒绝，并把它认定的那几处触点列给你——判断就来自那几处，不对就改触点。若你只动了那些文件里的内部符号，` +
+  `用 \`--internal-only "文件#符号"\` 具体说出是哪几个；**${NO_SYMBOL_MEANS_UNCLEAR}**，那就该写 \`--shows\`。`;
+/**
+ * t-179：说明书第 3.5 步「建任务」那一段，同 `SHOWS_RULE`。
+ *
+ * 这两步问的是同一个问题的两头（t-171），所以它们共用 `EMPTY_IS_NOT_NO_IMPACT` 那一句；把 3.5 也填进来，是因为
+ * 我加 `SHOWS_RULE` 的那一刻，通用的那道闸当场报出「两句都不给会被拒绝」在说明书里还有一份——它抓到的是**我
+ * 自己刚抄的那一句**。那正是它该抓的。
+ */
+export const PROMISE_RULE =
+  `建一件任务时，先说清它做完之后人会看到什么：\`--shows "<人会看到什么>"\`；确实什么都不变就明写 \`--no-human-impact\`。` +
+  `两句都不给会被拒绝——**在写下它的时候问这个问题还来得及，等到交活时才问，范围已经定死了**。`;
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";
 
