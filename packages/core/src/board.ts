@@ -222,6 +222,15 @@ export interface Board {
   needs_human: {
     /** ask: answer it; do: do it and say "done"; info: read it. */
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
+    /**
+     * t-188（frontend 10:36 的更正）：**这张卡原来根本没有这个字段。**牌桌上一张要人拍板的卡说得出「什么时候
+     * 到期」，靠的就是它；缺了它，页面只能说「不点的话按 X」而说不出「到什么时候」，pd 09:18 那句定稿也就印不全。
+     * pm 10:34 报的「board 报 null」其实是 JSON 里的缺席，不是有一处代码把值抹掉了——按后者去找，那处不存在。
+     *
+     * `ack_by_again` 是 t-190 重算后的期限：一张被退回待答的卡，人再看到之后从那一刻起算。它在的时候，人该看的
+     * 是它，不是原来那个已经过去的 `ack_by`。
+     */
+    ack_by: string; ack_by_again?: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
     /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话（core 一处，页面与命令行都印它）。 */
     says_default?: DefaultSay;
@@ -760,6 +769,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
         kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
+        ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st),
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });

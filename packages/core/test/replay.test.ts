@@ -2958,3 +2958,72 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     expect(filled).not.toContain("{{default_rule}}");
   });
 });
+
+/**
+ * t-188：**一张要人拍板的卡，牌桌上说得出它什么时候到期。**
+ *
+ * pm 10:34 报的是「牌桌把 ack_by 丢成了 null」，frontend 10:36 更正了：**那张卡的类型里根本没有这个字段**，
+ * JSON 里它是缺席不是 null。按「有一处代码把值抹掉了」去找，那处不存在——这个更正省下的是下一个人的一小时。
+ *
+ * pm 自己提的判据 2（「到期判定读的也是这份被丢空的值」）被 frontend 与 qa 各自独立排掉了：到期判定读的是
+ * State 里那条指令的 `ack_by`，与 `board.needs_human` 无关。这里顺带把那条结论也钉住，免得它被重新提出来。
+ *
+ * 判据 6 那件更重的事——「一张到期的卡从需要你里无声消失，日志里没有任何事件」——根在 t-181 那里：`settle()`
+ * 原来在 ack_by 一过就把 `chosen` **算**出来，而 `board` 见 `chosen` 就把卡从 needs_human 里拿掉。所以卡消失了，
+ * 日志里却一个字都没有。t-181 之后 `chosen` 只由真事件产生，这里把它当回归钉住。
+ */
+describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消失", () => {
+  const ask = (store: MemoryStore, c: ReturnType<typeof clock>, mins: number) =>
+    emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(mins)) });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 1、3、5：卡上带着事件里那个 ack_by，一字不差", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, 60);
+    const card = (await at(store, c)).needs_human[0];
+    expect(card.ack_by).toBe(q.ack_by);                     // 不是 null，不是缺席
+    expect(card.ack_by_again).toBeUndefined();              // 没被退回过，就没有第二个期限
+    expect(JSON.parse(JSON.stringify(card))).toHaveProperty("ack_by");   // 走一遍 JSON 也还在
+    // 那句话印得出到期时刻，靠的就是它
+    expect(card.says_default!.line).toContain(atClock(q.ack_by));
+  });
+
+  it("判据 5：被 t-190 退回待答的卡，带的是重算后的那个期限", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, 60);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
+    await pull(store, HUMAN, null, c.now());                // 人再看到那一刻
+    const card = (await at(store, c)).needs_human[0];
+    expect(card.ack_by).toBe(q.ack_by);                     // 原来那个还在，它是历史
+    expect(card.ack_by_again).toBeDefined();                // 人该看的是这个
+    expect(Date.parse(card.ack_by_again!)).toBeGreaterThan(Date.parse(card.ack_by));
+  });
+
+  it("判据 6：到期的卡不会无声消失——没有事件，它就还在等你答", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, 60);
+    expect((await at(store, c)).needs_human.map((n) => n.id)).toEqual([q.id]);
+    c.tick(min(61));                                        // 到期，而没有任何人、任何服务写过一个字
+    const b = await at(store, c);
+    expect(b.needs_human.map((n) => n.id), "一张要人拍板的卡到期就没了下落").toEqual([q.id]);
+    expect(b.instructions[0].chosen).toBeUndefined();        // 也没有人替他决定
+    expect(b.needs_human[0].says_default!.state).toBe("stuck");   // 而且它自己说得出这是个故障态
+    // 日志里确实一个决定都没有：卡还在，是因为什么都没发生，不是因为我们漏读了什么
+    expect(reduce(await store.read(), c.now()).notes.filter((n) => n.decides)).toEqual([]);
+  });
+
+  it("判据 7（pm 自己作废的那条假设）：到期判定读的是 State 里的 ack_by，与卡上有没有这个字段无关", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c, 60);
+    c.tick(min(61));
+    const s = reduce(await store.read(), c.now());
+    expect(s.instructions.get(q.id)!.instruction.ack_by).toBe(q.ack_by);
+    expect(s.instructions.get(q.id)!.default_due).toBe(true);     // 它照样知道自己到期了
+    expect(s.instructions.get(q.id)!.overdue).toBe(true);
+  });
+});
