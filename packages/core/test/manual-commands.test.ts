@@ -24,6 +24,11 @@ function cliCommands(): Set<string> {
   return out;
 }
 
+/** Every `ateam <word>` a piece of prose teaches. */
+function taughtIn(where: string, text: string): { where: string; cmd: string; sub?: string }[] {
+  return [...text.matchAll(/ateam\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?/g)].map((m) => ({ where, cmd: m[1], sub: m[2] }));
+}
+
 /** Every `ateam <word>` the prose teaches, with the file it came from. */
 function taught(): { where: string; cmd: string; sub?: string }[] {
   const out: { where: string; cmd: string; sub?: string }[] = [];
@@ -35,12 +40,12 @@ function taught(): { where: string; cmd: string; sub?: string }[] {
     if (f.isDirectory()) for (const g of readdirSync(new URL(`${f.name}/`, MANUAL_DIR))) if (g.endsWith(".md")) texts.push([`${f.name}/${g}`, read(`${f.name}/${g}`)]);
   }
   for (const [where, text] of texts) {
-    for (const m of text.matchAll(/ateam\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?/g)) out.push({ where, cmd: m[1], sub: m[2] });
+    out.push(...taughtIn(where, text));
   }
   return out;
 }
 
-describe("t-141 · 说明书教的命令必须真的存在", () => {
+describe("t-148 · 说明书教的命令必须真的存在", () => {
   it("每一个 `ateam <命令>` 都在 CLI 的分派里", () => {
     const have = cliCommands();
     const missing = taught().filter((t) => !have.has(t.cmd));
@@ -53,13 +58,36 @@ describe("t-141 · 说明书教的命令必须真的存在", () => {
     expect(missing, `说明书教了 CLI 没有的 task 子命令：${missing.map((m) => `${m.where} 里的 \`ateam task ${m.sub}\``).join("、")}`).toEqual([]);
   });
 
-  it("写一个不存在的命令进说明书就会红：这条断言自己能被证伪", () => {
+  /** 判据 2, the half that must fire: a command nobody implemented, put into prose, and caught by name. */
+  it("该报的：说明书里放一个不存在的命令，闸报出来并指名", () => {
     const have = cliCommands();
-    expect(have.has("sync")).toBe(true);              // a real one, from the switch
-    expect(have.has("join")).toBe(true);              // a real one, dispatched before the switch
-    expect(have.has("summon")).toBe(false);           // an invented one
-    // the check is over the real files, so a bad line anywhere in them fails the first test above
+    const bad = taughtIn("造出来的一页.md", "没事做？跑 `ateam summon` 把它叫起来。").filter((t) => !have.has(t.cmd));
+    expect(bad.map((b) => [b.where, b.cmd])).toEqual([["造出来的一页.md", "summon"]]);
+    expect(have.has("summon")).toBe(false);
+  });
+
+  /**
+   * 判据 2 的另一半，也是判据 3 的记录：**这道闸第一次跑就冤枉了一页正确的文档。**
+   *
+   * 06:2x 它指控 invite.md 与 welcome.md 教了不存在的 `ateam join`。`join` 一直都在，只是它和 `init` 由 switch 之前
+   * 的一句 `cmd === "…"` 处理，而当时的闸只读 `case "x":`。错的是闸，不是说明书——我差一点据此给 frontend 报一个
+   * 不存在的缺陷。留着这一条，是为了不让后来人以为这是一道从没出过错的闸。
+   */
+  it("不该报的：`ateam join` 走 switch 之前的 if，一直存在——闸第一次把这一页冤枉了", () => {
+    const have = cliCommands();
+    expect(have.has("join")).toBe(true);
+    expect(have.has("init")).toBe(true);
+    expect(CLI).toMatch(/cmd === "init" \|\| cmd === "join"/);   // the shape that fooled it
+    expect(CLI).not.toMatch(/case\s+"join"\s*:/);
+    for (const page of ["invite.md", "welcome.md"]) {
+      const text = readFileSync(new URL(page, MANUAL_DIR), "utf8");
+      expect(taughtIn(page, text).filter((t) => !have.has(t.cmd))).toEqual([]);
+    }
+  });
+
+  it("闸本身还活着：说明书与 CLI 都真的读到了", () => {
     expect(taught().length).toBeGreaterThan(10);
+    expect(cliCommands().size).toBeGreaterThan(10);
     expect(manualRoles().length).toBeGreaterThan(0);
     expect(manual("dev")).toBeTruthy();
     expect(welcome("https://x")).toBeTruthy();
