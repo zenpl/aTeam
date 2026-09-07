@@ -97,6 +97,40 @@ describe("t-147 · 判据 2 与 3：欠的是答案，不是回执", () => {
   });
 });
 
+/**
+ * 判据 7（pm 07:04）：人五小时没打开牌桌，那期间发出的卡照样算晚。
+ *
+ * 对 agent「没读到不算你欠」是对的；对人主语变了——这张单子说的是「我们还在等一个到不了的人」，而人不在的那几
+ * 小时恰恰是最该被看见的。今天全队静默 4.4 小时，若把「没读到」当成「不算晚」，那 4.4 小时会显示成「什么都不晚」。
+ */
+describe("t-147 · 判据 7：人没读到不豁免——把缺席消音是最坏的一种沉默", () => {
+  it("人从没打开过牌桌：那期间的卡照样进 overdue", async () => {
+    const w = await world();
+    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["A", "B"], ack_by: at(-10).toISOString() }, -60);
+    const s = await st(w.s);
+    expect(s.read_upto.get(HUMAN)).toBeUndefined();          // 人一次都没拉过
+    expect(s.instructions.get(card.id)!.reach).toBe("unread");
+    expect(s.instructions.get(card.id)!.overdue).toBe(true);  // 仍然算晚
+    const b = board(s, HUMAN, at(0));
+    expect(b.overdue.map((o) => o.instruction)).toEqual([card.id]);
+  });
+
+  it("但仍然只有一处：它不进 t-139 的在场三态，也不生成第二张给人的卡", async () => {
+    const w = await world();
+    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["A", "B"], ack_by: at(-10).toISOString() }, -60);
+    const b = board(await st(w.s), HUMAN, at(0));
+    expect(Object.values(b.overdue_by_presence).flatMap((g) => g.instructions)).not.toContain(card.id);
+    expect(b.needs_human.filter((n) => n.id === card.id)).toHaveLength(1);   // NEEDS HUMAN 里就那一张，没有第二张
+    expect(b.needs_human.filter((n) => n.from === "ateam")).toEqual([]);     // 服务没有为「它晚了」另发一张卡
+  });
+
+  it("agent 那一侧不受影响：没读到的普通指令仍然不算逾期", async () => {
+    const w = await world();
+    const plain = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "去看一眼 CI", ack_by: at(-10).toISOString() }, -60);
+    expect((await st(w.s)).instructions.get(plain.id)!.overdue).toBe(false);
+  });
+});
+
 describe("t-147 · 判据 4：历史不重算", () => {
   it("已有的 ack 事件原样留在日志里，acked_at 仍在，新口径只作用于显示与判定", async () => {
     const w = await world();

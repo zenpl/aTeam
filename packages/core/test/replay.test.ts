@@ -496,9 +496,12 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
     expect(b.instructions.find((i) => i.id === q.id)!.chosen).toBeUndefined();
     // t-147: 「deploy」 carries no options, so there is no answer to be late with. It is not overdue; what is true of
-    // it is that backend has not read it, and that is where the board carries it.
-    expect(b.overdue).toEqual([]);
+    // it is that backend has not read it, and that is where the board carries it. The ask is the opposite case: it is
+    // past its deadline with no answer, and 判据 7 says the human never having opened the board does not excuse it —
+    // that is precisely when 「我们还在等」 needs saying.
+    expect(b.overdue.map((o) => o.instruction)).toEqual([q.id]);
     expect(b.overdue_by_presence.missing.instructions).toContain(plain.id);
+    expect(b.overdue_by_presence.missing.instructions).not.toContain(q.id);   // 不在两处各算一次
   });
 });
 

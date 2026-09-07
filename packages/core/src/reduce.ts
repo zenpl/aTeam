@@ -444,10 +444,17 @@ export function settle(s: State, now: Date): State {
     if (!st.chosen && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
       st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
     }
-    // t-147 判据 3: overdue is now one thing only — a card that was read, carries options, and still has no answer at
-    // its deadline. An instruction nobody read is t-139's presence problem and was being counted in both places; one
-    // without options is owed nothing but the doing, and chasing a receipt for it is what this retired.
-    st.overdue = i.ack_by < nowIso && !!i.options?.length && !st.chosen && st.reach !== "unread";
+    // t-147 判据 3 + 判据 7 (pm 07:04): overdue is a card with options, past its deadline, still unanswered.
+    //
+    // 判据 3 had a 「读到了」 clause and 判据 7 removed it, for a reason worth keeping next to the code: for an agent,
+    // overdue means 「你欠着」, and something it never read is not owed — that is pd's 「不由回执证明」. For the human
+    // the subject changes: an overdue card says 「我们还在等一个到不了的人」, and the hours nobody opened the board are
+    // exactly the ones that most need saying. Treating unread as not-late would let an absence silence itself — today
+    // the whole team went quiet for 4.4 hours and the board would have shown 「什么都不晚」.
+    //
+    // Options may only be addressed to the human (rules.ts), so this branch is only ever about the human's cards; the
+    // agents' side is `owedTo` and t-139's three presence states, and nothing is counted in both.
+    st.overdue = i.ack_by < nowIso && !!i.options?.length && !st.chosen;
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   s.focus = focusId ? s.readings.get(focusId)!.reading : undefined;
