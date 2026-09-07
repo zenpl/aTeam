@@ -35,14 +35,14 @@ describe("static checks on the declared packing", () => {
 
   it("打破独立审核: R3+R6 or R5+R6 in one role without an owner degradation; the declaration clears it", async () => {
     const w = world();
-    await pack(w, { 写手: ["R5"], 审稿: ["R1", "R3", "R6"] });
+    await pack(w, { writer: ["R5"], reviewer: ["R1", "R3", "R6"] });
     let ws = staticAllocation(await w.state());
-    expect(ws).toEqual([{ pattern: "打破独立审核", evidence: ["审稿 同时持有 R3 与 R6，没有 owner 退化声明"], hint: "审稿 同时持有 R3 与 R6。它定标准的东西只能由 owner 验；建议把 R3 交给 owner 或再起一个角色。" }]);
-    await pack(w, { 写手: ["R5"], 审稿: ["R1", "R3", "R6:自定标准的退化给 owner"] });
+    expect(ws).toEqual([{ pattern: "打破独立审核", evidence: ["reviewer 同时持有 R3 与 R6，没有 owner 退化声明"], hint: "reviewer 同时持有 R3 与 R6。它定标准的东西只能由 owner 验；建议把 R3 交给 owner 或再起一个角色。" }]);
+    await pack(w, { writer: ["R5"], reviewer: ["R1", "R3", "R6:自定标准的退化给 owner"] });
     ws = staticAllocation(await w.state());
     expect(ws).toEqual([]);
-    await pack(w, { 写手: ["R5", "R6"], 审稿: ["R1", "R3"] });
-    expect(staticAllocation(await w.state())[0].hint).toContain("写手 同时持有 R5 与 R6。它做的东西只能由 owner 验");
+    await pack(w, { writer: ["R5", "R6"], reviewer: ["R1", "R3"] });
+    expect(staticAllocation(await w.state())[0].hint).toContain("writer 同时持有 R5 与 R6。它做的东西只能由 owner 验");
   });
 
   it("负载陷阱: one role holds far more than the others; a two-node team is exempt", async () => {
@@ -145,7 +145,7 @@ describe("runtime metrics over the last window", () => {
 
   it("the board carries all five at most once each, and never rejects anything", async () => {
     const w = world();
-    await pack(w, { pm: ["R1", "R3", "R4", "R8", "R11", "R13"], 审稿: ["R3", "R6"], dev: ["R5", "R9"], frontend: ["R5"] });
+    await pack(w, { pm: ["R1", "R3", "R4", "R8", "R11", "R13"], reviewer: ["R3", "R6"], dev: ["R5", "R9"], frontend: ["R5"] });
     const b = board(await w.state(), HUMAN, w.at());
     expect(b.allocation.warnings.map((x) => x.pattern)).toEqual(["重叠", "打破独立审核", "负载陷阱"]);
     expect(b.allocation.summary).toBe("分配：3 条预警（重叠、打破独立审核、负载陷阱）");

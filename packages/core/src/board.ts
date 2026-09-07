@@ -115,6 +115,12 @@ export interface Board {
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
+  /**
+   * t-106: the name to show for a role id, wherever a person reads one — presence, a task's owner, an instruction's
+   * sender and recipient, the source of a needs-you card. One map rather than a name beside every mention: a list kept
+   * apart from what it describes drifts (the omitted lesson). Absent id = show the id, which is what ids are for.
+   */
+  role_names: Record<string, string>;
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
   undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
@@ -354,13 +360,36 @@ export function isMissing(s: State, role: string, now: Date, listenWindowMs = LI
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
 export function projectRoles(s: State): string[] {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   if (Array.isArray(v) && v.every((x) => typeof x === "string") && v.length) return v as string[];
   if (typeof v === "string" && v.trim()) return v.split(",").map((x) => x.trim()).filter(Boolean);
-  if (v && typeof v === "object" && Object.keys(v).length) return Object.keys(v as object); // t-059: {role: [responsibility ids]}
+  if (v && typeof v === "object" && Object.keys(v).length) return Object.keys(v as object); // t-059 / t-106: keys are ids
   return DEFAULT_ROLES;
+}
+
+/** The one place that reads `project:roles`. Three shapes have been declared over time; all three still work. */
+function rolesFact(s: State): unknown {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  return r?.valid && !r.expired ? r.reading.value : undefined;
+}
+
+/**
+ * t-106: the name people read, per role id. Only the third shape carries one — `{id: {name, responsibilities}}` —
+ * so most projects get an empty map and everything shows the id, which is what the id is for. A name is never used to
+ * find anything: ids are forever, names are free (the same split as a task's label, t-096).
+ */
+export function roleNames(s: State): Record<string, string> {
+  const v = rolesFact(s);
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [id, entry] of Object.entries(v as Record<string, unknown>)) {
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name === "string" && name.trim() && name.trim() !== id) out[id] = name.trim();
+    }
+  }
+  return out;
 }
 
 /**
@@ -368,16 +397,30 @@ export function projectRoles(s: State): string[] {
  * role names expands to the default packing of responsibilities.md, and a name outside it holds nothing until the project says.
  */
 export function roleResponsibilities(s: State): Record<string, string[]> {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   const out: Record<string, string[]> = {};
   if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) {
-    for (const [role, ids] of Object.entries(v as Record<string, unknown>)) out[role] = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string").map((x) => responsibilityId(x)) : [];
+    for (const [role, entry] of Object.entries(v as Record<string, unknown>)) {
+      const ids = heldBy(entry);
+      out[role] = ids.filter((x): x is string => typeof x === "string").map((x) => responsibilityId(x));
+    }
     return out;
   }
   for (const role of projectRoles(s)) out[role] = DEFAULT_RESPONSIBILITIES[role] ?? [];
   return out;
+}
+
+/**
+ * What one entry of the roles map says the role holds. `["R5","R6"]` is the t-059 shape; `{responsibilities:[...]}`
+ * is the t-106 shape that also carries a name. Anything else holds nothing until the project says otherwise.
+ */
+function heldBy(entry: unknown): unknown[] {
+  if (Array.isArray(entry)) return entry;
+  if (entry && typeof entry === "object") {
+    const r = (entry as { responsibilities?: unknown }).responsibilities;
+    if (Array.isArray(r)) return r;
+  }
+  return [];
 }
 
 /** An entry may carry a boundary after the id ("R5:数据侧", "R6 自定标准的退化给 owner"): the id is the first word. */
@@ -385,13 +428,12 @@ export function responsibilityId(entry: string): string { return entry.trim().sp
 
 /** The boundary text each role declared next to a responsibility id, keyed `${role}:${id}` (t-061 静态检查). */
 export function responsibilityBoundaries(s: State): Map<string, string> {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   const out = new Map<string, string>();
   if (!v || typeof v !== "object" || Array.isArray(v)) return out;
-  for (const [role, ids] of Object.entries(v as Record<string, unknown>)) {
-    if (!Array.isArray(ids)) continue;
+  for (const [role, entry] of Object.entries(v as Record<string, unknown>)) {
+    const ids = heldBy(entry);
+    if (!ids.length) continue;
     for (const x of ids) {
       if (typeof x !== "string") continue;
       const rest = x.trim().slice(responsibilityId(x).length).replace(/^[\s:：]+/, "").trim();
@@ -440,6 +482,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     seams: [],
     presence: [],
     roles: projectRoles(s),
+    role_names: roleNames(s),
     coverage: [],
     allocation: { warnings: [], summary: "" },
     alert: { status: "unanswered" },

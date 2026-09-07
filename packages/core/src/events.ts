@@ -142,6 +142,12 @@ export const PD_ACTOR = "pd";
 export const SERVICE_ACTOR = "ateam";
 /** Reading key that declares a project's role set; value is an array of role names. */
 export const ROLES_KEY = "roles";
+/**
+ * t-106: a role **id** is ASCII lowercase — it travels in an HTTP header (X-Actor), and a header is latin-1 by the
+ * spec, so a non-ASCII id does not fail loudly: some clients refuse to send it, others send raw UTF-8 that the server
+ * reads as latin-1, and the team quietly becomes 审稿 → å®¡ç¨¿. The **name** people read is free in any language.
+ */
+export const ROLE_ID_RE = /^[a-z][a-z0-9_-]*$/;
 export const PROJECT_SURFACE = "project";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */

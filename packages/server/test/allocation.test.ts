@@ -17,7 +17,7 @@ describe("t-061 · project:allocation", () => {
     const emit = (e: NewEvent) => { t += min(1); return append(store, e, { human: HUMAN, now: now() }); };
     const state = async () => reduce(await store.read(), now());
     expect(allocationFact(await state(), HUMAN, now())).toBeNull();
-    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { 写手: ["R5"], 审稿: ["R3", "R6"] } });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { writer: ["R5"], reviewer: ["R3", "R6"] } });
     const f1 = allocationFact(await state(), HUMAN, now())!;
     expect(f1).toMatchObject({ kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: "allocation", value: { count: 1, warnings: [{ pattern: "打破独立审核" }] } });
     expect(Date.parse((f1 as { valid_until: string }).valid_until) - now().getTime()).toBe(ALLOCATION_PERIOD_MS);
@@ -26,7 +26,7 @@ describe("t-061 · project:allocation", () => {
     t += min(30);
     expect(allocationFact(await state(), HUMAN, now())).toBeNull(); // same pattern, within the period: the fact stands
     // a second pattern appears: a new fact now, with both
-    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { 写手: ["R5", "R9"], 审稿: ["R3", "R6", "R9"] } });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { writer: ["R5", "R9"], reviewer: ["R3", "R6", "R9"] } });
     const f2 = allocationFact(await state(), HUMAN, now())!;
     expect((f2 as { value: { warnings: { pattern: string }[] } }).value.warnings.map((w) => w.pattern)).toEqual(["重叠", "打破独立审核"]);
     await emit(f2);
@@ -37,7 +37,7 @@ describe("t-061 · project:allocation", () => {
     await emit(f3);
     expect(allocationFact(await state(), HUMAN, now())).toBeNull();
     // the warnings clear: one last fact saying none
-    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { 写手: ["R5", "R9:自己的分支"], 审稿: ["R3", "R6:退化给 owner", "R9:集成"] } });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { writer: ["R5", "R9:自己的分支"], reviewer: ["R3", "R6:退化给 owner", "R9:集成"] } });
     const f4 = allocationFact(await state(), HUMAN, now())!;
     expect((f4 as { value: { count: number } }).value.count).toBe(0);
   });
