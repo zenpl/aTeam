@@ -4,7 +4,7 @@
  * delivered to — read exactly like one that works: silence.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, type NewEvent } from "@ateam/core";
+import { MemoryStore, append, reduce, board, SERVICE_ACTOR, type NewEvent } from "@ateam/core";
 import * as fmt from "../src/format.js";
 
 const HUMAN = "human";
@@ -16,7 +16,9 @@ async function at(kind: "none" | "misconfigured" | "unproven" | "reachable") {
   const address = "https://hooks.example/team";
   if (kind === "misconfigured") await emit({ kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "me@example.com", shape: {} } as NewEvent);
   else if (kind !== "none") await emit({ kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: address });
-  if (kind === "reachable") await emit({ kind: "reading", actor: "pm", surface: "project", key: "alert.reached", value: address, method: "外呼 全队停摆 真的送到了（HTTP 200）" });
+  // t-134: the proof is the service's own record of a call it made. Written by anyone else it is refused, and would
+  // not be believed even if it were in the log.
+  if (kind === "reachable") await emit({ kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: "alert.reached", value: address, method: "外呼 全队停摆 真的送到了（HTTP 200）" });
   return board(reduce(await store.read()), HUMAN);
 }
 

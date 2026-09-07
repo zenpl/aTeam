@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities } from "./board.js";
 
@@ -197,6 +197,12 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       // row in the log, no consumer — harder to notice than an error. pm wrote it that way once and the reading was
       // invisible for hours. A key may still contain a colon (node:release:能力 is a real one); only its own surface,
       // said twice, is the mistake.
+      // t-134: "we reached you" is a thing only the service can know — it is the record of a call it made. A node that
+      // writes one is not recording a fact, it is asserting a conclusion, and the board would then promise the human
+      // that a never-tested address works. The same holds for the human's own "try it now": the service tries and the
+      // service records; whoever pressed the button does not get to write the answer.
+      if (e.surface === PROJECT_SURFACE && e.key === ALERT_REACHED_KEY && e.actor !== SERVICE_ACTOR)
+        throw new Rejected("alert.reached", `${PROJECT_SURFACE}:${ALERT_REACHED_KEY} 只由服务自己写：它记的是「外呼真的送到了」，而只有发出那次外呼的服务知道这件事。${e.actor} 写的这一条会让牌桌对人说「你不在时会发到这里」——一个从没证明过能送到的地址。要证明它，让服务真发一次（外呼成功时会自己记下来），人点「现在试一下」也是服务去试、服务记结果。证不到就停在「还没真发成功过」，那是四态里本来就有的一态`);
       if (e.key.startsWith(`${e.surface}:`))
         throw new Rejected("reading", `键里不要再说一遍表面名：--surface ${e.surface} 已经说了这是 ${e.surface} 的。键写成 ${JSON.stringify(e.key)} 会落成 ${e.surface}:${e.key}，而要读它的人找的是 ${e.surface}:${e.key.slice(e.surface.length + 1)}，对不上，谁也读不到——命令还会返回 201、日志里有一条，比报错更难发现。正确写法：--surface ${e.surface} <键> ${e.key.slice(e.surface.length + 1)}`);
       // t-098 (M7): "the move is finished" may not be recorded before the human said 对 on the check card. The button is the
