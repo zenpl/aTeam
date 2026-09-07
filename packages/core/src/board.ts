@@ -71,13 +71,14 @@ export interface DefaultSay { state: DefaultState; line: string }
 /** 到期时刻在卡上的写法：`2026-09-07T10:15:00Z` → `10:15`。 */
 export const atClock = (iso: string) => iso.slice(11, 16);
 
-export function sayDefault(st: InstructionState): DefaultSay | undefined {
+export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefined {
   const i = st.instruction;
   if (i.default === undefined || !i.options?.length) return undefined;
   if (st.chosen?.by === DEFAULT_DECIDER) return { state: "applied", line: DEFAULT_LINES.applied(st.chosen.option) };
   if (st.chosen) return undefined;                       // 有人真的点了：这张卡不再是「到期会怎样」的事
   if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
-  return { state: "waiting", line: DEFAULT_LINES.waiting(atClock(i.ack_by), i.default) };
+  // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
+  return { state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(i.ack_by) - now.getTime()), i.default) };
 }
 
 /**
@@ -114,6 +115,25 @@ export function span(ms: number): string {
   return `${Math.floor(sec / 86400)} 天`;
 }
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
+
+/**
+ * 第三把梯子：**还有多久**（pd 10:39）。
+ *
+ * pd 定前两把时漏了它，是我 t-189 拿「不点的话，<绝对时刻>到期」去问「09:09 说绝对时刻只进 title，这里怎么办」
+ * 才补上的：**过去与未来是两种量**，`ago` 那把只管过去。正文一律用相对、绝对时刻只进 title——人读相对时间是为了
+ * 一眼知道还剩多少，一个 `11:52` 逼他去算。
+ *
+ * 梯子：不到 1 小时「还有 N 分钟」／不到 1 天「还有 N 小时」／更远「N 天后」。取整与不出小数同前两把。
+ * 不到一分钟那一档 pd 没定，我按前两把的形状写成「还有不到 1 分钟」，已单独发它过目。
+ */
+export function until(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return UNTIL_UNDER_A_MINUTE;
+  if (sec < 3600) return `还有 ${Math.floor(sec / 60)} 分钟`;
+  if (sec < 86400) return `还有 ${Math.floor(sec / 3600)} 小时`;
+  return `${Math.floor(sec / 86400)} 天后`;
+}
+export const UNTIL_UNDER_A_MINUTE = "还有不到 1 分钟";
 const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
 
 export function instructionKind(i: Pick<Instruction, "intent" | "options">): InstructionIntent {
@@ -748,7 +768,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       // t-189：`note` 必须带过来。投影原来把它丢在这里，于是页面无从分辨「默认真落成了」与「默认该落成而没落成」，
       // 只好按「时间过了」印「已按默认 X 执行」——一句在替没发生的事作证的话。
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at, note: st.chosen.note } : undefined,
-      says_default: sayDefault(st),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
+      says_default: sayDefault(st, now),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
     if (status === "acked" || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
@@ -759,7 +779,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
         kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
-        options: i.options, default: i.default, says_default: sayDefault(st),
+        options: i.options, default: i.default, says_default: sayDefault(st, now),
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }

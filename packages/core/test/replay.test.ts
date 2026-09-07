@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, DEFAULT_LINES, atClock, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, DEFAULT_LINES, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -470,7 +470,8 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     let b = await at(store, c);
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
     expect(b.instructions[0].chosen).toBeUndefined();
-    expect(b.needs_human[0].says_default).toEqual({ state: "waiting", line: DEFAULT_LINES.waiting(atClock(q.ack_by), "private") });
+    // t-189 · pd 10:39：正文用相对、绝对只进 title（改前这里是 atClock，印一个光秃秃的 `11:52`）。
+    expect(b.needs_human[0].says_default).toEqual({ state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(q.ack_by) - Date.parse(b.now)), "private") });
     c.tick(min(31));
     b = await at(store, c);
     // 到期了，但没人落事件：卡还在人手里，牌桌说的是故障态那一句，不是「已经按 private 了」

@@ -165,7 +165,7 @@ describe("验收 2 · 一种红、一种主色按钮、琥珀只给卡住/逾期
 });
 
 describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 小页面", () => {
-  it("问你 / 请你做 / 告诉你: kind label, buttons, default marked, 「不点的话，<到期时刻>到期，按 X 执行。」（t-181 pd 09:18 定稿）", async () => {
+  it("问你 / 请你做 / 告诉你: kind label, buttons, default marked, 「不点的话，还有 N 分钟到期，按 X 执行。」（pd 10:39：正文用相对）", async () => {
     const html = await w.authedPage();
     const needs = section(html, "needs-you", "say");
     const card = (id: string) => { const i = needs.indexOf(`value="${id}"`); const s = needs.lastIndexOf("<article", i); return needs.slice(s, needs.indexOf("</article>", i)); };
@@ -174,7 +174,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(a).toContain('<span class="kind">问你</span>');
     expect(a).toContain('<p class="q">看板认证选私有还是公开？</p>');         // the board's title drops the mark; the page puts 「？」 back
     expect(a).toMatch(/<details class="detail"><summary>细节<\/summary><p>细节：私有要每次带 token，公开谁都能看。<\/p><\/details>/);
-    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，\d\d:\d\d到期，按 公开 执行。<\/span><\/form>/);
+    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，还有 \d+ 分钟到期，按 公开 执行。<\/span><\/form>/);   // pd 10:39：绝对时刻只进 title
     expect(d).toContain('<span class="kind">请你做</span>');
     expect(d).toContain('<p class="q">请把第 3 批推到 production</p>');
     expect(d).toContain("<summary>细节</summary><p>claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。</p>");

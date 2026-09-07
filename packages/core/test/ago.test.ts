@@ -9,7 +9,7 @@
  * 梯子分档、向下取整（不许把还没到的时刻说成到了）、永不出现小数、以及 sayReading 那句跟着走。
  */
 import { describe, it, expect } from "vitest";
-import { ago, sayReading } from "../src/board.js";
+import { ago, span, until, sayReading } from "../src/board.js";
 
 const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H;
 
@@ -57,5 +57,33 @@ describe("t-180 · pd 09:09 的梯子", () => {
     const said = sayReading({ surface: "project", key: "backup.path", value: { path: "/x" }, by: "ateam", at }, now);
     expect(said!.line).toContain("17 小时前由 ateam 记下");
     expect(said!.line).not.toMatch(/\d{3,} 分钟前/);
+  });
+});
+
+/**
+ * t-189 · pd 10:39 的第三把梯子：**还有多久**。pd 定前两把时漏了它——`ago` 只管过去，而
+ * 「不点的话，<还有多久>到期」问的是未来。三把梯子共用同一套规矩：向下取整、不出小数。
+ */
+describe("t-189 · 还有多久", () => {
+  it("三档的边界一格不差", () => {
+    expect(until(0)).toBe("还有不到 1 分钟");
+    expect(until(59 * S)).toBe("还有不到 1 分钟");
+    expect(until(60 * S)).toBe("还有 1 分钟");
+    expect(until(59 * M + 59 * S)).toBe("还有 59 分钟");
+    expect(until(1 * H)).toBe("还有 1 小时");
+    expect(until(23 * H + 59 * M)).toBe("还有 23 小时");
+    expect(until(1 * D)).toBe("1 天后");
+    expect(until(9 * D + 23 * H)).toBe("9 天后");
+  });
+
+  it("永远不出现小数，也从不把还没到的说成已经到了", () => {
+    for (let ms = 0; ms < 400 * D; ms += 3 * M + 7 * S) {
+      const said = until(ms);
+      expect(said, `${ms}ms`).not.toMatch(/\d\.\d/);
+      if (said === "还有不到 1 分钟") { expect(ms).toBeLessThan(60 * S); continue; }   // 这一句说的是上界，不是「还有 1 分钟」
+      const n = Number(said.match(/(\d+)/)![1]);
+      const unit = said.includes("分钟") ? M : said.includes("小时") ? H : D;
+      expect(n * unit, `${ms}ms 说成「${said}」`).toBeLessThanOrEqual(ms);
+    }
   });
 });
