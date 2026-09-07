@@ -67,3 +67,40 @@ describe("t-212 · 人点按钮被挡住，也要被数进去", () => {
     expect(c.by_rule.find((x) => x.rule === "decide")!.n).toBeGreaterThanOrEqual(2);
   });
 });
+
+/**
+ * qa 16:33：**两处出口各自被测到了，两处叠在一起的那道缝没有。** core 的用例直接调 appendFrom（只见第一处
+ * 出口），按钮那条路只有一处出口（所以永远对），而**没有一条用例走「HTTP → validate 拒绝」这条最常见的路**
+ * ——重复恰好只在这条路上发生。今天第五次同一形状：每一块都对，合起来的那一处没人看。
+ */
+describe("t-212 · 两处出口叠在一起的那道缝：同一次拒绝只记一条", () => {
+  const api = (body: unknown, actor = "qa") =>
+    fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("走 API 被 validate 拒：账上只多一条，不是两条", async () => {
+    const before = (await store.refusals!()).length;
+    const r = await api({ kind: "ack", of: "01ZZZZZZZZZZZZZZZZZZZZZZZZ" });
+    expect(r.status).toBe(409);
+    const rs = await store.refusals!();
+    expect(rs.length, "同一次拒绝被记了两次").toBe(before + 1);
+    expect(rs[rs.length - 1]).toMatchObject({ rule: "ack", who: "qa" });
+  });
+
+  it("虚高若回来，按规则名与按人分组的比例也会歪——这两个数正是判据 5 要的", async () => {
+    const { countRefusals } = await import("@ateam/core");
+    const before = countRefusals(await store.refusals!());
+    await api({ kind: "note" });                        // 形状闸：缺 body
+    await api({ kind: "note" });                        // 再来一次
+    const after = countRefusals(await store.refusals!());
+    expect(after.total).toBe(before.total + 2);         // 两次拒绝，两条记录，不是四条
+    const shape = (c: typeof after) => c.by_rule.find((x) => x.rule === "shape")?.n ?? 0;
+    expect(shape(after)).toBe(shape(before) + 2);
+    expect(after.by_who.find((x) => x.who === "qa")!.n).toBe((before.by_who.find((x) => x.who === "qa")?.n ?? 0) + 2);
+  });
+
+  it("处理器自己抛的那条仍然记得上——去重不许把它一起去掉", async () => {
+    const before = (await store.refusals!()).length;
+    expect((await form("/decide", { id: card, option: "ZZZ" })).status).toBe(409);
+    expect((await store.refusals!()).length).toBe(before + 1);
+  });
+});

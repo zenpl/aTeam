@@ -115,6 +115,7 @@ export async function appendFrom(store: EventStore, ne: NewEvent, opts: AppendOp
     if (err instanceof Rejected && store.recordRefusal) {
       await store.recordRefusal({ kind: "refused", who: ne.actor ?? null, rule: err.rule,
         op: refusedOp(ne as { kind?: unknown; op?: unknown }), id: (opts.mint ?? ulid)(now.getTime()), at: now.toISOString() });
+      err.recorded = true;   // t-212：外层那个出口据此跳过，同一次拒绝不记两遍
     }
     throw err;
   }

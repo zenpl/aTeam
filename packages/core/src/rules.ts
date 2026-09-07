@@ -121,6 +121,14 @@ export const PASS_ONLY_GATE = "。这挡住的是通过，不是不通过；要�
 export const PASS_ONLY_REGION = "if (e.pass) {";
 
 export class Rejected extends Error {
+  /**
+   * t-212（qa 16:32）：**这一条已经被记进拒绝账了吗。**
+   *
+   * 拒绝有两条出口各记一次（写入路径上的 `appendFrom`、服务的统一 catch），而一条从 `appendFrom` 抛出来的
+   * Rejected 会**两条都路过**——于是走 API 那一路记两次、处理器自己抛的记一次，账变成不均匀的虚高
+   * （qa 实测三次真拒绝数出 4）。记号打在拒绝本身上，外层见了就跳过：**两处出口都保住结构，不靠谁维护名单。**
+   */
+  recorded = false;
   constructor(public readonly rule: string, message: string) {
     super(`${rule}: ${message}`);
   }

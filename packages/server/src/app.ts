@@ -686,7 +686,9 @@ export function createApp(opts: ServerOptions) {
       if (err instanceof Rejected) {
         // t-212：**Rejected 的唯一出口，也是记账的唯一出口。** 任何一条走到这里的拒绝都被数进去，
         // 不管它是 validate 抛的还是某个处理器自己抛的——下一个人再加一条拒绝，不必记得来这里补一行。
-        await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
+        // t-212（qa 16:32）：从 appendFrom 抛出来的那一条已经在写入路径上记过了，这里跳过——否则走 API
+        // 那一路记两次、处理器自己抛的记一次，账是不均匀的虚高。
+        if (!err.recorded) await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
         return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
       }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
