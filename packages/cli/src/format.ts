@@ -1,4 +1,4 @@
-import { describeShape, type Event, type Board, type BoardTask } from "@ateam/core";
+import { describeShape, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -221,13 +221,25 @@ export function release(b: Board): string {
   const r = b.release ?? { deployed_sha: b.live?.deployed_sha ?? null, candidates: [] };
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
-  if (!r.candidates) { out.push("  （默认板省略了待上线清单：用 ateam release 或 board --full）"); return out.join("\n"); }
+  const counts = r.counts ?? { pending_deploy: 0, deployed_unverified: 0, unknown: (r.candidates ?? []).length };
+  out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.basis ? `  （${r.basis}）` : ""}`);
+  if (!r.candidates) { out.push("  （默认板省略了清单：用 ateam release 或 board --full）"); return out.join("\n"); }
   if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
-  out.push(`  任务      证据 sha   验收（表面：谁）              标题`);
-  for (const c of r.candidates) {
+  const row = (c: BoardRelease) => {
     const who = Object.entries(c.verified_by).map(([surface, by]) => `${surface}：${by}`).join("，");
-    out.push(`  ${c.task.padEnd(9)} ${(c.evidence_sha ? c.evidence_sha.slice(0, 7) : "（证据无 sha）").padEnd(10)} ${who.padEnd(28)} ${c.title}`);
+    return `  ${c.task.padEnd(9)} ${(c.evidence_sha ? c.evidence_sha.slice(0, 7) : "（证据无 sha）").padEnd(10)} ${who.padEnd(28)} ${c.title}`;
+  };
+  const group = (label: string, xs: BoardRelease[] | undefined) => {
+    if (!xs?.length) return;
+    out.push("", `${label}（${xs.length}）`, `  任务      证据 sha   验收（表面：谁）              标题`);
+    for (const c of xs) out.push(row(c));
+  };
+  group("未上线：代码不在生产里", r.pending_deploy);
+  group("已上线未验：代码在生产上跑着，没人在 production 表面验过", r.deployed_unverified);
+  if (r.unknown?.length) {
+    out.push("", `无法判定（${r.unknown.length}）`, `  任务      证据 sha   原因`);
+    for (const c of r.unknown) out.push(`  ${c.task.padEnd(9)} ${(c.evidence_sha ? c.evidence_sha.slice(0, 7) : "（证据无 sha）").padEnd(10)} ${c.reason}`);
   }
-  out.push(`  共 ${r.candidates.length} 项，按 done 先后排序。`);
+  out.push("", `  共 ${r.candidates.length} 项，各组内按 done 先后排序。`);
   return out.join("\n");
 }
