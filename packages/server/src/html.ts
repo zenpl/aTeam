@@ -247,7 +247,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // t-190 退回待答的卡看的是重算后的那个期限——原来那个已经过去了，印它只会误导。
         // pd 10:39：正文用相对，绝对只进 title。所以这里印的是「还有多久」，与带默认的卡那句同一个说法
         // （core 的 until），不是一个光秃秃的 11:52。
-        const dueLine = say ? "" : `<span class="hint">${esc(UI.due(until(Date.parse(i.ack_by_again ?? i.ack_by) - Date.now())))}</span>`;
+        // t-195（qa 11:08）：这里原来用 `Date.now()`，而整页别处用 `b.now`（上面第 165 行就是）。生产上两者差不到
+        // 一秒，看页面永远看不出来；qa 把牌桌的钟拨前 30 分钟才让它露出来——同一张卡，带默认那句说「还有 30 分钟」，
+        // 这一句说「还有 59 分钟」，同页差 29 分钟。**一页两个钟**。
+        const dueLine = say ? "" : `<span class="hint">${esc(UI.due(until(Date.parse(i.ack_by_again ?? i.ack_by) - now)))}</span>`;
         out.push(form("/decide", "actions", id, `${buttons}${say ? `<span class="hint${i.says_default!.state === "stuck" ? " stuck" : ""}">${esc(say)}</span>` : dueLine}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
