@@ -3,7 +3,7 @@
  * 从分支相对 claim 起点的 diff 算；没有 diff 的介质退回手工修订，那条退化路径是一等公民，不是「以后再说」。
  */
 import { describe, it, expect } from "vitest";
-import { revise } from "../src/touches.js";
+import { revise, baseAt } from "../src/touches.js";
 
 const DECLARED = ["packages/cli/src/watch.ts", "packages/cli/src/heartbeat.ts", "packages/cli/src/index.ts", "packages/cli/src/format.ts"];
 const ACTUAL = ["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts", "packages/cli/test/deaf.test.ts"];
@@ -94,5 +94,48 @@ describe("t-105 · --touches-only：我写的这几条就是全部", () => {
     const text = r.lines.join("\n");
     expect(text).toContain("触点按你写的这 2 条算，量出来的不作数（--touches-only）");
     expect(text).toContain("claim 时声明了、这次没写：a/y.ts、GET /health");
+  });
+});
+
+/**
+ * t-135: the measuring point of a round. t-112 was claimed at 00:52 and reopened at 03:58; in between its owner
+ * shipped five other tasks over eight commits, and `done` charged all thirty-two of those files to it and refused on
+ * two seams that did not exist. The only way through was editing the recorded sha by hand — which is not a gate, it is
+ * a gate people learn to walk around.
+ */
+describe("t-135 · a reopened round is measured from where the round started", () => {
+  const CLAIM = "c0cadad", ROUND2 = "14342b5", ROUND3 = "e1d5a22";
+
+  it("the first claim records; widening the same claim does not move it", () => {
+    expect(baseAt("claim", CLAIM, null)).toBe(CLAIM);        // nothing recorded yet: this is the start
+    expect(baseAt("claim", ROUND2, CLAIM)).toBe(CLAIM);      // claiming again widens the declaration, it is not a new round
+    expect(baseAt("claim", ROUND3, CLAIM)).toBe(CLAIM);      // however many times
+  });
+
+  it("a reopen moves it, and every reopen after that moves it again", () => {
+    expect(baseAt("reopen", ROUND2, CLAIM)).toBe(ROUND2);
+    expect(baseAt("reopen", ROUND3, ROUND2)).toBe(ROUND3);
+    expect(baseAt("reopen", ROUND3, null)).toBe(ROUND3);     // reopened without a record (claimed before this existed)
+  });
+
+  it("no git, no record: the manual path takes over rather than a wrong measurement", () => {
+    expect(baseAt("claim", null, null)).toBeNull();
+    expect(baseAt("reopen", null, CLAIM)).toBeNull();        // an old record is left alone, never replaced by a guess
+  });
+
+  it("dev's case, end to end: what the round touched, not what the branch did all night", () => {
+    // the eight commits between claim and reopen touched these; this round touched two of them
+    const between = ["packages/core/src/board.ts", "packages/core/src/store.ts", "packages/core/src/reduce.ts", "packages/server/src/app.ts", "packages/cli/src/main.ts"];
+    const thisRound = ["packages/core/src/rules.ts", "packages/core/test/pass-only-gates.test.ts"];
+    const declared = ["packages/core/src/rules.ts"];
+    // before: measured from the first claim, everything the branch did is charged to this task
+    const before = revise(declared, [...between, ...thisRound], [], `相对 claim 起点 ${CLAIM.slice(0, 7)}`);
+    expect(before.touches).toEqual([...between, ...thisRound]);
+    expect(before.lines.join("\n")).toContain("packages/core/src/board.ts");   // five files this round never opened
+    // after: the round is measured from its own start
+    const after = revise(declared, thisRound, [], `相对 claim 起点 ${ROUND2.slice(0, 7)}`);
+    expect(after.touches).toEqual(thisRound);
+    for (const f of between) expect(after.lines.join("\n")).not.toContain(f);
+    expect(after.lines.join("\n")).toContain("claim 时没声明、实际改了：packages/core/test/pass-only-gates.test.ts");
   });
 });

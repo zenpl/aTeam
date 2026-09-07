@@ -10,7 +10,7 @@ import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, deafNotice } from "./deaf.js";
-import { revise, type Diff } from "./touches.js";
+import { revise, baseAt, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -108,6 +108,13 @@ function need(v: string | undefined, what: string): string {
  * with no git, or a task claimed before this existed, simply has no base, and the revision falls back to hand.
  */
 function baseFile(task: string) { return join(process.cwd(), ".ateam", `base.${task}`); }
+/** t-135: record where this round starts. `baseAt` decides; this only writes what it decided. */
+function stampBase(task: string, op: "claim" | "reopen") {
+  const next = baseAt(op, gitDiff().head(), gitDiff().base(task));
+  if (!next) return;
+  mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
+  writeFileSync(baseFile(task), next + "\n");
+}
 function gitDiff(): Diff {
   const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
   return {
@@ -295,12 +302,7 @@ async function main(argv: string[]) {
         case "claim": {
           const t = need(id, "<id>");
           await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
-          // t-105: remember where this branch stood, so done can measure what the task actually touched. Only the
-          // *first* claim sets it (qa 00:29): widening a claim is this rule's own way out, and re-basing there would
-          // move the measuring point to "now" and make every later diff empty — silently, on exactly the tasks that
-          // need this most.
-          const head = gitDiff().head();
-          if (head && !existsSync(baseFile(t))) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
+          stampBase(t, "claim");   // t-105: remember where this branch stood, so done can measure what it touched
           return;
         }
         case "done": {
@@ -332,7 +334,12 @@ async function main(argv: string[]) {
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "obsolete": return emit({ kind: "task", op, task: need(id, "<id>"), decision: str(a, "by") ?? "", reason: str(a, "reason") });
-        case "reopen": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
+        case "reopen": {
+          const t = need(id, "<id>");
+          const e = await emit({ kind: "task", op, task: t, reason: str(a, "reason") ?? "" });
+          stampBase(t, "reopen");   // t-135: a new round is measured from where the round started, not from the first claim
+          return e;
+        }
         case "criteria": {
           const [sub, task, text] = exact(given, "add", "id", "text");
           if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);
