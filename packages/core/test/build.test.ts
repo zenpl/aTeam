@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE, speaking as speakingOf, deciding as decidingOf, measureKeySymbols, renderKeySymbols, withKeySymbols } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -214,6 +214,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
    * "allocation.ts"] 与另一份七个文件的名单——core 里新加一个会说人话的文件，两道闸都看不见它。现在从
    * `packages/core/src` 走一遍，谁都不用记得往哪份名单里加。
    */
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
   const CORE_FILES = sourceFiles(new URL("../src", import.meta.url).pathname, "").map((f) => f.replace(/^\//, ""));
   /**
    * core 源码里「函数体或常量里含给人看的整句中文」的导出符号——**只有 pd 08:22 那两类中的第一类**：
@@ -226,53 +227,16 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
    * gateHonesty 里 shows 那一档。
    */
   /**
-   * t-178：**决定「哪句话出现在哪儿」的函数**——pd 08:22 那两半里的第二半。
+   * t-186：**这两段搬走了。**`speaking()` / `deciding()` 现在住在 `packages/core/src/keysyms.ts`，仓库里因此
+   * 有了一个能**产出**名单的东西（`bin/keysyms`），不再只有一条能**检查**它的断言。根是 frontend 10:13 找到的：
+   * 生成器只存在于断言里，所以每个人的做法必然是手改到闸变绿，而名单又是每行六个排版的，任何一次增删都重排
+   * 整块——两个人各加一个名字，撞的不是逻辑，是排版。
    *
-   * 它从登记推出来，不从名字数出来：读 `HUMAN_FIELDS` 里那些人可见字段的，或在 `SAYINGS` 登记过的话之间
-   * 做选择的，都是在决定人看到什么。qa 08:54 用 `inFlightGroups` 证明按名字数这一类按定义数不出来。
+   * 这里只留判定：闸读的是同一段代码，所以「闸怎么想」与「名单怎么来」不会再各说各话。
    */
-  const deciding = (): string[] => {
-    const froms = new Set(SAYINGS.map((x) => x.from.split(".")[0]));
-    const out = new Set<string>();
-    for (const f of CORE_FILES) {
-      let src: string;
-      try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
-      src = src.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length)).replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
-      for (const m of src.matchAll(/export (?:const|function) (\w+)/g)) {
-        if ((REGISTRY_SYMBOLS as readonly string[]).includes(m[1])) continue;
-        const next = src.indexOf("\nexport ", m.index! + 1);
-        const body = src.slice(m.index!, next < 0 ? src.length : next);
-        if (!/=>|function/.test(body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
-        const byField = HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body));
-        const bySaying = [...froms].some((x) => x !== m[1] && new RegExp(`\\b${x}\\b`).test(body));
-        if (byField || bySaying) out.add(m[1]);
-      }
-    }
-    return [...out].sort();
-  };
-
-  const speaking = (): string[] => {
-    const out = new Set<string>();
-    for (const f of CORE_FILES) {
-      let src: string;
-      try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
-      src = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-      // frontend 09:27：**按「上一个 export 之后」归属是错的。** 非导出的函数紧跟在一个导出常量下面时，它那几句
-      // 会被记在常量头上——honestyLine 的 6 句记在了 nobodyElse 上，splitRelease 的 7 句记在 batches 上。
-      // 于是改 honestyLine 动 6 句人话，却不碰名单里任何一个符号。所以归属按**最近的一个声明**算，导出与否都算：
-      // 触点本来就写成「文件#符号」，一个非导出函数照样指得出来。
-      // 只认**顶层**声明（行首、不缩进）：函数体里的局部 const 不是谁碰得到的符号，把它们算进来会得到一堆
-      // `a`、`line`、`rest` 这样的名字——那是另一种「名单看着很全」。
-      const decls = [...src.matchAll(/^(?:export\s+)?(?:const|function)\s+(\w+)/gm)];
-      for (let d = 0; d < decls.length; d++) {
-        const from = decls[d].index!;
-        const to = d + 1 < decls.length ? decls[d + 1].index! : src.length;
-        const strings = [...src.slice(from, to).matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((x) => x[1]);
-        if (strings.some((t) => CJK.test(t) && [...t].length >= 6)) out.add(decls[d][1]);
-      }
-    }
-    return [...out].sort();
-  };
+  const sources = () => Object.fromEntries(CORE_FILES.map((f) => [f, read(`../src/${f}`)]));
+  const deciding = () => decidingOf(sources());
+  const speaking = () => speakingOf(sources());
 
   it("量出来的每一个都在名单里——漏一个，那件活就能说「不改变人看到的东西」", () => {
     const missing = [...new Set([...speaking(), ...deciding()])].filter((x) => !(KEY_SYMBOLS as readonly string[]).includes(x));
@@ -378,5 +342,73 @@ describe("t-179 · core 的句子在说明书里没有第二份", () => {
       expect([...x.text].length, `${x.from} → ${x.manual}`).toBeGreaterThanOrEqual(MANUAL_COPY_MIN);
       expect(Object.keys(manuals())).toContain(x.manual);
     }
+  });
+});
+
+/**
+ * t-186：**两个人各加一个人可见符号，不该再撞车。**
+ *
+ * qa 10:11 量的：两小时撞了两次，两次都不是逻辑冲突。到合完 t-189 那一轮，dev 自己解到第五次——每次的动作
+ * 一模一样：跑那段测量代码、重写整份名单。根是 frontend 10:13 找到的：**生成器只存在于一条断言里**，仓库里
+ * 没有任何东西能产出名单、只能检查它，所以每个人的做法必然是手改到闸变绿；而名单是每行六个排版的，任何一次
+ * 增删都重排整块，于是撞的不是内容，是排版。
+ *
+ * 两半一起改才有用：① 那两段搬进 `keysyms.ts`，`bin/keysyms` 能把名单跑出来；② 名单改成**一行一个**，
+ * 两个人各加一个名字落在不同的行上，git 自己就合得了。
+ */
+describe("t-186 · 名单跑得出来，两个人各加一行也不再撞", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const CORE_FILES = sourceFiles(new URL("../src", import.meta.url).pathname, "").map((f) => f.replace(/^\//, ""));
+  const sources = () => Object.fromEntries(CORE_FILES.map((f) => [f, read(`../src/${f}`)]));
+
+  it("判据 5：仓库里有能产出名单的东西，不只有能检查它的断言", () => {
+    // 那两段现在是 core 的导出，任何人都调得到；`bin/keysyms` 就是调它的那个入口
+    expect(typeof measureKeySymbols).toBe("function");
+    expect(measureKeySymbols(sources())).toEqual([...KEY_SYMBOLS]);
+    const bin = readFileSync(new URL("../../../bin/keysyms", import.meta.url), "utf8");
+    expect(bin).toContain("measureKeySymbols");
+    expect(bin).toContain("--write");
+  });
+
+  it("判据 2：它仍然由源码算出来——加一个会说人话的符号，量出来的名单就多一个", () => {
+    const before = measureKeySymbols(sources());
+    const after = measureKeySymbols({ ...sources(), "probe.ts": 'export const probeSentence = "这是一句给人看的中文句子。";' });
+    expect(after.filter((x) => !before.includes(x))).toEqual(["probeSentence"]);
+    // 反向也成立：不说人话的不进名单
+    const silent = measureKeySymbols({ ...sources(), "probe.ts": 'export const quiet = 42;' });
+    expect(silent).toEqual(before);
+  });
+
+  it("判据 3 正例：两个人各加一行，改的是不同的行——git 合得了", () => {
+    const base = [...KEY_SYMBOLS];
+    const mine = renderKeySymbols([...base, "aaaMine"].sort());
+    const theirs = renderKeySymbols([...base, "zzzTheirs"].sort());
+    const baseText = renderKeySymbols(base);
+    // 一行一个：各自相对基线只多一行，且两处改动落在不同的行上——三方合并的前提就是这个
+    const added = (text: string) => text.split("\n").filter((l) => !baseText.split("\n").includes(l));
+    expect(added(mine)).toEqual(['  "aaaMine",']);
+    expect(added(theirs)).toEqual(['  "zzzTheirs",']);
+    expect(mine.split("\n").indexOf('  "aaaMine",')).not.toBe(theirs.split("\n").indexOf('  "zzzTheirs",'));
+    // 而旧那种每行六个的排版，加一个名字会重排整块：这是它撞车的原因，不是巧合
+    const packed = (xs: string[]) => xs.reduce<string[]>((rows, x, i) => (i % 6 ? (rows[rows.length - 1] += `, "${x}"`, rows) : [...rows, `  "${x}"`]), []).join("\n");
+    const packedChanged = packed([...base, "aaaMine"].sort()).split("\n").filter((l) => !packed(base).split("\n").includes(l));
+    expect(packedChanged.length, "每行六个的排版，加一个名字只动一行——那今晚那五次冲突就无从解释").toBeGreaterThan(1);
+  });
+
+  it("判据 3 反例：真的改了规则的仍然被闸抓到", () => {
+    const src = sources();
+    // 拿掉一个会说人话的符号：量出来的名单少一个，与仓库里那份对不上——闸就是这样红的
+    const withoutBoard = Object.fromEntries(Object.entries(src).filter(([f]) => f !== "board.ts"));
+    const shrunk = measureKeySymbols(withoutBoard);
+    expect(shrunk.length).toBeLessThan([...KEY_SYMBOLS].length);
+    expect([...KEY_SYMBOLS].filter((x) => !shrunk.includes(x))).toContain("inFlightGroups");
+  });
+
+  it("写回是安全的：找不到那一块就什么都不写，绝不写出一个坏文件", () => {
+    const events = read("../src/events.ts");
+    expect(withKeySymbols(events, ["a", "b"])).toContain('export const KEY_SYMBOLS = [\n  "a",\n  "b",\n] as const;');
+    expect(withKeySymbols("没有那一块的文件", ["a"])).toBeNull();
+    // 写回一份与此刻相同的名单，文件一个字节都不变——所以「跑一次」是幂等的
+    expect(withKeySymbols(events, [...KEY_SYMBOLS])).toBe(events);
   });
 });
