@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -344,13 +344,13 @@ export function alertContact(s: State): Board["alert"] {
     return { status: "set", value: v.trim(), source: "given" };
   }
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
-  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
+  const skipped = [...s.instructions.values()].some((st) => isContactAsk(st.instruction.body) && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
 }
 
 /** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
 export function contactAskAnswered(s: State, i: Instruction): boolean {
-  if (i.body !== CONTACT_ASK) return false;
+  if (!isContactAsk(i.body)) return false;
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   return !!r && r.valid && !r.expired && typeof r.reading.value === "string" && !!r.reading.value.trim();
@@ -560,16 +560,25 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
-  // when the current sha was first recorded (the same sha re-measured later, short or long, does not move the line)
-  const currentSince = current ? deploys.find((r) => sameSha(r.value, current.value))!.at : undefined;
+  // when the current sha was first recorded (the same sha re-measured later, short or long, does not move the line).
+  // t-120: split by the log's own order (event ids), not by wall clock. Two appends can share a millisecond — under a
+  // loaded test run they do — and then `at >= at` put a verification recorded *before* the deploy on this version's
+  // side, turning "这一版刚上线，还没在生产验过" into "在生产上验过 1 件". Ids are monotonic within a process and the
+  // log is ordered by them, so they answer "which came first" exactly, where a timestamp only guesses.
+  const currentDeploy = current ? deploys.find((r) => sameSha(r.value, current.value))! : undefined;
+  const currentSince = currentDeploy?.at;
+  const currentSinceId = currentDeploy?.id;
 
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     // t-068: the t-026 rule for the "recent" list, applied to every task: production-verified before the current sha, or
     // ended (withdrawn/obsolete) before it, is earlier; anything the current version brought or that is still open is this version
-    const prodPass = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass).map((v) => v.at).sort().pop();
+    const prodPasses = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass);
+    const prodPassId = prodPasses.map((v) => v.id).sort().pop();
     const endedAt = t.withdrawn?.at ?? t.obsolete?.at;
     const before = (at: string | undefined) => !!at && b.live.since_sha !== null && currentSince !== undefined && at < currentSince;
-    const era: "this_version" | "earlier" = before(prodPass) || before(endedAt) ? "earlier" : "this_version";
+    // withdrawn/obsolete carry no event id, so those still compare by time; a production pass has one and uses it.
+    const beforeId = (id: string | undefined) => !!id && b.live.since_sha !== null && currentSinceId !== undefined && id < currentSinceId;
+    const era: "this_version" | "earlier" = beforeId(prodPassId) || before(endedAt) ? "earlier" : "this_version";
     const results0 = surfaceResults(t);
     const summary = t.status === "withdrawn" ? `已撤回：${t.withdrawn?.reason ?? ""}`
       : t.status === "obsolete" ? `已被 ${t.obsolete?.decision ?? "?"} 取代`
@@ -584,8 +593,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     });
     if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
       b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
-      const passedAt = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass).map((v) => v.at).sort().pop()!;
-      const recent = b.live.since_sha === null || currentSince === undefined || passedAt >= currentSince;
+      const recent = b.live.since_sha === null || currentSinceId === undefined || prodPassId! >= currentSinceId;
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title, shows: t.shows });
     }
     const results = surfaceResults(t);

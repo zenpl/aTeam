@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
@@ -796,7 +796,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
 });
 
 describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08）", () => {
-  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const CONTACT = CONTACT_ASK;
   // The feature is off by default (pm 22:39 after the human's 「外呼地址先不做」): a fact turns it on
   const ask = async (v: ReturnType<typeof server>) => {
     await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
@@ -811,7 +811,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       let html = await v.page();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<span class="kind">请你做</span>');
-      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
+      // t-117 · pd 01:17: the body ends by saying what the button does, so the two read as one thing
+      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
       expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
       expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
@@ -1027,8 +1028,11 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
       expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
       // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
       expect(c).toContain('<p class="body">在途 1 件、1 条现行决定、1 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。</p>');
-      expect(c).not.toContain("99");
-      expect(c).not.toContain("88");
+      // t-120 (qa 01:43): the numbers, not the whole card. The article carries the instruction's ULID in a hidden
+      // field, and a random id containing 88 or 99 turned this into a coin flip — it lost once in a full run.
+      const body = c.slice(c.indexOf('<p class="body">'), c.indexOf("</p>", c.indexOf('<p class="body">')));
+      expect(body).not.toContain("99");
+      expect(body).not.toContain("88");
       expect(c).not.toContain("<details");
       expect(c).toContain('<button class="btn primary" type="submit" name="option" value="对">对</button>');
       expect(c).toContain('<button class="btn" type="submit" name="option" value="有漏">有漏</button>');
@@ -1202,7 +1206,9 @@ describe("t-107 · 人看到的角色一律显示名", () => {
 });
 
 describe("t-111 · 按钮说出后果", () => {
-  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const CONTACT = CONTACT_ASK;
+  // an old card carries the words of its own time, body included (t-117)
+  const CONTACT_OLD = CONTACT_ASK_WAS;
   const card = (html: string) => {
     const needs = section(html, "needs-you", "say");
     const i = needs.indexOf("你不在时怎么找你");
@@ -1242,7 +1248,7 @@ describe("t-111 · 按钮说出后果", () => {
     try {
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       // an old card: its options are the words of its own time
-      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_OLD, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
       const cookie = await v.cookie();
       expect(card(await v.page({ cookie }))).toContain('value="先不要">先不要</button>'); // its own word, not today's
       expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
@@ -1395,6 +1401,56 @@ describe("t-114 · 轻接缝在牌桌上说一句", () => {
       expect(seams).not.toContain("<h4 class=\"seam-group\">都动了");
       expect(seams).not.toContain("light-seams");
       expect(seams).not.toContain("无");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say");
+    const i = needs.indexOf("你不在时怎么找你");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  // pd 01:18 / pm 01:19: a sentence that tells someone what a button does gets a test that does it, word for word.
+  // The words are 「不想要就点不要了，之后不再问你」, so: press 不要了, then give the service every chance to ask again.
+  it("点了「不要了」之后确实不再问：the card does not come back, on this page or the next one the service builds", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
+      const cookie = await v.cookie();
+      expect(card(await v.page({ cookie }))).toContain("不想要就点不要了，之后不再问你。");
+      expect(card(await v.page({ cookie }))).toContain('value="不要了">不要了</button>');
+
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      // every path that could put the card back: the page, a fresh append, a pull by a node
+      expect(card(await v.page({ cookie }))).toBe("");
+      await v.post("pm", { kind: "note", body: "随便记一句，让服务再跑一遍 follow-ups" });
+      await v.api("/pull?since=");
+      expect(card(await v.page({ cookie }))).toBe("");
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string; to?: string }[];
+      expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(1);
+    } finally { await v.stop(); }
+  });
+
+  it("a card already on the board carries the old question and still counts as answered (t-111's rule, for the body)", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK_WAS, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      // it keeps its own words and its own input box — it is the contact card, not a generic one
+      expect(card(await v.page({ cookie }))).toContain('name="value"');
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      await v.post("pm", { kind: "note", body: "让服务再跑一遍 follow-ups" });
+      await v.api("/pull?since=");
+      // answering the old card is answering the question: the service must not send today's card on top of it
+      expect(card(await v.page({ cookie }))).toBe("");
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
+      expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(0);
     } finally { await v.stop(); }
   });
 });

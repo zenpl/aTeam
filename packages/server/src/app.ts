@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -144,7 +144,7 @@ export function createApp(opts: ServerOptions) {
       }
       // t-069 / pm 22:39: the contact card exists only when the project asked for it (fact project:alert.ask) and no
       // address is known yet; once, never repeated. 填写 / 先不要 on it work as before (t-071).
-      if (contactWanted(state) && !alertContact(state).value && ![...state.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK)) {
+      if (contactWanted(state) && !alertContact(state).value && ![...state.instructions.values()].some((st) => isContactAsk(st.instruction.body))) {
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() }));
       }
       // t-061: the allocation warnings as a fact, at most one entry per pattern per period
@@ -421,8 +421,8 @@ export function createApp(opts: ServerOptions) {
           if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
-          const contact = i.body === CONTACT_ASK && option === CONTACT_FILL ? (form.get("value") ?? "").trim() : "";
-          if (i.body === CONTACT_ASK && option === CONTACT_FILL && !contact) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址；不想填就选「先不要」" } };
+          const contact = isContactAsk(i.body) && option === CONTACT_FILL ? (form.get("value") ?? "").trim() : "";
+          if (isContactAsk(i.body) && option === CONTACT_FILL && !contact) return { status: 400, body: { error: "value", message: `填一个 https:// 开头的 webhook 地址；不想填就选「${i.options?.[1] ?? CONTACT_SKIP}」` } };
           const [note, ...followed] = await serialize(async () => {
             const fresh = reduce(await store.read(), now()).instructions.get(of)!;
             if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human, now: real() })]);
