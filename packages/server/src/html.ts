@@ -237,7 +237,11 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // importer finish, and the human is told nothing happens to the old channel until they answer.
         const primary = (o: string) => o === i.default || (isMigrationCard(i) && o === MIGRATION_OK);
         const buttons = i.options!.map((o) => `<button class="btn${primary(o) ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
-        out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
+        // t-181 (pd 09:18)：这句话按真状态说，不再一律说「到期按 X」。三句在 core 一处（DEFAULT_LINES），
+        // 页面只负责印它算出来的那一句：还没到期说到期时刻，落下了说「你没点，已按默认 X 执行」，
+        // 到期了却还没落下就照实说「过期了，默认还没生效」——那一句是故障态，修好之后应当永不出现。
+        const say = i.says_default?.line;
+        out.push(form("/decide", "actions", id, `${buttons}${say ? `<span class="hint${i.says_default!.state === "stuck" ? " stuck" : ""}">${esc(say)}</span>` : ""}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
         // the role's own instructions stay unacked for the node that comes up.

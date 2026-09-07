@@ -1,6 +1,6 @@
 import {
   type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
-  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm, type SeamVerdict } from "./events.js";
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, SERVICE_ACTOR, isDefaultApplied, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm, type SeamVerdict } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
@@ -116,6 +116,11 @@ export interface InstructionState {
    * instruction nobody has read is t-139's presence problem, and counting it here as well counted it twice.
    */
   overdue?: boolean;
+  /**
+   * t-181: 到期了、没人点、而服务那条「默认生效」的事件还**没有**落下。这是一个故障态，不是一种正常状态——
+   * 服务一扫到它就落事件，落完这个字段就是 false。牌桌在这一态照实说「过期了，默认还没生效」（判据 8 第二句）。
+   */
+  default_due?: boolean;
   /**
    * For instructions with options: the option picked, by whom, and the decision note that records it.
    * `by: "default"` (no note) means nobody chose before ack_by and the default took effect; the human may still override it.
@@ -314,7 +319,10 @@ export function advance(s: State, log: Log): State {
   /** An event resolved this instruction: nothing about it is a question for the clock any more. */
   const resolved = (st: InstructionState) => {
     s.pending.delete(st.instruction.id);
-    if (st.chosen?.by === DEFAULT_DECIDER) st.chosen = undefined;  // a default that fired is not what a real answer leaves behind
+    // t-181：这里原来把「到期算出来的那个默认」抹掉——因为它本来就不是一条记录，只是读的时候算出来的。
+    // 现在默认是服务写下的一条真事件：**一个 ack 不能抹掉它**，否则人刚翻案的那条依据就消失了。要抹的只有
+    // 「到期了还没落下」这个故障态：这件事被 ack 结掉了，就不再是一个等着服务去落的默认。
+    st.default_due = false;
     st.overdue = false;
   };
 
@@ -358,9 +366,13 @@ export function advance(s: State, log: Log): State {
         }
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
         if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) {
-          st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
+          // t-181：服务落下的那条「没人点，按默认 X」记成 DEFAULT_DECIDER，不记成服务自己——因为它不是一个
+          // 决定，是一个到期。这样 R1b 里「默认可以被真人推翻」那一条照旧成立，人还是能翻案。
+          const byDefault = e.actor === SERVICE_ACTOR && isDefaultApplied(e.body);
+          st.chosen = { option: e.decides!.option, by: byDefault ? DEFAULT_DECIDER : e.actor, at: e.at, note: e.id };
           s.pending.delete(st.instruction.id);
           st.overdue = false;
+          st.default_due = false;
         }
         if (e.task) s.tasks.get(e.task)?.notes.push(e);
         break;
@@ -448,11 +460,13 @@ export function settle(s: State, now: Date): State {
   for (const id of s.pending) {
     const st = s.instructions.get(id)!;
     const i = st.instruction;
-    // An ask with a default answers itself at ack_by: the human's silence is the default, and it stays overridable.
-    if (st.chosen?.by === DEFAULT_DECIDER) st.chosen = undefined;
-    if (!st.chosen && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
-      st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
-    }
+    // t-181 (pd 09:18)：**默认到期不再由这里凭空算出来。**
+    //
+    // 以前这一段看见 ack_by 过了就把 `chosen` 填成默认值，于是牌桌显示「已按 A」而日志里一个字都没有——别人
+    // sync 读不到，人也无从翻案，而我们已经对他说了那句话。现在默认生效是服务写下的一条 note（`defaultApplied`），
+    // 它经 R1b 落进 `chosen`，`by` 记成 DEFAULT_DECIDER（真人仍可推翻）。这里只算**时间说了什么**：
+    // 到期了、还没人点、那条事件也还没落下 —— 那是一个故障态，牌桌要照实说（DEFAULT_LINES.stuck）。
+    st.default_due = !st.chosen && i.default !== undefined && !!i.options?.length && i.ack_by < nowIso;
     // t-147 判据 3 + 判据 7 (pm 07:04): overdue is a card with options, past its deadline, still unanswered.
     //
     // 判据 3 had a 「读到了」 clause and 判据 7 removed it, for a reason worth keeping next to the code: for an agent,

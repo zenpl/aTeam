@@ -278,19 +278,21 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
  * t-143 把人可见的每句话收进唯一 key 之后，这份名单该由那张表取代；在那之前，这条闸让它不会悄悄过时。
  */
 export const KEY_SYMBOLS = [
-  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE",
-  "FORWARD_LINK", "INJECT_BUILD_BROKE", "INJECT_STILL_GREEN", "INJECT_USAGE", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS",
-  "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL",
-  "PROMISE_RULE", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING",
-  "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE",
-  "VERIFY_ASK", "ago", "alertContact", "allocationSummary", "alsoHere", "applyReading",
-  "batches", "batchesEmptyLine", "blockedWhy", "board", "capabilityKey", "coverage",
-  "deployHistory", "exampleLine", "followUps", "gateHonesty", "honestyLine", "inFlightGroups",
-  "injectDirty", "injectManySites", "injectNoFile", "injectNoSite", "injectNotGit", "judgeSeam",
-  "lightSeamLine", "manualFor", "missingCard", "nobodyElse", "overdueByPresence", "owedSentences",
-  "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops", "sayReading", "shapeFor",
-  "slimBoard", "span", "splitRelease", "standIns", "staticAllocation", "taskHeading",
-  "whoElseTouches",
+  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "DEFAULT_APPLIED_PREFIX", "DEFAULT_LINES",
+  "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE", "FORWARD_LINK", "INJECT_BUILD_BROKE", "INJECT_STILL_GREEN", "INJECT_USAGE",
+  "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
+  "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PASS_ONLY_GATE", "PROMISE_RULE", "REACH_RULE", "REACH_WORDS",
+  "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHAPE_OF",
+  "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago",
+  "alertContact", "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine",
+  "blockedWhy", "board", "capabilityKey", "checkShape", "coverage", "deployHistory",
+  "dueDefaults", "exampleLine", "followUps", "gateHonesty", "honestyLine", "humanImpactPromised",
+  "inFlightGroups", "injectDirty", "injectManySites", "injectNoFile", "injectNoSite", "injectNotGit",
+  "judgeSeam", "lightSeamLine", "manual", "manualFor", "missingCard", "nobodyElse",
+  "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops",
+  "sayReading", "shapeFor", "slimBoard", "span", "splitRelease", "standInBlocker",
+  "standIns", "staticAllocation", "taskHeading", "validate", "validateTask", "valueForm",
+  "verifierEligibility", "whoCanVerify", "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -459,6 +461,37 @@ export const SHOWS_RULE =
 export const PROMISE_RULE =
   `建一件任务时，先说清它做完之后人会看到什么：\`--shows "<人会看到什么>"\`；确实什么都不变就明写 \`--no-human-impact\`。` +
   `两句都不给会被拒绝——**在写下它的时候问这个问题还来得及，等到交活时才问，范围已经定死了**。`;
+/**
+ * t-181：**默认到期，服务要真的落一条事件。**
+ *
+ * 到今天为止，「到期按默认」只是读的时候算出来的：`settle()` 看见 ack_by 过了就把 `chosen` 填成默认值，日志里
+ * 一个字都没有。后果不是抽象的——pm 09:17 实测：pd 15:57 那张卡 ack_by 03:57、默认 A，十二个小时过去，日志里
+ * 没有任何 ack 或 decision 事件。于是 ① 别人 sync 读不到这件事发生过；② 人无从翻案，因为没有一条可以指着说
+ * 「这一条我不同意」的记录；③ 牌桌却已经把它显示成定了。**我们对人说了一句不为真的话。**
+ *
+ * 所以默认生效是服务写下的一条 note：`decides` 指那张卡与那个选项，正文是下面这句，`refs` 指回那条指令。
+ * 落下之后它仍然可以被人改（rules.ts 的 R1b：`by === DEFAULT_DECIDER` 的选择允许被真人推翻）。
+ */
+export const DEFAULT_APPLIED_PREFIX = "没人点，按默认 ";
+/** 服务写下的那条 note 的正文。人读的字，所以只有这一处。 */
+export const defaultApplied = (option: string) => `${DEFAULT_APPLIED_PREFIX}${option}`;
+/** 那条 note 是不是「默认生效」的记录。判的是正文的前缀加 decides，不猜。 */
+export const isDefaultApplied = (body: string) => body.startsWith(DEFAULT_APPLIED_PREFIX);
+
+/**
+ * t-181 判据 8（pd 09:18 定稿，逐字）：一张带默认的卡在牌桌上按**真状态**说三句话，一句一态，不许混。
+ *
+ * · `waiting`：还没到期。它是一个承诺，主语是「到期会怎样」，所以要说出那个绝对时刻——人得知道还剩多久。
+ * · `stuck`：到期了，但服务那条事件还没落下。**修好之后这一句应当永不出现**（判据 9）：它存在是为了让故障现形，
+ *   而不是为了描述一种正常状态。之前牌桌在这一态说的是「已经按 A 了」——那正是我们对人说的那句不为真的话。
+ * · `applied`：事件落下了。主语是人：他没点，于是按了默认。
+ */
+export const DEFAULT_LINES = {
+  waiting: (at: string, option: string) => `不点的话，${at}到期，按 ${option} 执行。`,
+  stuck: () => "过期了，默认还没生效。",
+  applied: (option: string) => `你没点，已按默认 ${option} 执行。`,
+};
+
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";
 

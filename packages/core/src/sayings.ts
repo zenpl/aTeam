@@ -12,31 +12,57 @@
 /**
  * 人可见的话此刻还住在 core 之外的地方。每一处都是一次「同一句话的第二个家」。
  *
+ * **t-185：这里曾经是一份手写的三个文件的名单，现在不是了。**qa 10:01 用注入证过它：往名单外的任何一个文件里
+ * 加一句人可见的中文，这道闸全绿——而名单外还有 16 个文件、158 句，其中包括发到人手机上的失联告警。范围现在由
+ * `sourceFiles("packages")` 走出来、`isSecondHome` 判出来（`scan.ts`）：位置就是定义，新加一个文件或一个包，
+ * 它当场在范围里，没有谁需要记得把它加进哪份名单。
+ *
  * 说明书（`packages/core/manual/*.md`）不在这里：它是模板，整份都是给人读的字，数它的「中文字面量」没有意义；
  * 它与 core 的重复由另一条闸守着（t-179：core 里任何一句人可见的话在说明书里逐字出现第二份就红）。
  */
-export const SECOND_HOMES = [
-  "packages/server/src/i18n.ts",
-  "packages/cli/src/format.ts",
-  "packages/server/src/html.ts",
-] as const;
+export const SECOND_HOMES_ROOT = "packages";
 
 /**
- * 冻结的存量：上面那几处此刻还剩多少条人可见的中文字面量。**这个数是算出来的，不是数出来的**（判据 8）——
- * build.test.ts 里那条闸用同一段扫法重新算一遍，比这个数大就红。
+ * 冻结的存量：core 之外此刻还剩多少条人可见的中文字面量。**这个数是算出来的，不是数出来的**（判据 8）——
+ * sayings.test.ts 里那条闸用同一段扫法重新算一遍，比这个数大就红、比它小也红。
  *
  * 今晚 KEY_SYMBOLS 手写漏了将近一半（21→41），而在改成算出来之前没有任何迹象表明它不全。所以这个数每次变小，
  * 都要有人把它改小，**改小是搬迁的记账动作，不是可选项**：它只许变小，变大就是闸失效（判据 10）。
+ *
+ * **t-185 判据 4：这个数变大过一次，那是口径变更，不是闸失效。**207 → 365。207 是「手写的那三个文件里还有多少」，
+ * 365 是「core 之外一共还有多少」——同一件事的两个口径，后者才是 pd 08:55 那套机制真正需要的那个数。多出来的
+ * 158 句一直都在，只是没有人在数它们。从这一刻起按 365 重新起算，只减不增照旧：t-181 把页面那句「到期按 X」搬进 core（-1），合 t-144 又搬走 html.ts 最后两句（-2），此刻 362。
  */
 // t-180 搬走 4 句：页面那份 ago 梯子的四档（「刚刚」「N 分钟前」「N 小时前」「N 天前」）现在在 core 一处。
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
-export const SECOND_HOME_FROZEN: number = 205;
+// t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
+export const SECOND_HOME_FROZEN: number = 362;
 /**
- * 各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。冻结时是 i18n.ts 173、format.ts 36、html.ts 2；
- * t-180 把页面那份 ago 梯子的四档搬进 core，i18n.ts 173 → 169。这几个数用 `humanSentences` 量出来再填，不手写。
+ * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
+ * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
-export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 169, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 0 } as const;
+export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
+  "packages/server/src/i18n.ts": 168,
+  "packages/cli/src/format.ts": 36,
+  "packages/server/src/app.ts": 35,
+  "packages/cli/src/trace.ts": 26,
+  "packages/cli/src/release.ts": 23,
+  "packages/cli/src/main.ts": 22,
+  "packages/cli/src/touches.ts": 13,
+  "packages/cli/src/seamcheck.ts": 12,
+  "packages/server/src/alerts.ts": 11,
+  "packages/cli/src/deaf.ts": 5,
+  "packages/cli/src/config.ts": 2,
+  "packages/cli/src/rejected.ts": 2,
+  "packages/server/src/html.ts": 0,
+  "packages/server/src/sqlite-store.ts": 2,
+  "packages/cli/src/client.ts": 1,
+  "packages/cli/src/fixture.ts": 1,
+  "packages/cli/src/loop.ts": 1,
+  "packages/server/src/allocation.ts": 1,
+  "packages/server/src/projects.ts": 1,
+};
 
 /**
  * t-187 · `bin/inject` 对人说的八句话（pd 10:21、10:22）。
@@ -151,7 +177,7 @@ export const SENTENCE_FILES = [
 ] as const;
 
 /** t-178：这几张表本身只是名字的清单，引用一个名字不算「决定」——不排除它们，它们会把自己算进去。 */
-export const REGISTRY_SYMBOLS = ["KEY_SYMBOLS", "SAYINGS", "SECOND_HOMES", "LITERAL_CHECK_BLIND_SPOTS", "HUMAN_FIELDS", "REGISTRY_SYMBOLS"] as const;
+export const REGISTRY_SYMBOLS = ["KEY_SYMBOLS", "SAYINGS", "SECOND_HOMES_ROOT", "SECOND_HOME_AT_FREEZE", "LITERAL_CHECK_BLIND_SPOTS", "HUMAN_FIELDS", "REGISTRY_SYMBOLS"] as const;
 
 /**
  * t-143 判据 3：**这条检查唯一的例外，是构造性的，不是判出来的。**
@@ -260,7 +286,22 @@ export function humanSentences(src: string): string[] {
  * 名字，项目规矩也说命令名照原样）。所以先从 core 的句子里切出纯中文（含中文标点）的段落，再在其中找与说明书
  * 重合的最长一段——重合到 `MANUAL_COPY_MIN` 个字，就当它是抄的。
  */
-export const MANUAL_FILES = ["common.md", "invite.md", "welcome.md"] as const;
+/**
+ * 说明书住在哪儿。**t-185：这里原来是手写的三份 md，roles/ 底下那几份靠调用方自己再走一遍目录**——同一份范围
+ * 写在两处，加一份新的说明书就有一半的闸看不见它。现在只给根目录，谁要扫就把它整个走一遍（`manualFiles`）。
+ */
+export const MANUAL_ROOT = "packages/core/manual";
+
+/** `MANUAL_ROOT` 底下所有的说明书，递归，路径相对根目录。`entries` 是「目录 → 里面有什么」，由调用方读进来。 */
+export function manualFiles(entries: (dir: string) => { name: string; dir: boolean }[], root = ""): string[] {
+  const out: string[] = [];
+  for (const e of entries(root).sort((a, b) => a.name.localeCompare(b.name))) {
+    const rel = root ? `${root}/${e.name}` : e.name;
+    if (e.dir) out.push(...manualFiles(entries, rel));
+    else if (e.name.endsWith(".md")) out.push(rel);
+  }
+  return out;
+}
 /** 重合多少个中文字算抄。8 个字以下多半是「人现在能看到什么」这类共用的参数名，不是一句话。 */
 export const MANUAL_COPY_MIN = 8;
 

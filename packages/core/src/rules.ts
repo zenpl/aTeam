@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
@@ -285,7 +285,11 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.body?.trim()) throw new Rejected("instruction", "body is required");
       if (e.body.length > INSTRUCTION_MAX_CHARS)
         throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
-      if (!e.ack_by) throw new Rejected("instruction", "ack_by is required");
+      // t-181 判据 6 (pd 09:17)：带默认的卡没有 ack_by，那个默认永远不会生效——「到期按 X」里没有「到期」。
+      // CLI 总会填 15m，所以这道闸防的是别的客户端与直接调 API 的情形，拒绝话要说清怎么补。
+      if (!e.ack_by) throw new Rejected("instruction", e.default !== undefined
+        ? `带默认的卡必须有 ack_by：默认的意思是「到期按 ${e.default}」，没有到期时刻它永远不会生效。加上 ack_by（CLI 是 --ack-by 15m）`
+        : "ack_by is required");
       if (e.intent !== undefined) {
         if (e.to !== human) throw new Rejected("instruction", `kind is for the human's board; ${e.to} just acts`);
         if (!INSTRUCTION_INTENTS.includes(e.intent)) throw new Rejected("instruction", `kind must be one of ${INSTRUCTION_INTENTS.join(" | ")}, not "${e.intent}"`);
@@ -347,7 +351,16 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (!i.options?.length) throw new Rejected("decide", `${i.id} carries no options`);
         if (st.withdrawn) throw new Rejected("decide", `${i.id} was taken back by ${st.withdrawn.by} (${st.withdrawn.reason})`);
         if (!i.options.includes(e.decides.option)) throw new Rejected("decide", `"${e.decides.option}" is not one of: ${i.options.join(" | ")}`);
-        if (i.to !== e.actor && e.actor !== human) throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
+        // t-181 (pd 09:18)：默认到期由**服务**落成一条真事件，所以服务也能决定——但只在它该决定的那一刻、
+        // 只能选那个默认值。别的时候服务和任何人一样无权替人点。
+        const byService = e.actor === SERVICE_ACTOR && isDefaultApplied(e.body ?? "");
+        if (byService) {
+          if (i.default === undefined) throw new Rejected("decide", `${i.id} 没有默认值：没有默认，就没有「到期按什么」这回事`);
+          if (e.decides.option !== i.default) throw new Rejected("decide", `默认是 ${i.default}，不是 ${e.decides.option}——服务只能替人落下那个默认值`);
+          if (!(i.ack_by < now.toISOString())) throw new Rejected("decide", `${i.id} 还没到期（${i.ack_by}）：默认到期才生效，早一秒都是替人做主`);
+        } else if (i.to !== e.actor && e.actor !== human) {
+          throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
+        }
         // a default that took effect at ack_by may still be overridden; a real decision may not
         if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
         if (!e.decision) throw new Rejected("decide", "a choice is a decision; set decision: true");

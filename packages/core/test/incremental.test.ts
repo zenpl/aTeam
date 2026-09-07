@@ -10,7 +10,7 @@
  * All times are relative to now: nothing here is pinned to a date.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, Reduction, reduce, advance, settle, empty, DEFAULT_DECIDER, type State, type Event, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, Reduction, reduce, advance, settle, empty, runDueDefaults, DEFAULT_DECIDER, type State, type Event, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -97,23 +97,33 @@ describe("t-128 · an advanced reduction is the reduction", () => {
     }
   });
 
-  it("the default fires with the clock and is given back when the clock is asked earlier", async () => {
+  /**
+   * t-181 改了这两条测的**那个字段**，没改它们测的那件事：随时钟前后走、算出来的东西要跟着走。
+   * 变的是「到期」现在算出的是 `default_due`（到期了、没人点、服务那条事件还没落下）——`chosen` 不再由时间
+   * 凭空生出来，它只由一条真事件生出来。
+   */
+  it("到期这件事跟着时钟走，把钟拨回去它也跟着回去", async () => {
     const store = new MemoryStore();
     const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
     const r = new Reduction(store);
-    expect((await r.at(at(30))).instructions.get(ask.id)!.chosen).toMatchObject({ option: "B", by: DEFAULT_DECIDER });
-    expect((await r.at(at(10))).instructions.get(ask.id)!.chosen).toBeUndefined();
-    expect((await r.at(at(30))).instructions.get(ask.id)!.overdue).toBe(false);   // the default answered it
+    expect((await r.at(at(30))).instructions.get(ask.id)!.default_due).toBe(true);
+    expect((await r.at(at(10))).instructions.get(ask.id)!.default_due).toBe(false);
+    expect((await r.at(at(30))).instructions.get(ask.id)!.chosen).toBeUndefined();   // 时间不做决定
+    expect((await r.at(at(30))).instructions.get(ask.id)!.overdue).toBe(true);       // 还欠一个答案
   });
 
-  it("an ack after a default had fired leaves no default behind", async () => {
+  it("服务落下那条事件之后，它才是一个决定；而且一个 ack 抹不掉它", async () => {
     const store = new MemoryStore();
     const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
     const r = new Reduction(store);
+    await runDueDefaults(store, reduce(await store.read(), at(30)), HUMAN, at(30));
     expect((await r.at(at(30))).instructions.get(ask.id)!.chosen?.by).toBe(DEFAULT_DECIDER);
     await append(store, { kind: "ack", actor: HUMAN, of: ask.id }, { human: HUMAN, now: at(31) });
     const s = await r.at(at(40));
-    expect(s.instructions.get(ask.id)!.chosen).toBeUndefined();
+    // 之前这里断言 ack 之后 chosen 变回 undefined——那时它本来就不是一条记录。现在它是，抹掉它等于把
+    // 人翻案时唯一能指着的那条依据删了。
+    expect(s.instructions.get(ask.id)!.chosen?.by).toBe(DEFAULT_DECIDER);
+    expect(s.instructions.get(ask.id)!.default_due).toBe(false);
     expect(s.instructions.get(ask.id)!.overdue).toBe(false);
     expect(shape(s)).toEqual(shape(reduce(await store.read(), at(40))));
   });

@@ -75,7 +75,8 @@ export function board(b: Board, me: string): string {
   if (b.needs_human.length) {
     out.push("", "NEEDS HUMAN");
     // t-107: the card says who is asking by the name people read, not the summary core built from the id
-    for (const n of b.needs_human) out.push(`  ${who(n.from)}: ${n.body}${n.options?.length ? `  [${n.options.join(" | ")}${n.default ? `; default ${n.default}` : ""}]` : ""}  (${n.id})`);
+    // t-181：带默认的卡把「此刻真是什么状态」那一句也印出来。字来自 core（board 的 says_default），这里不写第二份。
+    for (const n of b.needs_human) out.push(`  ${who(n.from)}: ${n.body}${n.options?.length ? `  [${n.options.join(" | ")}${n.default ? `; default ${n.default}` : ""}]` : ""}${n.says_default ? `  ${n.says_default.line}` : ""}  (${n.id})`);
   }
 
   if (b.undelivered?.length) {

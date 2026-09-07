@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -179,6 +179,10 @@ export function createApp(opts: ServerOptions) {
       if (contactWanted(state) && !alertContact(state).value && ![...state.instructions.values()].some((st) => isContactAsk(st.instruction.body))) {
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() }));
       }
+      // t-181 (pd 09:18)：到期的默认，服务在自己的时钟上把它落成真事件。放在这里而不是某个请求路径上，是因为
+      // 「到期」不是任何人做了什么——没有人来点，正是它该发生的那一刻；等下一个人碰巧发个请求才落下，就又变成
+      // 「牌桌说的和日志里的不是一回事」。
+      out.push(...await runDueDefaults(store, state, human, real()));
       // t-061: the allocation warnings as a fact, at most one entry per pattern per period
       const fact = allocationFact(state, human, at);
       if (fact) out.push(await append(store, fact, { human, now: real() }));

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, DEFAULT_LINES, atClock, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -455,7 +455,14 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
   const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
 
-  it("before ack_by it is a question for the human; after, it is decided by default and leaves needs_human", async () => {
+  /**
+   * t-181 改了这一条测的东西，因为 t-022 那一版的行为是错的。
+   *
+   * 那一版：ack_by 一过，`settle()` 就把 `chosen` 算成默认值——**日志里一个字都没有**。牌桌因此显示「已经定了」，
+   * 而别人 sync 读不到，人也没有一条可以指着翻案的记录。pm 09:17 实测：pd 15:57 那张卡在这个状态里待了十二小时。
+   * 现在到期只是到期：牌桌照实说「过期了，默认还没生效」，直到服务落下那条事件为止。
+   */
+  it("到期本身不是决定：日志里没有那条事件之前，默认没有生效（t-181 判据 1、2）", async () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
@@ -463,11 +470,80 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     let b = await at(store, c);
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
     expect(b.instructions[0].chosen).toBeUndefined();
+    expect(b.needs_human[0].says_default).toEqual({ state: "waiting", line: DEFAULT_LINES.waiting(atClock(q.ack_by), "private") });
     c.tick(min(31));
     b = await at(store, c);
+    // 到期了，但没人落事件：卡还在人手里，牌桌说的是故障态那一句，不是「已经按 private 了」
+    expect(b.instructions[0].chosen).toBeUndefined();
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    expect(b.needs_human[0].says_default).toEqual({ state: "stuck", line: DEFAULT_LINES.stuck() });
+    expect(b.overdue.map((o) => o.instruction)).toEqual([q.id]);
+  });
+
+  it("服务落下那条事件之后，默认才生效——而且是一条谁都读得到、指得着的记录（判据 4 正例、判据 7）", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(61));
+    const landed = await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(landed).toHaveLength(1);
+    expect(landed[0]).toMatchObject({ kind: "note", actor: SERVICE_ACTOR, decision: true, decides: { of: q.id, option: "private" }, refs: [q.id] });
+    expect((landed[0] as { body: string }).body).toBe(defaultApplied("private"));
+    const b = await at(store, c);
     expect(b.needs_human).toHaveLength(0);
     expect(b.overdue).toHaveLength(0);
-    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: q.ack_by });
+    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at });
+    expect(b.instructions[0].says_default).toEqual({ state: "applied", line: DEFAULT_LINES.applied("private") });
+    // 幂等：再扫一次不会落第二条（`default_due` 落完就是 false）
+    expect(await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now())).toHaveLength(0);
+  });
+
+  it("判据 4 反例：人在到期前点了，就不落默认，以人的选择为准", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(10));
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
+    c.tick(min(90));
+    expect(await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now())).toHaveLength(0);
+    const b = await at(store, c);
+    expect(b.instructions[0].chosen?.option).toBe("public");
+    expect(b.instructions[0].chosen?.by).toBe(HUMAN);
+    expect(b.instructions[0].says_default).toBeUndefined();   // 人点过了，这张卡不再是「到期会怎样」的事
+  });
+
+  it("判据 9：故障态那一句只在故障时出现——服务扫过之后它不再出现", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await ask(store, c);
+    c.tick(min(61));
+    expect((await at(store, c)).needs_human[0].says_default!.state).toBe("stuck");   // 故障态：真的会出现
+    await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
+    const b = await at(store, c);
+    expect(b.instructions[0].says_default!.state).toBe("applied");
+    expect(b.instructions.some((i) => i.says_default?.state === "stuck")).toBe(false);
+    expect(b.needs_human.some((n) => n.says_default?.state === "stuck")).toBe(false);
+  });
+
+  it("判据 6：带默认却没有 ack_by 的卡被拒，拒绝话说清怎么补", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const r = await rejected(emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", options: ["private", "public"], default: "private" } as never));
+    expect(r.message).toContain("带默认的卡必须有 ack_by");
+    expect(r.message).toContain("到期按 private");
+    expect(r.message).toContain("--ack-by");
+  });
+
+  it("服务只能在该落的那一刻、落那个默认值：早一秒、换一个选项都被拒", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(10));
+    const early = await rejected(emit(store, c, { kind: "note", actor: SERVICE_ACTOR, body: defaultApplied("private"), decision: true, decides: { of: q.id, option: "private" } }));
+    expect(early.message).toContain("还没到期");
+    c.tick(min(90));
+    const wrong = await rejected(emit(store, c, { kind: "note", actor: SERVICE_ACTOR, body: defaultApplied("public"), decision: true, decides: { of: q.id, option: "public" } }));
+    expect(wrong.message).toContain("服务只能替人落下那个默认值");
   });
 
   it("after the default took effect the human can still decide; that decision wins and is a note; a second one is rejected", async () => {
@@ -475,6 +551,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     const c = clock();
     const q = await ask(store, c);
     c.tick(min(90));
+    await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());      // t-181：默认要先真的落下，才谈得上「被推翻」
     expect((await at(store, c)).instructions[0].chosen?.by).toBe("default");
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
     const n = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
@@ -2556,7 +2633,10 @@ describe("t-113 · a seam is judged at the finest granularity both sides declare
 
   it("no whitelist and no path pattern: a source file behaves exactly like a test file", async () => {
     const src = "packages/core/src/rules.ts";
-    expect((await seamOf(await pair([`${src}#validate`], [`${src}#checkShape`]))).light).toBe(true);
+    // t-185：这两个符号原来写的是 validate / checkShape，范围扩到 rules.ts 之后它们都在 KEY_SYMBOLS 里了
+    // （拒绝话就是人读的字），于是这条测试的 done 被那道闸拦下。这条测的是接缝的粒度，不是那道闸，
+    // 所以换成同一个文件里两个确实不说话的符号，测的东西一个字没变。
+    expect((await seamOf(await pair([`${src}#matchesShape`], [`${src}#sameShape`]))).light).toBe(true);
     expect((await seamOf(await pair([src], [src]))).light).toBeUndefined();
     // 判据 2：代码里（注释不算）没有任何按路径模式的豁免
     const code = readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")

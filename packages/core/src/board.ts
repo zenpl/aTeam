@@ -1,5 +1,5 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND } from "./events.js";
-import { lastSeen, overturnedOn } from "./reduce.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
@@ -53,6 +53,33 @@ export interface BoardTask {
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
 
 /** How an instruction to the human reads: asked, or derived (options → ask, otherwise do). */
+/**
+ * t-181 判据 2、8、9：一张带默认的卡此刻**真正**处在哪一态，以及照实说它的那句话。
+ *
+ * 三态是真状态，不是三种说法：
+ * · `waiting` 还没到期——那是一个承诺，所以说出到期的绝对时刻。
+ * · `stuck` 到期了，服务那条事件还没落下。**修好之后这一句应当永不出现**（判据 9）：它存在是为了让故障现形。
+ *   在此之前牌桌在这一态说的是「到期按 A」，读起来像已经定了——那正是我们对人说的那句不为真的话（判据 2）。
+ * · `applied` 事件落下了，人可以指着它翻案。
+ *
+ * 时刻只取到分（`hhmm`）：卡上要的是「还剩多久」的量级，秒是噪音。这三句在 core 一处（`DEFAULT_LINES`），
+ * 页面与命令行都印它，不各写一份。
+ */
+export type DefaultState = "waiting" | "stuck" | "applied";
+export interface DefaultSay { state: DefaultState; line: string }
+
+/** 到期时刻在卡上的写法：`2026-09-07T10:15:00Z` → `10:15`。 */
+export const atClock = (iso: string) => iso.slice(11, 16);
+
+export function sayDefault(st: InstructionState): DefaultSay | undefined {
+  const i = st.instruction;
+  if (i.default === undefined || !i.options?.length) return undefined;
+  if (st.chosen?.by === DEFAULT_DECIDER) return { state: "applied", line: DEFAULT_LINES.applied(st.chosen.option) };
+  if (st.chosen) return undefined;                       // 有人真的点了：这张卡不再是「到期会怎样」的事
+  if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  return { state: "waiting", line: DEFAULT_LINES.waiting(atClock(i.ack_by), i.default) };
+}
+
 /**
  * 「多久以前」，全项目一句话一个说法（t-180，pd 09:09 定的梯子）。牌桌、命令行、core 自己拼的句子都走这里。
  *
@@ -193,6 +220,8 @@ export interface Board {
     /** ask: answer it; do: do it and say "done"; info: read it. */
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+    /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话（core 一处，页面与命令行都印它）。 */
+    says_default?: DefaultSay;
   }[];
   /**
    * t-106: the name to show for a role id, wherever a person reads one — presence, a task's owner, an instruction's
@@ -291,6 +320,8 @@ export interface Board {
     deferred?: { note: string; body: string; at: string };
     /** present when the instruction asks the human to choose */
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+    /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话。 */
+    says_default?: DefaultSay;
   }[];
   readings: {
     id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[];
@@ -715,6 +746,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       reach: st.reach, acted_by_event: st.acted_by_event,
       options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
+      says_default: sayDefault(st),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
     if (status === "acked" || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
@@ -725,7 +757,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       b.needs_human.push({
         kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
-        options: i.options, default: i.default,
+        options: i.options, default: i.default, says_default: sayDefault(st),
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }
