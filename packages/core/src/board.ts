@@ -822,6 +822,30 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
  * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
  * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
  */
+/**
+ * t-140 (pd 06:23): what this node itself still owes, said only to it, only at sync. Two sentences because under the
+ * model of 05:39 it owes two different things: an answer to a card, and an action on everything else. The second
+ * ends with both legitimate ways out on purpose — silence is no longer an answer, and a refusal is information, so
+ * a line that offered neither would read as nagging.
+ */
+export function owedLines(forMe: { id: string; at: string; body?: string; options?: string[] }[], now: Date): string[] {
+  const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
+  type Owed = { id: string; at: string; body?: string; options?: string[] };
+  const oldest = (xs: Owed[]) => xs.reduce((a, b) => (a.at < b.at ? a : b));
+  const first = (x: Owed) => splitTitle(x.body ?? "").title || (x.body ?? "").trim().slice(0, 30);
+  const out: string[] = [];
+  const asks = forMe.filter((i) => i.options?.length), rest = forMe.filter((i) => !i.options?.length);
+  if (asks.length) {
+    const o = oldest(asks);
+    out.push(`有 ${asks.length} 条在等你答，最久的 ${mins(o.at)} 分钟：${first(o)}`);
+  }
+  if (rest.length) {
+    const o = oldest(rest);
+    out.push(`你读过还没动的有 ${rest.length} 条，最久 ${mins(o.at)} 分钟：${first(o)}。办了它，或者写一句「不办：原因」。`);
+  }
+  return out;
+}
+
 export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
   const state = new Map(b.presence.map((p) => [p.actor, p]));
   const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });

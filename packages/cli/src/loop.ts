@@ -1,4 +1,4 @@
-import type { PullResult } from "@ateam/core";
+import { owedLines, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -71,6 +71,9 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   const r = await client.pull(after, waitMs);
   advance(cursor, r.cursor);
   if (print) for (const line of report(r, me, after)) print(line);
+  // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
+  // this node's own business, not the team's and certainly not the human's.
+  if (print) for (const line of owedLines(r.for_me as { id: string; at: string; body?: string; options?: string[] }[], new Date())) print(line);
   return r;
 }
 

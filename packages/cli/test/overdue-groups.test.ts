@@ -41,3 +41,35 @@ describe("t-140 · CLI 与牌桌说同一句", () => {
     expect(out).not.toContain("undefined");
   });
 });
+
+describe("t-140 · 欠什么只在 sync 时对本人说", () => {
+  const puller = (forMe: { id: string; at: string; body?: string; options?: string[] }[]) => ({
+    pull: async () => ({ events: [], for_me: forMe as never[], cursor: "c1" }),
+  });
+  const cursor = () => { let v: string | null = null; return { read: () => v, write: (x: string | null) => { v = x; } }; };
+
+  it("sync says the two sentences; watch's own rounds do not", async () => {
+    const at = new Date(Date.now() - 20 * 60_000).toISOString();
+    const forMe = [{ id: "i1", at, body: "先上哪个？两个都行。", options: ["报表", "导出"] }, { id: "i2", at, body: "把灰字改了。细节在 note。" }];
+    const said: string[] = [];
+    const { sync } = await import("../src/loop.js");
+    await sync(puller(forMe) as never, "frontend", cursor() as never, 0, (l: string) => said.push(l));
+    const text = said.join("\n");
+    expect(text).toContain("在等你答");
+    expect(text).toContain("你读过还没动的有");
+    expect(text).toContain("不办：原因");
+
+    // print null is how watch calls it every round: the cursor still moves, and nothing is said
+    const quiet: string[] = [];
+    await sync(puller(forMe) as never, "frontend", cursor() as never, 0, null);
+    expect(quiet).toEqual([]);
+  });
+
+  it("says nothing when nothing is owed", async () => {
+    const said: string[] = [];
+    const { sync } = await import("../src/loop.js");
+    await sync(puller([]) as never, "frontend", cursor() as never, 0, (l: string) => said.push(l));
+    expect(said.join("\n")).not.toContain("在等你答");
+    expect(said.join("\n")).not.toContain("还没动的");
+  });
+});
