@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -458,6 +458,21 @@ export function createApp(opts: ServerOptions) {
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
       // run the same action right after the key is entered (docs/board.md: buttons are always clickable).
       const ACTIONS = new Set(["/ack", "/say", "/decide", "/fact"]);
+      /**
+       * t-212（qa 16:19 找到的洞）：**牌桌按钮那条路不走 validate**，所以它被挡住的那几次一条都没被数进
+       * 拒绝账——而那正是最该数的一条路：全队只有它是**人**被挡住。
+       * 记在这一处而不是每一个 `return { status: 409 }` 上，与 core 里记在唯一那条写入路径上是同一条道理：
+       * 下一个人再加一条拒绝分支，不必记得来这里加一行。
+       */
+      const actAndCount = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
+        const r = await act(then, form);
+        if (r.status >= 400 && store.recordRefusal) {
+          const b = (r.body ?? {}) as { rule?: unknown; error?: unknown };
+          const rule = typeof b.rule === "string" ? b.rule : typeof b.error === "string" ? b.error : "unknown";
+          await store.recordRefusal({ kind: "refused", who: human, rule, op: then, id: ulid(now().getTime()), at: now().toISOString() });
+        }
+        return r;
+      };
       const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
         if (then === "/ack") {
           // 「知道了」/「做好了」/「起好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
@@ -545,7 +560,7 @@ export function createApp(opts: ServerOptions) {
           }
           return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         }
-        const r = await act(path, new URLSearchParams(body));
+        const r = await actAndCount(path, new URLSearchParams(body));
         if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
       }
@@ -566,7 +581,7 @@ export function createApp(opts: ServerOptions) {
         const secure = proto === "https";
         const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure ? "; Secure" : ""}`;
         const then = fields.then ?? "";
-        const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
+        const r = ACTIONS.has(then) ? await actAndCount(then, new URLSearchParams(fields)) : { status: 204, body: null };
         if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
         res.writeHead(303, { location: `${base}/`, "set-cookie": setCookie });
         return res.end();

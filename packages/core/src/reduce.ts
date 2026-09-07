@@ -203,6 +203,17 @@ export interface State {
    * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
    */
   disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
+  /**
+   * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被误写时，本人（human）不在，而按 t-196 只有本人
+   * 或 human 能更正——于是全队谁都动不了它。今天它真的卡住了一件事：qa 03:36 试共享 token 时误落一条 ack，
+   * 以 actor=human 入库；16:05 release 要撤一张过期的卡，闸以「acked by human」拒了它。**一条假的 ack 正在
+   * 保护一张假的卡。**
+   *
+   * 出路不是让某一个 agent 单独说了算（那等于谁都能抹掉自己以 human 名义造的痕迹），而是**两个不同角色各
+   * 声明一次才生效**，并且留痕：human 回来可以对那条更正本身再发一条 disown 把它推翻。这里记的是「已经有
+   * 一个人声明了，还差一个」——牌桌据此说得出「这一条在争议中」。
+   */
+  contested: Map<string, { by: string[]; at: string; reason: string; actor: string }>;
   /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
   from: Map<string, Event>;
   readings: Map<string, ReadingState>;
@@ -322,6 +333,7 @@ export function empty(): State {
     ids: new Set(),
     actorOf: new Map(),
     disowned: new Map(),
+    contested: new Map(),
     from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
@@ -350,7 +362,11 @@ export function empty(): State {
  * "every append re-reduces the log" (O(events) per write, O(events squared) for a day of them) into "every append
  * folds what it has not seen". Events must arrive in id order, as the log stores them.
  */
-export function advance(s: State, log: Log): State {
+/**
+ * t-216：`human` 只用在一处——判一条署名更正是「本人／human 发的（当场生效）」还是「第三方对一条署着 human
+ * 的事件的声明（要两个人）」。默认 "human" 是这个项目一直用的那个名字；服务按自己的配置传。
+ */
+export function advance(s: State, log: Log, human = "human"): State {
   const dirty = new Set<string>();  // seams this batch could have changed the judgement of
   let judgeAll = false;
   const markSeams = (task: string) => { for (const id of s.seamsOf.get(task) ?? []) dirty.add(id); };
@@ -369,11 +385,34 @@ export function advance(s: State, log: Log): State {
   // 增量那一头由 `Reduction` 负责：一批里带着 disown 就整个重建（store.ts），因为一条更正可能指向早就折进去的
   // 事件，而已经算进状态的东西是收不回来的。
   for (const e of log.events) if (!s.ids.has(e.id)) s.actorOf.set(e.id, e.actor);
+  // t-216：更正分两种，所以要先把这一批里的更正收齐再判，不能见一条算一条。
+  // ① 本人自报、或 human 发的 —— 当场生效（t-196 原样）。
+  // ② 署着 human 的事件被别的角色更正 —— 那是**声明**，两个不同角色各来一次才生效；只有一个就挂在
+  //    `contested` 里等第二个人或等 human。
+  // 一条更正自己被更正了（human 回来推翻它），就当它没发生过——那正是 human 的翻案路，不必另造机制。
+  const claims = new Map<string, { by: string[]; at: string; reason: string }>();
+  const undone = new Set<string>();
+  for (const e of log.events) if (e.kind === "disown") {
+    for (const x of log.events) if (x.kind === "disown" && x.of === e.id) undone.add(e.id);
+  }
   for (const e of log.events) {
-    if (e.kind === "disown" && !s.ids.has(e.id) && !s.disowned.has(e.of)) {
-      s.disowned.set(e.of, { by: e.actor, at: e.at, reason: e.reason, actor: s.actorOf.get(e.of) ?? "" });
+    if (e.kind !== "disown" || s.ids.has(e.id) || undone.has(e.id)) continue;
+    const signer = s.actorOf.get(e.of) ?? "";
+    if (s.disowned.has(e.of)) continue;
+    if (e.actor === signer || e.actor === human) {
+      s.disowned.set(e.of, { by: e.actor, at: e.at, reason: e.reason, actor: signer });
+      claims.delete(e.of);
+      continue;
+    }
+    const c = claims.get(e.of) ?? { by: [], at: e.at, reason: e.reason };
+    if (!c.by.includes(e.actor)) c.by.push(e.actor);
+    claims.set(e.of, c);
+    if (c.by.length >= 2) {
+      s.disowned.set(e.of, { by: c.by.join("+"), at: e.at, reason: c.reason, actor: signer });
+      claims.delete(e.of);
     }
   }
+  for (const [of, c] of claims) s.contested.set(of, { ...c, actor: s.actorOf.get(of) ?? "" });
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
     s.ids.add(e.id);
@@ -573,8 +612,8 @@ export function settle(s: State, now: Date): State {
 }
 
 /** The whole log, reduced at a moment: what every caller that holds no state of its own still asks for. */
-export function reduce(log: Log, now: Date = new Date()): State {
-  return settle(advance(empty(), log), now);
+export function reduce(log: Log, now: Date = new Date(), human = "human"): State {
+  return settle(advance(empty(), log, human), now);
 }
 
 function invalidate(s: State, e: Event) {

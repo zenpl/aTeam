@@ -361,9 +361,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.reason?.trim()) throw new Rejected("disown", "说明为什么它不是你做的（--reason）：一条没有理由的署名更正，读的人无从判断该不该信");
       const who = state.actorOf.get(e.of);
       if (!who) throw new Rejected("disown", `找不到 ${e.of} 的署名，没法更正它`);
+      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
+      // t-216：**被误署成 human 的那一种，本人正好是不在的那个人。** 于是按 t-196 谁都动不了它——今天它真的
+      // 卡住了一件事（qa 03:36 误落的那条 ack，16:05 正保护着一张过期的卡）。这里开一条路，但不交给任何单个
+      // agent：署着 human 的事件，别的角色可以**声明**它不是 human 发的，两个不同角色各来一次才生效，
+      // 而且 human 回来可以对那条声明本身再发一条 disown 把它推翻。
+      if (who === human && e.actor !== human) {
+        const c = state.contested.get(e.of);
+        if (c?.by.includes(e.actor)) throw new Rejected("disown", `${e.actor} 已经声明过 ${e.of} 了：要生效还差另一个角色，同一个人说两次不算两个人`);
+        return;
+      }
       if (who !== e.actor && e.actor !== human)
         throw new Rejected("disown", `${e.of} 署的是 ${who}，不是 ${e.actor}：署名更正只能由本人自报，或由 ${human} 发。替别人说「这不是他做的」要人拍板——请 ${who} 自己发，或把这件交给 ${human}`);
-      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
       return;
     }
 
