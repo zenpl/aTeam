@@ -285,12 +285,13 @@ export const KEY_SYMBOLS = [
   "SAID_PREFIX", "SEAM_SAME_FILE", "SHAPE_OF", "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE",
   "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago", "alertContact", "allocationSummary", "alsoHere",
   "applyReading", "batches", "batchesEmptyLine", "blockedWhy", "board", "capabilityKey",
-  "checkShape", "coverage", "deployHistory", "dueDefaults", "followUps", "gateHonesty",
-  "honestyLine", "humanImpactPromised", "inFlightGroups", "judgeSeam", "lightSeamLine", "manual",
-  "manualFor", "missingCard", "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits",
-  "responsibilityAppendix", "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard",
-  "span", "splitRelease", "standInBlocker", "standIns", "staticAllocation", "taskHeading",
-  "validate", "validateTask", "valueForm", "verifierEligibility", "whoCanVerify", "whoElseTouches",
+  "checkShape", "coverage", "deployHistory", "dueDefaults", "exampleLine", "followUps",
+  "gateHonesty", "honestyLine", "humanImpactPromised", "inFlightGroups", "judgeSeam", "lightSeamLine",
+  "manual", "manualFor", "missingCard", "nobodyElse", "overdueByPresence", "owedSentences",
+  "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops", "sayReading", "shapeFor",
+  "slimBoard", "span", "splitRelease", "standInBlocker", "standIns", "staticAllocation",
+  "taskHeading", "validate", "validateTask", "valueForm", "verifierEligibility", "whoCanVerify",
+  "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -553,6 +554,20 @@ export const MIGRATION_OPTIONS = [MIGRATION_OK, MIGRATION_MISSING];
 export const INVITE_SENT_PREFIX = "邀请已发回旧渠道：";
 /** t-097: when the old place cannot be written to, the human forwards the link. pd's wording (UC-S9). */
 export const FORWARD_LINK = "把这个链接发给他们：";
+/**
+ * t-144: the screen-reader name of the box that link sits in. It was a literal in `html.ts` — a whole label the page
+ * had written for itself, invisible to everyone who does not use a screen reader and therefore to every reviewer too.
+ * pd 05:50's rule does not have a sighted-only clause: a name only some people hear is still a name only core says.
+ */
+export const INVITE_URL_LABEL = "邀请链接";
+/**
+ * t-144 · pd 09:50：一个 key 里必须是**一句人能读完的话**，占位符只替换**值**，不替换句子的任何一部分。
+ *
+ * 这一句原来是页面上的两个字「例如」，紧挨着一段 `<code>` 版式。它错不在短，而在**它是句子的一半，不是一个值**：
+ * 要把两个 key 接起来才凑成一句，那是碎片（禁止）；一句话里挖个洞填值，那是模板（允许）。所以整句进 core，
+ * 页面只负责把那个值包成 `<code>` 再递进来。
+ */
+export const exampleLine = (value: string) => `例如 ${value}`;
 /**
  * t-098 (M7): the fact that says the move is finished. Writing it is refused until the human answered 对 on the check
  * card — that button is the authorisation to touch someone else's channel, so nothing may claim the move is over before it.

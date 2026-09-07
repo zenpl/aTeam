@@ -31,9 +31,13 @@ export const SECOND_HOMES_ROOT = "packages";
  *
  * **t-185 判据 4：这个数变大过一次，那是口径变更，不是闸失效。**207 → 365。207 是「手写的那三个文件里还有多少」，
  * 365 是「core 之外一共还有多少」——同一件事的两个口径，后者才是 pd 08:55 那套机制真正需要的那个数。多出来的
- * 158 句一直都在，只是没有人在数它们。从这一刻起按 365 重新起算，只减不增照旧——t-181 把页面那句「到期按 X」搬进 core，当天就减到了 364。
+ * 158 句一直都在，只是没有人在数它们。从这一刻起按 365 重新起算，只减不增照旧：t-181 把页面那句「到期按 X」搬进 core（-1），合 t-144 又搬走 html.ts 最后两句（-2），此刻 362。
  */
-export const SECOND_HOME_FROZEN: number = 364;
+// t-180 搬走 4 句：页面那份 ago 梯子的四档（「刚刚」「N 分钟前」「N 小时前」「N 天前」）现在在 core 一处。
+// t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
+// html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
+// t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
+export const SECOND_HOME_FROZEN: number = 362;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -51,7 +55,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/cli/src/deaf.ts": 5,
   "packages/cli/src/config.ts": 2,
   "packages/cli/src/rejected.ts": 2,
-  "packages/server/src/html.ts": 2,
+  "packages/server/src/html.ts": 0,
   "packages/server/src/sqlite-store.ts": 2,
   "packages/cli/src/client.ts": 1,
   "packages/cli/src/fixture.ts": 1,
@@ -99,6 +103,8 @@ export const SAYINGS: readonly Saying[] = [
   { key: "seam.light", where: ["board", "cli"], from: "lightSeamLine" },
   { key: "who.also_here", where: ["cli"], from: "alsoHere" },
   { key: "who.nobody", where: ["cli"], from: "nobodyElse" },
+  { key: "invite.url_label", where: ["page"], from: "INVITE_URL_LABEL" },
+  { key: "token.example", where: ["page"], from: "exampleLine" },
 ];
 
 /** t-143 判据 1：一个 key 只登记一次——重复的 key 意味着两句话共用一个名字，改一个会动到另一个。 */
