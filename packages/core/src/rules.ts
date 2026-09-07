@@ -86,8 +86,86 @@ export class Rejected extends Error {
  * The structural rules. They are the product; everything else is storage.
  * Throws Rejected. `state` is the reduction of the log *before* this event.
  */
+/**
+ * t-109 (M4): a shape check that runs before any rule reads a field. qa 00:26 sent a `task seam` event that wrote its
+ * two tasks as `a`/`b` instead of `tasks`, and the seam rule reached straight for `e.tasks[0]`: TypeError, straight
+ * past `Rejected`, out as a 500. A 500 tells the caller the service is broken; a 409 tells them the service is working
+ * and they mistyped a field. The fix is one table rather than a guard at each of those reads: a new op that forgets to
+ * declare its required fields is the only way back to a crash, and the table is where you would look.
+ */
+type FieldKind = "string" | "boolean" | "strings" | "pair";
+const REQUIRED: Record<string, Record<string, FieldKind>> = {
+  reading: { key: "string", surface: "string" },
+  instruction: { to: "string", body: "string" },
+  ack: { of: "string" },
+  untell: { of: "string", reason: "string" },
+  note: { body: "string" },
+  "task:create": { task: "string", title: "string", criteria: "strings" },
+  "task:label": { task: "string", label: "string" },
+  "task:claim": { task: "string", touches: "strings" },
+  "task:done": { task: "string" },
+  "task:verify": { task: "string", surface: "string", pass: "boolean" },
+  "task:block": { task: "string", on: "string" },
+  "task:unblock": { task: "string" },
+  "task:withdraw": { task: "string", reason: "string" },
+  "task:obsolete": { task: "string", decision: "string" },
+  "task:reopen": { task: "string", reason: "string" },
+  "task:criteria": { task: "string", add: "strings" },
+  "task:seam": { tasks: "pair", resolution: "string" },
+};
+/** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
+const OPTIONAL: Record<string, Record<string, FieldKind>> = {
+  reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
+  note: { supersedes: "string", task: "string", label: "string" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings" },
+  "task:verify": { evidence: "string", shows: "string" },
+  "task:create": { label: "string" },
+  "task:obsolete": { reason: "string" },
+};
+
+const holds = (v: unknown, k: FieldKind): boolean =>
+  k === "string" ? typeof v === "string" && v.length > 0
+  : k === "boolean" ? typeof v === "boolean"
+  : k === "strings" ? Array.isArray(v) && v.every((x) => typeof x === "string")
+  : Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && x.length > 0);
+const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", boolean: "true 或 false", strings: "一个字符串数组", pair: "两个任务 id 的数组，例如 [\"t-1\", \"t-2\"]" };
+
+/** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
+export function checkShape(e: NewEvent): void {
+  if (e.refs !== undefined && !holds(e.refs, "strings")) throw new Rejected("shape", `refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}`);
+  const kinds = ["reading", "instruction", "ack", "untell", "note", "task"];
+  if (!kinds.includes(e.kind as string)) throw new Rejected("shape", `kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`);
+  let slot: string = e.kind;
+  if (e.kind === "task") {
+    const op = (e as { op?: unknown }).op;
+    const ops = Object.keys(REQUIRED).filter((k) => k.startsWith("task:")).map((k) => k.slice(5));
+    if (typeof op !== "string" || !ops.includes(op)) throw new Rejected("shape", `task 事件要带 op，${op === undefined ? "这条没带" : `${JSON.stringify(op)} 不是其中之一`}：${ops.join("、")}`);
+    slot = `task:${op}`;
+  }
+  const rec = e as unknown as Record<string, unknown>;
+  for (const [field, kind] of Object.entries(REQUIRED[slot] ?? {})) {
+    if (!holds(rec[field], kind)) {
+      const what = rec[field] === undefined ? "这条没带它" : `收到 ${valueForm(rec[field])}`;
+      throw new Rejected("shape", `${slot} 要带 ${field}（${SHAPE_OF[kind]}），${what}。字段名写错了也会走到这里——按 ${slot} 该有的字段核一遍：${Object.keys(REQUIRED[slot]).join("、")}`);
+    }
+  }
+  for (const [field, kind] of Object.entries(OPTIONAL[slot] ?? {})) {
+    if (rec[field] !== undefined && !holds(rec[field], kind)) throw new Rejected("shape", `${slot} 的 ${field} 可以不带，带了就要是${SHAPE_OF[kind]}，收到 ${valueForm(rec[field])}`);
+  }
+  // one nested shape a rule reaches into: a note that decides an instruction
+  const d = (e as { decides?: unknown }).decides;
+  if (d !== undefined) {
+    const o = d as { of?: unknown; option?: unknown };
+    if (!d || typeof d !== "object" || Array.isArray(d) || !holds(o.of, "string") || !holds(o.option, "string"))
+      throw new Rejected("shape", `note 的 decides 要是 {of: "<指令 id>", option: "<选项>"}，收到 ${valueForm(d)}`);
+  }
+  const sh = (e as { shape?: unknown }).shape;
+  if (sh !== undefined && (!sh || typeof sh !== "object" || Array.isArray(sh))) throw new Rejected("shape", `reading 的 shape 要是 {regex?, enum?} 这样的对象，收到 ${valueForm(sh)}`);
+}
+
 export function validate(state: State, e: NewEvent, human: string, now: Date = new Date()): void {
   if (!e.actor) throw new Rejected("actor", "actor is required");
+  checkShape(e); // t-109: shape before rules, so no rule ever reads a field that is not there
 
   // R0: you may not build on a reading that is no longer true, nor on an event that is not in the log.
   for (const ref of e.refs ?? []) {
