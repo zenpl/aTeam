@@ -174,6 +174,16 @@ export interface SeamState {
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /**
+   * t-196: 每条事件署的是谁。署名更正要判「是不是本人自报」，就得知道那条事件本来署谁——而 State 只留 id，
+   * 不留事件本身。一个 id -> actor 的映射，`disown` 那条规则读它。
+   */
+  actorOf: Map<string, string>;
+  /**
+   * t-196: 被署名更正过的那些事件：`of` -> 谁更正的、什么时候、为什么、原来署的是谁。**原事件原样留在日志里**，
+   * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
+   */
+  disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
   /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
   from: Map<string, Event>;
   readings: Map<string, ReadingState>;
@@ -291,6 +301,8 @@ function readingKey(r: Reading): string {
 export function empty(): State {
   return {
     ids: new Set(),
+    actorOf: new Map(),
+    disowned: new Map(),
     from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
@@ -333,9 +345,24 @@ export function advance(s: State, log: Log): State {
     st.overdue = false;
   };
 
+  // t-196：**先扫一遍署名更正，再折叠。**更正一定排在被更正的那条之后（id 是时间序），所以边折边看是看不到的：
+  // 走到那条事件时，说它不算数的那条还在后面。先把它们收齐，折到那一条时才跳得掉。
+  // 增量那一头由 `Reduction` 负责：一批里带着 disown 就整个重建（store.ts），因为一条更正可能指向早就折进去的
+  // 事件，而已经算进状态的东西是收不回来的。
+  for (const e of log.events) if (!s.ids.has(e.id)) s.actorOf.set(e.id, e.actor);
+  for (const e of log.events) {
+    if (e.kind === "disown" && !s.ids.has(e.id) && !s.disowned.has(e.of)) {
+      s.disowned.set(e.of, { by: e.actor, at: e.at, reason: e.reason, actor: s.actorOf.get(e.of) ?? "" });
+    }
+  }
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
     s.ids.add(e.id);
+    s.actorOf.set(e.id, e.actor);
+    // t-196: 一条被署名更正过的事件不再计入状态——历史不改，但它不再算数。放在折叠的最前面，是因为
+    // 「不计入」要对每一种事件都成立，而不是对某几种。更正本身只记账，不参与后面的分支。
+    if (e.kind === "disown") continue;
+    if (s.disowned.has(e.id)) continue;
     if (e.from && !s.from.has(e.from)) s.from.set(e.from, e);
     const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;

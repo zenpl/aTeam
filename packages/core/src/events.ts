@@ -81,6 +81,25 @@ export interface Untell extends Base {
   reason: string;
 }
 
+/**
+ * t-196（pd 11:16）：**署名更正。**
+ *
+ * 一条事件的 actor 写错了——不是笔误，是**那件事不是他做的**。今晚 qa 03:41 那次就是本人自报。历史不改：原事件
+ * 原样留在日志里；但被更正的那一条**不再计入状态**。读数早就有失效与取代（`writes`、同键更新），决策有
+ * `supersedes`，署名一直缺同一条——于是「那不是我做的」只能写在正文里，而**写在正文里的更正，规则看不见它**。
+ * 今晚第二次同一形状：第一次是默认到期没落成事件（t-181）。
+ *
+ * 谁能发：只有那条事件署名的那个人自己（自报），或 human。第三方不行——替别人说「这不是他做的」是另一回事，
+ * 那要人拍板，不该由一条事件悄悄生效。
+ */
+export interface Disown extends Base {
+  kind: "disown";
+  /** 被更正的那条事件的 id。它原样留着，只是不再计入状态。 */
+  of: string;
+  /** 为什么它不是他做的。一条没有理由的署名更正，读的人无从判断该不该信。 */
+  reason: string;
+}
+
 /** Discussion, decisions, concerns. Carries no action. */
 export interface Note extends Base {
   kind: "note";
@@ -143,7 +162,7 @@ export type TaskOp =
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
-export type Event = Reading | Instruction | Ack | Untell | Note | TaskEvent;
+export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;

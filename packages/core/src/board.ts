@@ -331,6 +331,14 @@ export interface Board {
   gate_honesty: GateHonesty[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
+  /**
+   * t-196 判据 2：被署名更正过的那些事件，两条并排——`of` 那一条原来署的是 `actor`，`by` 说它不是他做的、
+   * 什么时候说的、为什么。人不必读日志正文就知道那一条不是他做的。
+   *
+   * **这里只有数据，没有句子。**pd 11:17 起人可见的字冻结，所以那句并排怎么说、印在哪一段，我没有自拟——
+   * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
+   */
+  disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -752,6 +760,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     batches: [],
     said: [],
+    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],
     roles: projectRoles(s),

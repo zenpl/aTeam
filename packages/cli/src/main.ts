@@ -202,6 +202,8 @@ async function main(argv: string[]) {
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
     case "untell": return emit({ kind: "untell", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
+    // t-196: 署名更正。只有本人自报或 human 能发（服务端判），历史不改，被更正的那条不再计入状态。
+    case "disown": return emit({ kind: "disown", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
     case "board": {
       exact(rest);
       const b = await client.board(bool(a, "full"));
