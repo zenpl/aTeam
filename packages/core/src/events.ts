@@ -100,7 +100,12 @@ export interface Note extends Base {
 }
 
 export type TaskOp =
-  | { op: "create"; task: string; title: string; criteria: string[]; /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string }
+  | {
+      op: "create"; task: string; title: string; criteria: string[];
+      /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string;
+      /** t-171: 这件做完之后人会看到什么。与 `no_human_impact` 二选一——承诺那头也要有闸。 */ shows?: string;
+      /** t-171: 明写这件不改变人看到的东西。与 `shows` 二选一。 */ no_human_impact?: boolean;
+    }
   /** t-096: change what people see it called. The id is untouched, as always. */
   | { op: "label"; task: string; label: string }
   | { op: "claim"; task: string; touches: string[] }
@@ -114,6 +119,8 @@ export type TaskOp =
       touches?: string[];
       /** t-151: 明写这件对人没有影响。与 `shows` 二选一——两个都不给会被拒绝，两个都给也会。 */
       no_human_impact?: boolean;
+      /** t-170 (pd 08:33): 碰了人可见的文件时的具名出路——「文件#符号」，具体到符号才算数。 */
+      internal_only?: string[];
     }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
@@ -274,13 +281,29 @@ export const RENDERING_FILES = ["packages/server/src/html.ts", "packages/cli/src
 /** t-170: 一个触点算不算「碰了人可见的东西」，以及算不算得准。 */
 export type TouchVerdict = "human_visible" | "internal" | "unsure";
 
+/**
+ * t-170 第二轮 (pd 08:33)：**文件级拒绝继续用，另给一条具名出路。**
+ *
+ * 第一轮我按符号判：`html.ts#justDeferred` 直接放过。qa 判不过，理由是对的——t-163 今晚改了在途四行字，而它的
+ * 真实触点在新口径下可以合法说「不改变人看到的东西」。**按符号自动放过，等于让「顺手改一个词」重新漏网**，
+ * 那正是这条规则最想拦的东西。
+ *
+ * 所以拒绝仍按文件，出路改成一句**具体到符号**的话：「只动了 <文件> 里的内部符号：<符号名>」。它要求的不是一个
+ * 开关，是一次注意——写不出符号名，就说明你没看清自己改了什么，那就该写 shows。这句话由 core 拼，人给的是符号名：
+ * 措辞只有一处，而需要注意力的那一半在人手里。
+ *
+ * pd 08:33 同时说明这是暂行的：t-143 把人可见的每句话收进唯一 key 之后，按改动算才算得准，这条具名出路自动退役。
+ */
+export const internalOnly = (symbols: string[]) => `${NO_HUMAN_IMPACT}（只动了内部符号：${symbols.join("、")}）`;
+
 export function touchesHumanVisible(touch: string): TouchVerdict {
   const path = touch.split("#")[0].trim();
   const symbol = touch.includes("#") ? touch.slice(touch.indexOf("#") + 1).trim() : "";
   if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return "internal";   // 改一个用例不改变任何人看到的东西
   if (WORDS_FILES.some((x) => path === x || path.startsWith(x))) return "human_visible";        // ① 只装文本的地方
   if (symbol && KEY_SYMBOLS.includes(symbol as (typeof KEY_SYMBOLS)[number])) return "human_visible"; // ② key 本身
-  if (RENDERING_FILES.some((x) => path === x)) return symbol ? "internal" : "unsure";           // ③ 内部符号 / 说不清
+  // t-170 第二轮：**不再按符号自动放过**。带不带符号都算碰了人可见的东西；要出去，走 internalOnly 那条具名出路。
+  if (RENDERING_FILES.some((x) => path === x)) return "human_visible";
   return "internal";
 }
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */

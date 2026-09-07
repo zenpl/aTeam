@@ -87,10 +87,14 @@ describe("t-151 · pd 07:49：碰了人看得到的东西却说没变，接口�
     expect(r.body.message).toContain("不对就改触点");   // t-170 判据 2：人要能反驳一个看得见的判断
   });
 
-  it("t-170：人可见文件里的内部符号不再被拦（t-165 那次的形状），接口上也过", async () => {
+  it("t-170 第二轮：光说没变仍然被拒，说出是哪几个内部符号才放行（接口上跑一遍）", async () => {
     await post("pm", { kind: "task", op: "create", task: "t-10", title: "删一段死代码", criteria: ["能用"] });
     await post("dev", { kind: "task", op: "claim", task: "t-10", touches: ["packages/server/src/html.ts#justDeferred"] });
-    expect((await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true })).status).toBe(201);
+    const bare = await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true });
+    expect(bare.status).toBe(409);
+    expect(bare.body.message).toContain("--internal-only");
+    const named = await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true, internal_only: ["packages/server/src/html.ts#justDeferred"] });
+    expect(named.status).toBe(201);
   });
 
   it("补一句人能看到什么就过", async () => {

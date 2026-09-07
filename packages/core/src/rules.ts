@@ -160,10 +160,10 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
-  "task:create": { label: "string" },
+  "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
   "task:obsolete": { reason: "string" },
 };
 
@@ -358,6 +358,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
   }
 }
 
+/**
+ * t-151 与 t-171 是同一道闸的两头：**承诺的时候和交活的时候，都要说一句这件对人有什么影响，或者明写它没有。**
+ *
+ * 所以这句话只写一遍。两处各写一份，迟早有一处先改——t-171 判据 2 那句「同一句拒绝话」就是这个函数存在的理由。
+ */
+function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_human_impact?: boolean }): void {
+  const what = op === "create" ? "建一件任务要先说清它对人有什么影响" : "交活要说一句这件对人有什么影响";
+  if (e.no_human_impact && e.shows?.trim()) throw new Rejected(op, `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
+  if (!e.shows?.trim() && !e.no_human_impact)
+    throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+}
+
 function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
   if (e.op === "create") {
     if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`);
@@ -453,9 +465,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 一模一样。这道闸只对新的 done 生效，日志里已有的事件一律不动（判据 2）。
       //
       // 它排在「是不是你的」「能不能交」之后：先告诉一个连交都交不了的人去补一句话，是把出路指错。
-      if (e.no_human_impact && e.shows?.trim()) throw new Rejected("done", `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
-      if (!e.shows?.trim() && !e.no_human_impact)
-        throw new Rejected("done", `交活要说一句这件对人有什么影响：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+      humanImpactPromised("done", e);
       // t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——拦下，并把碰到的逐个列出来。
       // 出错的方式通常不是撒谎，是顺手：改 i18n 一个词、改说明书一行，正是不会重新想一遍这句话的时刻。
       if (e.no_human_impact) {
@@ -467,8 +477,19 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // 文件名、没说改在哪儿）不拒绝，因为一个看不见的判断不该挡住别人干活（判据 3）。
         const touches = [...new Set(e.touches ?? t.touches)];
         const seen = touches.filter((x) => touchesHumanVisible(x) === "human_visible").sort();
-        if (seen.length)
-          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只改了内部（注释、类型），也用 --shows 说清那一句。判断就来自上面列出的那几处触点，不对就改触点`);
+        // t-170 第二轮 (pd 08:33)：具名出路。写得出「只动了哪几个内部符号」就放行——它要的不是一个开关，是一次
+        // 注意；写不出符号名，就说明没看清自己改了什么，那就该写 shows。符号必须真的落在被拦的那几处文件里，
+        // 否则这句话可以拿任何一个符号名蒙混过去。
+        const named = (e.internal_only ?? []).map((x) => x.trim()).filter(Boolean);
+        if (seen.length && named.length) {
+          const covers = (f: string) => named.some((n) => n.startsWith(`${f.split("#")[0]}#`));
+          const bare = named.filter((n) => !n.includes("#"));
+          if (bare.length) throw new Rejected("done", `--internal-only 要写成「文件#符号」，具体到符号才算数：${bare.join("、")} 没说是哪个文件里的哪个符号`);
+          const uncovered = seen.filter((f) => !covers(f));
+          if (uncovered.length) throw new Rejected("done", `这几处还没说清动了里面的什么：${uncovered.join("、")}——每一处都要有一个「文件#符号」，或者改用 --shows`);
+        } else if (seen.length) {
+          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（写不出符号名，就说明还没看清自己改了什么）。判断就来自上面列出的那几处触点，不对就改触点`);
+        }
       }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
       // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it

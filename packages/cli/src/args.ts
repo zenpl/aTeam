@@ -10,7 +10,7 @@ export interface Args {
 // 工作——不致命，但那行错误信息今晚出现在每一次 sync --clear-refused 上。
 // build.test.ts 里有一条闸守着这份名单与 main.ts 里的用法一致（bool() 与 argv.includes 两种读法都查），别手工对。
 const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "touches-only", "once", "force", "full", "no-human-impact", "missed", "clear-refused"]);
-const REPEATABLE = new Set(["criteria", "assumes", "option"]);
+const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only"]);
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };

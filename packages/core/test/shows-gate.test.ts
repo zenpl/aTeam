@@ -128,7 +128,7 @@ describe("t-151 · pd 07:49 的三条", () => {
     expect(err.message).toContain("--shows");                            // 出路
   });
 
-  it("t-170 之后按改动分三档：改字的拒绝，改内部符号的放过，说不清的算不准", async () => {
+  it("t-170 第二轮：人可见的文件一律算碰了；出路是一句具体到符号的话，不是一个开关", async () => {
     const w = await world();
     // ① 只装文本的地方：改它就是改人看到的字
     for (const t of ["packages/server/src/i18n.ts", "packages/server/src/i18n.ts#releaseCanGo", "packages/core/manual/common.md"]) {
@@ -138,13 +138,10 @@ describe("t-151 · pd 07:49 的三条", () => {
     for (const t of ["packages/core/src/events.ts#BATCH_LINES", "packages/core/src/board.ts#missingCard", "packages/core/src/events.ts#REACH_WORDS"]) {
       expect(touchesHumanVisible(t), t).toBe("human_visible");
     }
-    // ③ 人可见文件里的内部符号：不算——这正是 t-165 那次被误伤的形状
-    for (const t of ["packages/server/src/html.ts#justDeferred", "packages/cli/src/format.ts#nobodyElse2"]) {
-      expect(touchesHumanVisible(t), t).toBe("internal");
-    }
-    // ③ 只给了文件名、没说改在哪儿：算不准，只提醒不拒绝
-    for (const t of ["packages/server/src/html.ts", "packages/cli/src/format.ts"]) {
-      expect(touchesHumanVisible(t), t).toBe("unsure");
+    // ③ 人可见的文件：带不带符号都算碰了——qa 08:32 判不过我第一版按符号自动放过的做法，理由成立：
+    // t-163 今晚改了在途四行字，而它的真实触点在那一版下可以合法说「不改变人看到的东西」。
+    for (const t of ["packages/server/src/html.ts#justDeferred", "packages/server/src/html.ts", "packages/cli/src/format.ts"]) {
+      expect(touchesHumanVisible(t), t).toBe("human_visible");
     }
     for (const t of ["packages/server/test/html.test.ts", "packages/core/src/reduce.ts", "packages/cli/src/loop.ts", "packages/core/test/replay.test.ts"]) {
       expect(touchesHumanVisible(t), t).toBe("internal");
@@ -184,10 +181,11 @@ describe("t-151 · pd 07:49 的三条", () => {
  * 下面照它那份清单重跑：四种纯内部的仍然过，真改字的仍然被拦，而它指出的那一种真误报（t-165 的形状）现在过。
  */
 describe("t-170 · 逐条重跑 qa 08:20 那份清单", () => {
-  const done = async (w: Awaited<ReturnType<typeof world>>, touches: string[]) =>
-    w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches }, -10)
+  const donex = async (w: Awaited<ReturnType<typeof world>>, touches: string[], internal_only?: string[]) =>
+    w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches, ...(internal_only ? { internal_only } : {}) }, -10)
       .then(() => "过" as const)
       .catch((e) => (e as Rejected).message);
+  const done = (w: Awaited<ReturnType<typeof world>>, touches: string[]) => donex(w, touches);
 
   it("四种纯内部形状：修前修后都过", async () => {
     for (const touches of [
@@ -215,19 +213,26 @@ describe("t-170 · 逐条重跑 qa 08:20 那份清单", () => {
     }
   });
 
-  it("qa 指出的那一种真误报（t-165 的形状）现在过：人可见文件里的内部符号", async () => {
-    expect(await done(await world(), ["packages/server/src/html.ts#justDeferred"])).toBe("过");
-  });
-
-  it("判据 3：只给了文件名、算不准的那一档不拒绝——别人装上我们的闸，最坏是被提醒", async () => {
-    expect(await done(await world(), ["packages/server/src/html.ts"])).toBe("过");
-    expect(await done(await world(), ["packages/cli/src/format.ts"])).toBe("过");
-  });
-
-  it("放过的那两档没有把真该拦的一起放过去：同一次 done 里只要有一处算得准，就仍然拦", async () => {
-    const r = await done(await world(), ["packages/server/src/html.ts", "packages/server/src/html.ts#justDeferred", "packages/server/src/i18n.ts#none"]);
+  it("t-165 那种形状：光说「不改变人看到的东西」仍然被拒，但拒绝话里给出那条具名出路", async () => {
+    const r = await done(await world(), ["packages/server/src/html.ts#justDeferred"]);
     expect(r).not.toBe("过");
-    expect(r).toContain("packages/server/src/i18n.ts#none");
-    expect(r).not.toContain("justDeferred");        // 只列算得准的那一处，不把放过的也摆出来
+    expect(r).toContain("--internal-only");
+    expect(r).toContain("写不出符号名，就说明还没看清自己改了什么");
+  });
+
+  it("具体到符号就放行——它要的不是一个开关，是一次注意", async () => {
+    expect(await donex(await world(), ["packages/server/src/html.ts"], ["packages/server/src/html.ts#justDeferred"])).toBe("过");
+  });
+
+  it("符号必须真的落在被拦的那几处文件里，否则一句话可以拿任何符号名蒙混过去", async () => {
+    const r = await donex(await world(), ["packages/server/src/html.ts", "packages/server/src/i18n.ts"], ["packages/server/src/html.ts#justDeferred"]);
+    expect(r).not.toBe("过");
+    expect(r).toContain("packages/server/src/i18n.ts");   // 这一处还没说清动了里面的什么
+  });
+
+  it("写不出「文件#符号」就不算具体到符号", async () => {
+    const r = await donex(await world(), ["packages/server/src/html.ts"], ["justDeferred"]);
+    expect(r).not.toBe("过");
+    expect(r).toContain("要写成「文件#符号」");
   });
 });
