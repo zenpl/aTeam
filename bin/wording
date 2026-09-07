@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+/**
+ * t-214：**WORDING_AT_FREEZE 跑一次就出来，不是手抄的。** 与 bin/keysyms 同一路子（t-186 那笔账：仓库里只有
+ * 能检查名单的断言、没有能产出名单的东西，于是每个人都照着错误信息一个个手加）。
+ *
+ * 用法（仓库根目录）：
+ *   bin/wording            印出此刻比快照多了／少了哪几句
+ *   bin/wording --write    把快照写回 packages/core/src/wording.ts
+ *
+ * **什么时候该 --write**：pd 通过了新措辞、或冻结解除之后重新起算。**不该在闸报红时顺手跑一遍**——那正是
+ * 这道闸要拦的事：跑一次快照就变绿，等于没有闸。所以它印出新增的原文，让人先看清自己加了什么。
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+let mod;
+try { mod = await import(join(repo, "packages/core/dist/index.js")); }
+catch { console.error("先 pnpm build：这条命令读的是 core 的产物（dist），不是源码。"); process.exit(2); }
+const { sourceFiles, isProductSource, measureWording, WORDING_AT_FREEZE, SECOND_HOMES_ROOT } = mod;
+
+const files = sourceFiles(join(repo, SECOND_HOMES_ROOT), SECOND_HOMES_ROOT).filter(isProductSource);
+const sources = Object.fromEntries(files.map((f) => [f, readFileSync(join(repo, f), "utf8")]));
+const now = measureWording(sources);
+const known = new Set(WORDING_AT_FREEZE);
+const added = now.filter((w) => !known.has(w.hash));
+const gone = [...known].filter((h) => !now.some((w) => w.hash === h));
+
+const path = join(repo, "packages/core/src/wording.ts");
+if (process.argv.includes("--write")) {
+  const src = readFileSync(path, "utf8");
+  const body = now.map((w) => `  "${w.hash}",`).join("\n");
+  const next = src.replace(/export const WORDING_AT_FREEZE: readonly string\[\] = \[[\s\S]*?\];/,
+    `export const WORDING_AT_FREEZE: readonly string[] = [\n${body}\n];`);
+  if (next === src) { console.error("没找到 WORDING_AT_FREEZE 那段，没有写回。"); process.exit(2); }
+  writeFileSync(path, next);
+  console.log(`写回 ${now.length} 条指纹（新增 ${added.length}、消失 ${gone.length}）`);
+  for (const w of added) console.log(`  + ${w.file}  ${w.text}`);
+} else {
+  console.log(`此刻 ${now.length} 条，快照 ${known.size} 条：新增 ${added.length}、消失 ${gone.length}`);
+  for (const w of added) console.log(`  + ${w.file}  ${w.text}`);
+  if (added.length) process.exit(1);
+}

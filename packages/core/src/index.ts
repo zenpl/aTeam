@@ -1,5 +1,6 @@
 export * from "./events.js";
 export * from "./sayings.js";
+export * from "./wording.js";
 export * from "./scan.js";
 export * from "./keysyms.js";
 export * from "./ulid.js";
