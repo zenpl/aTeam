@@ -372,7 +372,12 @@ function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
-    if (!overlap.length) continue;
+    if (!overlap.length) {
+      // t-105: recomputing is not only "find more". A revision that narrows the touches can leave a seam describing an
+      // overlap that no longer exists, and a seam nobody actually has is one more thing blocking a verify for nothing.
+      s.seams.delete(seamId(t.id, other.id));
+      continue;
+    }
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
     const existing = s.seams.get(id);

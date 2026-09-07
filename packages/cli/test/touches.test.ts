@@ -81,3 +81,18 @@ describe("t-105 · 走一遍出路之后，触点还得是事实（qa 00:29）",
     expect(revise([], [], [], "x").touches).toEqual([]);
   });
 });
+
+/**
+ * A diff measures a branch, not a task. One branch carrying three tasks in a row measures all three every time, and
+ * no amount of measuring tells them apart — so when the person knows and the measurement cannot, they say so.
+ */
+describe("t-105 · --touches-only：我写的这几条就是全部", () => {
+  it("replaces everything, says what the declaration had that this does not, and never claims to have measured", () => {
+    const r = revise(["a/x.ts", "a/y.ts", "GET /health"], ["a/x.ts", "b/other-task.ts"], ["a/x.ts", "a/x.ts#f"], "相对 claim 起点 abc1234", true);
+    expect(r.touches).toEqual(["a/x.ts", "a/x.ts#f"]);          // 量出来的 b/other-task.ts 不作数
+    expect(r.measured).toBe(false);
+    const text = r.lines.join("\n");
+    expect(text).toContain("触点按你写的这 2 条算，量出来的不作数（--touches-only）");
+    expect(text).toContain("claim 时声明了、这次没写：a/y.ts、GET /health");
+  });
+});

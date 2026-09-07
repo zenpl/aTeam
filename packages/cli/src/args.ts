@@ -3,7 +3,7 @@ export interface Args {
   flags: Record<string, string | boolean | string[]>;
 }
 
-const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "once", "force", "full"]);
+const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "touches-only", "once", "force", "full"]);
 const REPEATABLE = new Set(["criteria", "assumes", "option"]);
 
 export function parse(argv: string[]): Args {

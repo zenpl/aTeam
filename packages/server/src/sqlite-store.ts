@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { append, SERVICE_ACTOR, PROJECT_SURFACE } from "@ateam/core";
 import type { EventStore, Event, Log, Cursor, Delivery } from "@ateam/core";
 import { randomBytes } from "node:crypto";
-import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
+import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, OWNER_AGENT, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
 
 /**
  * One SQLite file holds every project. Rows carry a `project` column; a log that predates projects (t-041) is
@@ -48,6 +48,7 @@ export class SqliteDb {
     `);
     const cols = (table: string) => (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    if (!cols("keys").includes("used_at")) this.db.exec("ALTER TABLE keys ADD COLUMN used_at TEXT"); // t-103
     if (!cols("events").includes("project")) this.db.exec(`ALTER TABLE events ADD COLUMN project TEXT NOT NULL DEFAULT ${q(defaultProject)}`);
     if (!cols("deliveries").includes("project")) this.db.exec(`ALTER TABLE deliveries ADD COLUMN project TEXT NOT NULL DEFAULT ${q(defaultProject)}`);
     if (!cols("cursors").includes("project")) {
@@ -144,8 +145,16 @@ export class SqliteRegistry implements Registry {
     return (await this.get(id))!;
   }
   async lookup(key: string) {
-    const r = this.db.prepare("SELECT project, role, agent_id, created_at FROM keys WHERE hash = ?").get(hashKey(key)) as (KeyRecord & { agent_id: string | null }) | undefined;
-    return r ? { project: r.project, role: r.role, agent_id: r.agent_id ?? undefined, created_at: r.created_at } : null;
+    const r = this.db.prepare("SELECT project, role, agent_id, created_at, used_at FROM keys WHERE hash = ?").get(hashKey(key)) as (KeyRecord & { agent_id: string | null; used_at: string | null }) | undefined;
+    return r ? { project: r.project, role: r.role, agent_id: r.agent_id ?? undefined, created_at: r.created_at, used_at: r.used_at ?? undefined } : null;
+  }
+  async ownerKey(project: string, human: string, now = new Date()) { return this.nodeKey(project, OWNER_AGENT, human, now); }
+  async ownerKeyRecord(project: string) {
+    const p = await this.get(project);
+    return p ? this.lookup(deriveNodeKey(p.node_secret, OWNER_AGENT)) : null;
+  }
+  async markUsed(key: string, now = new Date()) {
+    this.db.prepare("UPDATE keys SET used_at = ? WHERE hash = ? AND used_at IS NULL").run(now.toISOString(), hashKey(key));
   }
   async addKey(project: string, role: string | null, agentId?: string, now = new Date()) {
     const key = newKey(role ? "nk" : "ak");
@@ -163,8 +172,8 @@ export class SqliteRegistry implements Registry {
     return live ?? this.createInvite(project, now);
   }
   async nodes(project: string) {
-    return (this.db.prepare("SELECT project, role, agent_id, created_at FROM keys WHERE project = ? AND role IS NOT NULL").all(project) as unknown as (KeyRecord & { agent_id: string | null })[])
-      .map((r) => ({ project: r.project, role: r.role, agent_id: r.agent_id ?? undefined, created_at: r.created_at }));
+    return (this.db.prepare("SELECT project, role, agent_id, created_at, used_at FROM keys WHERE project = ? AND role IS NOT NULL AND (agent_id IS NULL OR agent_id != ?)").all(project, OWNER_AGENT) as unknown as (KeyRecord & { agent_id: string | null; used_at: string | null })[])
+      .map((r) => ({ project: r.project, role: r.role, agent_id: r.agent_id ?? undefined, created_at: r.created_at, used_at: r.used_at ?? undefined }));
   }
   async nodeKey(project: string, agentId: string, role: string, now = new Date()) {
     const p = (await this.get(project))!;

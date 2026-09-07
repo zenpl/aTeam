@@ -50,7 +50,9 @@ tasks
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
   ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
                                              claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
-                                             --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份，
+                                             --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份；
+                                             --touches-only 表示「我写的这几条就是全部」——一条分支上连做几件时 diff 分不出是哪一件的，
+                                             
                                              --no-touches 原样沿用声明。重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
@@ -121,8 +123,9 @@ function gitDiff(): Diff {
 }
 
 /** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
-function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean } {
   if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
+  if (only) return revise(declared, null, extra, "", true);
   const d = gitDiff();
   const base = d.base(task);
   if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
@@ -302,7 +305,7 @@ async function main(argv: string[]) {
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
           // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
-          const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"));
+          const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
           for (const line of rev.lines) console.error(line);
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else {

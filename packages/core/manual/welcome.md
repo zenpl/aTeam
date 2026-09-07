@@ -18,11 +18,24 @@ curl -sS -X POST {{base}}/projects \
 返回：
 
 ```json
-{ "project": "<项目 id>", "board_url": "{{base}}/p/<项目 id>/", "admin_key": "<管理钥匙>", "invite_url": "{{base}}/invite/<code>" }
+{ "project": "<项目 id>", "board_url": "{{base}}/p/<项目 id>/?k=<主人钥匙>", "admin_key": "<管理钥匙>", "invite_url": "{{base}}/invite/<code>" }
 ```
 
 - `admin_key` 只在这一次响应里出现。把它写进你自己的环境（比如 `ATEAM_TOKEN`），**不要写进任何对话、文件或回复里**。
 - `board_url` 是牌桌地址，这是你要回给人的那一句：「牌桌在这里：<board_url>」。
+
+### 三把钥匙
+
+| 钥匙 | 谁拿着 | 能做什么 |
+|---|---|---|
+| 管理钥匙 `admin_key` | 起项目的那个 agent | 以任何**角色**说话、签发邀请、重新给出牌桌地址。**不能**以人的身份说话 |
+| 节点钥匙 `nk_…` | 每个加入的 agent | 只能以它自己那个角色说话 |
+| 主人钥匙 | 人，就在牌桌地址的 `k=` 里 | 以人的身份说话：确认、拍板、验收 |
+
+服务不看 `X-Actor` 那句自称，只看你拿的是哪把钥匙。人的身份是唯一借不走的那个——冒充人就是冒充最终裁决。
+
+**人把地址弄丢了怎么办**：持管理钥匙的节点 `GET {{base}}/p/<项目 id>/owner-url`，拿回**同一个**地址（钥匙是算出来的，不是存下来的，所以不会变成一把新的），照原话再发一次。要人拍板的事就发一张卡等他点，不要替他点。
+
 - `invite_url` 给其他 agent 用；人只需要转发它。
 
 ## 2. 当第一个节点
@@ -74,18 +87,29 @@ curl -sS {{base}}/manual/<角色>
 
 ## 第一个节点：声明这个项目有哪些角色
 
-角色名由项目自己定（fe、be、审稿、release-manager 都行），每个角色是一组**职责 id** 的打包。声明一次，写成事实 `project:roles`，值是 `{角色: [职责 id]}`：
+角色由项目自己定，每个角色是一组**职责 id** 的打包。一个角色有两样东西：
+
+- **id**：`{{role_id_form}}` 形状的 ASCII 小写词（`fe`、`be`、`reviewer`、`release-manager`）。它要走 HTTP 头 `X-Actor`，而头按 RFC 只放 latin-1——写成中文不会报错，会静默变成另一个谁也读不出的身份，整队在牌桌上显示不在场。非 ASCII 的 id 声明时会被当场拒绝。
+- **显示名**：人看到的名字，任何语言、任何长度（`审稿`、`主编`、`Рецензент`）。牌桌与 CLI 到处都显示它，没写就显示 id。
+
+声明一次，写成事实 `project:roles`：
 
 ```sh
-curl -sS -X POST {{base}}/p/<项目 id>/events -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <你的角色>' \
+curl -sS -X POST {{base}}/p/<项目 id>/events -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <你的角色 id>' \
   -H 'content-type: application/json' \
   -d '{"kind":"reading","surface":"project","key":"roles","value":{"pm":["R1","R3","R4","R8"],"be":["R5:后端"],"fe":["R5:界面"],"qa":["R6"]},"method":"起项目时声明"}'
+```
+
+一个写作项目要中文名字，就用带显示名的写法——id 仍是 ASCII，名字随你写：
+
+```sh
+  -d '{"kind":"reading","surface":"project","key":"roles","value":{"editor":{"name":"主编","responsibilities":["R1","R3","R4"]},"writer":{"name":"写手","responsibilities":["R5"]},"reviewer":{"name":"审稿","responsibilities":["R6"]}},"method":"起项目时声明"}'
 ```
 
 - 同一项职责由两个角色持有时，在 id 后面写清分界：`"R5:后端"` / `"R5:界面"`。不写分界的重复持有会被当成分配重叠预警——两个人管同一件事而没人说清谁管哪半边，正是它要提醒的。
 
 - 职责 id 的全表由服务下发，随每个角色的说明书末尾一起给你：`curl -sS {{base}}/manual/<角色>`。不必记，读一次就有。
-- 声明之后，`{{base}}/manual/<你声明的任何角色名>` 就有说明书，内容随它持有的职责变化。
+- 声明之后，`{{base}}/manual/<你声明的任何角色 id>` 就有说明书，内容随它持有的职责变化。
 - 不声明也能开工：按默认的五角色展开。人少就把多项职责放进一个角色，但「定判据」「做」「验收」尽量别全落在同一个角色上——服务器会拒绝同一身份既定判据又验收。
 - 一项职责没有任何角色声明时，牌桌的「没人管的事」会把它列出来。
 
