@@ -969,6 +969,81 @@ export function seamFiles(overlap: string[] | undefined): string[] {
   return [...new Set((overlap ?? []).map((o) => o.split("#")[0]))];
 }
 
+/**
+ * t-133: what one deploy is called. The number is the machine's — monotonic across the whole log, never reused — and
+ * the sentence is the person's: 「09-07 第 3 次上线」, counted within that day, because that is how someone refers to
+ * it out loud. Two fields, never one (pd 03:34; the same split as a task's id and its label, t-096).
+ */
+export interface Deploy { sha: string; at: string; seq: number; label: string }
+
+export function deployHistory(s: State, tz = "UTC"): Deploy[] {
+  const day = (iso: string) => {
+    const d = new Date(iso);
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, month: "2-digit", day: "2-digit" }).format(d);
+    return p;   // MM-DD
+  };
+  const readings = [...s.readings.values()].map((x) => x.reading)
+    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const out: Deploy[] = [];
+  const perDay = new Map<string, number>();
+  for (const r of readings) {
+    const sha = (r.value as string).trim();
+    // The same sha measured again is the same deploy, not a new one (the 7-char rule the board already uses).
+    if (out.length && out[out.length - 1].sha.slice(0, 7) === sha.slice(0, 7)) continue;
+    const d = day(r.at);
+    const n = (perDay.get(d) ?? 0) + 1;
+    perDay.set(d, n);
+    out.push({ sha, at: r.at, seq: out.length + 1, label: `${d} 第 ${n} 次上线` });
+  }
+  return out;
+}
+
+/**
+ * t-133 (release's rule, second clause): tasks that named the same sha in their evidence ship together or not at all.
+ * So the page's unit is a sha, and a unit is held by whichever of its members has not passed on repo — tonight
+ * t-118/t-119/t-122/t-125 were one such string, held by the one that failed.
+ */
+export interface ReleaseUnit {
+  sha: string;
+  /** Every finished task naming this sha, in the order the board lists them. */
+  tasks: { id: string; title: string; shows?: string; owner?: string; status: string; passed: boolean }[];
+  /** The members that are not verified on repo: the reason the whole string is not moving. */
+  held_by: { id: string; title: string; shows?: string; owner?: string; status: string }[];
+  /** Members already verified on repo and not yet in production: what this unit would actually bring. */
+  brings: number;
+  /** When the earliest member of this string was finished: how long it has been waiting. */
+  since: string;
+}
+
+export function releaseUnits(b: Board): ReleaseUnit[] {
+  const shipped = new Set((b.release.candidates ?? []).map((c) => c.task));
+  const doneAt = new Map((b.release.candidates ?? []).map((c) => [c.task, c.done_at]));
+  const units = new Map<string, ReleaseUnit>();
+  for (const group of Object.values(b.tasks)) {
+    for (const t of group) {
+      const sha = t.evidence_sha;
+      if (!sha || t.status === "withdrawn" || t.status === "obsolete") continue;
+      // A member holds the string until it is verified — on whichever surface its own criteria needed. Asking for a
+      // repo pass specifically would count a task verified only on production (t-002, t-012) as holding itself.
+      const passed = t.status === "verified";
+      const inProduction = (t.surfaces ?? []).some((r) => r.surface === "production" && r.pass);
+      const u = units.get(sha) ?? { sha, tasks: [], held_by: [], brings: 0, since: "" };
+      const at = doneAt.get(t.id);
+      if (at && (!u.since || at < u.since)) u.since = at;
+      u.tasks.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, passed });
+      if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status });
+      if (passed && !inProduction && shipped.has(t.id)) u.brings += 1;
+      units.set(sha, u);
+    }
+  }
+  // Only the units with something left to ship: a sha whose whole string is already in production is history.
+  // Oldest first, the same order the board lists candidates in: what has been waiting longest leads. Sorting by sha
+  // would be an implementation detail deciding what a person reads first.
+  return [...units.values()].filter((u) => u.brings > 0 || u.held_by.length > 0)
+    .sort((x, y) => (x.since || "~").localeCompare(y.since || "~") || x.sha.localeCompare(y.sha));
+}
+
 export function ambiguousLabels(b: Board): Set<string> {
   const tasks = Object.values(b.tasks).flat();
   const ids = new Set(tasks.map((t) => t.id));

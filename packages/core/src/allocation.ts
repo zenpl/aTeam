@@ -148,12 +148,13 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
 
   // ---- 无效上下文移交
   const handoff: Candidate[] = [];
+  const grams: GramCache = new Map();   // t-131: one call's worth of bigram sets, shared by both loops below
   const list = instructions.map((st) => st.instruction).sort((a, b) => a.at.localeCompare(b.at));
   const forwards: [Instruction, Instruction][] = [];
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];
     if (Date.parse(b.at) - Date.parse(a.at) > TEN_MIN) break;
-    if (a.actor !== b.actor && similarity(a.body, b.body) >= 0.6) forwards.push([a, b]);
+    if (a.actor !== b.actor && similarAtLeast(a.body, b.body, 0.6, grams)) forwards.push([a, b]);
   }
   if (forwards.length) {
     const by = tally(forwards.map(([, b]) => b.actor));
@@ -177,7 +178,7 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
     const a = list[i], b = list[j];
     if (Date.parse(b.at) - Date.parse(a.at) > FIVE_MIN) break;
-    if (a.to === b.to && a.actor !== b.actor && similarity(a.body, b.body) >= 0.6)
+    if (a.to === b.to && a.actor !== b.actor && similarAtLeast(a.body, b.body, 0.6, grams))
       near.push({ text: `${a.to} 五分钟内收到 ${a.actor} 与 ${b.actor} 内容相近的两条指令`, severity: 1 });
   }
   const badOverlap = worst([...dup, ...near]);   // a decision collision outranks two similar instructions
@@ -249,6 +250,32 @@ export function saidHops(s: State, human: string): { task: string; hops: number 
   return out;
 }
 
+function bigrams(x: string): Set<string> {
+  const cs = [...x.replace(/\s+/g, "")];
+  const g = new Set<string>();
+  for (let i = 0; i + 1 < cs.length; i++) g.add(cs[i] + cs[i + 1]);
+  return g;
+}
+
+/**
+ * t-131: the two loops below compare every instruction with the others inside a time window, so one body is cut into
+ * bigrams once per pairing it takes part in — with a busy hour and long messages that dominated the whole board.
+ * The cache lives for one `allocation()` call: reuse is within a call, and nothing outgrows the request.
+ */
+export type GramCache = Map<string, Set<string>>;
+const gramsOf = (cache: GramCache | undefined, x: string): Set<string> => {
+  if (!cache) return bigrams(x);
+  let g = cache.get(x);
+  if (!g) cache.set(x, (g = bigrams(x)));
+  return g;
+};
+
+/**
+ * Jaccard cannot reach `min` when one set is smaller than `min` times the other: their intersection is at most the
+ * smaller set. So the sizes alone rule most pairs out, exactly — never a pair that would have passed.
+ */
+const cannotReach = (a: number, b: number, min: number) => Math.min(a, b) < min * Math.max(a, b);
+
 /**
  * t-123: per author, how their own follow-ups break down. A follow-up is a second instruction *about the same thing*
  * to the same person soon after — same actor, same recipient, within ten minutes, and either saying much the same
@@ -277,13 +304,34 @@ export function selfCorrections(s: State, list: Instruction[]): Map<string, { se
 }
 
 /** Character-bigram Jaccard similarity: 1 for equal texts, 0 for nothing in common. */
-export function similarity(a: string, b: string): number {
-  const grams = (x: string) => { const cs = [...x.replace(/\s+/g, "")]; const g = new Set<string>(); for (let i = 0; i + 1 < cs.length; i++) g.add(cs[i] + cs[i + 1]); return g; };
-  const A = grams(a), B = grams(b);
+export function similarity(a: string, b: string, cache?: GramCache): number {
+  const A = gramsOf(cache, a), B = gramsOf(cache, b);
   if (!A.size && !B.size) return 1;
   let both = 0;
-  for (const g of A) if (B.has(g)) both++;
+  const [small, large] = A.size <= B.size ? [A, B] : [B, A];
+  for (const g of small) if (large.has(g)) both++;
   return both / (A.size + B.size - both);
+}
+
+/**
+ * similarity(a, b) >= min, answered without computing the ratio wherever that is already settled: first by the set
+ * sizes, then by giving up as soon as even matching every remaining gram could not reach `min`. Both are exact —
+ * they only rule out pairs the full computation would have rejected too.
+ */
+export function similarAtLeast(a: string, b: string, min: number, cache?: GramCache): boolean {
+  const A = gramsOf(cache, a), B = gramsOf(cache, b);
+  if (!A.size && !B.size) return 1 >= min;
+  if (cannotReach(A.size, B.size, min)) return false;
+  const [small, large] = A.size <= B.size ? [A, B] : [B, A];
+  const union = A.size + B.size;
+  let both = 0, left = small.size;
+  for (const g of small) {
+    if (large.has(g)) both++;
+    left--;
+    // the best this pair can still reach, if every gram left over matched
+    if ((both + left) / (union - both - left) < min) return false;
+  }
+  return both / (union - both) >= min;
 }
 
 function tally(xs: string[]): [string, number][] {

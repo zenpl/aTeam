@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
+import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -389,6 +389,13 @@ export function createApp(opts: ServerOptions) {
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
         return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin || isOwner, human, base, ask: url.searchParams.get("ask") }));
+      }
+
+      // t-133: the detail page behind the 线上 row. Same rules as the board and a task page: public unless private.
+      if (req.method === "GET" && wantsHtml && (path === "/release" || path === "/release/")) {
+        if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
+        const state = reduce(await store.read());
+        return html(res, 200, renderRelease(board(state, human), state, { sha, human, base }));
       }
 
       // t-065: one task in full, same rules as the board (public unless the board is private).

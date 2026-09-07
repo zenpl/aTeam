@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -305,7 +305,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const since = previousSha(b);
   // pd 22:47 (B): the count is this version's only; with nothing verified on this version there is no count at all.
   const onProd = b.live.recent.length;
-  out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
+  out.push(`<div class="row"><span class="label"><a href="${esc(base)}/release">${UI.live}</a></span><div class="val">`);
   if (sha) {
     // t-086: the board says where the sha came from, by the fields t-083 derives from the reading's method: who pushed it
     // (their own `release --deploy` wrote the fact), who only checked which version is live, both when both are known,
@@ -626,6 +626,80 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
  * GET /task/<id> (t-065): one task in full, in the board's clothes: criteria, evidence, verdicts, seams and notes.
  * Null when the log has no such task. The raw id stays in the URL and in the 「给 agent 看的」 fold.
  */
+
+/**
+ * GET /release (t-133): the detail page behind the 线上 row. pd 03:32 — it is not a second board: no cards, nothing
+ * in 需要你, and the counts stay on the board, because one number computed in two places drifts (t-118 proved it
+ * six times over in one night). What lives here is what the board has no room for: which version is running, what
+ * the next one would bring, and which string is not moving because one of its members has not passed.
+ */
+export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): string {
+  const who = roleNamer(b);
+  const base = opts.base ?? "";
+  const now = Date.parse(b.now);
+  const ago = (iso: string) => UI.ago(Math.max(0, Math.round((now - Date.parse(iso)) / 1000)));
+  const deploys = deployHistory(s);
+  const current = deploys.length ? deploys[deploys.length - 1] : null;
+  const units = releaseUnits(b);
+  // t-129 (pm 04:54): the batches this project packed, each judged against where production actually is. core works
+  // out the sentence for each state; the page says that sentence and does not write a second one — the whole reason
+  // BoardBatch carries `line` at all. A batch packed on the current head has nothing to warn about and says nothing.
+  const batches = b.batches ?? [];
+  const out: string[] = [];
+  const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}">${esc(id)}</a>`;
+
+  out.push(`<p class="meta"><a href="${esc(base)}/">${UI.backToBoard}</a></p>`);
+  out.push(`<section class="now release-page"><h2>${UI.releaseTitle}</h2>`);
+
+  // 线上这一版 — the same sha the board shows, named the way a person would say it out loud.
+  if (current) {
+    const src = b.live.deployed_by ? UI.pushedBy(who(b.live.deployed_by), ago(current.at)) : b.live.checked_by ? UI.checkedBy(who(b.live.checked_by), ago(current.at)) : "";
+    out.push(`<p class="row-line"><span class="label">${UI.releaseNow}</span> <b>${esc(current.label)}</b> <code>${esc(current.sha.slice(0, 7))}</code>${src ? ` <span class="meta">· ${esc(src)}</span>` : ""}</p>`);
+  } else {
+    out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
+  }
+
+  // 按住没发 — pd 03:32: a batch that is not going out must say why, and core already worked out why for each state.
+  if (batches.length) {
+    out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
+    for (const x of batches) {
+      const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
+      const why = x.line ? ` <span class="held">${esc(UI.releaseHeld(x.line))}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+      out.push(`<li>${named}${why}</li>`);
+    }
+    out.push(`</ul>`);
+  }
+
+  // 下一次上线 — never a count (the board says that); the units, and what each is waiting on.
+  out.push(`<h3>${UI.releaseNext}</h3>`);
+  if (!units.length) {
+    out.push(`<p class="quiet">${UI.releaseNothing}</p>`);
+  } else {
+    const line = (u: ReturnType<typeof releaseUnits>[number]) => {
+      const members = u.tasks.map((t) => `${link(t.id)} ${esc(t.shows ?? t.title)}`);
+      const head = u.tasks.length > 1 ? `<span class="tag">${UI.releaseTogether}</span> ` : "";
+      const waiting = u.held_by.length
+        ? ` <span class="meta held">${esc(UI.releaseHeld(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
+        : "";
+      return `<li>${head}<code>${esc(u.sha.slice(0, 7))}</code> ${members.join("；")}${waiting}</li>`;
+    };
+    const moving = units.filter((u) => !u.held_by.length), stuck = units.filter((u) => u.held_by.length);
+    if (stuck.length) out.push(`<ul class="plain stuck">${stuck.map(line).join("")}</ul>`);
+    if (moving.length) {
+      out.push(`<p class="meta">${UI.releaseBrings}</p>`);
+      out.push(`<ul class="plain">${moving.slice(0, RELEASE_SHOWN).map(line).join("")}</ul>`);
+      out.push(fold(moving.slice(RELEASE_SHOWN).map(line), UI.releaseUnitMore));
+    }
+  }
+
+  out.push(`<details class="meta"><summary>${UI.forAgents}</summary><code>ateam release</code></details>`);
+  out.push(`</section>`);
+  return page(out.join("\n"), { now: b.now, refresh: 0, sha: opts.sha, title: `${UI.releaseTitle} · ${UI.header}` });
+}
+
+/** How many moving units the page lists before folding the rest (docs/board.md: five, then a line). */
+const RELEASE_SHOWN = 5;
+
 export function renderTask(b: Board, s: State, id: string, opts: RenderOptions = {}): string | null {
   const who = roleNamer(b); // t-107
   const st = s.tasks.get(id);
