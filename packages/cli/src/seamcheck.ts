@@ -134,36 +134,45 @@ export function seamWarnings(b: Board, id: string, evidence: string | undefined,
  */
 export type Output = "some" | "none" | "unknown";
 
-/** 从某一刻起，仓库里有没有任何提交碰过这些路径。null = 判不了（没有 git，或路径为空）。 */
-export type CommitsSince = (sinceIso: string, paths: string[]) => boolean | null;
+/**
+ * 从某一刻起，仓库里有没有**别人的**提交碰过这些路径。`exclude` 是「我这一侧」的那个 ref——从它可达的提交
+ * 不算。null = 判不了（没有 git，或路径为空）。
+ */
+export type CommitsSince = (sinceIso: string, paths: string[], exclude: string) => boolean | null;
 
 export function gitCommitsSince(cwd = process.cwd()): CommitsSince {
-  return (sinceIso, paths) => {
-    if (!paths.length) return null;
+  return (sinceIso, paths, exclude) => {
+    if (!paths.length || !exclude) return null;
     // qa 12:01 判 fail 的那一处：**这里问错了问题。**上一版是 `git log --all -- <paths>`——没有作者、没有分支、
     // 没有排除我自己，于是它答的是「自那一刻起**任何人**有没有碰过那些路径」。而一条接缝之所以存在，恰恰是
     // 因为两边声明了同一批路径，所以「我自己在那些路径上的提交」不是边角情形，**它就是这个场景的常态**：
     // 我一提交，它就答「对方写代码了」，这条判定几乎永远放行不了。
     //
     // 该问的是「**对方**自认领以来有没有提交」。作者分不出来（这个仓库里每个 agent 都以同一个 git author 提交，
-    // touches.ts 里记着这件事），分支名日志里也没有。分得出来的是**可达性**：`--all --not HEAD` 是「任何 ref
-    // 上、但不在我这条线上」的提交——我自己的都在 HEAD 上，所以剩下的就是别人的。
-    // 已经被我合进来的那些也因此不算，那是对的：合过了就没有什么可撞的了（那种接缝走 t-160 的吸收）。
-    const r = spawnSync("git", ["log", "--all", "--not", "HEAD", "--oneline", `--since=${sinceIso}`, "--", ...paths], { cwd, encoding: "utf8" });
+    // touches.ts 里记着这件事），分支名日志里也没有。分得出来的是**可达性**。
+    //
+    // **但排掉的那一侧不能是 `HEAD`**（qa 12:27 判 fail 的第二条，也是在真仓库上跑出来的）：这段判定跑在
+    // `task verify --pass` 里，而落 pass 的只有 qa——**qa 的 HEAD 是 qa 自己的分支**，不是被验那件任务的分支。
+    // 于是 `--not HEAD` 排掉的是 qa 自己那条线，被验任务的提交照样不可达、照样被算成「对方写了代码」。
+    //
+    // 排的必须是**被验那一侧自己记在日志里的那个 sha**（它的证据 sha）。谁跑这条命令都一样，因为它不来自
+    // 谁的 checkout，来自日志。**残留的保守面说在明处**：别的分支上碰了同一批路径的提交仍会被算进来，
+    // 于是这条判定不放行——保守的方向是继续挡着，那一侧我认。
+    const r = spawnSync("git", ["log", "--all", "--not", exclude, "--oneline", `--since=${sinceIso}`, "--", ...paths], { cwd, encoding: "utf8" });
     if (r.error || r.status !== 0) return null;
     return r.stdout.trim().length > 0;
   };
 }
 
 /** 对方自 claim 以来有没有产出。声明里没有路径（只写了符号、章节）时判不了，返回 unknown。 */
-export function outputSinceClaim(claimedAt: string | undefined, touches: string[], commitsSince: CommitsSince): Output {
-  if (!claimedAt) return "unknown";
+export function outputSinceClaim(claimedAt: string | undefined, touches: string[], commitsSince: CommitsSince, mineSha?: string): Output {
+  if (!claimedAt || !mineSha) return "unknown";
   // 只拿看得见的那部分去问 git：「文件#符号」取文件名，纯符号（不含 / 也不含 .）问不了 git
   const paths = [...new Set(touches.map((t) => t.split("#")[0].trim()).filter((t) => t && (t.includes("/") || t.includes("."))))];
   // 一条路径都问不出来（只声明了符号、章节，或什么都没声明）：**这里就答 unknown**，不把它交给 git 去答。
   // 交下去要靠调用方也把空数组当「判不了」，那是一条只写在别处的约定——测试替身第一次就把它踩塌了。
   if (!paths.length) return "unknown";
-  const r = commitsSince(claimedAt, paths);
+  const r = commitsSince(claimedAt, paths, mineSha);
   if (r === null) return "unknown";
   return r ? "some" : "none";
 }
@@ -187,7 +196,9 @@ export function unjudgeableSeams(b: Board, id: string, commitsSince: CommitsSinc
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);
     if (!other || other.status !== "working") continue;          // ② 对方交过活：有产出可判
-    const verdict = outputSinceClaim(other.claimed_at, other.touches ?? [], commitsSince);
+    // 排掉的是**被验那一侧记在日志里的证据 sha**，不是谁的 HEAD——见 gitCommitsSince 的说明。
+    const mineSha = boardTask(b, id)?.evidence_sha ?? evidenceSha(boardTask(b, id)?.evidence) ?? undefined;
+    const verdict = outputSinceClaim(other.claimed_at, other.touches ?? [], commitsSince, mineSha);
     if (verdict === "some") continue;
     if (verdict === "unknown") {                                  // ③ 看不见就当有，但说出来
       out.notes.push(`${seam.id}：${cannotSeeOutput(otherId, other.claimed_at ?? "")}`);
