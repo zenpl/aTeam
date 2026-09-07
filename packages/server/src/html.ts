@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, DEFER_PREFIX, seamFiles, REACH_WORDS } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -271,11 +271,12 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     .sort((x, y) => y.at.localeCompare(x.at))[0];
   if (just) {
     const { title } = cardTitle(just.i);
-    // t-161: the fallback used to test `startsWith("先不做")` — pd's words, written out here as a *predicate*. A
-    // reworded button would not have shown wrong, it would have judged wrong, in silence. The prefix core owns is
-    // DEFER_PREFIX, and it carries the colon this literal lacked; reading it means a change to pd's wording needs no
-    // change here. core already computes the same thing into `deferred` (board.ts), which is why this is a fallback.
-    const deferred = !!just.i.deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith(DEFER_PREFIX));
+    // t-161 made this read core's DEFER_PREFIX instead of the three characters written out here — pd's words used as
+    // a *predicate*, where a reword would not have shown wrong but judged wrong, in silence.
+    // t-165 then removed the second half of it. core already decides this (board.ts `deferred`) from the same notes
+    // under the same three conditions, so the fallback was a second derivation of one judgment, which is how the page
+    // has been wrong before (t-126). What remains reads core and nothing else.
+    const deferred = !!just.i.deferred;
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
