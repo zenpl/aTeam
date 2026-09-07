@@ -5,9 +5,9 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -815,9 +815,11 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
       expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
-      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
+      // t-118 (pd 01:40)：按钮上写的就是它送出去的那个值，不做值与标签的映射；这张卡带的是旧值，按钮上就写旧值
+      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">填写</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
       expect(html).not.toContain('<p class="meta contact-line">'); // the card is on screen: no grey line under 线上
-      expect(html).not.toContain("填写</button>"); // the option names are not what the human reads
+      // t-118 (pd 01:40) 把这一条反过来了：选项的值就是人看到的那个词，所以按钮上写的必须与它送出去的值一致
+      expect(html).toContain('value="填写">填写</button>');
       expect(html).not.toContain("邮箱"); // pd 22:45: the service only calls webhooks, so the page never promises email
 
       const cookie = await v.cookie();
@@ -832,7 +834,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain('<p class="recent">你刚定了：<b>找你用 https://hooks.example/me</b>');
-      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/me</p>');
+      // t-126: an address just recorded has never delivered anything — the line says that, it does not promise delivery
+      expect(html).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       const readings = (await (await v.api("/board")).json()).readings;
       expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("https://hooks.example/me");
     } finally { await v.stop(); }
@@ -865,13 +868,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect((await v.form("/fact", { key: "deployed.sha", value: "https://h.example/x" }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(303);
       html = await v.page({ cookie });
-      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/abc</p>');
+      expect(html).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       // reopened with an address: the input is prefilled
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
       expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
-      expect((await v.page({ cookie })).includes("你不在时发到 https://hooks.example/xyz")).toBe(true);
+      expect((await v.page({ cookie })).includes("记下了外呼地址，还没真发成功过——不知道你收不收得到。")).toBe(true);
     } finally { await v.stop(); }
   });
 
@@ -896,13 +899,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
       expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
-      expect(await v.page({ cookie })).toContain("你不在时发到 https://hooks.example/me");
+      expect(await v.page({ cookie })).toContain("记下了外呼地址，还没真发成功过——不知道你收不收得到。");
       // an address recorded any other way also counts as on
       const u = server();
       await u.start();
       try {
         await u.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/x" });
-        expect(await u.authedPage()).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/x</p>');
+        expect(await u.authedPage()).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       } finally { await u.stop(); }
     } finally { await v.stop(); }
   });
@@ -1451,6 +1454,108 @@ describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
       expect(card(await v.page({ cookie }))).toBe("");
       const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
       expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(0);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-125 · 按钮的标签就是它送出的值", () => {
+  /**
+   * 判据 4. Every button that submits a decision (name="option") must print the very value it sends: one source, so
+   * a reworded label cannot leave the logged value behind. That is exactly how 「记下」/「填写」 drifted — the label
+   * came from i18n and the value from the card, and only one of them was changed.
+   *
+   * Scope is name="option" on purpose (pd 02:18): 「值即标签」 governs "the word a person clicks and the word the log
+   * keeps must be the same one". A name="note" button (「先不做」) sends a reason, not a label, so it has no second
+   * copy to drift from and is deliberately out of scope — not an omission.
+   */
+  const optionButtons = (html: string) =>
+    [...html.matchAll(/<button[^>]*name="option"[^>]*value="([^"]*)"[^>]*>(.*?)<\/button>/g)]
+      .map(([, value, label]) => ({ value, label: label.replace(/<small>.*?<\/small>/g, "").trim() }));
+
+  it("every decision button on the board prints its own value, across every kind of card", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: soon() });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: "先上哪个？", intent: "ask", options: ["报表", "导出"], default: "导出", ack_by: soon() });
+      await v.post("pd", { kind: "instruction", to: HUMAN, body: "这个项目是什么？说一句。", intent: "ask", options: ["说一句", "不要了"], ack_by: soon() });
+      const html = await v.page({ cookie: await v.cookie() });
+      const buttons = optionButtons(html);
+      expect(buttons.length).toBeGreaterThanOrEqual(6);
+      for (const { value, label } of buttons) expect(label, `button value=${value}`).toBe(value);
+      // and the one that started this: the card carries 记下, so that is what the human reads and what the log gets
+      expect(buttons.map((b) => b.value)).toContain("记下");
+      expect(html).not.toContain('value="填写">记下');
+    } finally { await v.stop(); }
+  });
+
+  it("a card sent before the wording changed still prints and sends its own word", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK_WAS, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      const buttons = optionButtons(await v.page({ cookie }));
+      for (const { value, label } of buttons) expect(label, `button value=${value}`).toBe(value);
+      expect(buttons.map((b) => b.value)).toEqual(expect.arrayContaining(["填写", "先不要"]));
+      // 判据 3: answering it with its own word works, and it is not asked again
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(after).not.toContain(CONTACT_ASK);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配」", () => {
+  const line = (html: string) => /<p class="meta contact-line">(.*?)<\/p>/.exec(html)?.[1] ?? "(none)";
+  const REACHED = "alert.reached";
+
+  it("four states, four sentences: an address never delivered to is never described as one that works", async () => {
+    // 未配置
+    const none = server();
+    await none.start();
+    try {
+      expect(line(await none.authedPage())).toBe("你不在时，我们找不到你。");
+    } finally { await none.stop(); }
+
+    // 形状对、从没送到过 (t-119's unproven): the state this whole task exists for
+    const un = server();
+    await un.start();
+    try {
+      await un.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" });
+      const l = line(await un.authedPage());
+      expect(l).toBe("记下了外呼地址，还没真发成功过——不知道你收不收得到。");
+      // the promise this replaced, in either wording: the page must not claim a call-out will arrive
+      expect(l).not.toContain("你不在时发到");
+      expect(l).not.toContain("会发到这里");
+      expect(l).not.toContain("已配置");
+      expect(l).not.toContain("https://hooks.example/team");
+
+      // 验过能送到: only a real delivery moves it, and then the sentence changes
+      await un.post("pm", { kind: "reading", surface: "project", key: REACHED, value: "https://hooks.example/team", method: "外呼 全队停摆 真的送到了（HTTP 200）" });
+      expect(line(await un.authedPage())).toMatch(/^你不在时会发到这里，最近一次成功是 .+。$/);
+
+      // a different address is not covered by that proof: back to 还没真发成功过
+      await un.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/other" });
+      expect(line(await un.authedPage())).toContain("还没真发成功过");
+    } finally { await un.stop(); }
+  });
+
+  it("the page says core's sentence rather than deriving one, and falls back honestly on a server that has none", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" });
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      // whatever core computed is what the human reads: no second wording to drift from (t-119's lesson)
+      expect(line(await v.authedPage())).toBe(b.alert!.line);
+      // an older server sends no alert at all: say what is true without it, never the promise
+      expect(contactLine(undefined, "https://hooks.example/team")).toBe("记下了外呼地址，线上这一版还看不出有没有真发成功过。");
+      expect(contactLine(undefined, null)).toBe("你不在时，我们找不到你。");
+      // 不要了 leaves no address and nothing to promise
+      expect(contactLine({ status: "skipped" }, null)).toBe("你不在时，我们找不到你。");
     } finally { await v.stop(); }
   });
 });

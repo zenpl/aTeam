@@ -3,7 +3,7 @@
  * The service calls out over a channel the project declared (fact project:alert.webhook). Pure decision + a runner
  * with injected fetch/clock, so it is testable and runs whether or not any node is online.
  */
-import { append, reduce, projectRoles, isMissing, type EventStore, type State, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, ALL_MISSING_AFTER_MS, HUMAN_OVERDUE_AFTER_MS, ALERT_COOLDOWN_MS, LISTEN_WINDOW_MS, SERVICE_ACTOR } from "@ateam/core";
+import { append, reduce, projectRoles, isMissing, type EventStore, type State, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, PROJECT_SURFACE, ALL_MISSING_AFTER_MS, HUMAN_OVERDUE_AFTER_MS, ALERT_COOLDOWN_MS, LISTEN_WINDOW_MS, SERVICE_ACTOR } from "@ateam/core";
 
 export type AlertKind = "all_missing" | "human_overdue";
 export interface Alert { kind: AlertKind; since: string; detail: string; summary: string }
@@ -111,7 +111,14 @@ export async function runAlerts(project: string, store: EventStore, deps: Alerte
       kind: "note", actor: SERVICE_ACTOR,
       body: `${NOTE_PREFIX}${a.kind} 自 ${a.since} ${ok ? "已发到" : `发送失败（三次，最后状态 ${status}）`} ${url}。${a.summary}`,
     }, { human: deps.human, now: deps.real?.() ?? deps.now?.() }); // stamped with the real clock (t-063): a test offset never writes a time
-    if (ok) sent.push(payload);
+    if (ok) {
+      // t-119 (pd 01:21): 「验过能送到」只能来自一次真实的成功。记下的是**这个地址**——换了地址就得重新证一次。
+      await append(store, {
+        kind: "reading", actor: SERVICE_ACTOR, surface: PROJECT_SURFACE, key: ALERT_REACHED_KEY, value: url,
+        method: `外呼 ${a.kind} 真的送到了（HTTP ${status}）`, writes: [`${PROJECT_SURFACE}:${ALERT_REACHED_KEY}`],
+      }, { human: deps.human, now: deps.real?.() ?? deps.now?.() });
+      sent.push(payload);
+    }
   }
   return sent;
 }

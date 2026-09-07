@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -74,9 +74,14 @@ export function waitingLine(b: Board): string {
 }
 
 /** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
-export function contactLine(address: string | null): string {
-  if (!address) return UI.contactNone;
-  return /^https?:\/\//i.test(address) ? UI.contactTo(address) : UI.contactEmail;
+export function contactLine(alert: Board["alert"], address: string | null): string {
+  // t-126: core already worked out whether we can actually reach them (t-119's four states) and pd's sentence for
+  // each. The page says that sentence and does not re-derive one from the shape of the string: "there is an address"
+  // was never evidence that a call-out arrives, and 「你不在时发到这里」 promises exactly that.
+  if (alert?.line) return alert.line;
+  if (alert) return UI.contactNone;   // unanswered / skipped: core has no sentence, and there is nothing to promise
+  // An older server sends no alert at all (t-080's lesson): say the one thing that is true without it.
+  return address ? UI.contactUnknown : UI.contactNone;
 }
 
 /** The address the call-outs use, when the fact is valid. */
@@ -193,16 +198,19 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const contactForm = (action: string, fields: string, current: string | null, options?: string[]) => {
     const [fill, skipValue] = [options?.[0] ?? CONTACT_FILL, options?.[1] ?? CONTACT_SKIP];
     const input = `<input type="text" name="value" placeholder="${esc(UI.contactPlaceholder)}" aria-label="${esc(UI.contactPlaceholder)}" autocomplete="off"${current ? ` value="${esc(current)}"` : ""}>`;
-    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
-    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
+    // t-118 (pd 01:40)：按钮上写的就是它送出去的那个值，不做值与标签的映射；老卡带着旧值，按钮上就写旧值。
+    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${esc(fill)}</button>` : `<button class="btn primary" type="submit">${esc(CONTACT_FILL)}</button>`;
+    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${esc(CONTACT_SKIP)}</a>`;
     return form(action, "actions contact", fields, `${input}${save}${skip}`);
   };
   const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);
   if (asks.length || reopen) {
     out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + (reopen ? 1 : 0)}</span></h2>`);
     if (reopen) {
+      // Reopened from the grey line: no instruction stands behind it, so it reads the same words the service would send.
+      const reQ = cardTitle({ body: CONTACT_ASK });
       out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span></div>`);
-      out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      out.push(`<p class="q">${esc(reQ.title)}</p><p class="body">${esc(reQ.detail)}</p>`);
       out.push(contactForm("/fact", `<input type="hidden" name="key" value="${esc(ALERT_WEBHOOK_KEY)}">`, contact));
       out.push(`</article>`);
     }
@@ -211,9 +219,11 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
       const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
       if (isContactCard(i)) {
-        // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
+        // t-069: 请你做, with an input. t-118: the words are the card's own — the page keeps no second copy of the
+        // question, so pd changing the instruction changes what the person reads, and the log and the page cannot
+        // drift apart. The whole body shows (title + the rest), not folded behind 「细节」: it is short and it is the ask.
         out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
-        out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+        out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else if (isMigrationCard(i)) {
         // t-095: the counts are the question; they are read, not folded away behind 「细节」.
         out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
@@ -265,7 +275,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
-      ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
+      ? ((just.i.chosen.option === CONTACT_FILL || just.i.chosen.option === CONTACT_FILL_WAS) && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(cardTitle({ body: just.i.body }).title)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     // t-111 (pd 00:39): the reason is welcome but never required — the invitation costs nothing and adds no control,
     // it just points at the 说一句 box that is already there.
@@ -320,7 +330,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   if (waiting) out.push(`<p class="meta waiting">${machineWords(waiting)}</p>`);
   // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
   // no address or skipped; an email that nothing sends to; an https address that gets the call.
-  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
+  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(b.alert, contact))}</p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);
