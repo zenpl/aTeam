@@ -489,6 +489,12 @@ export const INVITE_SENT_PREFIX = "邀请已发回旧渠道：";
 /** t-097: when the old place cannot be written to, the human forwards the link. pd's wording (UC-S9). */
 export const FORWARD_LINK = "把这个链接发给他们：";
 /**
+ * t-144: the screen-reader name of the box that link sits in. It was a literal in `html.ts` — a whole label the page
+ * had written for itself, invisible to everyone who does not use a screen reader and therefore to every reviewer too.
+ * pd 05:50's rule does not have a sighted-only clause: a name only some people hear is still a name only core says.
+ */
+export const INVITE_URL_LABEL = "邀请链接";
+/**
  * t-098 (M7): the fact that says the move is finished. Writing it is refused until the human answered 对 on the check
  * card — that button is the authorisation to touch someone else's channel, so nothing may claim the move is over before it.
  */

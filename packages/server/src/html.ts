@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -418,7 +418,7 @@ export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
 }
 
 function inviteLine(url: string): string {
-  return `<p class="invite">${UI.inviteLine}<input class="invite-url" type="text" readonly value="${esc(url)}" aria-label="邀请链接"><button class="btn copy" type="button" data-copy="${esc(url)}">${UI.copy}</button></p>`;
+  return `<p class="invite">${UI.inviteLine}<input class="invite-url" type="text" readonly value="${esc(url)}" aria-label="${esc(INVITE_URL_LABEL)}"><button class="btn copy" type="button" data-copy="${esc(url)}">${UI.copy}</button></p>`;
 }
 
 /** The only script on the page: the copy button. Without it the link is still a selectable readonly box. */
