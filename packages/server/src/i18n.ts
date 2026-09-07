@@ -16,7 +16,8 @@ export const UI = {
   nothingForYou: "没有等你的事。",
   kind: { ask: "问你", do: "请你做", tell: "告诉你" } as Record<string, string>,
   askedBy: (who: string, when: string) => `${who} · ${when}`,
-  ifNothing: (option: string) => `不点的话，到期按 ${option}`,
+  // t-181：这句由 core 的 DEFAULT_LINES 按真状态算出来（board 的 says_default），页面直接印它。
+  // 留在这里的是它的名字，不是它的字——之前这一句在任何状态下都说「到期按 X」，包括默认根本还没生效的时候。
   defaultTag: "默认",
   didIt: "做好了",
   notNow: "先不做",

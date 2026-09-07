@@ -2,7 +2,7 @@ import { append, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
 import { projectRoles, importCounts, standIns } from "./board.js";
 import { Rejected } from "./rules.js";
-import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, type Event, type NewEvent } from "./events.js";
+import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -118,6 +118,49 @@ export async function runFollowUps(store: EventStore, e: Event, human: string, n
         const task = ne.kind === "task" && ne.op === "verify" ? ne.task : undefined;
         out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `human 判了，但 verify 被拒（${err.rule}）：${err.message}`, task, refs: [x.id] }, { human, now, mint }));
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * t-181 (pd 09:18)：**到期的默认，服务把它落成真事件。**
+ *
+ * 在此之前「到期按 X」只是读的时候算出来的：牌桌显示已经定了，日志里一个字都没有——别人 sync 读不到，人也无从
+ * 翻案。pm 09:17 实测的那张卡在这个状态里待了十二个小时。
+ *
+ * 纯函数：给一个状态和一个时刻，说出此刻该落哪几条。`default_due` 是 `settle()` 算出来的「到期了、没人点、事件
+ * 还没落」，落完它就是 false，所以这个函数天然幂等，不会落第二条。
+ */
+export function dueDefaults(s: State, now: Date): NewEvent[] {
+  void now;   // 时刻已经由 settle(s, now) 算进 default_due 里；这里不再自己判一次，免得两处判法不一致
+  const out: NewEvent[] = [];
+  for (const st of s.instructions.values()) {
+    if (!st.default_due) continue;
+    const i = st.instruction;
+    if (i.default === undefined || st.withdrawn) continue;
+    out.push({ kind: "note", actor: SERVICE_ACTOR, decision: true, body: defaultApplied(i.default), decides: { of: i.id, option: i.default }, refs: [i.id] });
+  }
+  return out;
+}
+
+/**
+ * Append every default that has come due, and whatever follows from each. A rejection becomes a note, never a crash.
+ *
+ * **状态由调用方给**，这里不自己读日志：这一段跑在服务自己的时钟上、每分钟一次，而 t-128 那条不变式说的正是
+ * 「安静的日志一件事都不该折叠」。自己 `reduce(await store.read())` 一次，就等于每分钟把整个世界重建一遍——
+ * 我第一版就是这么写的，server 那条闸当场红（折叠了 8 件，应当是 0）。
+ */
+export async function runDueDefaults(store: EventStore, s: State, human: string, now: Date = new Date(), mint?: AppendOptions["mint"]): Promise<Event[]> {
+  const out: Event[] = [];
+  for (const ne of dueDefaults(s, now)) {
+    try {
+      const appended = await append(store, ne, { human, now, mint });
+      out.push(appended);
+      out.push(...await runFollowUps(store, appended, human, now, mint));
+    } catch (err) {
+      if (!(err instanceof Rejected)) throw err;
+      out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `默认到期没能落下（${err.rule}）：${err.message}`, refs: ne.refs }, { human, now, mint }));
     }
   }
   return out;

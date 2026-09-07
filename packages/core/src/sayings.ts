@@ -31,15 +31,15 @@ export const SECOND_HOMES_ROOT = "packages";
  *
  * **t-185 判据 4：这个数变大过一次，那是口径变更，不是闸失效。**207 → 365。207 是「手写的那三个文件里还有多少」，
  * 365 是「core 之外一共还有多少」——同一件事的两个口径，后者才是 pd 08:55 那套机制真正需要的那个数。多出来的
- * 158 句一直都在，只是没有人在数它们。从这一刻起按 365 重新起算，只减不增照旧。
+ * 158 句一直都在，只是没有人在数它们。从这一刻起按 365 重新起算，只减不增照旧——t-181 把页面那句「到期按 X」搬进 core，当天就减到了 364。
  */
-export const SECOND_HOME_FROZEN: number = 365;
+export const SECOND_HOME_FROZEN: number = 364;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
-  "packages/server/src/i18n.ts": 169,
+  "packages/server/src/i18n.ts": 168,
   "packages/cli/src/format.ts": 36,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,

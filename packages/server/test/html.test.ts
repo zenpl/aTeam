@@ -165,7 +165,7 @@ describe("验收 2 · 一种红、一种主色按钮、琥珀只给卡住/逾期
 });
 
 describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 小页面", () => {
-  it("问你 / 请你做 / 告诉你: kind label, buttons, default marked, 「不点的话，到期按 X」", async () => {
+  it("问你 / 请你做 / 告诉你: kind label, buttons, default marked, 「不点的话，<到期时刻>到期，按 X 执行。」（t-181 pd 09:18 定稿）", async () => {
     const html = await w.authedPage();
     const needs = section(html, "needs-you", "say");
     const card = (id: string) => { const i = needs.indexOf(`value="${id}"`); const s = needs.lastIndexOf("<article", i); return needs.slice(s, needs.indexOf("</article>", i)); };
@@ -174,7 +174,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(a).toContain('<span class="kind">问你</span>');
     expect(a).toContain('<p class="q">看板认证选私有还是公开？</p>');         // the board's title drops the mark; the page puts 「？」 back
     expect(a).toMatch(/<details class="detail"><summary>细节<\/summary><p>细节：私有要每次带 token，公开谁都能看。<\/p><\/details>/);
-    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，到期按 公开<\/span><\/form>/);
+    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，\d\d:\d\d到期，按 公开 执行。<\/span><\/form>/);
     expect(d).toContain('<span class="kind">请你做</span>');
     expect(d).toContain('<p class="q">请把第 3 批推到 production</p>');
     expect(d).toContain("<summary>细节</summary><p>claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。</p>");
@@ -498,7 +498,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
         // renamed it; it is gone from the page, so the list names neither.
         // t-147 renamed two of these in place: 逾期 → 到期没人选 (only a card with options can be late now) and
         // 待送达 → 还没读到 (delivery is computed from the reader's own cursor, not from a receipt).
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "到期没人选", "接缝", "事实", "已定", "human 选择了「报表」", "还没读到", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，", "到期，按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "到期没人选", "接缝", "事实", "已定", "human 选择了「报表」", "还没读到", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)
