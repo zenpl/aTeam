@@ -1,4 +1,4 @@
-import { describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
+import { describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -112,10 +112,17 @@ export function board(b: Board, me: string): string {
 
   const openSeams = b.seams.filter((s) => s.open ?? (!s.resolved && !s.stacked));
   if (openSeams.length) {
-    out.push("", "SEAMS (open: nobody owns these; they block verify)");
+    out.push("", `SEAMS (open: nobody owns these; they block verify) · ${SEAM_UNDECIDED}`);
     for (const s of openSeams) out.push(`  ${s.tasks.join(" + ")} both touch ${(s.overlap ?? []).join(", ")}`);
   }
-  const absorbed = b.seams.filter((s) => s.absorbed);
+  // t-114 (pm 01:20/01:21): the same sentence the board says, in the same place — right after 等人裁决. A light seam
+  // is a heads-up for whoever merges second: it enters no count and no alert line, here or there.
+  const lightSeams = b.seams.filter((s) => s.light);
+  if (lightSeams.length) {
+    out.push("", SEAM_SAME_FILE);
+    for (const s of lightSeams) out.push(`  ${lightSeamLine(s.tasks[0], s.tasks[1], seamFiles(s.overlap).join("、"))}`);
+  }
+  const absorbed = b.seams.filter((s) => s.absorbed && !s.light);
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked && !s.absorbed);
   const sameOwner = b.seams.filter((s) => !s.resolved && !s.stacked && s.same_owner);
   if (stacked.length || sameOwner.length || absorbed.length) {
@@ -202,16 +209,21 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
       out.push(`  r${h.round} ${hhmm(h.at)} ${who(h.by)}  ${line}`);
     }
   }
-  const mine = seams.filter((s) => s.tasks.includes(t.id));
+  const mine = seams.filter((s) => s.tasks.includes(t.id) && !s.light);
+  const lightMine = seams.filter((s) => s.tasks.includes(t.id) && s.light);
   out.push("seams");
   // The default board keeps only the seams still in play (t-070): an empty list there is not "no seams" (t-075 round 2).
-  if (!mine.length) out.push(seamsCut ? `  (not in the default board; ateam task show ${t.id} has them)` : "  (none)");
+  if (!mine.length && !lightMine.length) out.push(seamsCut ? `  (not in the default board; ateam task show ${t.id} has them)` : "  (none)");
   for (const s of mine) {
     const other = s.tasks.find((x) => x !== t.id);
     const state = s.absorbed ? `absorbed: ${s.absorbed.basis}` : s.resolved ? `resolved by ${s.resolved}` : s.stacked ? `stacked (${s.stacked.on} on ${s.stacked.done}, blocks nothing)` : s.same_owner ? "same owner (blocks nothing)" : "OPEN";
     out.push(`  ${state}  with ${other}${s.overlap?.length ? `: ${s.overlap.join(", ")}` : ""}`);
   }
   if (seamsCut && mine.length) out.push(`  (the default board lists only seams still in play; ateam task show ${t.id} has all of them)`);
+  if (lightMine.length) {
+    out.push(SEAM_SAME_FILE);
+    for (const s of lightMine) out.push(`  ${lightSeamLine(s.tasks[0], s.tasks[1], seamFiles(s.overlap).join("、"))}`);
+  }
   out.push("notes");
   if (left("notes")) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
   else if (!notes.length) out.push("  (none)");

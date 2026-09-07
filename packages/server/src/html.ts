@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -514,9 +514,14 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   }
   d.push(`</section>`);
 
+  // t-114 · pd 01:01: two groups. The unresolved ones are waiting on a person; the light ones are a heads-up for
+  // whoever merges second — no button, no red, and never counted as something to do.
+  const lightSeams = b.seams.filter((x) => x.light);
   d.push(`<section id="seams"><h3>${UI.seams} <span class="meta">${esc(UI.openCount(openSeams.length))}</span></h3>`);
-  const closedSeams = b.seams.length - openSeams.length;
-  d.push(openSeams.length ? `<ul class="plain">${openSeams.map((x) => seamLine(x, base)).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const closedSeams = b.seams.length - openSeams.length - lightSeams.length;
+  if (openSeams.length) d.push(`<h4 class="seam-group">${UI.seamsUndecided}</h4><ul class="plain">${openSeams.map((x) => seamLine(x, base)).join("")}</ul>`);
+  else if (!lightSeams.length) d.push(`<p class="quiet">${UI.none}</p>`);
+  if (lightSeams.length) d.push(lightSeamGroup(lightSeams, base));
   if (closedSeams) d.push(`<p class="meta">${esc(UI.seamsElsewhere(closedSeams))}</p>`);
   d.push(`</section>`);
 
@@ -532,6 +537,19 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 }
 
 type Seam = Board["seams"][number];
+
+/**
+ * A light seam (t-113): both sides declared symbols and they do not overlap, so it blocks nothing. One sentence,
+ * pd's wording of 01:01, rendered identically in the dig layer and on a task page — the reader learns it once.
+ * Returns "" for an empty list so the group leaves nothing behind when there are none (t-114 criterion 5).
+ */
+export function lightSeamGroup(seams: Seam[], base: string): string {
+  if (!seams.length) return "";
+  const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}"><code>${esc(id)}</code></a>`;
+  const line = (x: Seam) =>
+    `<li>${UI.seamLight(link(x.tasks[0]), link(x.tasks[1]), seamFiles(x.overlap).map((f) => `<code>${esc(f)}</code>`).join("、"))}</li>`;
+  return `<h4 class="seam-group">${UI.seamsSameFile}</h4><ul class="plain light-seams">${seams.map(line).join("")}</ul>`;
+}
 
 function seamLine(x: Seam, base: string): string {
   const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}"><code>${esc(id)}</code></a>`;
@@ -617,7 +635,10 @@ export function renderTask(b: Board, s: State, id: string, opts: RenderOptions =
   out.push(`<p class="meta">${bits.join(" · ")}</p>`);
   out.push(taskDetail(st, t, ago, null, true, task.from, who));
   const seams = b.seams.filter((x) => x.tasks.includes(id));
-  if (seams.length) out.push(`<h3>${UI.taskSeams} <span class="meta">${seams.length}</span></h3><ul class="plain">${seams.map((x) => seamLine(x, base)).join("")}</ul>`);
+  const heavy = seams.filter((x) => !x.light);
+  if (heavy.length) out.push(`<h3>${UI.taskSeams} <span class="meta">${heavy.length}</span></h3><ul class="plain">${heavy.map((x) => seamLine(x, base)).join("")}</ul>`);
+  const lightHere = seams.filter((x) => x.light);
+  if (lightHere.length) out.push(lightSeamGroup(lightHere, base));
   out.push(`<details class="meta"><summary>${UI.forAgents}</summary><code>${esc(task.id)}</code> · <code>ateam task show ${esc(task.id)}</code></details>`);
   out.push(`</section>`);
   return page(out.join("\n"), { now: b.now, refresh: 0, sha: opts.sha, title: `${esc(task.shows ?? task.title)} · ${UI.header}` });
@@ -709,6 +730,8 @@ header { display:flex; justify-content:space-between; align-items:baseline; gap:
 header h1 { margin:0; font:600 1.05rem/1.4 var(--sans); letter-spacing:.04em; }
 .meta { color:var(--muted); font-size:.82rem; }
 .quiet { margin:0; color:var(--muted); }
+/* t-114: a light seam is a heads-up, not a thing to do — no tag, no red, muted like the rest of the notes. */
+.light-seams li { color:var(--muted); }
 h2 { margin:0 0 .75rem; font:600 .95rem/1.4 var(--sans); letter-spacing:.06em; color:var(--ink); display:flex; align-items:center; gap:.5rem; }
 h2::after { content:""; flex:1; height:1px; background:var(--line); }
 h3 { margin:1rem 0 .4rem; font:600 .9rem/1.4 var(--sans); letter-spacing:.04em; }
