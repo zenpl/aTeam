@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage, contactEnabled } from "./html.js";
+import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -9,7 +9,41 @@ import { runAlerts } from "./alerts.js";
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
 export const REMIND_COOLDOWN_MS = 15 * 60_000;
 
+/**
+ * t-103 (qa 01:12): the page asks for "the whole board address, or just the part after k=", because what a person has
+ * in hand is an address, not a key — making them cut it themselves was our mistake. So take either: a pasted URL
+ * (k= or token=), or the bare key, with whatever whitespace a copy-paste dragged along.
+ */
+export function keyFromPaste(pasted: string | null): string | null {
+  if (pasted === null) return null;
+  const t = pasted.trim();
+  if (!t) return "";
+  // A whole address: take k= (or token=) out of its query, wherever in the order it sits, and drop any #fragment.
+  const q = t.indexOf("?") >= 0 ? t.slice(t.indexOf("?") + 1) : t.includes("=") ? t : "";
+  if (q) {
+    const params = new URLSearchParams(q.replace(/#.*$/, ""));
+    const found = params.get("k") ?? params.get("token");
+    if (found?.trim()) return clean(found);
+  }
+  return clean(t);
+}
+/**
+ * A key is base64url with a short prefix — only letters, digits, `_` and `-`. So anything trailing that cannot be part
+ * of one (a slash, a space, the full stop of the sentence it was copied out of) was never part of it.
+ */
+function clean(k: string): string { return k.trim().replace(/[^A-Za-z0-9_-]+$/, ""); }
+
 const COOKIE = "ateam_token";
+/** How long a board cookie lasts. Recorded in the entry-form fact (t-103) so a lost address can be reissued from the log. */
+export const COOKIE_MAX_AGE_S = 2592000;
+/** Reading key: how a person gets into this board right now. */
+export const ENTRY_FORM_KEY = "entry.form";
+/**
+ * t-103, pd 00:28 + 00:29 定稿。人可见的其余三处文字在 frontend 的 t-110；这一句是服务端拒绝时说的那句，
+ * 照抄，不各写一份。
+ */
+export const OWNER_ONLY = (human: string) =>
+  `你拿的是项目共享钥匙，它不能代 ${human} 说话——${human} 这个身份只有他自己那把钥匙能用。要人拍板就发一张卡等他点；牌桌地址丢了，持管理钥匙的节点可以再发一个。`;
 
 export interface ServerOptions {
   /** Legacy single-project form: the store and shared key of the default project. */
@@ -172,11 +206,12 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
       if (req.method === "GET" && path.startsWith("/manual/")) {
         const role = decodeURIComponent(path.slice("/manual/".length));
-        const text = manual(role);
-        if (text === null) return json(res, 404, { error: "not found", message: "no manual for that role" });
-        // t-059: the project's own packing at the end, when the project exists
+        // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
         const known = await registry.get(projectId);
         const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read())) : null;
+        const text = manualFor(role, packing?.[role]);
+        if (text === null) return json(res, 404, { error: "not found", message: `这个项目没有 ${role} 这个角色；在事实 project:roles 里声明它（{"<角色>": ["R5"]}），就有说明书` });
+        // t-059: the project's own packing at the end, when the project exists
         return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
@@ -186,9 +221,13 @@ export function createApp(opts: ServerOptions) {
         const name = typeof body.name === "string" ? body.name.trim() : "";
         if (!name) return json(res, 400, { error: "name", message: "给项目一个名字：{\"name\": \"...\"}" });
         const { project, admin_key, invite } = await registry.create(name);
+        // t-103: the owner's key lives inside the board address. The sentence the first agent relays does not change —
+        // "牌桌在这里：<board_url>" — but from now on that address is the owner's, and only they can speak as themselves.
+        const { key: ownerKey } = await registry.ownerKey(project.id, human);
         return json(res, 201, {
           project: project.id, name: project.name,
-          board_url: `${origin}/p/${encodeURIComponent(project.id)}/`, project_url: `${origin}/p/${encodeURIComponent(project.id)}`,
+          board_url: `${origin}/p/${encodeURIComponent(project.id)}/?k=${encodeURIComponent(ownerKey)}`,
+          project_url: `${origin}/p/${encodeURIComponent(project.id)}`,
           admin_key, invite_url: `${origin}/invite/${invite.code}`, invite_expires_at: invite.expires_at,
         });
       }
@@ -251,9 +290,53 @@ export function createApp(opts: ServerOptions) {
       const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
       if (record && record.project !== projectId) return json(res, 403, { error: "forbidden", message: "这把钥匙属于另一个项目" });
       const isAdmin = !!record && record.role === null;
+      const isOwner = !!record && record.role === human;
       const authed = () => isAdmin || !!record;
+      if (presented && record) await registry.markUsed(presented, now());   // t-103: first use is what flips this project
+      /**
+       * t-103: three kinds of key — admin, node, owner — and `X-Actor` is no longer taken as a statement of identity.
+       * The owner's identity is the one that cannot be borrowed: impersonating the human is impersonating the final say.
+       *
+       * The upgrade is delivered with the enforcement rather than after it, because turning this on in one step would
+       * lock a project's owner out of their own board — the one failure with no way back (pd 23:53). So: until the
+       * owner's key has been used once, the admin key may still speak for them, and the board says so in as many words
+       * (「这张牌桌还没有主人的钥匙」/「已把牌桌地址给出去了，还没人打开过」). The first time the owner opens their
+       * own address, the project is upgraded and that borrowing is closed for good. It closes by itself, and it cannot
+       * strand anyone: nothing is enforced until the person it protects has demonstrably arrived.
+       */
+      const ownerArrived = async () => !!(await registry.ownerKeyRecord(projectId, human))?.used_at;
+      /**
+       * t-103, pd 23:53 的兜底：在钥匙形态改变的前后各留一条事实，写清此刻可用的进门方式。人进不来时，第一个 agent
+       * 靠管理钥匙照事实里的形态把地址重发一遍就行——不必读代码，也不必找我们。
+       */
+      const recordEntryForm = async (state: "issued" | "in_use") => {
+        await append(store, {
+          kind: "reading", actor: SERVICE_ACTOR, surface: PROJECT_SURFACE, key: ENTRY_FORM_KEY,
+          value: { state, board_url: `${origin}${base}/?k=<主人钥匙>`, reissue: `GET ${origin}${base}/owner-url（要管理钥匙）`, cookie_max_age_s: COOKIE_MAX_AGE_S },
+          method: state === "issued" ? "主人钥匙首次发出时由服务记下" : "主人第一次打开牌桌时由服务记下",
+        }, { human, now: now() });
+      };
+      /** t-103: the three states — nobody was ever given an address, it was given, it has been opened. Read-only: asking is not giving. */
+      const ownerKeyState = async (): Promise<Board["owner_key"]> => {
+        const r = await registry.ownerKeyRecord(projectId, human);
+        if (!r) return { state: "none" };
+        return r.used_at ? { state: "in_use", since: r.used_at } : { state: "issued", since: r.created_at };
+      };
 
       const remind = () => remindFor(projectId, store);
+
+      // t-103: the owner lost their address. A node holding the admin key asks for it again — the key is derived, so
+      // this is the same address as before, not a new one, and nothing had to be stored in the clear to say it.
+      if (path === "/owner-url" && (req.method === "GET" || req.method === "POST")) {
+        if (!isAdmin) return json(res, 401, { error: "unauthorized", message: "重新给出牌桌地址需要管理钥匙" });
+        const { key, record, created } = await registry.ownerKey(projectId, human);
+        if (created) await recordEntryForm("issued");   // 钥匙第一次发出的那一刻
+        const url_ = `${origin}${base}/?k=${encodeURIComponent(key)}`;
+        return json(res, created ? 201 : 200, {
+          board_url: url_, state: record.used_at ? "in_use" : "issued", since: record.used_at ?? record.created_at,
+          say: `牌桌在这里：${url_}`,
+        });
+      }
 
       if (req.method === "POST" && path === "/invites") {
         if (!isAdmin) return json(res, 401, { error: "unauthorized", message: "重新签发邀请链接需要管理钥匙" });
@@ -262,20 +345,25 @@ export function createApp(opts: ServerOptions) {
       }
 
       if (req.method === "GET" && path === "/") {
-        const given = url.searchParams.get("token");
+        // t-103: `k=` is the owner's own key, `token=` the admin key; both open the board and both set the cookie.
+        const given = url.searchParams.get("k") ?? url.searchParams.get("token");
         if (given !== null) {
           const r = await registry.lookup(given);
-          if (!r || r.project !== projectId || r.role !== null) return html(res, 401, unauthorizedPage());
+          if (!r || r.project !== projectId || (r.role !== null && r.role !== human)) return html(res, 401, unauthorizedPage());
+          const first = r.role === human && !r.used_at;
+          await registry.markUsed(given, now());
+          if (first) await recordEntryForm("in_use");   // 升级完成的那一刻
           const secure = proto === "https";
-          res.writeHead(303, { location: `${base}/`, "set-cookie": `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}` });
+          res.writeHead(303, { location: `${base}/`, "set-cookie": `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure ? "; Secure" : ""}` });
           return res.end();
         }
-        if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
+        if (!boardPublic && !isAdmin && !isOwner) return html(res, 401, unauthorizedPage());
         await remind();
         const state = reduce(await store.read(), now());
         const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
-        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin, human, base, ask: url.searchParams.get("ask") }));
+        b.owner_key = await ownerKeyState();
+        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin || isOwner, human, base, ask: url.searchParams.get("ask") }));
       }
 
       // t-065: one task in full, same rules as the board (public unless the board is private).
@@ -352,7 +440,7 @@ export function createApp(opts: ServerOptions) {
           // The feature is fact-gated (pm 22:39): with it off there is no entrance, so no route either.
           if (!contactEnabled(board(reduce(await store.read(), now()), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
           if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$|^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个邮箱或 https:// 开头的 webhook 地址" } };
+          if (!/^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个 https:// 开头的 webhook 地址" } };
           const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
           emitAll([reading]);
           return { status: 201, body: reading };
@@ -360,9 +448,25 @@ export function createApp(opts: ServerOptions) {
         return { status: 404, body: { error: "not found" } };
       };
 
+      /**
+       * t-103 (qa 01:05): these four write as `human`, so the same rule governs them as governs POST /events — the page
+       * is not a second door with older locks. The owner's own key presses their own buttons; the shared key may still
+       * do it during the upgrade window, and not one moment after the owner has arrived.
+       */
+      const mayActAsHuman = async () => isOwner || (isAdmin && !(await ownerArrived()));
       if (req.method === "POST" && ACTIONS.has(path)) {
-        if (!isAdmin) return html(res, 401, unauthorizedPage());
-        const r = await act(path, new URLSearchParams(await readText(req)));
+        const body = await readText(req);
+        if (!(await mayActAsHuman())) {
+          // qa 01:08 ④: a button is always pressable (docs/board.md). Nobody signed in — a cookie that ran out, a page
+          // left open — is not a dead end: it is the moment to ask for the address, then do the thing they pressed.
+          if (!isAdmin && !isOwner) {
+            const fields: Record<string, string> = { then: path };
+            for (const [k, v] of new URLSearchParams(body)) if (k !== "token") fields[k] = v;
+            return html(res, 401, tokenPage(fields, false, base));
+          }
+          return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
+        }
+        const r = await act(path, new URLSearchParams(body));
         if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
       }
@@ -373,12 +477,15 @@ export function createApp(opts: ServerOptions) {
         const form = new URLSearchParams(req.method === "POST" ? await readText(req) : url.search);
         const fields: Record<string, string> = {};
         for (const [k, v] of form) if (k !== "token") fields[k] = v;
-        const given = form.get("token");
+        const given = keyFromPaste(form.get("token"));
         if (given === null) return html(res, 200, tokenPage(fields, false, base));
         const r0 = await registry.lookup(given);
-        if (!r0 || r0.project !== projectId || r0.role !== null) return html(res, 401, tokenPage(fields, true, base));
+        // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.
+        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base, pasteShape(form.get("token") ?? "")));
+        if (r0.role === null && (await ownerArrived())) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
+        await registry.markUsed(given, now());
         const secure = proto === "https";
-        const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`;
+        const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure ? "; Secure" : ""}`;
         const then = fields.then ?? "";
         const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
         if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
@@ -391,11 +498,17 @@ export function createApp(opts: ServerOptions) {
       const actor = String(req.headers["x-actor"] ?? "").trim();
       if (!actor) return json(res, 400, { error: "X-Actor header is required" });
       if (record.role !== null && actor !== record.role) return json(res, 403, { error: "forbidden", message: `这把钥匙是 ${record.role} 的，不能以 ${actor} 说话` });
+      // t-103: the service's own identity is never lent out, and the owner's is lent only until they first arrive.
+      if (actor === SERVICE_ACTOR && record.role !== SERVICE_ACTOR)
+        return json(res, 403, { error: "forbidden", message: `${SERVICE_ACTOR} 是服务自己的身份，任何钥匙都不能以它说话。要服务替你说一句，就让它自己触发（例如发一张卡）` });
+      if (actor === human && !isOwner && await ownerArrived())
+        return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
 
       if (req.method === "GET" && path === "/board") {
         await remind();
         const b = board(reduce(await store.read(), now()), human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
+        b.owner_key = await ownerKeyState();
         // t-070/t-080 (pm 22:45): the slim board goes to a client that says it knows it (X-Ateam-Client: <shape it speaks>);
         // a client without the header — an older CLI — gets the full board and never breaks. ?full=1 always means full.
         const knowsSlim = Number(req.headers["x-ateam-client"]) >= 2;
@@ -435,9 +548,13 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "POST" && path === "/events") {
         const body = (await readJson(req)) as NewEvent;
         const ne = { ...body, actor } as NewEvent;
-        const [e, ...followed] = await serialize(async () => { const x = await append(store, ne, { human, now: real() }); return [x, ...(await runFollowUps(store, x, human, real()))]; });
-        emitAll([e, ...followed]);
-        return json(res, 201, e);
+        // t-088: an event that carries `from` is written once; a repeat returns the first one, and says so
+        const [{ event: e, created }, ...followed] = await serialize(async () => {
+          const x = await appendFrom(store, ne, { human, now: real() });
+          return [x, ...(x.created ? await runFollowUps(store, x.event, human, real()) : []).map((event) => ({ event, created: true }))];
+        });
+        emitAll([e, ...followed.map((x) => x.event)]);
+        return json(res, created ? 201 : 200, { ...e, created });
       }
 
       return json(res, 404, { error: "not found" });

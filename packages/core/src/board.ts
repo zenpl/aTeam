@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -7,6 +7,10 @@ import { surfaceResults, type State, type TaskState, type InstructionState, type
 export interface BoardTask {
   id: string;
   title: string;
+  /** t-096: what people call it (an old number, say); absent when nobody set one. References are always by id. */
+  label?: string;
+  /** t-088: where this task came from when it was carried in; absent for one created here. */
+  from?: string;
   status: string;
   /** Absent on the slim board (t-070): GET /task/<id> has them. */
   criteria?: string[];
@@ -35,7 +39,7 @@ export interface BoardTask {
   /** Surfaces whose latest result since the task was last done is a pass. */
   verified_on: string[];
   /** Notes attached with --task, in log order. */
-  notes?: { id: string; actor: string; at: string; body: string; decision?: boolean }[];
+  notes?: { id: string; actor: string; at: string; body: string; decision?: boolean; /** t-096 */ label?: string }[];
   /**
    * t-068: which layer of the page the task belongs to. this_version: brought by the current deploy or still in flight
    * (criteria and evidence inlined); earlier: verified on production before the current sha, or ended before it
@@ -111,6 +115,18 @@ export interface Board {
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
   }[];
+  /**
+   * t-106: the name to show for a role id, wherever a person reads one — presence, a task's owner, an instruction's
+   * sender and recipient, the source of a needs-you card. One map rather than a name beside every mention: a list kept
+   * apart from what it describes drifts (the omitted lesson). Absent id = show the id, which is what ids are for.
+   */
+  role_names: Record<string, string>;
+  /**
+   * t-103: whether this board has an owner who can speak for themselves. `none` — nobody was ever given the address;
+   * `issued` — it was given out and never opened; `in_use` — the owner has arrived, and from then on nothing else may
+   * speak as them. Filled in by the server (the log knows nothing about keys), absent when it did not look.
+   */
+  owner_key?: { state: "none" | "issued" | "in_use"; since?: string };
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
   undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
@@ -124,6 +140,10 @@ export interface Board {
     deployed_sha: string | null;
     /** Who recorded the current deployed sha: a role (the team pushed) or the human. */
     deployed_by: string | null;
+    /** t-083: who recorded the sha by hand (a measurement, not a push); null when the push recorded it or the source is unknown. */
+    checked_by: string | null;
+    /** t-083: when that reading was written, so the line can say how long ago it was pushed or checked. */
+    at: string | null;
     since_sha: string | null;
     verified_on_production: { id: string; title: string; shows?: string }[];
     recent: { id: string; title: string; shows?: string }[];
@@ -154,6 +174,8 @@ export interface Board {
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
+    /** t-087: set when a service notice stopped being true, with why and who took over. */
+    stale?: NoticeStaleness;
     /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
     withdrawn?: { by: string; at: string; reason: string; seen: boolean };
     sent: string; delivered?: string; acked?: string;
@@ -174,7 +196,9 @@ export interface Board {
   }[];
   tasks: Record<string, BoardTask[]>;
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
-  seams: { id: string; tasks: [string, string]; /** absent on the slim board for seams that are not open (t-077) */ overlap?: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string } }[];
+  seams: { id: string; tasks: [string, string]; /** absent on the slim board for seams that are not open (t-077) */ overlap?: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string };
+    /** t-113: both sides named symbols in the shared file and named different ones. `open` stays false: it holds nothing up. */
+    light?: boolean }[];
   /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
@@ -182,7 +206,13 @@ export interface Board {
   /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
   coverage: BoardCoverage[];
   /** t-069: how to reach the human when away. set: the fact exists (however it got there); skipped: 先不要 and no fact; else unanswered. */
-  alert: { status: "unanswered" | "set" | "skipped"; value?: string; source?: "given" };
+  alert: {
+    status: "unanswered" | "set" | "skipped" | "misconfigured";
+    value?: string;
+    source?: "given";
+    /** t-084: one line for the board when the address is set but cannot be called (not https). */
+    line?: string;
+  };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
   allocation: { warnings: AllocationWarning[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
@@ -240,23 +270,58 @@ export interface BoardOptions { /** How long since the last pull a node still co
  * (a newer round) or the task is no longer waiting, the instruction is true no more and leaves the lists by itself.
  */
 export function serviceNoticeStale(s: State, i: Instruction): boolean {
+  return !!noticeStaleness(s, i);
+}
+
+/** Why a service notice is no longer true, in the data (t-087), so every surface reads the reason instead of inventing one. */
+export interface NoticeStaleness {
+  /** redone: a newer round; taken_over: someone else claimed it; moved_on: the task is no longer waiting for this. */
+  reason: "redone" | "taken_over" | "moved_on";
+  task: string;
+  /** taken_over: who took it and the claim event that says so. */
+  by?: string;
+  claim?: string;
+}
+
+export function noticeStaleness(s: State, i: Instruction): NoticeStaleness | null {
   const ref = i.refs?.[0];
-  if (!ref) return false;
+  if (!ref) return null;
   if (i.body.includes(FAIL_NOTICE)) {
     for (const t of s.tasks.values()) {
       const v = t.verifications.find((x) => x.id === ref);
-      if (v) return t.round !== v.round;
+      if (!v) continue;
+      if (t.round !== v.round) return { reason: "redone", task: t.id };
+      // t-087: another role took the task over in this same round — the one who was asked to fix it is not on it any more
+      if (t.owner && t.owner !== i.to && t.claimed_id && t.claimed_id > v.id) return { reason: "taken_over", task: t.id, by: t.owner, claim: t.claimed_id };
+      return null;
     }
-    return false;
+    return null;
   }
   if (i.body.includes(VERIFY_ASK)) {
     for (const t of s.tasks.values()) {
       const d = t.history.find((h) => h.op === "done" && h.id === ref);
-      if (d) return t.round !== d.round || t.status !== "done";
+      if (!d) continue;
+      if (t.round !== d.round) return { reason: "redone", task: t.id };
+      return t.status !== "done" ? { reason: "moved_on", task: t.id } : null;
     }
-    return false;
+    return null;
   }
-  return false;
+  return null;
+}
+
+/**
+ * t-092: what an import actually put in this log, counted from the events that carry `from` — never from what the
+ * importer claimed. In-flight tasks, decisions that still stand, imported facts, questions the human has not answered.
+ */
+export interface ImportCounts { tasks: number; decisions: number; readings: number; asks: number }
+export function importCounts(s: State): ImportCounts {
+  const superseded = new Set(s.notes.filter((n) => n.supersedes).map((n) => n.supersedes!));
+  return {
+    tasks: [...s.tasks.values()].filter((t) => t.from && !["verified", "withdrawn", "obsolete"].includes(t.status)).length,
+    decisions: s.notes.filter((n) => n.from && n.decision && !superseded.has(n.id)).length,
+    readings: [...s.readings.values()].filter((r) => r.reading.from).length,
+    asks: [...s.instructions.values()].filter((st) => st.instruction.from && !st.acked_at && !st.chosen).length,
+  };
 }
 
 /** The push level a role declared when it joined; "none" when the fact is missing, stale, or says something else. */
@@ -273,8 +338,13 @@ export function alertContact(s: State): Board["alert"] {
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
-  if (typeof v === "string" && v.trim()) return { status: "set", value: v.trim(), source: "given" };
-  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && st.chosen?.option === CONTACT_SKIP);
+  if (typeof v === "string" && v.trim()) {
+    // t-084: a value that is there but is not an https webhook (recorded before the shape was declared): said, not hidden
+    if (!/^https:\/\/\S+$/.test(v.trim())) return { status: "misconfigured", value: v.trim(), source: "given", line: `外呼地址配了但发不出去：不是 https（${v.trim()}）` };
+    return { status: "set", value: v.trim(), source: "given" };
+  }
+  // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
+  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
 }
 
@@ -299,13 +369,36 @@ export function isMissing(s: State, role: string, now: Date, listenWindowMs = LI
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
 export function projectRoles(s: State): string[] {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   if (Array.isArray(v) && v.every((x) => typeof x === "string") && v.length) return v as string[];
   if (typeof v === "string" && v.trim()) return v.split(",").map((x) => x.trim()).filter(Boolean);
-  if (v && typeof v === "object" && Object.keys(v).length) return Object.keys(v as object); // t-059: {role: [responsibility ids]}
+  if (v && typeof v === "object" && Object.keys(v).length) return Object.keys(v as object); // t-059 / t-106: keys are ids
   return DEFAULT_ROLES;
+}
+
+/** The one place that reads `project:roles`. Three shapes have been declared over time; all three still work. */
+function rolesFact(s: State): unknown {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  return r?.valid && !r.expired ? r.reading.value : undefined;
+}
+
+/**
+ * t-106: the name people read, per role id. Only the third shape carries one — `{id: {name, responsibilities}}` —
+ * so most projects get an empty map and everything shows the id, which is what the id is for. A name is never used to
+ * find anything: ids are forever, names are free (the same split as a task's label, t-096).
+ */
+export function roleNames(s: State): Record<string, string> {
+  const v = rolesFact(s);
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [id, entry] of Object.entries(v as Record<string, unknown>)) {
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const name = (entry as { name?: unknown }).name;
+      if (typeof name === "string" && name.trim() && name.trim() !== id) out[id] = name.trim();
+    }
+  }
+  return out;
 }
 
 /**
@@ -313,16 +406,30 @@ export function projectRoles(s: State): string[] {
  * role names expands to the default packing of responsibilities.md, and a name outside it holds nothing until the project says.
  */
 export function roleResponsibilities(s: State): Record<string, string[]> {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   const out: Record<string, string[]> = {};
   if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) {
-    for (const [role, ids] of Object.entries(v as Record<string, unknown>)) out[role] = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string").map((x) => responsibilityId(x)) : [];
+    for (const [role, entry] of Object.entries(v as Record<string, unknown>)) {
+      const ids = heldBy(entry);
+      out[role] = ids.filter((x): x is string => typeof x === "string").map((x) => responsibilityId(x));
+    }
     return out;
   }
   for (const role of projectRoles(s)) out[role] = DEFAULT_RESPONSIBILITIES[role] ?? [];
   return out;
+}
+
+/**
+ * What one entry of the roles map says the role holds. `["R5","R6"]` is the t-059 shape; `{responsibilities:[...]}`
+ * is the t-106 shape that also carries a name. Anything else holds nothing until the project says otherwise.
+ */
+function heldBy(entry: unknown): unknown[] {
+  if (Array.isArray(entry)) return entry;
+  if (entry && typeof entry === "object") {
+    const r = (entry as { responsibilities?: unknown }).responsibilities;
+    if (Array.isArray(r)) return r;
+  }
+  return [];
 }
 
 /** An entry may carry a boundary after the id ("R5:数据侧", "R6 自定标准的退化给 owner"): the id is the first word. */
@@ -330,13 +437,12 @@ export function responsibilityId(entry: string): string { return entry.trim().sp
 
 /** The boundary text each role declared next to a responsibility id, keyed `${role}:${id}` (t-061 静态检查). */
 export function responsibilityBoundaries(s: State): Map<string, string> {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ROLES_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  const v = rolesFact(s);
   const out = new Map<string, string>();
   if (!v || typeof v !== "object" || Array.isArray(v)) return out;
-  for (const [role, ids] of Object.entries(v as Record<string, unknown>)) {
-    if (!Array.isArray(ids)) continue;
+  for (const [role, entry] of Object.entries(v as Record<string, unknown>)) {
+    const ids = heldBy(entry);
+    if (!ids.length) continue;
     for (const x of ids) {
       if (typeof x !== "string") continue;
       const rest = x.trim().slice(responsibilityId(x).length).replace(/^[\s:：]+/, "").trim();
@@ -379,12 +485,13 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
-    live: { deployed_sha: null, deployed_by: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
+    live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     said: [],
     seams: [],
     presence: [],
     roles: projectRoles(s),
+    role_names: roleNames(s),
     coverage: [],
     allocation: { warnings: [], summary: "" },
     alert: { status: "unanswered" },
@@ -403,7 +510,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
       kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
-      options: i.options, default: i.default, withdrawn: st.withdrawn,
+      options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
     if (status === "acked" || status === "withdrawn") continue;
@@ -432,7 +539,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     b.readings.push({
       id: r.id, key: r.key, surface: r.surface, value: r.value, at: r.at, by: r.actor, valid,
       measured_at: measured, recorded_after_s: recordedAfter, late: validFor !== undefined && recordedAfter * 1000 > validFor / 2, valid_until: r.valid_until,
-      why: valid ? undefined : rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired",
+      why: valid ? undefined : rs.imported_why ?? (rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired"),
       assumptions: r.assumptions,
     });
   }
@@ -444,7 +551,12 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
   if (current) {
     b.live.deployed_sha = current.value as string;
-    b.live.deployed_by = current.actor;
+    // t-083: the one who pushed is the one whose `release --deploy` wrote the reading; anyone else who wrote it measured it.
+    // A reading with no method at all says nothing about its source: neither.
+    b.live.at = current.at;
+    const source = deploySource(current);
+    b.live.deployed_by = source === "pushed" ? current.actor : null;
+    b.live.checked_by = source === "checked" ? current.actor : null;
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
@@ -464,11 +576,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       : results0.length ? results0.map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ") : t.status;
     (b.tasks[t.status] ??= []).push({
       era, summary,
-      id: t.id, title: t.title, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
+      id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
-      notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision })),
+      notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
     });
     if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
       b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
@@ -518,7 +630,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed });
+    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed && !seam.light, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed, light: seam.light });
   }
 
   // who is not receiving: pending (never pulled) instructions older than 5 minutes, by recipient
@@ -570,7 +682,7 @@ export function slimBoard(b: Board): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
-      id: t.id, title: t.title, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
+      id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
@@ -581,8 +693,8 @@ export function slimBoard(b: Board): Board {
   // done (the seam check needs them); once both sides are final they are history, and GET /task/<id> still has them
   const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));
   const seams = b.seams
-    .filter((x) => x.open || ((x.resolved || x.stacked) && !x.tasks.every((id) => final.has(id))))
-    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed }));
+    .filter((x) => x.open || ((x.resolved || x.stacked || x.light) && !x.tasks.every((id) => final.has(id))))   // t-113: a light seam is for whoever merges second, so it stays while a side can still be done
+    .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed, light: x.light, overlap: x.light ? x.overlap : undefined }));
   const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
   const readings = b.readings.filter((r) => r.valid || stale.includes(r));
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]
@@ -626,6 +738,13 @@ export function omittedPaths(full: unknown, slim: unknown, path = ""): string[] 
   return [...out].filter((x) => x !== "omitted" && x !== "shape").sort();
 }
 
+/** t-083: how a production:deployed.sha reading came to be: written by `ateam release --deploy`, measured by someone, or unsaid. */
+export function deploySource(r: Reading): "pushed" | "checked" | "unknown" {
+  const m = r.method?.trim() ?? "";
+  if (m.startsWith("ateam release --deploy")) return "pushed";
+  return m ? "checked" : "unknown";
+}
+
 const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
@@ -660,6 +779,60 @@ function splitRelease(s: State, b: Board) {
     else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+}
+
+/**
+ * t-100 (display only, changes nothing in the log): the ids whose display name a reader could mistake for another row —
+ * because it is another row's id, or because two rows carry the same display name. Rows outside this set stay clean.
+ */
+export function ambiguousLabels(b: Board): Set<string> {
+  const tasks = Object.values(b.tasks).flat();
+  const ids = new Set(tasks.map((t) => t.id));
+  const byLabel = new Map<string, string[]>();
+  for (const t of tasks) if (t.label) byLabel.set(t.label, [...(byLabel.get(t.label) ?? []), t.id]);
+  const out = new Set<string>();
+  for (const t of tasks) {
+    if (!t.label) continue;
+    if ((byLabel.get(t.label) ?? []).length > 1 || (ids.has(t.label) && t.label !== t.id)) out.add(t.id);
+  }
+  return out;
+}
+
+/**
+ * t-107 (display only): what to call a role where a person reads it — its display name when the project gave it one,
+ * the id otherwise. A name that could be mistaken for another role's id, or that two roles share, carries the real id
+ * after it, by the same rule t-100 uses for tasks.
+ */
+export function roleNamer(b: Board): (id: string) => string {
+  const names = b.role_names ?? {};
+  const ids = new Set<string>([...Object.keys(names), ...(b.roles ?? []), ...b.presence.map((p) => p.actor)]);
+  const shared = new Map<string, number>();
+  for (const n of Object.values(names)) shared.set(n, (shared.get(n) ?? 0) + 1);
+  return (id: string) => {
+    const name = names[id];
+    if (!name) return id;
+    return (shared.get(name) ?? 0) > 1 || (ids.has(name) && name !== id) ? `${name} (${id})` : name;
+  };
+}
+
+/**
+ * t-107: role ids inside a sentence the service already wrote (a coverage gap, an allocation warning) — swap each
+ * whole id for the name people read. Only exact ids are touched, so a name that happens to contain one is left alone.
+ */
+export function nameRoles(text: string, name: (id: string) => string, ids: string[]): string {
+  let out = text;
+  for (const id of [...ids].sort((a, b) => b.length - a.length)) {
+    const shown = name(id);
+    if (shown === id) continue;
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "g"), shown);
+  }
+  return out;
+}
+
+/** t-100: what one row calls a task — its display name and title, and the real id only when the name is ambiguous. */
+export function taskHeading(t: { id: string; title: string; label?: string }, ambiguous: Set<string>): string {
+  const name = t.label ? `${t.label} ${t.title}` : t.title;
+  return ambiguous.has(t.id) ? `${name} (${t.id})` : name;
 }
 
 export function boardTask(b: Board, id: string): BoardTask | undefined {

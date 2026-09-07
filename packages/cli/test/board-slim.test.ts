@@ -120,3 +120,48 @@ describe("t-075 · the CLI prints no half sentence from the default board", () =
     expect(checked).toBeGreaterThan(12); // the rule was exercised across tasks and sections, not vacuously
   });
 });
+
+describe("t-100 · CLI 用同一份判定", () => {
+  it("appends the real id to an ambiguous display name and to nothing else", async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3_600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-4", title: "本地建的", criteria: ["可用"] } as NewEvent);
+    const b = board(reduce(await store.read()), HUMAN);
+    const text = fmt.board(b, "pm");
+    expect(text).toContain("T-99 登录超时 (L-1)");
+    expect(text).toContain("T-99 导出乱码 (L-2)");
+    expect(text).toContain("T-07 日志脱敏");
+    expect(text).not.toContain("T-07 日志脱敏 (L-3)");
+    expect(text).not.toContain("本地建的 (L-4)");
+  });
+});
+
+describe("t-107 · CLI 与页面叫同一个名字", () => {
+  it("names roles the way the project named them, in the focus, the cards, the instructions, the tasks and the sentences the service wrote", async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3_600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { editor: { name: "主编", responsibilities: ["R1", "R3", "R4"] }, writer: { name: "写手", responsibilities: ["R5"] }, reviewer: { name: "审稿", responsibilities: ["R6"] }, qa2: ["R6"] } } as NewEvent);
+    await emit({ kind: "reading", actor: "editor", surface: "team", key: "focus", value: "先把登录修好" } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "editor", task: "t-1", title: "登录修复", criteria: ["能登录"] } as NewEvent);
+    await emit({ kind: "task", op: "claim", actor: "writer", task: "t-1", touches: ["src/login.ts"] } as NewEvent);
+    await emit({ kind: "instruction", actor: "editor", to: "writer", body: "先做登录", ack_by: new Date(t + 3_600_000).toISOString() } as NewEvent);
+    await emit({ kind: "instruction", actor: "editor", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], ack_by: new Date(t + 3_600_000).toISOString() } as NewEvent);
+    const b = board(reduce(await store.read()), HUMAN);
+    const text = fmt.board(b, "writer");
+    expect(text).toContain("(主编, "); // who set the focus
+    expect(text).toContain("主编: 先发哪个？"); // who is asking on the card
+    expect(text).toContain("主编 → 写手: 先做登录"); // both ends of an instruction
+    expect(text).toContain("@写手"); // the task's owner
+    for (const id of ["editor", "writer", "reviewer"]) expect(text.split("TASKS")[0]).not.toContain(id);
+    // a role the project left unnamed keeps its id, with nothing invented for it
+    expect(text).toContain("qa2");
+    // the sentence the service wrote about who holds nothing is renamed too
+    const gaps = b.coverage?.filter((c) => c.status !== "held") ?? [];
+    if (gaps.length) expect(text).not.toMatch(/没人管[^\n]*\beditor\b/);
+  });
+});

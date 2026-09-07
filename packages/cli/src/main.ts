@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
+import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -8,6 +9,9 @@ import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
+import { watchState, deafNotice } from "./deaf.js";
+import { revise, type Diff } from "./touches.js";
+import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -27,7 +31,8 @@ every turn
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
-  ateam release [--json] [--deploy <sha>]   what passed on repo and not yet on production; --deploy pushes the sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
+  ateam release [--json] [--deploy <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
+      what passed on repo and not yet on production; --deploy pushes that sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
@@ -44,7 +49,12 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+                                             claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
+                                             --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份；
+                                             --touches-only 表示「我写的这几条就是全部」——一条分支上连做几件时 diff 分不出是哪一件的，
+                                             
+                                             --no-touches 原样沿用声明。重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
@@ -90,6 +100,38 @@ function common(a: Args): { refs?: string[]; writes?: string[] } {
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`missing ${what}`);
   return v;
+}
+
+/**
+ * t-105: this project's way of knowing what a task actually touched. The base is the branch's head at claim time,
+ * kept beside the cursor in .ateam/ — local, never in the log, because it is this checkout's business. A checkout
+ * with no git, or a task claimed before this existed, simply has no base, and the revision falls back to hand.
+ */
+function baseFile(task: string) { return join(process.cwd(), ".ateam", `base.${task}`); }
+function gitDiff(): Diff {
+  const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
+  return {
+    head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
+    base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
+    changed: (base) => {
+      const r = git(["diff", "--name-only", base]);          // committed and uncommitted, against the claim point
+      if (r.status !== 0) return null;
+      const u = git(["ls-files", "--others", "--exclude-standard"]); // files created since and not yet added
+      // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
+      return [...r.stdout.split("\n"), ...(u.status === 0 ? u.stdout.split("\n") : [])].map((x) => x.trim()).filter((x) => x && !x.startsWith(".ateam/"));
+    },
+  };
+}
+
+/** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+  if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
+  if (only) return revise(declared, null, extra, "", true);
+  const d = gitDiff();
+  const base = d.base(task);
+  if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
+  const changed = d.changed(base);
+  return revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
 }
 
 async function main(argv: string[]) {
@@ -143,7 +185,8 @@ async function main(argv: string[]) {
       const lockPath = join(process.cwd(), ".ateam", `watch.${cfg.me}.lock`);
       const other = blockingLock(lockPath, new Date(), 3 * interval);
       if (other && !bool(a, "force")) throw new UsageError(`another watch is already listening as ${cfg.me} in this checkout (pid ${other.pid}, heartbeat ${other.at}). Two watches replay old instructions to each other. Stop it first: kill ${other.pid}; or run with --force if it is really gone.`);
-      const beat = () => writeLock(lockPath, process.pid);
+      const started = `ateam ${["watch", ...process.argv.slice(3).filter((x) => x !== "--force")].join(" ")}`; // t-102: what to re-run, in this node's own words
+      const beat = () => writeLock(lockPath, process.pid, new Date(), started);
       beat();
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
@@ -175,7 +218,7 @@ async function main(argv: string[]) {
         return;
       }
       const outcome = await deploy(b, target, {
-        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN,
+        git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
         reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
         note: async (body) => { await emit({ kind: "note", body }); },
         print: console.log,
@@ -237,7 +280,9 @@ async function main(argv: string[]) {
       switch (op) {
         case "show": {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
-          console.log(fmt.task(t, seams, [])); // GET /task/<id> is the whole task: nothing omitted
+          // t-107: the same names the board shows; the role set comes from the board, one extra read
+          const nb = await client.board().catch(() => null);
+          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined)); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {
@@ -247,9 +292,22 @@ async function main(argv: string[]) {
           console.log(fmt.created(title, criteria));
           return;
         }
-        case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
+        case "claim": {
+          const t = need(id, "<id>");
+          await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
+          // t-105: remember where this branch stood, so done can measure what the task actually touched. Only the
+          // *first* claim sets it (qa 00:29): widening a claim is this rule's own way out, and re-basing there would
+          // move the measuring point to "now" and make every later diff empty — silently, on exactly the tasks that
+          // need this most.
+          const head = gitDiff().head();
+          if (head && !existsSync(baseFile(t))) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
+          return;
+        }
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
+          // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
+          const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
+          for (const line of rev.lines) console.error(line);
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else {
             const b = await client.board();
@@ -257,7 +315,7 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), touches: rev.touches });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
@@ -289,14 +347,82 @@ async function main(argv: string[]) {
   }
 }
 
-main(process.argv.slice(2)).catch((err) => {
+/**
+ * t-102: after any command but `watch` itself, tell this node — and only this node — that its own watch stopped.
+ * On stderr so `board --json` stays pipeable while a person still reads it at the end of the output. Best effort:
+ * a node with no config, or no readable .ateam/, simply has nothing to say.
+ */
+/**
+ * t-116: a refusal is visible for exactly one second — the moment it happens. At 01:11 I read a successful `tell` and
+ * told two people a task was done; its `done` had been refused seconds earlier and I never looked back. So the node
+ * writes down its last refusal and says it again on the next `sync` or `board`, until the same action goes through or
+ * the person crosses it off. Local, like the deaf notice: no event, no log line — a refusal is this node's business.
+ */
+function refusalFile(me: string) { return join(process.cwd(), ".ateam", `refused.${me}`); }
+function meOf(): string | null {
+  try {
+    const file = configFile();
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
+    return process.env.ATEAM_ME || stored.me || null;
+  } catch { return null; }
+}
+/** Called when a write is refused: remember it. Called after any command succeeds: cross off the one it redid. */
+function noteRefusal(argv: string[], refusal: Refusal | null): void {
+  try {
+    const me = meOf();
+    if (!me) return;
+    const path = refusalFile(me);
+    if (refusal) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(path, JSON.stringify(refusal)); return; }
+    // a success crosses off a refusal of the *same* action, and nothing else: redoing `task claim` does not clear a refused `task done`
+    const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
+    if (st.kind === "open" && st.refusal.what !== actionOf(argv)) return;
+    if (existsSync(path)) rmSync(path, { force: true });
+  } catch { /* the record is a convenience; never let it break the command */ }
+}
+/** The reminder itself, on the commands a turn starts with. `--clear-refused` crosses it off by hand. */
+function sayIfRefused(argv: string[]): void {
+  try {
+    if (argv[0] !== "sync" && argv[0] !== "board") return;
+    const me = meOf();
+    if (!me) return;
+    const path = refusalFile(me);
+    if (argv.includes("--clear-refused")) { if (existsSync(path)) rmSync(path, { force: true }); console.error("已划掉上一次被拒的写入。"); return; }
+    const line = refusalNotice(readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null), new Date());
+    if (line) console.error(line);
+  } catch { /* same */ }
+}
+
+function sayIfDeaf(argv: string[]): void {
+  try {
+    if (argv[0] === "watch") return;
+    const file = configFile();
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
+    const me = process.env.ATEAM_ME || stored.me;   // just the identity: a half-configured node still deserves the reminder
+    if (!me) return;
+    const path = join(process.cwd(), ".ateam", `watch.${me}.lock`);
+    const line = deafNotice(watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date()));
+    if (line) console.error(line);
+  } catch { /* never let the reminder break the command that carried it */ }
+}
+
+const ARGV = process.argv.slice(2);
+main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
+  // the reminders go last, after whatever this command had to say — including its failure
+  const bye = (code: number, rule?: string) => {
+    // quote what a shell would need quoted, so the line can be pasted back verbatim
+    const shell = (a: string) => (/[\s"'$`\\]/.test(a) ? `"${a.replace(/(["\\$`])/g, "\\$1")}"` : a);
+    if (rule) noteRefusal(ARGV, { at: new Date().toISOString(), rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    sayIfRefused(ARGV);
+    sayIfDeaf(ARGV);
+    process.exit(code);
+  };
   if (err instanceof ClientError) {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
-    process.exit(err.status === 409 ? 2 : 1);
+    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
   }
-  if (err instanceof ShapeError) { console.error(err.message); process.exit(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); process.exit(2); }
+  if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2, "usage"); }
   console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
+  return bye(1);
 });

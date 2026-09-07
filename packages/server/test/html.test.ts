@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -190,7 +190,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(gate.status).toBe(200);
     const g = await gate.text();
     expect(g).toContain("<h2>输入 token</h2>");
-    expect(g).toContain("要作答，先输入一次项目 token；之后 30 天不用再输。");
+    expect(g).toContain("把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。"); // t-110 (pd 00:28 ④): the human holds a whole address, not a key
     expect(g).toContain('<input type="hidden" name="then" value="/decide">');
     expect(g).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
     expect(g).toContain('<input type="hidden" name="option" value="公开">');
@@ -199,7 +199,10 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
 
     const wrong = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: "nope" });
     expect(wrong.status).toBe(401);
-    expect(await wrong.text()).toContain("token 不对，再试一次。");
+    // t-115 (pd 01:17)：不再说「token 不对，再试一次」——人手上是一条地址不是 token，那句要说清形态并给例子
+    const wrongText = await wrong.text();
+    expect(wrongText).toContain("这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。");
+    expect(wrongText).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");
     expect(wrong.headers.get("set-cookie")).toBeNull();
 
     const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: TOKEN });
@@ -317,7 +320,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(shown).toContain("任务7");
       expect(now).toMatch(/<span class="chip"><b>7<\/b> 在做<\/span>/);
 
-      expect(now).toMatch(/<span class="ok">在生产上验过 3 件<\/span>/);
+      expect(now).toMatch(/<span class="ok">在生产上验过 1 件<\/span>/); // pd 22:47 (B): this version's count only; the 2 earlier are in 更早的
       expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 2 件<\/summary><ul class="plain"><li>登录修复<\/li><li>导出报表<\/li><\/ul><\/details>/);
 
       const say = section(html, "say", "now");
@@ -347,7 +350,8 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       let now = section(await v.authedPage(), "now", "rest");
-      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
+      expect(now).not.toContain("在生产上验过"); // pd 22:47 (B): no cumulative count beside the empty state
+      expect(now).toMatch(/<code class="sha">bbbbbbb<\/code><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
       expect(now).not.toContain("这一版带来了什么");
       // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
       const f = server();
@@ -355,7 +359,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       try {
         await f.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
         const first = section(await f.authedPage(), "now", "rest");
-        expect(first).toMatch(/<code class="sha">ccccccc<\/code> <span class="meta">· dev 刚刚核对<\/span><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<\/div>/);
+        expect(first).toMatch(/<code class="sha">ccccccc<\/code><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div>\s*<p class="meta contact-line">.*?<\/p>\s*<\/div>/);
         expect(first).not.toContain("更早的");
       } finally { await f.stop(); }
       // 3. something verified on this version: the list is back, the sentence is gone
@@ -462,7 +466,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       const q = await z.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", ack_by: soon(), options: ["报表", "限流"], default: "报表" });
       await z.post(HUMAN, { kind: "ack", of: q.id });
       await z.post(HUMAN, { kind: "note", body: "决定：先发报表", decision: true, decides: { of: q.id, option: "报表" } });
-      await z.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6" });
+      await z.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", method: "读 /health" });
       await z.post("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, depends_on: ["production:users"] });
       await z.post("dev", { kind: "note", body: "导入了第三批", writes: ["production:users"], task: "t-1" });
       await z.post("qa", { kind: "reading", surface: "production", key: "health", value: "ok", valid_until: new Date(Date.now() - 1000).toISOString() });
@@ -796,10 +800,10 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
   // The feature is off by default (pm 22:39 after the human's 「外呼地址先不做」): a fact turns it on
   const ask = async (v: ReturnType<typeof server>) => {
     await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
-    return v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+    return v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
   };
 
-  it("the card is 请你做 with pd's title and body, an input, 记下 (primary) and 先不要; anonymous goes through the token page; 记下 sets the address and the page says so", async () => {
+  it("the card is 请你做 with pd's title and body, an input, 记下 (primary) and 不要了; anonymous goes through the token page; 记下 sets the address and the page says so", async () => {
     const v = server();
     await v.start();
     try {
@@ -807,12 +811,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       let html = await v.page();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<span class="kind">请你做</span>');
-      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个邮箱或 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
+      expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
-      expect(card).toContain('<input type="text" name="value" placeholder="邮箱或 https://…" aria-label="邮箱或 https://…" autocomplete="off">');
-      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="先不要">先不要</button>');
+      expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
+      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
       expect(html).not.toContain('<p class="meta contact-line">'); // the card is on screen: no grey line under 线上
       expect(html).not.toContain("填写</button>"); // the option names are not what the human reads
+      expect(html).not.toContain("邮箱"); // pd 22:45: the service only calls webhooks, so the page never promises email
 
       const cookie = await v.cookie();
       html = await v.page({ cookie });
@@ -821,80 +826,489 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       const before = (await (await v.api("/events")).json()).events.length;
       expect((await v.form("/decide", { id, option: "填写", value: "  " }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await (await v.api("/events")).json()).events.length).toBe(before);
-      const r = await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" });
+      const r = await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" });
       expect(r.status).toBe(303);
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
-      expect(html).toContain('<p class="recent">你刚定了：<b>找你用 me@example.org</b>');
-      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时发到 me@example.org</a></p>');
+      expect(html).toContain('<p class="recent">你刚定了：<b>找你用 https://hooks.example/me</b>');
+      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/me</p>');
       const readings = (await (await v.api("/board")).json()).readings;
-      expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("me@example.org");
+      expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("https://hooks.example/me");
     } finally { await v.stop(); }
   });
 
-  it("先不要 closes the card and leaves the grey line; the grey line reopens the card, which posts the address alone", async () => {
+  it("不要了 closes the card and leaves the grey line; the grey line reopens the card, which posts the address alone", async () => {
     const v = server();
     await v.start();
     try {
       const { id } = await ask(v);
       const cookie = await v.cookie();
-      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
       let html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
-      expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>先不要</b>");
-      expect(html).toContain('<p class="meta contact-line"><a href="/?ask=alert">你不在时，我们找不到你。</a></p>');
+      expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
+      expect(html).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
 
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<p class="q">你不在时怎么找你？</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/fact"><input type="hidden" name="key" value="alert.webhook">');
-      expect(card).toContain('<button class="btn primary" type="submit">记下</button><a class="btn" href="/">先不要</a>');
+      expect(card).toContain('<button class="btn primary" type="submit">记下</button><a class="btn" href="/">不要了</a>');
       expect(html).not.toContain('<p class="meta contact-line">');
       // anonymous reopen goes through the token page too
       const anon = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html" } })).text();
       expect(anon).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/fact">');
 
       expect((await v.form("/fact", { key: "alert.webhook", value: "not an address" }, { cookie, accept: "text/html" })).status).toBe(400);
+      expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(400); // only a webhook can be called
       expect((await v.form("/fact", { key: "deployed.sha", value: "https://h.example/x" }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(303);
       html = await v.page({ cookie });
-      expect(html).toContain('<a href="/?ask=alert">你不在时发到 https://hooks.example/abc</a>');
+      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/abc</p>');
       // reopened with an address: the input is prefilled
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "x@y.z", token: TOKEN })).status).toBe(303);
-      expect((await v.page({ cookie })).includes("你不在时发到 x@y.z")).toBe(true);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
+      expect((await v.page({ cookie })).includes("你不在时发到 https://hooks.example/xyz")).toBe(true);
     } finally { await v.stop(); }
   });
 
   it("off by default: without the fact the card is hidden, there is no grey line, no reopen page and no /fact route", async () => {
-    expect(await w.authedPage()).not.toContain('<p class="meta contact-line">');
+    // the grey line is always there, not clickable, and truthful (pd 22:45)
+    expect(await w.authedPage()).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
+    expect(await w.authedPage()).not.toContain('?ask=alert');
     const v = server();
     await v.start();
     try {
-      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
       const cookie = await v.cookie();
       let html = await v.page({ cookie });
       expect(html).not.toContain("你不在时怎么找你");
-      expect(html).not.toContain('<p class="meta contact-line">');
+      expect(html).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
       expect(html).toContain('<section class="needs empty" id="needs-you">');
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).not.toContain("你不在时怎么找你");
-      expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(404);
+      expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(404);
       // one fact turns it on, no release needed: the card the data side already sent appears, and the address can be set
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
-      expect((await v.form("/decide", { id, option: "填写", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(303);
-      expect(await v.page({ cookie })).toContain("你不在时发到 me@example.org");
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect(await v.page({ cookie })).toContain("你不在时发到 https://hooks.example/me");
       // an address recorded any other way also counts as on
       const u = server();
       await u.start();
       try {
         await u.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/x" });
-        expect(await u.authedPage()).toContain('<a href="/?ask=alert">你不在时发到 https://hooks.example/x</a>');
+        expect(await u.authedPage()).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/x</p>');
       } finally { await u.stop(); }
     } finally { await v.stop(); }
+  });
+});
+
+describe("t-086 · 「线上」按来源署名：推的 / 核对", () => {
+  it("names the pusher when the fact came from release --deploy, the checker when someone measured it, and nobody when the fact says neither", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // measured: whoever wrote the reading only checked which version is live
+      await v.post("qa", { kind: "reading", surface: "production", key: "deployed.sha", value: "eae0b22fd12", method: "curl /health 读到的" });
+      let now = section(await v.page(), "now", "rest");
+      expect(now).toContain('<span class="meta">· qa 刚刚核对</span>');
+      expect(now).not.toContain("推的");
+      // pushed: the deployer's own release --deploy wrote it
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222", method: "ateam release --deploy 推的" });
+      now = section(await v.page(), "now", "rest");
+      expect(now).toContain('<span class="meta">· dev 刚刚推的</span>');
+      expect(now).not.toContain("核对");
+      // a reading with no method says nothing about its source: the sha stands alone
+      await v.post("pm", { kind: "reading", surface: "production", key: "deployed.sha", value: "ccccccc3333" });
+      now = section(await v.page(), "now", "rest");
+      expect(now).toContain('<code class="sha">ccccccc</code>');
+      expect(now).not.toContain("推的");
+      expect(now).not.toContain("核对");
+    } finally { await v.stop(); }
+  });
+
+  it("shows both claims side by side when the board knows both, never merged into one", async () => {
+    const store = new MemoryStore();
+    await append(store, { kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "bbbbbbb2222", method: "ateam release --deploy 推的" } as never, { human: HUMAN });
+    const state = reduce(await store.read());
+    const b = board(state, HUMAN);
+    b.live.checked_by = "qa"; // the same version pushed by one and checked by another
+    const html = renderBoard(b, state, { human: HUMAN });
+    expect(html).toContain('<span class="meta">· dev 刚刚推的</span> <span class="meta">· qa 刚刚核对</span>');
+  });
+});
+
+describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", () => {
+  const verified = async (v: ReturnType<typeof server>, id: string, title: string, sha: string) => {
+    await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+    await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+    await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}: 全绿` });
+    await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "测试通过" });
+  };
+  const setup = async (v: ReturnType<typeof server>) => {
+    await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111", method: "读 /health" });
+    await verified(v, "t-1", "登录修复", "1111111");
+    await verified(v, "t-2", "导出报表", "2222222");
+  };
+  const line = (html: string) => /<p class="meta waiting">([\s\S]*?)<\/p>/.exec(html)?.[1] ?? "";
+
+  it("says how many are verified and waiting; says nothing when none wait; says why instead of a number when it cannot tell", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      // no containment fact yet: the board cannot tell, so it says why and what to do, and invents no number
+      let html = await v.page();
+      expect(line(html)).toContain("不知道有多少件在等上线");
+      expect(line(html)).toContain("<code>production:deployed.tasks</code>");
+      expect(line(html)).toContain("<code>ateam release</code>");
+      expect(html).not.toContain("有 0 件");
+
+      // one of the two is not in production yet: exactly that one is waiting
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1"], not_contained: ["t-2"] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(line(html)).toBe("1 件验过了，等一次上线。");
+      expect(html).not.toContain("部署"); // pd: 上线 is the human's word, 部署 is the machine's
+
+      // both in production: nothing waits, so the line is gone entirely
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: ["t-1", "t-2"], not_contained: [] }, method: "ateam release 用 git 逐件测" });
+      html = await v.page();
+      expect(html).not.toContain('class="meta waiting"');
+      expect(html).not.toContain("等一次上线");
+    } finally { await v.stop(); }
+  });
+
+  it("counts only what the data says, and the CLI says the same sentence from the same counts", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      await v.post("dev", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-1", "t-2"] }, method: "ateam release 用 git 逐件测" });
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      expect(b.release.counts).toMatchObject({ pending_deploy: 2, deployed_unverified: 0, unknown: 0 });
+      expect(waitingLine(b)).toBe("2 件验过了，等一次上线。");
+      expect(line(await v.page())).toBe("2 件验过了，等一次上线。");
+      // the line states, it never asks: no link and no button in it
+      expect(line(await v.page())).not.toMatch(/<a |<button|<form/);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
+  const migrate = async (v: ReturnType<typeof server>) => {
+    // one in-flight task, one decision, one fact and one open question, each carrying where it came from (t-088/t-089)
+    await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "jira://PROJ-1" });
+    await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+    await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, from: "jira://PROJ-2" });
+    await v.post("dev", { kind: "reading", surface: "staging", key: "users", value: 128, measured_at: new Date(Date.now() - 86_400_000).toISOString(), from: "jira://PROJ-3" });
+    await v.post("dev", { kind: "instruction", to: HUMAN, body: "旧队伍等你答的问题", ack_by: soon(), from: "jira://PROJ-4" });
+    // the importer says so in the log, and claims numbers of its own; the service counts what actually landed
+    return v.post("dev", { kind: "note", body: "导入完成：我搬了 99 件任务、88 条决定", from: "jira://done-1" });
+  };
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say"); // the card, if it is still being asked; the dig layer keeps the answered one
+    const i = needs.indexOf("搬过来了，对吗？");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  it("renders as 问你 with pd's title, the service's counts in the open, 对 primary and 有漏 plain", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await migrate(v);
+      const html = await v.page();
+      const c = card(html);
+      expect(c).toContain('data-kind="ask"');
+      expect(c).toContain('<span class="kind">问你</span>');
+      expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
+      // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
+      expect(c).toContain('<p class="body">在途 1 件、1 条现行决定、1 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。</p>');
+      expect(c).not.toContain("99");
+      expect(c).not.toContain("88");
+      expect(c).not.toContain("<details");
+      expect(c).toContain('<button class="btn primary" type="submit" name="option" value="对">对</button>');
+      expect(c).toContain('<button class="btn" type="submit" name="option" value="有漏">有漏</button>');
+      expect(c).not.toContain("默认"); // no default: the card waits for a real answer
+    } finally { await v.stop(); }
+  });
+
+  it("「对」 leaves 你刚定了：清单对 and no card; 「有漏」 leaves 清单有漏 and 现在 says who is patching", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const note = await migrate(v);
+      const id = JSON.parse(await (await v.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+      const cookie = await v.cookie();
+      expect((await v.form("/decide", { id, option: "对" }, { cookie, accept: "text/html" })).status).toBe(303);
+      let html = await v.page({ cookie });
+      expect(card(html)).toBe("");
+      expect(html).toContain('<p class="recent">你刚定了：<b>清单对</b>');
+      expect(html).not.toContain('class="meta patching"');
+
+      // a second migration that the human says is incomplete
+      const w = server();
+      await w.start();
+      try {
+        await migrate(w);
+        const id2 = JSON.parse(await (await w.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
+        const c2 = await w.cookie();
+        expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(303);
+        const h2 = await w.page({ cookie: c2 });
+        expect(card(h2)).toBe("");
+        expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏，已让 dev 回去补</b>');
+        expect(h2).toContain('<p class="meta patching">等 dev 补漏</p>');
+      } finally { await w.stop(); }
+      expect(note).toBeTruthy();
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-099 · 搬来的东西看得见来自哪一条", () => {
+  const page = async (v: ReturnType<typeof server>, id: string) => (await fetch(`${v.base}/task/${id}`, { headers: { accept: "text/html" } })).text();
+
+  it("a carried-in task and its decision note say where they came from, in code, after the criteria and the evidence", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "https://tracker.example.com/PROJ-42" });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" });
+      await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, task: "t-1", from: "chat://msg/998" });
+      const html = await page(v, "t-1");
+      // the source is a link only because this one is a URL; it sits after the criteria and the evidence
+      expect(html).toContain('<div class="meta from">来自 <a href="https://tracker.example.com/PROJ-42"><code>https://tracker.example.com/PROJ-42</code></a></div>');
+      expect(html.indexOf("能登录")).toBeLessThan(html.indexOf('class="meta from"'));
+      expect(html.indexOf("提交 1234567")).toBeLessThan(html.indexOf('class="meta from"'));
+      // the decision note carries its own source, in the same shape, right after the note
+      expect(html).toContain('决定：先做登录<div class="meta from">来自 <code>chat://msg/998</code></div>');
+      expect(html).not.toContain('<a href="chat://msg/998"'); // not a link one can follow: not a link
+    } finally { await v.stop(); }
+  });
+
+  it("a source that is not a URL is code and not clickable; a task created here renders exactly as before", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "导出报表", criteria: ["能导出"], from: "docs/plan.md#L20" });
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次"] });
+      for (const id of ["t-1", "t-2"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+      const carried = await page(v, "t-1"), local = await page(v, "t-2");
+      expect(carried).toContain('<div class="meta from">来自 <code>docs/plan.md#L20</code></div>');
+      expect(carried).not.toContain('<a href="docs/plan.md#L20"');
+      // nothing at all for something created here: no label, no placeholder, no empty element
+      expect(local).not.toContain("来自");
+      expect(local).not.toContain('class="meta from"');
+      expect(local).not.toContain("<div class=\"meta from\"></div>");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-100 · 显示名撞了才附真 id", () => {
+  const setup = async (v: ReturnType<typeof server>) => {
+    // T-99 is another task's display name AND the third task's id: two different kinds of collision at once
+    await v.post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" });
+    await v.post("pm", { kind: "task", op: "create", task: "T-99", title: "限流", criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" });
+    await v.post("pm", { kind: "task", op: "create", task: "L-4", title: "本地建的", criteria: ["可用"] });
+    for (const id of ["L-1", "L-2", "T-99", "L-3", "L-4"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
+  };
+  const rest = (html: string) => html.slice(html.indexOf('<details class="rest"'));
+
+  it("two rows sharing a display name, and a display name that is another row's id, carry the real id; the rest stay clean", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const r = rest(await v.page());
+      // both T-99 rows are ambiguous twice over: same name as each other, and the name is a real id
+      expect(r).toContain("T-99 登录超时 (L-1)");
+      expect(r).toContain("T-99 导出乱码 (L-2)");
+      // a display name nobody else uses stays clean, and so does a task with no display name
+      expect(r).toContain("T-07 日志脱敏");
+      expect(r).not.toContain("T-07 日志脱敏 (L-3)");
+      expect(r).toContain("本地建的");
+      expect(r).not.toContain("本地建的 (L-4)");
+      // the task whose id is T-99 has no display name of its own: it is not ambiguous, so nothing is appended
+      expect(r).toContain("限流");
+      expect(r).not.toContain("限流 (T-99)");
+    } finally { await v.stop(); }
+  });
+
+  it("the task page uses the same heading, and nothing about the log changes", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await setup(v);
+      const page = await (await fetch(`${v.base}/task/L-1`, { headers: { accept: "text/html" } })).text();
+      expect(page).toContain("<h2>T-99 登录超时 (L-1)</h2>");
+      const clean = await (await fetch(`${v.base}/task/L-3`, { headers: { accept: "text/html" } })).text();
+      expect(clean).toContain("<h2>T-07 日志脱敏</h2>");
+      // ids and display names are untouched: the collision only changes what is printed
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      const byId = Object.fromEntries(Object.values(b.tasks).flat().map((t) => [t.id, t]));
+      expect(byId["L-1"].label).toBe("T-99");
+      expect(byId["L-2"].label).toBe("T-99");
+      expect(byId["T-99"].id).toBe("T-99");
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-107 · 人看到的角色一律显示名", () => {
+  const roles = async (v: ReturnType<typeof server>, value: unknown) => v.post("pm", { kind: "reading", surface: "project", key: "roles", value });
+
+  it("shows the name the project gave a role, falls back to the id, and never leaves a blank", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await roles(v, { pm: { name: "主编", responsibilities: ["R1", "R3"] }, dev: { name: "写手", responsibilities: ["R5"] }, qa: ["R6"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+      await v.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
+      const html = await v.authedPage();
+      const now = section(html, "now", "rest"), rest = html.slice(html.indexOf('<details class="rest"'));
+      // 谁在 and the owner chip read as people named them
+      expect(now).toContain(">主编<");
+      expect(now).toContain(">写手<");
+      expect(now).toContain('<span class="who">写手</span>');
+      // a role with no name of its own keeps its id, with no blank and no placeholder
+      expect(now).toContain(">qa<");
+      expect(now).not.toContain("><span class=\"meta\">缺人</span></span><span class=\"who-chip\"><i></i><");
+      // instructions between agents name both ends the same way
+      expect(rest).toContain("主编 → qa：复核限流");
+      // the id is still there for machines, in the dig layer
+      expect(rest).toContain("t-1");
+    } finally { await v.stop(); }
+  });
+
+  it("a name that is another role's id, or shared by two roles, carries the real id after it (t-100's rule)", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // pd's name is literally another role's id; pm and dev share one name
+      await roles(v, { pd: { name: "qa", responsibilities: ["R2"] }, pm: { name: "编辑", responsibilities: ["R1"] }, dev: { name: "编辑", responsibilities: ["R5"] }, qa: ["R6"] });
+      await v.post("pd", { kind: "note", body: "看一眼" });
+      const now = section(await v.authedPage(), "now", "rest");
+      expect(now).toContain(">qa (pd)<");
+      expect(now).toContain(">编辑 (pm)<");
+      expect(now).toContain(">编辑 (dev)<");
+      expect(now).toContain(">qa<"); // the real qa keeps its own id, unadorned
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-111 · 按钮说出后果", () => {
+  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say");
+    const i = needs.indexOf("你不在时怎么找你");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  it("the permanent choice reads 不要了 and logs the same word; a one-off card still reads 先不做", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: "请重启一次服务", ack_by: soon() });
+      const cookie = await v.cookie();
+      const html = await v.page({ cookie });
+      // what the human reads on the permanent one is the value the log will carry
+      expect(card(html)).toContain('<button class="btn" type="submit" name="option" value="不要了">不要了</button>');
+      expect(html).not.toContain(">先不要<");
+      // the one-off card is untouched
+      expect(html).toContain('>先不做</button>');
+
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(after).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
+      // pd 00:39: the reason is invited, never required, and no new control appears
+      expect(after).toContain('<a class="say-hint" href="#say">想说一句就说</a>');
+      expect(after).toContain('name="text"');
+      expect(after.match(/name="text"/g)).toHaveLength(1);
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
+      expect(events.some((e) => e.kind === "note" && e.body === `decision: ${CONTACT} -> 不要了`)).toBe(true);
+    } finally { await v.stop(); }
+  });
+
+  it("a card sent before the wording changed is still answerable with the word it carries", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      // an old card: its options are the words of its own time
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      expect(card(await v.page({ cookie }))).toContain('value="先不要">先不要</button>'); // its own word, not today's
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(card(after)).toBe(""); // answered and gone
+      expect(after).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>'); // and it counts as skipped
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-110 · 钥匙三分后人看到的四处文字", () => {
+  it("the token page asks for the address, not a key", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const g = await (await fetch(`${v.base}/token`)).text();
+      expect(g).toContain("把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。");
+      expect(g).not.toContain("要作答，先输入一次项目 token");
+    } finally { await v.stop(); }
+  });
+
+  it("a key appears once, in the address, and is never echoed back — not in the box, not in a hidden field, not in the redirect", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const secret = TOKEN;
+      // arriving with the key in the address: the answer carries a cookie and sends the reader to a clean URL
+      const r = await fetch(`${v.base}/?token=${secret}`, { redirect: "manual", headers: { accept: "text/html" } });
+      expect(r.status).toBe(303);
+      expect(r.headers.get("location")).toBe("/");
+      expect(r.headers.get("location")).not.toContain(secret);
+      expect(r.headers.get("set-cookie")).toContain("HttpOnly");
+      expect(await r.text()).not.toContain(secret);
+      // a wrong key comes back as a fresh box, never as the thing that was typed
+      const wrong = await v.form("/token", { then: "/ack", id: "x", token: "not-the-key" }, { accept: "text/html" });
+      const page = await wrong.text();
+      expect(page).not.toContain("not-the-key");
+      expect(page).toContain('type="password"');
+      expect(page).not.toMatch(/name="token"[^>]*value=/);
+      // the pending action travels in the hidden fields; the key never does
+      expect(page).toContain('<input type="hidden" name="then" value="/ack">');
+      expect(page).not.toMatch(/<input type="hidden"[^>]*token/);
+    } finally { await v.stop(); }
+  });
+
+  it("says whether this board has an owner's key, by the fact and in three states, with no button and no key on the page", async () => {
+    const store = new MemoryStore();
+    await append(store, { kind: "note", actor: "pm", body: "起项目" } as never, { human: HUMAN });
+    const state = reduce(await store.read());
+    const base = board(state, HUMAN);
+    const page = (owner_key: unknown) => renderBoard({ ...base, owner_key } as Board, state, { human: HUMAN });
+
+    // ② nobody has been given a key yet: a statement, not a card and not a link
+    const none = page({ state: "none" });
+    expect(none).toContain('<p class="meta owner-key">这张牌桌还没有主人的钥匙。</p>');
+    expect(none).not.toMatch(/<p class="meta owner-key">[^<]*<\/p>\s*<(a|button|form)/);
+    // ③ the address went out and nobody has opened it: the first agent learns whether to send it again
+    expect(page({ state: "issued" })).toContain('<p class="meta owner-key">已把牌桌地址给出去了，还没人打开过。</p>');
+    // in use: nothing to say, so nothing is said
+    expect(page({ state: "in_use" })).not.toContain('<p class="meta owner-key">');
+    // an older server that says nothing about keys renders as before
+    expect(page(undefined)).not.toContain('<p class="meta owner-key">');
+    // nothing on any of these pages is a key or part of one
+    for (const html of [none, page({ state: "issued", since: new Date().toISOString() }), page({ state: "in_use" })]) {
+      expect(html).not.toMatch(/k=[A-Za-z0-9]/);
+      expect(html).not.toContain("secret");
+    }
   });
 });

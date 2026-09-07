@@ -108,3 +108,23 @@ describe("t-050 · call-outs", () => {
     expect(w.calls).toHaveLength(2);
   });
 });
+
+describe("t-084 · an address that cannot be called", () => {
+  it("says so in a note once per episode and sends nothing; an unset address stays silent; a good one sends as before", async () => {
+    const w = world();
+    // a value that predates the shape: written straight into the store, as an older log would have it
+    await w.store.appendRaw({ id: "01OLDWEBHOOK", at: new Date(w.now().getTime() - 60_000).toISOString(), kind: "reading", actor: "human", surface: "project", key: "alert.webhook", value: "human@example.com" } as never);
+    await w.emit({ kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await pull(w.store, "pm", null, w.now());
+    w.tick(min(21)); // everyone silent past the window: all_missing is due
+    expect(await w.run()).toEqual([]); // nothing sent
+    expect(w.calls).toEqual([]);
+    const notes = await w.notes();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/^外呼：all_missing 自 \S+ 未发送：外呼地址配了但发不出去，不是 https（human@example\.com）/);
+    // the same episode again: no second note
+    w.tick(min(5));
+    expect(await w.run()).toEqual([]);
+    expect(await w.notes()).toHaveLength(1);
+  });
+});

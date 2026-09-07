@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -19,6 +19,17 @@ const JUST_MS = 60 * 60_000;
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null }
 
+/** The migration check card (t-095): the service's own 「搬过来了，对吗？」, whose numbers it counted itself (t-092). */
+export function isMigrationCard(i: { body: string }): boolean {
+  return i.body.startsWith(MIGRATION_ASK_TITLE);
+}
+
+/** Who is still patching a migration the human said was incomplete; null when nobody is (t-095). */
+export function patchingRole(b: Board): string | null {
+  const i = b.instructions.find((x) => x.from === SERVICE_ACTOR && x.body === MIGRATION_PATCH && x.status !== "acked");
+  return i ? i.to : null;
+}
+
 /** The contact card (t-069): the instruction whose body is the S0 second question. */
 export function isContactCard(i: { body: string }): boolean {
   return i.body === CONTACT_ASK;
@@ -32,6 +43,40 @@ export function isContactCard(i: { body: string }): boolean {
 export const CONTACT_ASK_KEY = "alert.ask";
 export function contactEnabled(b: Board): boolean {
   return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
+}
+
+/**
+ * t-099: 「来自 <出处>」 for something carried in from another system. The value is a machine string of any shape — a path,
+ * a ticket number, a message id, a URL — so it is set as code and linked only when it is a link one can follow.
+ * Empty for anything created here, which must render exactly as it did before (pm's criterion 4).
+ */
+export function sourceLine(from: string | undefined | null): string {
+  if (!from) return "";
+  const value = /^https?:\/\/\S+$/i.test(from) ? `<a href="${esc(from)}"><code>${esc(from)}</code></a>` : `<code>${esc(from)}</code>`;
+  return `<div class="meta from">${UI.carriedFrom} ${value}</div>`;
+}
+
+/** Machine words (a fact name, a command, a sha) inside a human sentence are set as code, so the eye can skip them. */
+export function machineWords(text: string): string {
+  return esc(text).replace(/\b(?:[a-z][a-z0-9]*:[a-z][a-z0-9.]*|ateam [a-z-]+|git|[0-9a-f]{7,40})\b/g, (m) => `<code>${m}</code>`);
+}
+
+/**
+ * t-091: 「有 N 件已验的等一次部署」 from the counts t-078 derives, never recomputed here. Empty when nothing waits;
+ * when the containment fact is missing or stale the board says why instead of inventing a number (t-078's shape).
+ */
+export function waitingLine(b: Board): string {
+  const c = b.release?.counts;
+  if (!c) return "";
+  if (c.pending_deploy > 0) return c.unknown ? `${UI.waitingDeploy(c.pending_deploy).replace(/。$/, "；")}${UI.waitingAlsoUnknown(c.unknown)}` : UI.waitingDeploy(c.pending_deploy);
+  if (c.unknown > 0) return UI.waitingUnknown(b.release.basis || "");
+  return "";
+}
+
+/** The grey line under 线上 (pd 22:45): the truth about where a call-out would go. */
+export function contactLine(address: string | null): string {
+  if (!address) return UI.contactNone;
+  return /^https?:\/\//i.test(address) ? UI.contactTo(address) : UI.contactEmail;
 }
 
 /** The address the call-outs use, when the fact is valid. */
@@ -124,6 +169,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const secAgo = (iso: string) => Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
   const ago = (iso: string) => UI.ago(secAgo(iso));
   const t = (iso: string) => `<time datetime="${esc(iso)}">${esc(ago(iso))}</time>`;
+  const who = roleNamer(b); // t-107: every role a person reads goes through here
   const canDecide = opts.canDecide !== false;
   const base = opts.base ?? "";
   // Buttons are always clickable. Without the cookie, a form posts to the token page, which does the action after the key.
@@ -142,10 +188,13 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const contact = contactOf(b);
   // t-069: an input, 记下 (primary) and 先不要. On the card the buttons are the card's options (POST /decide);
   // reopened from the grey line under 线上 it posts the address alone (POST /fact) and 先不要 just goes back.
-  const contactForm = (action: string, fields: string, current: string | null) => {
+  // t-111: the buttons send the values the card itself carries, so a card sent before the wording changed is still
+  // answerable; what the human reads is the value, so label and log never disagree.
+  const contactForm = (action: string, fields: string, current: string | null, options?: string[]) => {
+    const [fill, skipValue] = [options?.[0] ?? CONTACT_FILL, options?.[1] ?? CONTACT_SKIP];
     const input = `<input type="text" name="value" placeholder="${esc(UI.contactPlaceholder)}" aria-label="${esc(UI.contactPlaceholder)}" autocomplete="off"${current ? ` value="${esc(current)}"` : ""}>`;
-    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(CONTACT_FILL)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
-    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(CONTACT_SKIP)}">${UI.contactSkip}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
+    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
+    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
     return form(action, "actions contact", fields, `${input}${save}${skip}`);
   };
   const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);
@@ -163,22 +212,29 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
       if (isContactCard(i)) {
         // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
-        out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      } else if (isMigrationCard(i)) {
+        // t-095: the counts are the question; they are read, not folded away behind 「细节」.
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
+        out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else {
-        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(i.from, ago(i.since)))}</span></div>`);
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p>`);
         if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
       }
       const id = `<input type="hidden" name="id" value="${esc(i.id)}">`;
       if (isContactCard(i)) {
-        out.push(contactForm("/decide", id, contact));
+        out.push(contactForm("/decide", id, contact, i.options));
       } else if (kind === "ask" && !i.options?.length) {
         // A question with no options is answered in the 说一句 box (UC-S0: 「这个项目是什么？说一句。」).
         out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
         if (invite) out.push(inviteLine(invite));
       } else if (kind === "ask") {
-        const buttons = i.options!.map((o) => `<button class="btn${o === i.default ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
+        // t-095: the migration card has no default; 「对」 is the primary button because it is the answer that lets the
+        // importer finish, and the human is told nothing happens to the old channel until they answer.
+        const primary = (o: string) => o === i.default || (isMigrationCard(i) && o === MIGRATION_OK);
+        const buttons = i.options!.map((o) => `<button class="btn${primary(o) ? " primary" : ""}" type="submit" name="option" value="${esc(o)}">${esc(o)}${o === i.default ? ` <small>${UI.defaultTag}</small>` : ""}</button>`).join("");
         out.push(form("/decide", "actions", id, `${buttons}${i.default ? `<span class="hint">${esc(UI.ifNothing(i.default))}</span>` : ""}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
@@ -207,15 +263,18 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const { title } = cardTitle(just.i);
     const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
-    const what = isContactCard(just.i) && just.i.chosen
+    const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
+      : isContactCard(just.i) && just.i.chosen
       ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
-    out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
+    // t-111 (pd 00:39): the reason is welcome but never required — the invitation costs nothing and adds no control,
+    // it just points at the 说一句 box that is already there.
+    out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span> <a class="say-hint" href="#say">${UI.saySomething}</a></p>`);
   }
 
   // ---------- 说一句 ----------
   out.push(`<section class="say" id="say">`);
-  out.push(form("/say", "", "", `<input type="text" name="text" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" aria-label="${esc(UI.sayPlaceholder)}" autocomplete="off"><button class="btn" type="submit">${UI.say}</button>`));
+  out.push(form("/say", "", "", `<input type="text" name="text" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" aria-label="${esc(UI.sayPlaceholder)}" autocomplete="off"${just ? " autofocus" : ""}><button class="btn" type="submit">${UI.say}</button>`));
   const said = saidOf(b);
   if (said.length) {
     const line = (x: Said) => `<li><span class="said-body">${esc(x.body)}</span> <span class="meta">${t(x.at)} · ${esc(saidStatus(x))}</span></li>`;
@@ -225,15 +284,28 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
 
   // ---------- 现在 ----------
   out.push(`<section class="now" id="now"><h2>${UI.now}</h2>`);
-  out.push(`<div class="focus"><span class="label">${UI.focus}</span>${b.focus ? `<p class="focus-text">${esc(str(b.focus.body))}</p><span class="meta">${esc(UI.setBy(b.focus.set_by, ago(b.focus.at)))}</span>` : `<p class="focus-text quiet">${UI.noFocus}</p>`}</div>`);
+  out.push(`<div class="focus"><span class="label">${UI.focus}</span>${b.focus ? `<p class="focus-text">${esc(str(b.focus.body))}</p><span class="meta">${esc(UI.setBy(who(b.focus.set_by), ago(b.focus.at)))}</span>` : `<p class="focus-text quiet">${UI.noFocus}</p>`}</div>`);
+
+  // t-095: the human said the migration was incomplete; the importer is patching it. One line, no button.
+  const patching = patchingRole(b);
+  if (patching) out.push(`<p class="meta patching">${esc(UI.migrationPatching(who(patching)))}</p>`);
 
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
   const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");
   const since = previousSha(b);
-  const onProd = b.live.verified_on_production.length;
+  // pd 22:47 (B): the count is this version's only; with nothing verified on this version there is no count at all.
+  const onProd = b.live.recent.length;
   out.push(`<div class="row"><span class="label">${UI.live}</span><div class="val">`);
   if (sha) {
-    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${shaReading ? ` <span class="meta">· ${esc(UI.checkedBy(shaReading.by, ago(shaReading.at)))}</span>` : ""}</div>`);
+    // t-086: the board says where the sha came from, by the fields t-083 derives from the reading's method: who pushed it
+    // (their own `release --deploy` wrote the fact), who only checked which version is live, both when both are known,
+    // and neither when the fact says nothing about its source.
+    const when = shaReading ? ago(shaReading.at) : "";
+    const source = [
+      b.live.deployed_by ? UI.pushedBy(who(b.live.deployed_by), when) : "",
+      b.live.checked_by ? UI.checkedBy(who(b.live.checked_by), when) : "",
+    ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
+    out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
     const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
     if (b.live.recent.length) {
       out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
@@ -242,15 +314,20 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
     }
   } else out.push(`<span class="quiet">${UI.noDeployReading}</span>`);
-  // t-069: while the contact card is not on screen, one grey line says where the call-outs go; clicking it reopens the card.
-  if (contactOn && !asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line"><a href="${esc(base)}/?ask=alert">${esc(contact ? UI.contactTo(contact) : UI.contactNone)}</a></p>`);
+  // t-091: one standing line for what is verified and not yet deployed, from t-078's counts. Nothing when there is
+  // nothing waiting; when the containment fact cannot answer, the reason instead of a made-up number.
+  const waiting = waitingLine(b);
+  if (waiting) out.push(`<p class="meta waiting">${machineWords(waiting)}</p>`);
+  // pd 22:45: one grey line, always there and not clickable, saying what the call-outs can really do (t-050 posts to https only):
+  // no address or skipped; an email that nothing sends to; an https address that gets the call.
+  if (!asks.some(isContactCard) && !reopen) out.push(`<p class="meta contact-line">${esc(contactLine(contact))}</p>`);
   out.push(`</div></div>`);
 
   const flight = inFlightOf(b);
   out.push(`<div class="row"><span class="label">${UI.inFlight}</span><div class="val">`);
   if (flight.some((g) => g.total)) {
     out.push(`<div class="chips">${flight.filter((g) => g.total).map((g) => `<span class="chip${g.key === "blocked" ? " warn" : ""}"><b>${g.total}</b> ${esc(g.label)}</span>`).join("")}</div>`);
-    const row = (x: FlightItem) => `<li${x.blocked ? ' class="warn"' : ""}><span class="dot"></span><span class="ttl">${esc(x.title)}</span>${x.owner ? `<span class="who">${esc(x.owner)}</span>` : "<span></span>"}${x.why ? `<span class="why">${esc(x.why)}</span>` : ""}</li>`;
+    const row = (x: FlightItem) => `<li${x.blocked ? ' class="warn"' : ""}><span class="dot"></span><span class="ttl">${esc(x.title)}</span>${x.owner ? `<span class="who">${esc(who(x.owner))}</span>` : "<span></span>"}${x.why ? `<span class="why">${esc(x.why)}</span>` : ""}</li>`;
     for (const g of flight.filter((g) => g.total)) {
       if (g.key === "working" || g.key === "blocked") {
         out.push(`<div class="grp"><div class="grp-h">${esc(g.label)}</div><ul class="tasks">${g.items.slice(0, SHOWN).map(row).join("")}</ul>${fold(g.items.slice(SHOWN).map(row), UI.moreItems, "tasks")}</div>`);
@@ -268,14 +345,20 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     return r.undelivered ? `${state} · ${esc(UI.undelivered(r.undelivered))}` : state;
   };
   const whoChips = roles.length
-    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(r.role)}<span class="meta">${whoLabel(r)}</span>${r.push === "production" ? `<span class="can-push">${UI.canPushProduction}</span>` : ""}</span>`).join("")
-    : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(p.actor)}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
+    ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(who(r.role))}<span class="meta">${whoLabel(r)}</span>${r.push === "production" ? `<span class="can-push">${UI.canPushProduction}</span>` : ""}</span>`).join("")
+    : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(who(p.actor))}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
   out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
+  // t-110 (pd 00:28 ②③): whether this board has an owner's key yet — a statement in the 谁在 row, not a card and not a
+  // button; once the key is in use the board says nothing, because there is nothing to do.
+  const keyState = b.owner_key?.state;
+  if (keyState === "none" || keyState === "issued") {
+    out.push(`<div class="row"><span class="label"></span><div class="val"><p class="meta owner-key">${esc(keyState === "none" ? UI.noOwnerKey : UI.ownerKeyUnused)}</p></div></div>`);
+  }
   out.push(`</section>`);
 
   // ---------- 其余 ----------
   // The dig layer keeps its times short: the exact stamps are on the task page and in the API (t-065).
-  out.push(renderRest(b, s, human, (iso) => esc(ago(iso)), ago, base));
+  out.push(renderRest(b, s, human, (iso) => esc(ago(iso)), ago, base, who));
 
   return page(out.join("\n") + (out.some((x) => x.includes('class="btn copy"')) ? "\n" + COPY_SCRIPT : ""), { now: b.now, refresh, sha: opts.sha });
 }
@@ -371,7 +454,7 @@ function fold(rows: string[], label: (n: number) => string, listClass = "plain")
   return `<details class="more-list"><summary>${esc(label(rows.length))}</summary><ul class="${listClass}">${rows.join("")}</ul></details>`;
 }
 
-function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = ""): string {
+function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = "", who: (id: string) => string = (x) => x): string {
   const d: string[] = [];
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
@@ -389,21 +472,22 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const cov = b.coverage ?? [];
   const gaps = cov.filter((c) => c.status !== "held");
   const teamLine = [cov.length ? UI.held(cov.length, cov.length - gaps.length) : "", b.allocation?.summary ?? ""].filter(Boolean).join(" · ");
-  if (teamLine) d.push(`<p class="meta team">${UI.team}：${esc(teamLine)}</p>`);
-  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(c.line.replace(/（能力事实[^）]*）/g, "").trim())}</li>`).join("")}</ul></section>`);
+  if (teamLine) d.push(`<p class="meta team">${UI.team}：${esc(nameRoles(teamLine, who, b.roles ?? []))}</p>`);
+  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(nameRoles(c.line.replace(/（能力事实[^）]*）/g, "").trim(), who, b.roles ?? []))}</li>`).join("")}</ul></section>`);
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
-  d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(i.to, i.body, i.from))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(who(i.to), i.body, who(i.from)))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(`</section>`);
 
   d.push(`<section id="instructions"><h3>${UI.agentInstructions} <span class="meta">${open.length}</span></h3>`);
-  d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(UI.instrStatus[i.status] ?? i.status)}</span> ${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(UI.instrStatus[i.status] ?? i.status)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
-  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(i.from)} → ${esc(i.to)}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(i.chosen!.by, i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
+  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
   d.push(`</section>`);
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);
   const inline = inlinedTasks(b);
+  const ambiguous = ambiguousLabels(b); // t-100: the same judgment the CLI uses
   d.push(`<section id="tasks"><h3>${UI.tasks} <span class="meta">${total}</span></h3>`);
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     const list = b.tasks[status] ?? [];
@@ -412,18 +496,18 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
     for (const task of list) {
       const st = s.tasks.get(task.id);
       const bits: string[] = [];
-      if (task.owner) bits.push(`@${esc(task.owner)}`);
+      if (task.owner) bits.push(`@${esc(who(task.owner))}`);
       if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
       if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
       const href = `${base}/task/${encodeURIComponent(task.id)}`;
       if (st && inline.has(task.id)) {
         // This version's and still-moving tasks carry their criteria and evidence inline (t-065).
-        d.push(`<li><details><summary>${esc(task.title)}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
-        d.push(taskDetail(st, t, ago, href, MOVING.has(status)));
+        d.push(`<li><details><summary>${esc(taskHeading(task, ambiguous))}${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</summary>`);
+        d.push(taskDetail(st, t, ago, href, MOVING.has(status), task.from, who));
         d.push(`</details></li>`);
       } else {
         // Earlier tasks: the title and one line; everything else lives on the task page.
-        d.push(`<li class="brief"><a href="${esc(href)}">${esc(task.title)}</a>${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</li>`);
+        d.push(`<li class="brief"><a href="${esc(href)}">${esc(taskHeading(task, ambiguous))}</a>${bits.length ? ` <span class="meta">${bits.join(" · ")}</span>` : ""}</li>`);
       }
     }
     d.push(`</ul>`);
@@ -437,7 +521,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   d.push(`</section>`);
 
   d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(valid.length, stale.length))}</span></h3>`);
-  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} <span class="meta">${esc(r.by)}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`;
+  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} <span class="meta">${esc(who(r.by))}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`;
   const staleShown = stale.slice().sort((x, y) => y.at.localeCompare(x.at)).slice(0, STALE_SHOWN);
   d.push(b.readings.length ? `<ul class="plain">${[...valid, ...staleShown].map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   if (stale.length > staleShown.length) d.push(`<p class="meta">${esc(UI.olderStale(stale.length - staleShown.length))}</p>`);
@@ -485,9 +569,9 @@ const VERDICT_MAX = 80;
 const MOVING = new Set(["open", "working", "blocked", "done", "failed"]);
 
 /** A task's criteria, evidence, verdicts and notes; the same block inline on the board and on the task page. */
-function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string) => string, href: string | null, withNotes = true): string {
+function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string) => string, href: string | null, withNotes = true, from?: string, who: (id: string) => string = (x) => x): string {
   const d: string[] = [];
-  d.push(`<div class="meta">${esc(UI.criteriaBy(st.criteria_by, ago(st.created_at)))}</div>`);
+  d.push(`<div class="meta">${esc(UI.criteriaBy(who(st.criteria_by), ago(st.created_at)))}</div>`);
   d.push(`<ol class="criteria">${st.criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>`);
   if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
   const evidence = st.evidence && href ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;
@@ -495,15 +579,16 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
   const evidenceNotes = st.notes.filter((n) => /^\s*evidence:/i.test(n.body));
   // On the board a note keeps its first lines; the task page has the whole text (t-065).
   const body = (text: string) => href ? clip(text, NOTE_MAX) : text;
-  if (withNotes) for (const n of evidenceNotes) d.push(`<div class="meta">+ ${esc(body(n.body.replace(/^\s*evidence:\s*/i, "")))} <span class="meta">（${esc(n.actor)}，${t(n.at)}）</span></div>`);
+  if (withNotes) for (const n of evidenceNotes) d.push(`<div class="meta">+ ${esc(body(n.body.replace(/^\s*evidence:\s*/i, "")))} <span class="meta">（${esc(who(n.actor))}，${t(n.at)}）</span></div>`);
   // On the board a finished task's verdicts keep their first line; the verifier's full evidence is on the task page.
   const verdicts = href && !withNotes ? latestPerSurface(st.verifications) : st.verifications;
-  for (const v of verdicts) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(v.by)}，${t(v.at)}${v.evidence ? `：${esc(href ? clip(v.evidence, VERDICT_MAX) : v.evidence)}` : ""}</div>`);
-  if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(st.withdrawn.by, ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
-  if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, st.obsolete.by, ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
+  for (const v of verdicts) d.push(`<div class="meta">${v.pass ? `✓ ${UI.verifiedOn}` : `✗ ${UI.failedOn}`} <b>${esc(surface(v.surface))}</b>，${UI.by} ${esc(who(v.by))}，${t(v.at)}${v.evidence ? `：${esc(href ? clip(v.evidence, VERDICT_MAX) : v.evidence)}` : ""}</div>`);
+  if (st.withdrawn) d.push(`<div class="meta">${esc(UI.withdrawnBy(who(st.withdrawn.by), ago(st.withdrawn.at)))}：${esc(st.withdrawn.reason)}</div>`);
+  if (st.obsolete) d.push(`<div class="meta">${esc(UI.obsoleteBy(st.obsolete.decision, who(st.obsolete.by), ago(st.obsolete.at)))}${st.obsolete.reason ? `：${esc(st.obsolete.reason)}` : ""}</div>`);
   const other = withNotes ? st.notes.filter((n) => !/^\s*evidence:/i.test(n.body)) : st.notes;
+  d.push(sourceLine(from)); // t-099: after the criteria and the evidence, never at the top (pd 23:42)
   if (st.touches.length && (withNotes || !href)) d.push(`<div class="meta">${UI.touches}：${st.touches.map((x) => `<code>${esc(x)}</code>`).join(", ")}</div>`);
-  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(n.actor)}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(body(n.body))}</li>`).join("")}</ul>`);
+  if (other.length && withNotes) d.push(`<ul class="notes">${other.map((n) => `<li><b>${esc(who(n.actor))}</b> ${t(n.at)}${n.decision ? ` <span class="tag">${UI.decisionTag}</span>` : ""}：${esc(body(n.body))}${sourceLine(n.from)}</li>`).join("")}</ul>`);
   // On the board, a finished task's notes are a count and a link: they are what made the page grow with the log (t-065).
   if (href) d.push(`<div class="meta">${other.length && !withNotes ? esc(UI.notesCount(other.length)) + " · " : ""}<a href="${esc(href)}">${UI.details}</a></div>`);
   return d.join("\n");
@@ -514,6 +599,7 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
  * Null when the log has no such task. The raw id stays in the URL and in the 「给 agent 看的」 fold.
  */
 export function renderTask(b: Board, s: State, id: string, opts: RenderOptions = {}): string | null {
+  const who = roleNamer(b); // t-107
   const st = s.tasks.get(id);
   const task = boardTask(b, id);
   if (!st || !task) return null;
@@ -523,13 +609,13 @@ export function renderTask(b: Board, s: State, id: string, opts: RenderOptions =
   const t = (iso: string) => `<time datetime="${esc(iso)}">${esc(ago(iso))}</time>`;
   const out: string[] = [];
   const bits: string[] = [esc(UI.taskStatus[task.status] ?? task.status)];
-  if (task.owner) bits.push(`@${esc(task.owner)}`);
+  if (task.owner) bits.push(`@${esc(who(task.owner))}`);
   if (task.blocked_on) bits.push(`⏸ ${esc(task.blocked_on)}`);
   if (task.verified_on?.length) bits.push(`✓ ${esc(task.verified_on.map(surface).join("、"))}`);
   out.push(`<p class="meta"><a href="${esc(base)}/">${UI.backToBoard}</a></p>`);
-  out.push(`<section class="now task-page"><h2>${esc(task.shows ?? task.title)}</h2>`);
+  out.push(`<section class="now task-page"><h2>${esc(task.shows ?? taskHeading(task, ambiguousLabels(b)))}</h2>`);
   out.push(`<p class="meta">${bits.join(" · ")}</p>`);
-  out.push(taskDetail(st, t, ago, null));
+  out.push(taskDetail(st, t, ago, null, true, task.from, who));
   const seams = b.seams.filter((x) => x.tasks.includes(id));
   if (seams.length) out.push(`<h3>${UI.taskSeams} <span class="meta">${seams.length}</span></h3><ul class="plain">${seams.map((x) => seamLine(x, base)).join("")}</ul>`);
   out.push(`<details class="meta"><summary>${UI.forAgents}</summary><code>${esc(task.id)}</code> · <code>ateam task show ${esc(task.id)}</code></details>`);
@@ -566,13 +652,41 @@ export function unauthorizedPage(): string {
 }
 
 /** The token page: the only thing on it is a token box; the hidden fields carry the action the human clicked. */
-export function tokenPage(fields: Record<string, string>, wrong = false, base = ""): string {
+/** The body of a key: `nk_`/`ak_` plus this many base64url characters. Only its length is ever spoken of. */
+export const KEY_BODY_LEN = 32;
+
+/**
+ * t-115 (pd 01:23): say the **shape** of what was pasted, never its content. Telling someone "it looks like an address
+ * but there is no k= in it" is more use than handing their own text back for them to diff — and a rejected paste may be
+ * carrying a real key, so not one character of it comes back to the page. Length and "is there a k=" are shape;
+ * characters are content. Null when we cannot say anything true about the shape: then the caller falls back to the
+ * plain sentence and the example.
+ */
+export function pasteShape(pasted: string): string | null {
+  const t = pasted.trim();
+  if (!t) return null;
+  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^\/?[\w./-]+\?/.test(t);
+  const hasKeyParam = /[?&](?:k|token)=[^&#\s]/i.test(t);
+  if (looksLikeUrl) return hasKeyParam ? UI.shapeKeyUnknown : UI.shapeNoKey;
+  const bare = /^(?:nk|ak)_([A-Za-z0-9_-]*)$/.exec(t);
+  if (bare) return bare[1].length === KEY_BODY_LEN ? UI.shapeKeyUnknownBare : UI.shapeKeyShort;
+  if (!/[?&]?(?:k|token)=/i.test(t) && [...t].length >= 12) return UI.shapeNoKeyAnywhere;   // 一整段字，里面根本没有 k=
+  return null;
+}
+
+/**
+ * t-115 (pd 01:17) 的第三条约束「粘错时不清空输入框」这里**没有做**，因为它与 pd 01:02 的另一条撞了：一次被拒的
+ * 粘贴里照样可能含着一把真钥匙（地址对、末尾多几个字符就够），而那一条说钥匙一个字都不回显，t-110 有测试守着。
+ * 我试过只回显形态（k= 后面换圆点），但那仍然要把粘进来的其余内容原样打回页面，同一条测试照样红。两条规矩谁让步
+ * 归 pd，我不替它选：先按已经验收过的那条（不回显）做，冲突已报给 pd。
+ */
+export function tokenPage(fields: Record<string, string>, wrong = false, base = "", shape: string | null = null): string {
   const hidden = Object.entries(fields).filter(([k]) => k !== "token").map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("");
   return `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${UI.tokenTitle} · ${UI.title}</title>
 <style>${CSS}</style></head>
 <body><main class="token-page"><header><h1>${UI.header}</h1></header>
-<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${UI.tokenWrong}</p>` : ""}
+<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${esc(shape ?? UI.tokenWrong)}</p><p class="why">例如 <code>${esc(UI.tokenExample)}</code></p>` : ""}
 <form method="post" action="${esc(base)}/token" class="line">${hidden}<input type="password" name="token" aria-label="${UI.tokenLabel}" autofocus autocomplete="off" required><button class="btn primary" type="submit">${UI.tokenSubmit}</button></form>
 </section></main></body></html>
 `;
@@ -611,6 +725,9 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 .ask .body { margin:-.4rem 0 .85rem; color:var(--muted); max-width:40em; }
 .actions.contact input { flex:1 1 14rem; min-width:0; font:inherit; padding:.55rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 a.btn { text-decoration:none; display:inline-block; }
+.waiting { margin:.35rem 0 0; }
+.from { margin:.15rem 0 0; } .from a { color:var(--accent); }
+.owner-key { margin:0; }
 .contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
@@ -624,6 +741,7 @@ a.btn { text-decoration:none; display:inline-block; }
 .invite input { flex:1 1 14rem; min-width:0; font:.85rem var(--mono); padding:.35rem .6rem; border:1px solid var(--line); border-radius:6px; background:var(--soft); color:var(--ink); }
 .btn.copy { padding:.35rem .8rem; font-size:.85rem; }
 .recent { margin:-.25rem 0 0; padding-left:1.25rem; color:var(--muted); font-size:.85rem; } .recent b { color:var(--ink); }
+.say-hint { color:var(--muted); }
 .say form { display:flex; gap:.5rem; }
 .say input { flex:1; min-width:0; font:inherit; padding:.6rem .9rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 .say .meta, .say .said { margin:.35rem 0 0 .25rem; }

@@ -6,15 +6,16 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-export interface Lock { pid: number; at: string }
+/** `cmd` (t-102) is what to re-run when this watch turns out to be gone; older locks have none. */
+export interface Lock { pid: number; at: string; cmd?: string }
 
 export function readLock(path: string): Lock | null {
   try { return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Lock) : null; } catch { return null; }
 }
 
-export function writeLock(path: string, pid: number, now = new Date()): void {
+export function writeLock(path: string, pid: number, now = new Date(), cmd?: string): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ pid, at: now.toISOString() }));
+  writeFileSync(path, JSON.stringify({ pid, at: now.toISOString(), ...(cmd ? { cmd } : {}) }));
 }
 
 export function removeLock(path: string, pid: number): void {

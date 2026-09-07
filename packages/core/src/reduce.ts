@@ -20,6 +20,10 @@ export interface TaskState {
   updated_at: string;
   owner?: string;
   /** When the current owner last claimed it, and that claim event's id (t-067: what a seam is judged against; ids order the log). */
+  /** t-092: where this task came from when it was carried in (the create event's `from`). */
+  from?: string;
+  /** t-096: what people call it (an old number, say). Not an identifier: the id is the id. */
+  label?: string;
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
@@ -86,6 +90,8 @@ export interface ReadingState {
   superseded_by?: string;
   /** set at board time when valid_until has passed */
   expired?: boolean;
+  /** t-089: why an imported reading is not current, for the board to show instead of each renderer inventing a phrase. */
+  imported_why?: string;
 }
 
 export interface InstructionState {
@@ -126,11 +132,18 @@ export interface SeamState {
   resolution?: { by: string; at: string; text: string };
   /** t-073: both sides done and the later absorbed the earlier, by the project's declared form; blocks nothing. */
   absorbed?: { later: string; earlier: string; basis: string; by?: string };
+  /**
+   * t-113: both sides named symbols in the file they share, and named different ones. Worth saying out loud to whoever
+   * merges second; never a reason to hold a verification. Recomputed on every claim and done, like the overlap itself.
+   */
+  light?: boolean;
 }
 
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
+  from: Map<string, Event>;
   readings: Map<string, ReadingState>;
   /** surface:key -> event id of the latest reading */
   latestReading: Map<string, string>;
@@ -164,6 +177,37 @@ export function overlapOf(a: string[], b: string[]): string[] {
   return [...out];
 }
 
+const pathOf = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) : null);
+
+/**
+ * t-113 (pd 00:59): judge a seam at the finest granularity **both** sides declared. Two tasks that each named the
+ * symbols they would touch in one file, and named different ones, are not colliding — blocking them teaches people to
+ * declare less, which is the opposite of what the seam is for. It takes both sides: a side that only said "this file"
+ * has not told you which half of it, so anything it overlaps is still a collision.
+ *
+ * A directory-prefix overlap is never light: nobody declared symbols for a whole directory.
+ * No whitelist, no path pattern — a test file is not special, a declaration is (pm 01:00; the omitted lesson).
+ */
+export function overlapIsLight(a: string[], b: string[]): boolean {
+  const paths = new Set<string>();
+  let any = false;
+  for (const x of a) for (const y of b) {
+    if (!touchesOverlap(x, y)) continue;
+    any = true;
+    if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
+    paths.add(pathOf(x));
+  }
+  if (!any) return false;
+  for (const p of paths) {
+    const syms = (side: string[]) => side.filter((t) => pathOf(t) === p).map(symbolOf);
+    const as = syms(a), bs = syms(b);
+    if (as.includes(null) || bs.includes(null)) return false;            // one side only said "this file"
+    if (as.some((x) => bs.includes(x))) return false;                    // both named symbols, and they meet
+  }
+  return true;
+}
+
 /** The `chosen.by` of a decision that nobody made: the default took effect when ack_by passed. */
 export const DEFAULT_DECIDER = "default";
 
@@ -178,6 +222,7 @@ function readingKey(r: Reading): string {
 export function reduce(log: Log, now: Date = new Date()): State {
   const s: State = {
     ids: new Set(),
+    from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
     shapes: new Map(),
@@ -190,6 +235,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
 
   for (const e of log.events) {
     s.ids.add(e.id);
+    if (e.from && !s.from.has(e.from)) s.from.set(e.from, e);
     const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
     s.presence.set(e.actor, pe);
@@ -242,6 +288,7 @@ export function reduce(log: Log, now: Date = new Date()): State {
   }
   for (const rs of s.readings.values()) {
     if (rs.reading.valid_until && rs.reading.valid_until < nowIso) rs.expired = true;
+    if (rs.reading.from) { rs.expired = true; rs.valid = false; rs.imported_why = "搬进来的数字：在这里没有测过，谁用谁重测"; } // t-089
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   if (focusId) s.focus = s.readings.get(focusId)!.reading;
@@ -283,6 +330,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        from: e.from, label: e.label, // t-092, t-096
       });
       return;
     case "seam": {
@@ -297,6 +345,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   if (!t) return;
   t.updated_at = e.at;
   switch (e.op) {
+    case "label":
+      t.label = e.label.trim() || undefined; // t-096: a display name changes freely; the id never does
+      return;
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
@@ -307,6 +358,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "done"; t.evidence = e.evidence; t.round += 1;
       if (e.shows?.trim()) t.shows = e.shows.trim();
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
+      // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
+      // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
+      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; detectSeams(s, t); }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
@@ -354,12 +408,18 @@ function detectSeams(s: State, t: TaskState) {
   for (const other of s.tasks.values()) {
     if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
-    if (!overlap.length) continue;
+    if (!overlap.length) {
+      // t-105: recomputing is not only "find more". A revision that narrows the touches can leave a seam describing an
+      // overlap that no longer exists, and a seam nobody actually has is one more thing blocking a verify for nothing.
+      s.seams.delete(seamId(t.id, other.id));
+      continue;
+    }
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
+    const light = overlapIsLight(t.touches, other.touches) || undefined;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner });
+    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
   }
   for (const seam of s.seams.values()) if (seam.tasks.includes(t.id)) judgeSeam(s, seam);
 }
@@ -413,7 +473,22 @@ export function namesSha(evidence: string, sha: string): boolean {
   return [...evidence.matchAll(/[0-9a-f]{7,40}/g)].some((m) => sha.startsWith(m[0]) || m[0].startsWith(sha));
 }
 
+/**
+ * t-105: which seams would block `t` if its touches were `touches` and it were done right now? Used to judge a revision
+ * *before* it is written, so the answer must come from the same rules the log already runs — detectSeams/judgeSeam —
+ * not a second judgement. Pure: the shadow state it walks is thrown away, the real one is untouched.
+ */
+export function blockingSeamsIfTouches(s: State, t: TaskState, touches: string[]): { with: string; overlap: string[] }[] {
+  const AFTER_EVERYTHING = "\uffff"; // a done happening now cannot precede a claim already in the log
+  const mine: TaskState = { ...t, touches: [...new Set(touches.map((x) => x.trim()).filter(Boolean))], status: "done",
+    history: [...t.history, { op: "done", id: AFTER_EVERYTHING, by: t.owner ?? "", at: AFTER_EVERYTHING, round: t.round + 1, evidence: t.evidence }] };
+  const shadow: State = { ...s, tasks: new Map(s.tasks), seams: new Map([...s.seams].map(([id, x]) => [id, { ...x }])) };
+  shadow.tasks.set(t.id, mine);
+  detectSeams(shadow, mine);
+  return openSeamsFor(shadow, t.id).map((x) => ({ with: x.tasks.find((id) => id !== t.id) ?? "", overlap: x.overlap }));
+}
+
 /** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && !x.light && x.tasks.includes(task));
 }

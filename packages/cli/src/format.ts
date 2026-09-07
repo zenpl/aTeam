@@ -1,4 +1,4 @@
-import { describeShape, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
+import { describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -40,34 +40,46 @@ function at(overlap: string[] | undefined): string {
 
 export function board(b: Board, me: string): string {
   const out: string[] = [];
+  const who = roleNamer(b); // t-107: the CLI shows the same names the board does
   const now = Date.parse(b.now);
   const ago = (iso: string) => {
     const s = Math.round((now - Date.parse(iso)) / 1000);
     return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`;
   };
 
-  out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${b.focus.set_by}, ${ago(b.focus.at)} ago)` : "—"}`);
+  out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${who(b.focus.set_by)}, ${ago(b.focus.at)} ago)` : "—"}`);
 
   if (b.live) {
-    const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${b.live.deployed_by ? ` (${b.live.deployed_by === "human" ? "human 推的" : `${b.live.deployed_by} 推的`})` : ""}` : "sha unknown"}`;
+    // t-083: 推的 only when release --deploy wrote the reading, 核对 (no 的, pd 22:47) when someone measured it, nothing when
+    // the source is unsaid; each with how long ago, so nobody has to guess whether it was just now or six hours back
+    const when = b.live.at ? `${ago(b.live.at)}前` : "";
+    const by = b.live.deployed_by ? ` (${b.live.deployed_by} ${when}推的)` : b.live.checked_by ? ` (${b.live.checked_by} ${when}核对)` : "";
+    const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${by}` : "sha unknown"}`;
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
+    if (b.alert?.status === "misconfigured" && b.alert.line) out.push(`           ${b.alert.line}`); // t-084
+    // t-091: the same sentence the board shows, from the same counts (t-078); nothing when nothing waits
+    const c = b.release?.counts;
+    const waiting = !c ? "" : c.pending_deploy > 0 ? `${c.pending_deploy} 件验过了，等一次上线${c.unknown ? `；另有 ${c.unknown} 件不知道上没上` : ""}。`
+      : c.unknown > 0 ? `不知道有多少件在等上线：${b.release.basis ?? ""}` : "";
+    if (waiting) out.push(`           ${waiting}`);
     out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.shows ? `${t.id} ${t.shows}` : t.id).join(", ") || "—"}${earlier}` : live);
   }
 
   if (b.needs_human.length) {
     out.push("", "NEEDS HUMAN");
-    for (const n of b.needs_human) out.push(`  ${n.summary}  (${n.id})`);
+    // t-107: the card says who is asking by the name people read, not the summary core built from the id
+    for (const n of b.needs_human) out.push(`  ${who(n.from)}: ${n.body}${n.options?.length ? `  [${n.options.join(" | ")}${n.default ? `; default ${n.default}` : ""}]` : ""}  (${n.id})`);
   }
 
   if (b.undelivered?.length) {
     out.push("", "UNDELIVERED (sent 5+ minutes ago, never pulled)");
-    for (const u of b.undelivered) out.push(`  ${u.to.padEnd(10)} ${u.count} 条没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没在听"}`);
+    for (const u of b.undelivered) out.push(`  ${who(u.to).padEnd(10)} ${u.count} 条没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没在听"}`);
   }
 
   if (b.overdue?.length) {
     out.push("", "OVERDUE");
-    for (const o of b.overdue) out.push(`  ${o.to} has not acked "${o.body}" from ${o.from}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+    for (const o of b.overdue) out.push(`  ${who(o.to)} has not acked "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn");
@@ -77,23 +89,24 @@ export function board(b: Board, me: string): string {
       const you = i.to === me ? "  ⇐ YOU" : "";
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       const defaulted = i.chosen?.by === "default" ? `  ⇒ ${i.chosen.option} by default at ack_by (human may still decide)` : "";
-      out.push(`  ${i.status.padEnd(9)} ${i.from} → ${i.to}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      out.push(`  ${i.status.padEnd(9)} ${who(i.from)} → ${who(i.to)}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
     }
   }
 
   const decided = b.instructions.filter((i) => i.chosen);
   if (decided.length) {
     out.push("", "DECIDED");
-    for (const i of decided.slice(-5)) out.push(`  ${i.from} → ${i.to}: ${i.body}  ⇒ ${i.chosen!.option}  (${i.chosen!.by}, ${ago(i.chosen!.at)} ago)  ${i.id}`);
+    for (const i of decided.slice(-5)) out.push(`  ${who(i.from)} → ${who(i.to)}: ${i.body}  ⇒ ${i.chosen!.option}  (${who(i.chosen!.by)}, ${ago(i.chosen!.at)} ago)  ${i.id}`);
   }
 
   out.push("", "TASKS");
+  const ambiguous = ambiguousLabels(b); // t-100: the same judgment the board uses
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     for (const t of b.tasks[status] ?? []) {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
       const overturned = (t.overturned ?? []).map((o) => `${o.surface} 验过，后被 ${o.by} 推翻`).join("；");
       const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : status === "obsolete" ? `  已被 ${t.obsolete?.decision ?? "?"} 取代` : results ? `  ${results}${overturned ? `（${overturned}）` : ""}` : "";
-      out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${t.title}${t.owner ? `  @${t.owner}` : ""}${extra}`);
+      out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${taskHeading(t, ambiguous)}${t.owner ? `  @${who(t.owner)}` : ""}${extra}`);
     }
   }
 
@@ -118,26 +131,27 @@ export function board(b: Board, me: string): string {
   out.push("", `READINGS (${valid.length} valid, ${stale.length} stale)`);
   for (const r of valid) {
     const when = r.recorded_after_s ? `测于 ${ago(r.measured_at)} 前，记于 ${ago(r.at)} 前${r.late ? "，记录晚了 ⚠" : ""}` : `${ago(r.at)} ago`;
-    out.push(`  ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  (${r.by}, ${when})${r.assumptions?.length ? `  assumes: ${r.assumptions.join("; ")}` : ""}`);
+    out.push(`  ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  (${who(r.by)}, ${when})${r.assumptions?.length ? `  assumes: ${r.assumptions.join("; ")}` : ""}`);
   }
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
 
   out.push("", "PRESENCE");
   for (const p of b.presence) {
+    const name = who(p.actor);
     const st = p.status ?? (p.present === false ? "missing" : "listening");
     const label = st === "listening" ? `在听  ${ago(p.last_seen!)} 前`
       : st === "deaf" ? `没在听 ${p.last_pull ? `${ago(p.last_pull)}` : "从未拉取"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
-    out.push(`  ${p.actor.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
+    out.push(`  ${name.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
   }
   const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
   if (gaps.length) {
     out.push("", "COVERAGE (responsibilities nobody holds right now)");
-    for (const c of gaps) out.push(`  ${c.responsibility.padEnd(4)} ${c.line}`);
+    for (const c of gaps) out.push(`  ${c.responsibility.padEnd(4)} ${nameRoles(c.line, who, b.roles ?? [])}`);
   }
   if (b.allocation?.warnings?.length) {
-    out.push("", `TEAM  ${b.allocation.summary}`);
-    for (const w of b.allocation.warnings) out.push(`  ${w.pattern}  ${w.hint}`);
+    out.push("", `TEAM  ${nameRoles(b.allocation.summary, who, b.roles ?? [])}`);
+    for (const w of b.allocation.warnings) out.push(`  ${w.pattern}  ${nameRoles(w.hint, who, b.roles ?? [])}`);
   }
 
   return out.join("\n");
@@ -145,14 +159,14 @@ export function board(b: Board, me: string): string {
 
 /** `ateam task show <id>`: everything the log knows about one task. */
 /** `omitted` is required (t-077, qa 22:19): every caller says what its board left out; a full task or full board passes []. */
-export function task(t: BoardTask, seams: Board["seams"], omitted: string[]): string {
+export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who: (id: string) => string = (x) => x): string {
   const out: string[] = [];
   // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
   const touches = t.touches ?? [];
   const verifications = t.verifications ?? [];
   out.push(`${t.id}  ${t.title}`);
   out.push(`status     ${t.status ?? "?"}${t.blocked_on ? `  ⏸ ${t.blocked_on}` : ""}${t.withdrawn ? `  ✗ withdrawn by ${t.withdrawn.by} ${hhmm(t.withdrawn.at)}: ${t.withdrawn.reason}` : ""}${t.obsolete ? `  已被 ${t.obsolete.decision} 取代（${t.obsolete.by} ${hhmm(t.obsolete.at)}${t.obsolete.reason ? `：${t.obsolete.reason}` : ""}）` : ""}`);
-  out.push(`owner      ${t.owner ?? "—"}`);
+  out.push(`owner      ${t.owner ? who(t.owner) : "—"}`);
   // The default board (t-070) leaves fields out and says which in board.omitted (t-077): an absent field is "not sent",
   // never "empty". A server older than this CLI sends neither the fields nor the list.
   // Paths follow the board's real shape (t-077 round 2): tasks.<status>[].<field>, seams[].overlap, seams[<n> of <m>].
@@ -161,11 +175,11 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[]): st
   if (left("criteria")) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
   else if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {
-    out.push(`criteria   (by ${t.criteria_by})`);
+    out.push(`criteria   (by ${t.criteria_by ? who(t.criteria_by) : "—"})`);
     if (!t.criteria.length) out.push("  (none)");
     t.criteria.forEach((c, i) => {
       const added = t.criteria_added?.find((a) => a.index === i);
-      out.push(`  ${i + 1}. ${c}${added ? `  (added by ${added.by} ${hhmm(added.at)})` : ""}`);
+      out.push(`  ${i + 1}. ${c}${added ? `  (added by ${who(added.by)} ${hhmm(added.at)})` : ""}`);
     });
   }
   out.push(`touches    ${left("touches") ? `(not in the default board; ateam task show ${t.id} has them)` : touches.length ? touches.join(", ") : "—"}`);
@@ -173,19 +187,19 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[]): st
   if (left("evidence")) out.push(`evidence   ${t.evidence_sha ? `sha ${t.evidence_sha.slice(0, 7)}; ` : ""}(not in the default board; ateam task show ${t.id} has it)`);
   else out.push(`evidence   ${t.evidence ?? "—"}`);
   const notes = t.notes ?? [];
-  for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${n.actor} ${hhmm(n.at)})`);
+  for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${who(n.actor)} ${hhmm(n.at)})`);
   for (const o of t.overturned ?? []) out.push(`overturned ${o.surface} 验过（${o.passed_by}），后被 ${o.by} 推翻 ${hhmm(o.at)}${o.evidence ? `：${o.evidence}` : ""}`);
   out.push("verifications");
   if (left("verifications")) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join("  ") || "(none)"}`);
   else if (!verifications.length) out.push("  (none)");
-  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${v.by} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
+  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${v.surface}  by ${who(v.by)} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
   if (t.history?.length) {
     out.push("history");
     for (const h of t.history) {
       const line = h.op === "done" ? `done${h.evidence ? `: ${h.evidence}` : ""}`
         : h.op === "verify" ? `${h.pass ? "✓ pass" : "✗ fail"} ${h.surface}${h.evidence ? `: ${h.evidence}` : ""}`
         : `reopened: ${h.reason}`;
-      out.push(`  r${h.round} ${hhmm(h.at)} ${h.by}  ${line}`);
+      out.push(`  r${h.round} ${hhmm(h.at)} ${who(h.by)}  ${line}`);
     }
   }
   const mine = seams.filter((s) => s.tasks.includes(t.id));
@@ -201,7 +215,7 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[]): st
   out.push("notes");
   if (left("notes")) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);
   else if (!notes.length) out.push("  (none)");
-  for (const n of notes) out.push(`  ${hhmm(n.at)} ${n.actor.padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
+  for (const n of notes) out.push(`  ${hhmm(n.at)} ${who(n.actor).padEnd(9)} ${n.decision ? "DECISION " : ""}${n.body}`);
   return out.join("\n");
 }
 

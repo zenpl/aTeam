@@ -12,6 +12,12 @@ export interface Base {
   refs?: string[];
   /** World state this event changed, as `surface:key`. Invalidates readings that depend_on them. */
   writes?: string[];
+  /**
+   * t-088: where this event came from when it was carried in from somewhere else — a path, a ticket number, a URL, a
+   * message id, whatever that place calls things. Free text, matched exactly: writing a second event with the same
+   * `from` returns the first one instead of adding a duplicate, so an import can be run again safely.
+   */
+  from?: string;
 }
 
 /** What values a reading key may take. A regex is matched against the value as a string; an enum by JSON equality. */
@@ -24,6 +30,8 @@ export interface ReadingShape { regex?: string; enum?: unknown[] }
  */
 export const DEFAULT_SHAPES: Record<string, ReadingShape> = {
   "deployed.sha": { regex: "^([0-9a-f]{7,40}|unknown)$" },
+  /** t-084: the call-out address is an https webhook, nothing else; t-050 can only POST to https. */
+  "alert.webhook": { regex: "^https://\\S+$" },
 };
 
 /** A measurement of the world at one moment. Never a constant. */
@@ -84,12 +92,23 @@ export interface Note extends Base {
   decides?: { of: string; option: string };
   /** Attach to a task: `task show`, the board and GET / list it there. A body starting "evidence:" is an evidence update. */
   task?: string;
+  /**
+   * t-096: a name for people to recognise this by — the number it had where it came from ("T-07", "决策 12"). Never an
+   * identifier: every reference is by `id`, two records may carry the same label, and a label never changes an id.
+   */
+  label?: string;
 }
 
 export type TaskOp =
-  | { op: "create"; task: string; title: string; criteria: string[] }
+  | { op: "create"; task: string; title: string; criteria: string[]; /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string }
+  /** t-096: change what people see it called. The id is untouched, as always. */
+  | { op: "label"; task: string; label: string }
   | { op: "claim"; task: string; touches: string[] }
-  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string }
+  /**
+   * t-105: `touches` here is the **final value** — claim's was a declaration, done's is the fact. The platform only
+   * knows that: how the caller arrived at it (a git diff, a person retyping it) is the project's business, not the log's.
+   */
+  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string; touches?: string[] }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
@@ -123,6 +142,12 @@ export const PD_ACTOR = "pd";
 export const SERVICE_ACTOR = "ateam";
 /** Reading key that declares a project's role set; value is an array of role names. */
 export const ROLES_KEY = "roles";
+/**
+ * t-106: a role **id** is ASCII lowercase — it travels in an HTTP header (X-Actor), and a header is latin-1 by the
+ * spec, so a non-ASCII id does not fail loudly: some clients refuse to send it, others send raw UTF-8 that the server
+ * reads as latin-1, and the team quietly becomes 审稿 → å®¡ç¨¿. The **name** people read is free in any language.
+ */
+export const ROLE_ID_RE = /^[a-z][a-z0-9_-]*$/;
 export const PROJECT_SURFACE = "project";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
@@ -154,6 +179,31 @@ export const RESPONSIBILITIES: Responsibility[] = [
   { id: "R17", name: "对外接口", holder: "none" },
   { id: "R18", name: "钥匙与边界", holder: "service" },
 ];
+/**
+ * What the holder of each responsibility does, in one line (docs/responsibilities.md, 「持有者需要知道」条). The manual for any
+ * role is assembled from these by id (t-081), so a project that calls its roles fe / be / release-manager gets a real manual
+ * without anyone writing a file per role name.
+ */
+export const RESPONSIBILITY_DOING: Record<string, string> = {
+  R1: "一句话说清现在最要紧的一件事，并说明什么被推迟了；焦点变了要让每个人下一轮就读到。",
+  R2: "引用人的原话写成场景需求，定人可见之物的措辞与交互，把产品问题带选项和默认交给人。",
+  R3: "动手前把判据写成可判定的句子，每条指明在哪个表面判；判据只追加、有留痕。",
+  R4: "把要求拆成任务，写清判据与接口约定；按谁在听、谁有能力派活；被阻塞的说清卡在哪。",
+  R5: "claim 时把触点写宽，做完 done 带证据（能定位产出、逐条对应判据）；改变了世界要 writes。",
+  R6: "在指定表面上对照判据判 pass 并带证据——落 pass 要持本职责，落 fail 谁都可以；不验自己写判据的任务；FAIL 要说清缺什么。",
+  R7: "把值记成事实，写清表面、方法、假设与有效期；引用别人的事实前先看它有没有失效。",
+  R8: "触点重叠时说清谁合谁、边界在哪；批次集成，后落地方合并先落地方。",
+  R9: "部署或迁移，写 writes 让相关事实失效，部署后把新状态记成事实；推之前确认自己有许可和凭据。",
+  R10: "决定写成带 --decision 的 note，改变决定用 --supersedes，从不改历史。",
+  R11: "把 friction 变成任务，改进规则本身；不要把本项目的约定固化成平台。",
+  R12: "在真实表面上巡查，把观察写成 note 带证据，不直接当需求。",
+  R13: "定期出报告，说节奏、返工、摩擦、人的负担与结构性发现；要人做的事变成卡。",
+  R14: "谁在听、谁没在听、谁缺；缺人时把它变成一张给人的卡。",
+  R15: "政策与产品范围由人定；给出选项和默认，到期按默认执行并留痕。",
+  R16: "新节点十分钟内做出第一个正确动作；换人不需要口头交接。",
+  R17: "外部信号带来源与信任级进来，先过滤再进日志。",
+  R18: "项目隔离、钥匙发放与撤销；钥匙不进对话、不进文件。",
+};
 /** The default packing (responsibilities.md, 打包 · 默认五角色): what a role holds when the project declares only role names. */
 export const DEFAULT_RESPONSIBILITIES: Record<string, string[]> = {
   pd: ["R2", "R12"],
@@ -172,13 +222,18 @@ export const capabilityKey = (role: string) => `${role}:能力`;
 export const SHOWS_MAX_CHARS = 120;
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];
+/** t-104: the responsibility a role must hold to record a **pass**. A fail is open to everyone: only a release needs independence. */
+export const VERIFY_RESPONSIBILITY = "R6";
 /** Body prefixes of the instructions the service writes on behalf of the verification flow. */
 export const FAIL_NOTICE = " 验收未过：";
 export const VERIFY_ASK = " 做完了，验不验得过？";
 /** S0's second card (t-069, pd 21:07): how to reach the human when they are away. Optional; 先不要 skips it for good. */
 export const CONTACT_ASK = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
 export const CONTACT_FILL = "填写";
-export const CONTACT_SKIP = "先不要";
+/** t-111 (pd 00:39): a button says what it costs — this one closes the question for good, so it is not 「先不做」. */
+export const CONTACT_SKIP = "不要了";
+/** What the same button said before t-111. Cards already sent carry it; answering them must keep working. */
+export const CONTACT_SKIP_WAS = "先不要";
 export const CONTACT_OPTIONS = [CONTACT_FILL, CONTACT_SKIP];
 /**
  * t-073: how this project tells that the later side of a seam absorbed the earlier one (fact project:absorb.form).
@@ -202,6 +257,28 @@ export const BOARD_SHAPE = 2;
  * It depends on production:deployed.sha, so a deploy invalidates it and the board says "unknown" until someone measures again.
  */
 export const DEPLOYED_TASKS_KEY = "deployed.tasks";
+/**
+ * t-092 (S9/M4): the importer says in the log that it is finished — a note whose body starts with this — and the service
+ * counts what actually landed and asks the human to check it. The event is the trigger; nothing out of band.
+ */
+export const IMPORT_DONE_PREFIX = "导入完成：";
+/** The check card, pd's wording (UC-S9「核对卡的措辞与交互」). The counts come from the log, never from the importer. */
+export const MIGRATION_ASK_TITLE = "搬过来了，对吗？";
+export const MIGRATION_OK = "对";
+export const MIGRATION_MISSING = "有漏";
+export const MIGRATION_OPTIONS = [MIGRATION_OK, MIGRATION_MISSING];
+/** t-097 (M6): the note the importer writes once it has put the invitation back where the team already is. */
+export const INVITE_SENT_PREFIX = "邀请已发回旧渠道：";
+/** t-097: when the old place cannot be written to, the human forwards the link. pd's wording (UC-S9). */
+export const FORWARD_LINK = "把这个链接发给他们：";
+/**
+ * t-098 (M7): the fact that says the move is finished. Writing it is refused until the human answered 对 on the check
+ * card — that button is the authorisation to touch someone else's channel, so nothing may claim the move is over before it.
+ */
+export const MIGRATION_DONE_KEY = "migration.done";
+/** What the first node is told to do once the human answered (M7 does the old channel itself). */
+export const MIGRATION_FINISH = "human 说清单对：去旧渠道留最后一条「这里只读」，并记一条事实「迁移完成」。";
+export const MIGRATION_PATCH = "human 说有漏：回去核对旧单据再补，补完再发一条「导入完成：…」，我会重新问他。";
 /** t-069 / pm 22:39: the contact card exists only when this fact (surface project) is set; off by default. */
 export const ALERT_ASK_KEY = "alert.ask";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */

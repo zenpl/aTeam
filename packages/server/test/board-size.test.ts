@@ -98,6 +98,8 @@ describe("t-070 · GET /board is slim by default", () => {
     const servedFull = await (await get("/board?full=1")).json();
     const expected = JSON.parse(JSON.stringify(board(await b.state(new Date(t)), "human", new Date(t))));
     delete servedFull.invite_url;
+    expect(servedFull.owner_key).toEqual({ state: "none" });   // t-103: comes from the keys, not the log
+    delete servedFull.owner_key;
     expect(servedFull).toEqual(expected);
     expect(JSON.parse(served).tasks.done[0].criteria).toBeUndefined();
     expect(JSON.parse(served).omitted).toContain("tasks.done[].criteria");

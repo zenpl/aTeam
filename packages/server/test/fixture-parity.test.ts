@@ -54,6 +54,9 @@ describe("t-062 · built log ≡ served log", () => {
     // the one thing the server adds for the admin key is the invite link; it is not derived from the log
     expect(typeof served.invite_url).toBe("string");
     delete served.invite_url;
+    // t-103: whether this board has an owner who can speak for themselves lives with the keys, not in the log
+    expect(served.owner_key).toEqual({ state: "none" });
+    delete served.owner_key;
     expect(served).toEqual(built);
     // and the raw logs agree too: deliveries and cursors included
     const servedLog = await store.read();

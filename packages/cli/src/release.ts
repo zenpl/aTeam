@@ -25,12 +25,15 @@ export function deploySetting(b: Board): DeploySetting | null {
 
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
 
-export interface Plan { ok: boolean; reasons: string[]; included: string[] }
+export interface Plan { ok: boolean; reasons: string[]; included: string[]; /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[] }
+/** t-093: the rule a refusal names (M4). */
+export const DEPLOY_RULE = "deploy-unverified";
 
 /** What the sha carries, and whether it may ship: every task whose evidence is inside it must be verified on repo with no open seam. */
-export function plan(b: Board, sha: string, isAncestor: IsAncestor): Plan {
+export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null): Plan {
   const reasons: string[] = [];
   const included: string[] = [];
+  const unverified: string[] = [];
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
     if (t.status === "withdrawn" || t.status === "open") continue;
@@ -38,13 +41,15 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor): Plan {
     if (!s) continue;
     const inside = isAncestor(s, sha);
     if (inside !== true) continue;
+    // t-093: only what this push *adds* — a task already inside the running sha is not this push's to answer for
+    if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
     const passedRepo = (t.surfaces ?? []).some((r) => r.surface === "repo" && r.pass);
-    if (t.status === "working") reasons.push(`${t.id} 的证据 ${s} 在这个 sha 里，但任务被重开后还没 done`);
-    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
+    if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
+    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
     for (const seam of b.seams) if (seam.open && seam.tasks.includes(t.id)) reasons.push(`${t.id} 有未解决的接缝 ${seam.id}`);
   }
-  return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included };
+  return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)] };
 }
 
 /**
@@ -115,6 +120,8 @@ export interface DeployDeps {
   git: Git;
   me: string;
   hasCredential: boolean;
+  /** t-093: a reason for pushing past unverified tasks; without it, they refuse the push. */
+  anyway?: string;
   /** Record a fact or a note in the log. */
   reading(key: string, value: unknown, extra: { surface: string; writes?: string[]; method?: string }): Promise<void>;
   note(body: string): Promise<void>;
@@ -136,8 +143,19 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return "refused"; }
   const sha = deps.git.resolve(shaArg);
   if (!sha) { deps.print(`本地没有提交 ${shaArg}；先 fetch。`); return "refused"; }
-  const p = plan(b, sha, deps.git.isAncestor);
-  if (!p.ok) { deps.print(`不推 ${sha.slice(0, 7)}：`); for (const r of p.reasons) deps.print(`  - ${r}`); return "refused"; }
+  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null);
+  if (!p.ok && !deps.anyway) {
+    // t-093 (M4): a refusal names its rule, lists what is not verified, and says what would happen with a branch name
+    deps.print(`REFUSED (${DEPLOY_RULE}): 不推 ${sha.slice(0, 7)}，它比生产多出的提交里有还没验收的东西：`);
+    for (const r of p.reasons) deps.print(`  - ${r}`);
+    deps.print(`  推的是这个 sha，不是分支名：分支头随时可能前进到还没验收的提交上。要越过，写清理由：ateam release --deploy ${sha.slice(0, 7)} --anyway "<为什么现在必须推>"`);
+    return "refused";
+  }
+  if (!p.ok && deps.anyway) {
+    // t-093: going past is allowed, and leaves a trace: who, why, and exactly what was skipped
+    await deps.note(`越过未验收推生产：${deps.me} 推 ${sha.slice(0, 7)}，跳过 ${p.unverified.join("、") || "（无具体任务）"}。理由：${deps.anyway}`);
+    deps.print(`越过 ${p.unverified.length} 件未验收（已记进日志）：${p.unverified.join("、")}`);
+  }
   const tip = deps.git.remoteTip(setting.branch);
   const already = tip !== null && (tip === sha || sha.startsWith(tip) || tip.startsWith(sha));
   const current = b.live?.deployed_sha ?? null;
