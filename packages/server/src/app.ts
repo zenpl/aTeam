@@ -149,7 +149,7 @@ export function createApp(opts: ServerOptions) {
   const reading = new Map<string, Reduction>();
   const stateFor = async (projectId: string, store: EventStore, at: Date = now()): Promise<State> => {
     let r = reading.get(projectId);
-    if (!r) reading.set(projectId, (r = new Reduction(store)));
+    if (!r) reading.set(projectId, (r = new Reduction(store, human)));
     return r.at(at);
   };
 
@@ -268,7 +268,7 @@ export function createApp(opts: ServerOptions) {
         const role = decodeURIComponent(path.slice("/manual/".length));
         // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
         const known = await registry.get(projectId);
-        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read())) : null;
+        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read(), undefined, human)) : null;
         const text = manualFor(role, packing?.[role]);
         if (text === null) return json(res, 404, { error: "not found", message: `这个项目没有 ${role} 这个角色；在事实 project:roles 里声明它（{"<角色>": ["R5"]}），就有说明书` });
         // t-059: the project's own packing at the end, when the project exists
@@ -308,7 +308,7 @@ export function createApp(opts: ServerOptions) {
           if (caps instanceof Error) return json(res, 400, { error: "capabilities", message: caps.message });
           const pstore = storeFor(owner.id);
           const result = await serialize(async () => {
-            const state = reduce(await pstore.read(), now());
+            const state = reduce(await pstore.read(), now(), human);
             const roles = projectRoles(state);
             const nodes = await registry.nodes(owner.id);
             const mine = nodes.find((n) => n.agent_id === agentId);
@@ -448,7 +448,7 @@ export function createApp(opts: ServerOptions) {
       // t-133: the detail page behind the 线上 row. Same rules as the board and a task page: public unless private.
       if (req.method === "GET" && wantsHtml && (path === "/release" || path === "/release/")) {
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
-        const state = reduce(await store.read());
+        const state = reduce(await store.read(), undefined, human);
         return html(res, 200, renderRelease(board(state, human), state, { sha, human, base }));
       }
 

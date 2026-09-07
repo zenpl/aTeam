@@ -83,7 +83,7 @@ export interface AlerterDeps {
 /** One pass over one project: call out what is due, and leave a note either way. Returns what was sent. */
 export async function runAlerts(project: string, store: EventStore, deps: AlerterDeps): Promise<AlertPayload[]> {
   const now = deps.now?.() ?? new Date();
-  const state = reduce(await store.read(), now);
+  const state = reduce(await store.read(), now, deps.human);
   const hook = webhookState(state);
   if (hook.kind === "unset") return []; // never declared: silence is the declared choice (pm 22:39)
   if (hook.kind === "bad") {

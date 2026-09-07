@@ -119,3 +119,20 @@ describe("t-216 判据 3 · 牌桌看得出「在争议中」，但只出数据�
     expect(b2.disowned).toHaveLength(1);
   });
 });
+
+/**
+ * qa 16:49：注入「human 自己那条也只算一票」时，t-216 的用例一条都没红，红的是 t-196 的——因为我造的那条是
+ * **human 更正 human 自己署名的事件**，`e.actor === signer` 那一支就接住了。**「human 更正别人署名的事件」
+ * 这一路，t-216 自己没有用例盯着**，而那正是它量出问题的那一路。
+ */
+describe("t-216 · human 更正别人署名的事件：一个人就够，且这一路自己有用例盯着", () => {
+  it("human 对 dev 署名的事件发一条 disown ⇒ 当场生效，不进争议", async () => {
+    const w = await world();
+    const mine = await w.put({ kind: "note", actor: "dev", body: "dev 自己写的一条" }, -240);
+    await w.put({ kind: "disown", actor: HUMAN, of: mine.id, reason: "这条是我让它代发的，署名不对" }, -200);
+    const s = await st(w.s);
+    expect(s.disowned.get(mine.id)?.by).toBe(HUMAN);
+    expect(s.disowned.get(mine.id)?.actor).toBe("dev");   // 原来署的是谁，记着
+    expect(s.contested.has(mine.id)).toBe(false);         // 不是「差一个人」
+  });
+});

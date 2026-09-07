@@ -59,21 +59,27 @@ export interface LogMark { event: string | null; delivery: string | null }
 export class Reduction {
   private s: State = empty();
   private mark: LogMark | null = null;
-  constructor(private store: EventStore) {}
+  /**
+   * t-216（qa 16:46 抓到的）：**`human` 是谁，折叠这一侧也要知道**——一条署名更正是「本人／human 发的、当场
+   * 生效」还是「第三方对一条署着 human 的事件的声明、要两个人」，全看这个名字。它有默认值 `"human"`，而这个
+   * 项目的人恰好就叫 human，于是**没接线也看不出来**：qa 把它改成 "boss" 一试，本人自报那条路当场降成一票。
+   * 默认值把一根没接的线藏住了，所以这里不给默认——调用方必须说。
+   */
+  constructor(private store: EventStore, private human = "human") {}
 
   async at(now: Date): Promise<State> {
-    if (!this.store.readSince) return reduce(await this.store.read(), now);
+    if (!this.store.readSince) return reduce(await this.store.read(), now, this.human);
     let got = await this.store.readSince(this.mark);
     // t-196：一批里带着署名更正就整个重建。一条更正可以指向早就折进去的事件，而**已经算进状态的东西是收不
     // 回来的**——增量折叠只会往前加。更正很少见，重建一次的代价换的是「增量与全量给出同一个答案」这条不变式。
     const disowning = got.log.events.some((e) => e.kind === "disown");
     if (disowning) { this.s = empty(); got = await this.store.readSince(null); }
-    advance(this.s, got.log);
+    advance(this.s, got.log, this.human);
     if (got.events !== this.s.ids.size) {
       // Something is in the store that we never folded. Rebuild rather than serve a state that disagrees with the log.
       this.s = empty();
       got = await this.store.readSince(null);
-      advance(this.s, got.log);
+      advance(this.s, got.log, this.human);
     }
     this.mark = got.mark;
     return settle(this.s, now);
@@ -82,9 +88,9 @@ export class Reduction {
 
 /** t-128: the write path's reduction for each store, kept alive exactly as long as the store is. */
 const writing = new WeakMap<EventStore, Reduction>();
-function reductionFor(store: EventStore): Reduction {
+function reductionFor(store: EventStore, human: string): Reduction {
   let r = writing.get(store);
-  if (!r) writing.set(store, (r = new Reduction(store)));
+  if (!r) writing.set(store, (r = new Reduction(store, human)));
   return r;
 }
 
@@ -100,7 +106,7 @@ export async function append(store: EventStore, ne: NewEvent, opts: AppendOption
 export async function appendFrom(store: EventStore, ne: NewEvent, opts: AppendOptions): Promise<Appended> {
   const now = opts.now ?? new Date();
   // t-128: nothing is awaited between here and the append, so the reduction cannot be settled at another moment underneath us.
-  const state = await reductionFor(store).at(now);
+  const state = await reductionFor(store, opts.human).at(now);
   if (ne.from) {
     const seen = state.from.get(ne.from);
     if (seen) return { event: seen, created: false };
