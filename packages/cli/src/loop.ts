@@ -1,4 +1,4 @@
-import { DECLINE_PREFIX, owedSentences, type PullResult } from "@ateam/core";
+import { owedSentences, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -58,10 +58,11 @@ export function report(r: PullResult, me: string, after: string | null): string[
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }
-  // t-147 (pd 05:40): the tail no longer asks for a receipt. Pulling this batch is what records that you read it;
-  // what is still owed is an answer to a card with options, or one line 「不办：<原因>」 for something you will not do.
-  // The 「你欠什么」 summary the server now sends with every pull (`owed`) is t-140's line, not this one.
-  if (r.for_me.length) lines.push(`\n${r.for_me.length} instruction(s) for you. Do them, or say 「${DECLINE_PREFIX}<原因>」 in a note. Cards with options need an answer: ateam decide <id> <option>`);
+  // t-140 (pd 07:34): there is no tail here at all any more. t-147 had replaced the old 「ateam ack」 line with one
+  // that named the two things still owed; pd deleted that too, integrally, because it said the same thing as the
+  // 「你欠什么」 line at sync while counting something else — this batch, not the standing debt — and two same-meaning
+  // numbers from two sources are the shape 07:07 forbids: if they were really the same thing they would be one.
+  // What just arrived is already marked instruction by instruction (⇐ FOR YOU); what is owed is said once, at sync.
   return lines;
 }
 
