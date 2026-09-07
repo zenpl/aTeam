@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -116,5 +116,38 @@ describe("t-145 · watch 的间隔只有一处", () => {
     // every place that teaches the interval reads the same source, so this test is the whole list of them
     const sources = ["../manual/common.md", "../../cli/src/main.ts", "../../cli/src/deaf.ts"];
     for (const p of sources) expect(read(p)).toMatch(/watch_interval|WATCH_INTERVAL/);
+  });
+});
+
+/**
+ * t-141: 「你欠什么」那一段是 pd 06:27 的字。它在 core 里只有一份（REACH_RULE），说明书填进去，不抄。
+ *
+ * 这一件的整个由来就是「一边停一边教」：说明书教「先 ack 再做别的」，而行为已经不这么算了。抄一份到 markdown
+ * 里，下一次口径变的时候两份就会又分开——同一条 t-108/t-145 的规矩，这次守的是一段话不是一个数。
+ */
+describe("t-141 · 说明书里「你欠什么」那一段只有一处出处", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+
+  it("说明书是填 REACH_RULE，不是抄它的字", () => {
+    const src = read("../manual/common.md");
+    expect(src).toContain("{{reach_rule}}");
+    expect(src).not.toContain("沉默不是答案");                 // 一个字都不在 markdown 里
+    const filled = manual("dev")!;
+    expect(filled).toContain(REACH_RULE);
+    expect(filled).not.toContain("{{reach_rule}}");
+  });
+
+  it("三份说明书都不再教已经退役的「先 ack 再做别的」", () => {
+    for (const p of ["../manual/common.md", "../manual/invite.md", "../manual/welcome.md"]) {
+      const text = read(p);
+      expect(text, `${p} 还在教 ack`).not.toMatch(/先\s*ack|必须\s*ack|每一条发给你的指令.*ack/);
+      expect(text, `${p} 还在教发 ack 事件`).not.toContain('"kind":"ack"');
+    }
+  });
+
+  it("代价说在明处：不是「你会被记一笔」，是「发的人会一直以为你还没读到」", () => {
+    expect(REACH_RULE).toContain("沉默不是答案");
+    expect(REACH_RULE).toContain("发的人会一直以为你还没读到");
+    expect(manual("dev")!).toContain("发的人会一直以为你还没读到");
   });
 });

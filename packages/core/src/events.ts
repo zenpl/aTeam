@@ -332,8 +332,12 @@ export const WATCH_INTERVAL = "60s";
 export const REACH_STATES = ["unread", "read", "acted"] as const;
 export type Reach = (typeof REACH_STATES)[number];
 export const REACH_WORDS: Record<Reach, string> = { unread: "还没读到", read: "读到了，还没动", acted: "办了" };
+/**
+ * pd 06:27 给的字，一字未改（t-141 判据 4：措辞归 pd）。说明书那一段直接引它，不要转述；改它要 pd 先改这里。
+ * 注意它只说「读没读到」，而模型有三态——第三态「办了」是这句的后果不是它的内容，我问过 pd，见 t-141 的 note。
+ */
 export const REACH_RULE =
-  "发给你的指令，服务从你的拉取和你自己写下的事件里就知道你读没读到、动没动，不必回执。你欠的只有两件：带选项的卡要一个答案；不打算办的写一句「不办：<原因>」。沉默不是答案——发的人会一直以为你还没读到。";
+  "发给你的指令，服务从你的拉取自己知道你读没读到，不必回执。你欠的只有两件：带选项的卡要一个答案；不打算办的写一句「不办：原因」。沉默不是答案——发的人会一直以为你还没读到。";
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";
 
