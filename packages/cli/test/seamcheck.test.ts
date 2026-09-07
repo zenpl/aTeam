@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * t-037: before `task done`, check in local git that a resolved seam's "later merges earlier" really happened.
  */
@@ -7,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore, append, reduce, board, NO_OUTPUT_PREFIX, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince } from "../src/seamcheck.js";
+import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, gitCommitsSince, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -331,5 +335,52 @@ describe("t-182 · 报的是三方比较的交集，不是两份清单的交集"
   it("名单本来就报得准时，不多说一句", () => {
     const same = seamTruthEvents([{ seam: "s", other: "t-2", reported: ["a.ts", "b.ts"], real: ["a.ts", "b.ts"] }], "t-1");
     expect(same).toEqual({ events: [], notes: [] });
+  });
+});
+
+/**
+ * t-191 判据 1，第二轮：**问的必须是「对方有没有提交」，不是「那些路径上有没有任何人的提交」。**
+ *
+ * qa 12:01 判 fail 的正是这一处。上一版是 `git log --all -- <paths>`：没有作者、没有分支、没有排除我自己，
+ * 于是它答的是「自那一刻起任何人有没有碰过那些路径」。而一条接缝之所以存在，恰恰是因为两边声明了**同一批
+ * 路径**——所以「我自己在那些路径上的提交」不是边角情形，**它就是这个场景的常态**：我一提交它就答「对方写
+ * 代码了」，这条判定几乎永远放行不了。
+ *
+ * 分得出来的不是作者（这个仓库里每个 agent 都以同一个 git author 提交），是**可达性**：`--all --not HEAD`
+ * 是「任何 ref 上、但不在我这条线上」的提交。这几条在一个真 git 仓库上跑，因为要证的正是那几个 git 参数。
+ */
+describe("t-191 · 问的是对方有没有提交，不是任何人", () => {
+  const repo = mkdtempSync(join(tmpdir(), "t191-"));
+  const run = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  beforeAll(() => {
+    run("init", "-q", ".");
+    run("config", "user.email", "t@t"); run("config", "user.name", "t");
+    writeFileSync(join(repo, "shared.ts"), "base\n");
+    run("add", "."); run("commit", "-qm", "base");
+    run("checkout", "-qb", "theirs");
+    writeFileSync(join(repo, "shared.ts"), "theirs\n");
+    run("commit", "-qam", "theirs");                       // 对方分支上的提交
+    run("checkout", "-q", "master");
+    run("checkout", "-qb", "mine");
+    writeFileSync(join(repo, "shared.ts"), "mine\n");
+    run("commit", "-qam", "mine");                         // 我自己的提交，在同一批路径上
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("我自己在那些路径上的提交不算「对方写代码了」", () => {
+    // 站在 mine 上问：shared.ts 上有我的提交，也有对方的——但只有对方的算
+    const seen = gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["shared.ts"]);
+    expect(seen, "对方分支上确实有提交，该答 true").toBe(true);
+    // 把对方那条分支删掉：只剩我自己的提交，就该答 false
+    run("branch", "-qD", "theirs");
+    expect(gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["shared.ts"]), "只剩我自己的提交，却答成「对方写代码了」").toBe(false);
+  });
+
+  it("路径不在任何提交里：答 false（对方确实没碰过它）", () => {
+    expect(gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["nobody-touched.ts"])).toBe(false);
+  });
+
+  it("不是 git 仓库：答 null，接缝照旧挡着", () => {
+    expect(gitCommitsSince(mkdtempSync(join(tmpdir(), "notgit-")))("1970-01-01T00:00:00Z", ["x.ts"])).toBeNull();
   });
 });
