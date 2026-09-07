@@ -128,13 +128,26 @@ describe("t-151 · pd 07:49 的三条", () => {
     expect(err.message).toContain("--shows");                            // 出路
   });
 
-  it("四类都算：页面、页面的词、说明书、CLI 给人看的输出；测试文件不算", async () => {
+  it("t-170 之后按改动分三档：改字的拒绝，改内部符号的放过，说不清的算不准", async () => {
     const w = await world();
-    for (const t of ["packages/server/src/html.ts", "packages/server/src/i18n.ts", "packages/core/manual/common.md", "packages/cli/src/format.ts", "packages/server/src/html.ts#live"]) {
-      expect(touchesHumanVisible(t), t).toBe(true);
+    // ① 只装文本的地方：改它就是改人看到的字
+    for (const t of ["packages/server/src/i18n.ts", "packages/server/src/i18n.ts#releaseCanGo", "packages/core/manual/common.md"]) {
+      expect(touchesHumanVisible(t), t).toBe("human_visible");
+    }
+    // ② core 里那些 key 本身
+    for (const t of ["packages/core/src/events.ts#BATCH_LINES", "packages/core/src/board.ts#missingCard", "packages/core/src/events.ts#REACH_WORDS"]) {
+      expect(touchesHumanVisible(t), t).toBe("human_visible");
+    }
+    // ③ 人可见文件里的内部符号：不算——这正是 t-165 那次被误伤的形状
+    for (const t of ["packages/server/src/html.ts#justDeferred", "packages/cli/src/format.ts#nobodyElse2"]) {
+      expect(touchesHumanVisible(t), t).toBe("internal");
+    }
+    // ③ 只给了文件名、没说改在哪儿：算不准，只提醒不拒绝
+    for (const t of ["packages/server/src/html.ts", "packages/cli/src/format.ts"]) {
+      expect(touchesHumanVisible(t), t).toBe("unsure");
     }
     for (const t of ["packages/server/test/html.test.ts", "packages/core/src/reduce.ts", "packages/cli/src/loop.ts", "packages/core/test/replay.test.ts"]) {
-      expect(touchesHumanVisible(t), t).toBe(false);
+      expect(touchesHumanVisible(t), t).toBe("internal");
     }
     // 改一个用例不改变任何人看到的东西：可以说这句
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches: ["packages/server/test/html.test.ts"] }, -10);
@@ -162,5 +175,59 @@ describe("t-151 · pd 07:49 的三条", () => {
       const src = readFileSync(new URL(p, import.meta.url), "utf8");
       expect(src, `${p} 里替人填了这句`).not.toMatch(/no_human_impact\s*[:=]\s*true/);
     }
+  });
+});
+
+/**
+ * t-170 判据 5（我提的，pd 08:23 记了一笔）：**修误报的这一版，要把原来真被拦下的那几种形状逐条重跑**，
+ * 每条的出路仍然成立——不许为了修误报而把真该拦的放过去。qa 08:20 在仓库表面跑过九种形状（探针 p151fp.mjs），
+ * 下面照它那份清单重跑：四种纯内部的仍然过，真改字的仍然被拦，而它指出的那一种真误报（t-165 的形状）现在过。
+ */
+describe("t-170 · 逐条重跑 qa 08:20 那份清单", () => {
+  const done = async (w: Awaited<ReturnType<typeof world>>, touches: string[]) =>
+    w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches }, -10)
+      .then(() => "过" as const)
+      .catch((e) => (e as Rejected).message);
+
+  it("四种纯内部形状：修前修后都过", async () => {
+    for (const touches of [
+      ["packages/core/src/rules.ts"],
+      ["packages/server/src/app.ts", "packages/core/src/reduce.ts"],
+      ["packages/server/test/html.test.ts"],
+      ["packages/core/test/replay.test.ts"],
+    ]) {
+      expect(await done(await world(), touches), touches.join("、")).toBe("过");
+    }
+  });
+
+  it("真改了人看到的字：仍然被拦，而且指得出是哪一处", async () => {
+    for (const [touches, hit] of [
+      [["packages/server/src/i18n.ts#releaseCanGo"], "packages/server/src/i18n.ts#releaseCanGo"],
+      [["packages/core/manual/common.md"], "packages/core/manual/common.md"],
+      [["packages/core/src/events.ts#BATCH_LINES"], "packages/core/src/events.ts#BATCH_LINES"],
+      [["packages/core/src/reduce.ts", "packages/server/src/i18n.ts"], "packages/server/src/i18n.ts"],
+    ] as const) {
+      const r = await done(await world(), [...touches]);
+      expect(r, touches.join("、")).not.toBe("过");
+      expect(r).toContain(hit);                    // 判据 2：列出它认定的那一处，人才能反驳
+      expect(r).toContain("--shows");              // 出路仍然成立
+      expect(r).toContain("不对就改触点");           // 反驳的办法也说了
+    }
+  });
+
+  it("qa 指出的那一种真误报（t-165 的形状）现在过：人可见文件里的内部符号", async () => {
+    expect(await done(await world(), ["packages/server/src/html.ts#justDeferred"])).toBe("过");
+  });
+
+  it("判据 3：只给了文件名、算不准的那一档不拒绝——别人装上我们的闸，最坏是被提醒", async () => {
+    expect(await done(await world(), ["packages/server/src/html.ts"])).toBe("过");
+    expect(await done(await world(), ["packages/cli/src/format.ts"])).toBe("过");
+  });
+
+  it("放过的那两档没有把真该拦的一起放过去：同一次 done 里只要有一处算得准，就仍然拦", async () => {
+    const r = await done(await world(), ["packages/server/src/html.ts", "packages/server/src/html.ts#justDeferred", "packages/server/src/i18n.ts#none"]);
+    expect(r).not.toBe("过");
+    expect(r).toContain("packages/server/src/i18n.ts#none");
+    expect(r).not.toContain("justDeferred");        // 只列算得准的那一处，不把放过的也摆出来
   });
 });

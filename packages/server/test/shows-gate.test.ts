@@ -77,13 +77,20 @@ describe("t-151 · pd 07:49：碰了人看得到的东西却说没变，接口�
   });
   afterAll(() => new Promise<void>((r) => app.close(() => r())));
 
-  it("409，列出碰到的那几处，并给出出路", async () => {
+  it("409，列出它认定的那一处，并给出出路与反驳的办法", async () => {
     const r = await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234", no_human_impact: true });
     expect(r.status).toBe(409);
     expect(r.body.rule).toBe("done");
     expect(r.body.message).toContain("packages/server/src/i18n.ts");
     expect(r.body.message).toContain(NO_HUMAN_IMPACT);
     expect(r.body.message).toContain("--shows");
+    expect(r.body.message).toContain("不对就改触点");   // t-170 判据 2：人要能反驳一个看得见的判断
+  });
+
+  it("t-170：人可见文件里的内部符号不再被拦（t-165 那次的形状），接口上也过", async () => {
+    await post("pm", { kind: "task", op: "create", task: "t-10", title: "删一段死代码", criteria: ["能用"] });
+    await post("dev", { kind: "task", op: "claim", task: "t-10", touches: ["packages/server/src/html.ts#justDeferred"] });
+    expect((await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true })).status).toBe(201);
   });
 
   it("补一句人能看到什么就过", async () => {

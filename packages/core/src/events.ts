@@ -244,27 +244,44 @@ export const SHOWS_MAX_CHARS = 120;
 export const NO_HUMAN_IMPACT = "不改变人看到的东西";
 
 /**
- * t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——闸当场拦下，并把碰到的逐个列出来。
+ * t-170 (pd 08:22)：**「碰了人可见的东西」按改动算，不按文件算。**
  *
- * 这不是不信任写下它的人，是因为**这句话最可能出错的方式不是撒谎，是没注意**：改 i18n 里一个词、改说明书一行、
- * 改卡上的一句，都是「顺手」，而顺手正是人不会重新想一遍「这对人意味着什么」的时刻。
+ * t-151 第一版按文件前缀判，当天就误伤了一次真实的活：t-165 删的是 html.ts 里一段死代码（`#justDeferred`），
+ * 人看到的东西一个字没变，闸却拦下它，逼作者写一句内容是「什么都没变」的 shows。那句 shows 长得像「说得出人
+ * 能看到什么」，其实是第二类的合法版本——**这道闸本来就是为了把这两类分开的，文件级判定反而在往日志里掺第三类。**
  *
- * 名单是声明的，会漏；漏了就是一次没被拦下的顺手改。所以它按**出处**列，不按猜测：页面与它的词、说明书、
- * 以及 core 里那几处专门产生给人看的话的符号（t-154 之后它们集中在 READING_SAYINGS/sayReading 一带）。
- * 测试文件不在名单里——改一个用例不改变任何人看到的东西。
+ * 按 pd 的口径，只有三件事算人可见：动了那些 key、动了它们的文本、动了哪个 key 在哪显示。所以判定分三档：
+ *
+ * ① **只装文本的地方**（`WORDS_FILES`）——i18n 与说明书里没有内部符号可言，改它就是改人看到的字。拒绝。
+ * ② **core 里的 key 本身**（`KEY_SYMBOLS`）——触点写成 `路径#符号` 且符号是其中之一。拒绝。
+ * ③ **其余**：人可见文件里的内部符号（`html.ts#justDeferred` 这种）不算；只给了文件名、没说改在哪儿的，
+ *    **算不准**——那时只提醒，不拒绝（判据 3：别人装上我们的闸，最坏是被提醒，不该被我们的纪律挡住干活）。
+ *
+ * 名单仍然会漏，而且这一版比上一版更依赖它。t-143/t-144 把人可见的每句话收进唯一 key 之后，②那一档就该从
+ * 那张表算出来，而不是在这里数符号名。在那之前，漏掉一个 key 的代价是一次没被拦下的顺手改。
  */
-export const HUMAN_VISIBLE_TOUCHES = [
-  "packages/server/src/html.ts",
-  "packages/server/src/i18n.ts",
-  "packages/core/manual/",
-  "packages/cli/src/format.ts",
+export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual/"] as const;
+/** t-170: core 里装着给人看的整句话的那些符号。动它们就是动人看到的字。 */
+export const KEY_SYMBOLS = [
+  "BATCH_LINES", "REACH_WORDS", "REACH_RULE", "NO_HUMAN_IMPACT", "READING_SAYINGS", "sayReading",
+  "missingCard", "lightSeamLine", "SEAM_UNDECIDED", "SEAM_SAME_FILE", "CONTACT_ASK", "CONTACT_OPTIONS",
+  "STAND_IN_ASK_TITLE", "STAND_IN_OPTIONS", "MIGRATION_ASK_TITLE", "FAIL_NOTICE", "VERIFY_ASK",
+  "overdueByPresence", "honestyLine", "alsoHere", "nobodyElse",
 ] as const;
+/** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
+export const RENDERING_FILES = ["packages/server/src/html.ts", "packages/cli/src/format.ts"] as const;
 
-/** t-151: 这个触点是不是「人看得到的东西」。`路径#符号` 按路径判；测试文件一律不算。 */
-export function touchesHumanVisible(touch: string): boolean {
+/** t-170: 一个触点算不算「碰了人可见的东西」，以及算不算得准。 */
+export type TouchVerdict = "human_visible" | "internal" | "unsure";
+
+export function touchesHumanVisible(touch: string): TouchVerdict {
   const path = touch.split("#")[0].trim();
-  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return false;
-  return HUMAN_VISIBLE_TOUCHES.some((x) => path === x || path.startsWith(x));
+  const symbol = touch.includes("#") ? touch.slice(touch.indexOf("#") + 1).trim() : "";
+  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return "internal";   // 改一个用例不改变任何人看到的东西
+  if (WORDS_FILES.some((x) => path === x || path.startsWith(x))) return "human_visible";        // ① 只装文本的地方
+  if (symbol && KEY_SYMBOLS.includes(symbol as (typeof KEY_SYMBOLS)[number])) return "human_visible"; // ② key 本身
+  if (RENDERING_FILES.some((x) => path === x)) return symbol ? "internal" : "unsure";           // ③ 内部符号 / 说不清
+  return "internal";
 }
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];

@@ -461,9 +461,14 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (e.no_human_impact) {
         // t-105 的口径照旧：done 带了 touches 就是事实、取代 claim 时的声明；没带才用声明。用声明去判一件已经
         // 量过的事，会拿一个当事人自己更正过的名单去拦他。
-        const seen = [...new Set((e.touches ?? t.touches).filter(touchesHumanVisible))].sort();
+        //
+        // t-170 (pd 08:22)：按改动算，不按文件算。拒绝只发生在**算得准**的那两档——改了只装文本的地方，或改了
+        // core 里那些 key 本身；两者都指得出是哪一处，人可以据此反驳一个具体的判断。算不准的那一档（只给了
+        // 文件名、没说改在哪儿）不拒绝，因为一个看不见的判断不该挡住别人干活（判据 3）。
+        const touches = [...new Set(e.touches ?? t.touches)];
+        const seen = touches.filter((x) => touchesHumanVisible(x) === "human_visible").sort();
         if (seen.length)
-          throw new Rejected("done", `这件碰了人看得到的东西：${seen.join("、")}——所以不能说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只改了内部（注释、类型），也用 --shows 说清那一句`);
+          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只改了内部（注释、类型），也用 --shows 说清那一句。判断就来自上面列出的那几处触点，不对就改触点`);
       }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
       // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it
