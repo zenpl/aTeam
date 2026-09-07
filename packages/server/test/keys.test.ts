@@ -175,14 +175,24 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
   it("qa 01:12：照 pd 的提示粘整条地址也进得去，不只是粘 k= 后面那一段", async () => {
     const p = await fresh("粘地址项目");
     const enter = (pasted: string) => fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: pasted }), redirect: "manual" });
+    const url = new URL(p.ownerUrl);
+    const reordered = `${url.origin}${url.pathname}?ask=1&k=${p.ownerKey}`;   // 参数换了顺序，还多带一个
     for (const pasted of [
       p.ownerUrl,                        // 整条地址，人手上真正有的那样东西
       `  ${p.ownerUrl}  `,               // 复制时带上的空白
       `${p.ownerUrl}#hash`,              // 有的客户端会补一个锚点
+      `${p.ownerUrl}/`,                  // 末尾多一个斜杠
+      `${p.ownerUrl}。`,                 // 从一句话里连标点一起复制
+      reordered,                         // query 参数顺序不同
       p.ownerKey,                        // 只粘 k= 后面那一段
       ` ${p.ownerKey}\n`,
+      `${p.ownerKey}/`,
     ]) expect((await enter(pasted)).status, JSON.stringify(pasted)).toBe(303);
     expect((await enter("这不是钥匙")).status).toBe(401);              // 乱粘仍然被挡，并且是「token 不对」那一页
+    expect((await enter(`${url.origin}${url.pathname}`)).status).toBe(401);   // 一条不带钥匙的地址：也认不出
+    // 判据 4：认不出的那一页不回显粘进来的东西，更不回显钥匙
+    const wrong = await (await enter(`${p.ownerUrl}zzz`)).text();
+    expect(wrong).not.toContain(p.ownerKey);
   });
 
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {

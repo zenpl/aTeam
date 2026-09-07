@@ -18,14 +18,20 @@ export function keyFromPaste(pasted: string | null): string | null {
   if (pasted === null) return null;
   const t = pasted.trim();
   if (!t) return "";
+  // A whole address: take k= (or token=) out of its query, wherever in the order it sits, and drop any #fragment.
   const q = t.indexOf("?") >= 0 ? t.slice(t.indexOf("?") + 1) : t.includes("=") ? t : "";
   if (q) {
     const params = new URLSearchParams(q.replace(/#.*$/, ""));
     const found = params.get("k") ?? params.get("token");
-    if (found?.trim()) return found.trim();
+    if (found?.trim()) return clean(found);
   }
-  return t;
+  return clean(t);
 }
+/**
+ * A key is base64url with a short prefix — only letters, digits, `_` and `-`. So anything trailing that cannot be part
+ * of one (a slash, a space, the full stop of the sentence it was copied out of) was never part of it.
+ */
+function clean(k: string): string { return k.trim().replace(/[^A-Za-z0-9_-]+$/, ""); }
 
 const COOKIE = "ateam_token";
 /** How long a board cookie lasts. Recorded in the entry-form fact (t-103) so a lost address can be reissued from the log. */
