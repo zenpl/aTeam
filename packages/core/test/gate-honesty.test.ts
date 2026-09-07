@@ -178,7 +178,11 @@ describe("t-170 判据 10 · 认不出的那一类，闸自己说出来", () => 
     expect(h.fix).toMatchObject({ task: "t-178", in_production: false });
     expect(h.line).toContain("认不出「哪句话出现在哪儿变了」");
     expect(h.line).toContain("t-178");
-    expect(h.line).toContain("shows");   // 说清它认得的是哪一类
+    // pd 09:02：说完「我看不见」要说这时候谁来看——一句只说自己瞎的实话会让读的人停在原地
+    expect(h.line).toContain("请作者自己在判据里说出人会看到什么变化");
+    // pd 09:02：给人读的说法在前，字段名在括号里给要动代码的人
+    expect(h.line).toContain("「这件干了什么」（shows）");
+    expect(h.line).toContain("任务标题（title）");
   });
 
   it("只在仓库上验过还不算：它说的是生产上的行为", async () => {

@@ -460,9 +460,13 @@ export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
  *
  * 与 t-149 同一个机制：这句话由 `project:gate.shows.fix` 指的那件任务的状态决定，那件在生产上验过之后它自己
  * 消失，不用谁去关掉它。
+ *
+ * 措辞是 pd 09:02 定稿的，两处是它改的、理由值得留着：① 末尾那句出路——**一句只说「我看不见」的实话会让读的人
+ * 停在原地**；我们对拒绝话立的规矩是「说完不行要说谁行」，闸声明自己瞎的时候同样适用。② 「这件干了什么」「任务
+ * 标题」是给人读的说法，`shows` / `title` 是我们内部的字段名，放括号里给要动代码的人。
  */
 export const SHOWS_GATE_BLIND = (fix: string) =>
-  `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」——改了在途分组该印 shows 还是 title 这种，它看不见。修法在 ${fix}。`;
+  `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」：比如在途那几行改成印「这件干了什么」（shows）还是印任务标题（title），它看不见。这一类改动请作者自己在判据里说出人会看到什么变化。修法在 ${fix}。`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
