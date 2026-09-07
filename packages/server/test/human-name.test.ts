@@ -35,7 +35,21 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
 
 describe("t-216 · 人不叫 human 的时候，那条线也接着", () => {
-  it("**本人自报当场生效**——这一条在没接线的版本上会被降成一票", async () => {
+  /**
+   * **这一条才是真正盯住那根线的。** 我第一版写的四条（本人自报、两角色、boss 自己那条）没有一条需要折叠
+   * 知道人叫什么——本人自报走的是 `e.actor === signer`，与名字无关。手工把 app.ts 那处改回默认名，四条全绿。
+   * 只有「**人去更正别人署名的事件**」这一路非要那个名字不可，而那正是 qa 16:49 探针用的形状。
+   */
+  it("boss 更正 **dev 署名的** 事件：一个人就够——这一条在没接线的版本上会被降成一票", async () => {
+    const note = await post("dev", { kind: "note", body: "dev 写的，署名要被人更正" });
+    const d = await post(BOSS, { kind: "disown", of: note.body.id, reason: "这条是我让它代发的，署名不对" });
+    expect(d.status).toBe(201);
+    const b = await board();
+    expect(b.disowned.some((x) => x.of === note.body.id), "人本人的更正没有当场生效：折叠那一侧不知道人叫什么").toBe(true);
+    expect(b.contested.some((x) => x.of === note.body.id)).toBe(false);
+  });
+
+  it("**本人自报当场生效**——这一条与人叫什么无关，写在这儿是为了说明它盯不住那根线", async () => {
     const note = await post("dev", { kind: "note", body: "dev 自己写的" });
     const d = await post("dev", { kind: "disown", of: note.body.id, reason: "手滑落的，不是我要说的话" });
     expect(d.status).toBe(201);
