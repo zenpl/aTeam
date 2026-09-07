@@ -114,3 +114,34 @@ describe("t-122 · 日志里有几张卡，页面上就有几张", () => {
     expect(await page()).toContain("你不在时怎么找你");
   });
 });
+
+describe("t-134 · 服务之外没有人能写「送到了」", () => {
+  it("节点写 project:alert.reached 被 409 挡下；牌桌上那句话一点没变", async () => {
+    const { project, key } = await start("伪造可达性");
+    const address = "https://hooks.example/team";
+    const alert = async () => ((await (await api(project, "/board?full=1", key)).json()) as { alert?: { status: string; line: string } }).alert!;
+    expect((await api(project, "/events", key, { method: "POST", body: JSON.stringify({ kind: "reading", surface: "project", key: "alert.webhook", value: address }) })).status).toBe(201);
+    const before = await alert();
+    expect(before.status).toBe("unproven");
+
+    const r = await api(project, "/events", key, { method: "POST", body: JSON.stringify({ kind: "reading", surface: "project", key: "alert.reached", value: address, method: "我说它通了" }) });
+    expect(r.status).toBe(409);
+    const err = (await r.json()) as { rule: string; message: string };
+    expect(err.rule).toBe("alert.reached");
+    expect(err.message).toContain("只由服务自己写");
+
+    const after = await alert();
+    expect(after).toEqual(before);                       // 一个字都没动
+    expect(after.line).not.toContain("会发到这里");
+  });
+
+  it("冒充服务身份也不行：那是另一道门，两道都关着", async () => {
+    const { project, key } = await start("冒充服务");
+    const r = await fetch(`${base}/p/${project}/events`, {
+      method: "POST", headers: { authorization: `Bearer ${key}`, "x-actor": "ateam", "content-type": "application/json" },
+      body: JSON.stringify({ kind: "reading", surface: "project", key: "alert.reached", value: "https://hooks.example/team" }),
+    });
+    expect(r.status).toBe(403);
+  });
+});
+

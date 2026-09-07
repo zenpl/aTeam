@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
@@ -14,7 +14,8 @@ const HUMAN = "human";
 const soon = () => new Date(Date.now() + 3_600_000).toISOString();
 
 function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
-  const app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234", ...opts });
+  const store = opts.store ?? new MemoryStore();
+  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", ...opts });
   let base = "";
   const post = async (actor: string, body: unknown) => {
     const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -31,7 +32,9 @@ function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
     fetch(`${base}${path}`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(fields).toString() });
   const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`; };
   const stop = () => new Promise<void>((r) => app.close(() => r()));
-  return { get base() { return base; }, post, api, page, authedPage, cookie, form, start, stop };
+  // t-134: some facts are the service's own and no key may speak as it, so a test that needs one writes it the way the
+  // service does — from inside, not over HTTP.
+  return { get base() { return base; }, store, post, api, page, authedPage, cookie, form, start, stop };
 }
 
 /** Visible text above the fold (before the 其余 toggle), tags and style stripped. */
@@ -1536,7 +1539,9 @@ describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配�
       expect(l).not.toContain("https://hooks.example/team");
 
       // 验过能送到: only a real delivery moves it, and then the sentence changes
-      await un.post("pm", { kind: "reading", surface: "project", key: REACHED, value: "https://hooks.example/team", method: "外呼 全队停摆 真的送到了（HTTP 200）" });
+      // t-134: only the service's own record counts, and no key may speak as the service — so this is written the way
+      // alerts.ts writes it, from inside, after a call that actually landed.
+      await append(un.store, { kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: REACHED, value: "https://hooks.example/team", method: "外呼 全队停摆 真的送到了（HTTP 200）" }, { human: HUMAN });
       expect(line(await un.authedPage())).toMatch(/^你不在时会发到这里，最近一次成功是 .+。$/);
 
       // a different address is not covered by that proof: back to 还没真发成功过

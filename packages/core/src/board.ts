@@ -358,12 +358,21 @@ function ago(at: string, now: Date): string {
 
 /** t-119: the last time a call actually got through, and to which address. Nothing else counts as proof. */
 export function reachedProof(s: State): { value: string; at: string } | null {
-  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_REACHED_KEY}`);
-  const r = id ? s.readings.get(id) : undefined;
-  if (!r?.valid || r.expired) return null;
-  const v = r.reading.value;
-  return typeof v === "string" && v.trim() ? { value: v.trim(), at: r.reading.measured_at ?? r.reading.at } : null;
+  // t-134: the proof is only worth anything if the one who wrote it could not have been wrong or lying about it.
+  // Whether an outbound call reached the human is something only the service that made it knows, so only the service's
+  // own record of it counts. Reading the latest one *by the service* rather than the latest one full stop matters in
+  // both directions: a node cannot manufacture a proof, and it cannot destroy one either by writing over it.
+  let proof: Reading | undefined;
+  for (const rs of s.readings.values()) {
+    if (rs.reading.actor !== SERVICE_ACTOR || readingKeyOf(rs.reading) !== `${PROJECT_SURFACE}:${ALERT_REACHED_KEY}`) continue;
+    if (rs.invalidated_by || rs.expired) continue;   // something it depended on was rewritten, or it is too old to mean anything
+    proof = rs.reading;                              // readings are held in log order: the last one standing is the newest
+  }
+  const v = proof?.value;
+  return typeof v === "string" && v.trim() ? { value: v.trim(), at: proof!.measured_at ?? proof!.at } : null;
 }
+
+const readingKeyOf = (r: Reading) => `${r.surface}:${r.key}`;
 
 export function alertContact(s: State, now: Date = new Date()): Board["alert"] {
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);

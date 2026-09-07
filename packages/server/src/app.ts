@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -116,11 +116,33 @@ export function createApp(opts: ServerOptions) {
     return p;
   };
 
+  /**
+   * t-121 (P0), finished by t-128: every request rebuilt the world from scratch — read the whole log out of sqlite,
+   * JSON.parse every row, reduce it, derive the board. All of that is synchronous, so it does not merely make one
+   * request slow, it stops the instance serving anyone else while it runs.
+   *
+   * t-121 answered that with a cache keyed on the log's last event: a burst of callers shared one reduction, but the
+   * next append threw it away and the next caller paid for the whole log again. t-128 replaces the cache with a
+   * reduction that is never thrown away: it asks the store what has landed since it last looked and folds only that,
+   * then settles it at the moment being asked about. There is one per project, it belongs to the read path, and
+   * nothing invalidates it — it cannot be stale, because catching up is the first thing every answer does.
+   *
+   * It is settled in place, so it must not be handed to anyone who holds it across an await while another caller could
+   * settle it at a different moment. The write path therefore keeps its own (in core's `appendFrom`); the two share the
+   * algorithm, not the state. A store too old to answer `readSince` falls back to reducing the whole log, as before.
+   */
+  const reading = new Map<string, Reduction>();
+  const stateFor = async (projectId: string, store: EventStore, at: Date = now()): Promise<State> => {
+    let r = reading.get(projectId);
+    if (!r) reading.set(projectId, (r = new Reduction(store)));
+    return r.at(at);
+  };
+
   // A role that has gone quiet with work in its hands: a card for the human, at most one per role per absence (pm 14:15).
   const remindFor = async (projectId: string, store: EventStore): Promise<unknown[]> => {
     const events = await serialize(async () => {
       const at = now();
-      const state = reduce(await store.read(), at);
+      const state = await stateFor(projectId, store, at);
       const out: unknown[] = [];
       const b = board(state, human, at);
       for (const role of projectRoles(state)) {
@@ -362,7 +384,7 @@ export function createApp(opts: ServerOptions) {
         }
         if (!boardPublic && !isAdmin && !isOwner) return html(res, 401, unauthorizedPage());
         await remind();
-        const state = reduce(await store.read(), now());
+        const state = await stateFor(projectId, store);
         const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
@@ -379,7 +401,7 @@ export function createApp(opts: ServerOptions) {
       // t-065: one task in full, same rules as the board (public unless the board is private).
       if (req.method === "GET" && wantsHtml && path.startsWith("/task/")) {
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
-        const state = reduce(await store.read());
+        const state = await stateFor(projectId, store);
         const out = renderTask(board(state, human), state, decodeURIComponent(path.slice("/task/".length)), { sha, human, base });
         return out ? html(res, 200, out) : html(res, 404, notFoundPage(base));
       }
@@ -396,15 +418,15 @@ export function createApp(opts: ServerOptions) {
           // when the instruction names a task, the note hangs on that task too. Several ids ack together (t-043).
           const ids = form.getAll("id").filter(Boolean), of = ids[0] ?? "", why = (form.get("note") ?? "").trim();
           const events = await serialize(async () => {
-            const st = reduce(await store.read(), now()).instructions.get(of);
+            const st = (await stateFor(projectId, store)).instructions.get(of);
             const out = [await append(store, { kind: "ack", actor: human, of }, { human, now: real() })];
             for (const more of ids.slice(1)) {
-              const fresh = reduce(await store.read(), now()).instructions.get(more);
+              const fresh = (await stateFor(projectId, store)).instructions.get(more);
               if (fresh && !fresh.acked_at) out.push(await append(store, { kind: "ack", actor: human, of: more }, { human, now: real() }));
             }
             if (why) {
               const task = /\bt-\d+\b/.exec(st?.instruction.body ?? "")?.[0];
-              const known = task && reduce(await store.read(), now()).tasks.has(task) ? task : undefined;
+              const known = task && (await stateFor(projectId, store)).tasks.has(task) ? task : undefined;
               out.push(await append(store, { kind: "note", actor: human, body: `${DEFER_PREFIX}${why}`, refs: [of], task: known }, { human, now: real() }));
             }
             return out;
@@ -424,7 +446,7 @@ export function createApp(opts: ServerOptions) {
         if (then === "/decide") {
           // One click: ack the instruction and record the decision, in one request.
           const of = form.get("id") ?? "", option = form.get("option") ?? "";
-          const st = reduce(await store.read(), now()).instructions.get(of);
+          const st = (await stateFor(projectId, store)).instructions.get(of);
           if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
           const i = st.instruction;
           if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
@@ -435,7 +457,7 @@ export function createApp(opts: ServerOptions) {
           const contact = filling ? (form.get("value") ?? "").trim() : "";
           if (filling && !contact) return { status: 400, body: { error: "value", message: `填一个 https:// 开头的 webhook 地址；不想填就选「${i.options?.[1] ?? CONTACT_SKIP}」` } };
           const [note, ...followed] = await serialize(async () => {
-            const fresh = reduce(await store.read(), now()).instructions.get(of)!;
+            const fresh = (await stateFor(projectId, store)).instructions.get(of)!;
             if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human, now: real() })]);
             const n = await append(store, { kind: "note", actor: human, body: `decision: ${i.body} -> ${option}${contact ? `：${contact}` : ""}`, decision: true, decides: { of, option }, refs: [of] }, { human, now: real() });
             const out = [n, ...(await runFollowUps(store, n, human, real()))]; // t-055: the human's 过/不过 becomes a verify, and a fail notice
@@ -449,7 +471,7 @@ export function createApp(opts: ServerOptions) {
           // t-069: the address changed from the grey line under 线上: the fact alone, in the human's name.
           const key = form.get("key") ?? "", value = (form.get("value") ?? "").trim();
           // The feature is fact-gated (pm 22:39): with it off there is no entrance, so no route either.
-          if (!contactEnabled(board(reduce(await store.read(), now()), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
+          if (!contactEnabled(board(await stateFor(projectId, store), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
           if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
           if (!/^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个 https:// 开头的 webhook 地址" } };
           const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
@@ -517,7 +539,7 @@ export function createApp(opts: ServerOptions) {
 
       if (req.method === "GET" && path === "/board") {
         await remind();
-        const b = board(reduce(await store.read(), now()), human, now());
+        const b = board(await stateFor(projectId, store), human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
         // t-070/t-080 (pm 22:45): the slim board goes to a client that says it knows it (X-Ateam-Client: <shape it speaks>);
@@ -532,7 +554,7 @@ export function createApp(opts: ServerOptions) {
       const taskPath = /^\/task\/([^/]+)$/.exec(path);
       if (req.method === "GET" && taskPath) {
         const id = decodeURIComponent(taskPath[1]);
-        const state = reduce(await store.read(), now());
+        const state = await stateFor(projectId, store);
         const b = board(state, human, now());
         const task = Object.values(b.tasks).flat().find((t) => t.id === id);
         if (!task) return json(res, 404, { error: "not found", message: `日志里没有任务 ${id}` });
