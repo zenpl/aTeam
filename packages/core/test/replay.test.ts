@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, DEFAULT_LINES, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board, until } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -553,7 +553,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(90));
+    c.tick(min(65));   // t-190：过 ack_by 五分钟——在 DEFAULT_LATE_MS 之内，所以这是正常落下，不是「我们没在跑」
     await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());      // t-181：默认要先真的落下，才谈得上「被推翻」
     expect((await at(store, c)).instructions[0].chosen?.by).toBe("default");
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
@@ -2842,5 +2842,124 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
     // A 的验收放行了，而 B 要合的是 A **此刻**那一轮：接缝仍然指着 A 的新证据，不是第一轮那个 sha
     expect(boardTask(b, "A")!.evidence).toContain("bbbbbbb");
     expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
+  });
+});
+
+/**
+ * t-190（pd 10:40）：**默认只有真落成事件才算数；没落成的一律回待答，不得追认。**
+ *
+ * t-181 修的是「从此以后」那一半。存量这一半是它漏的：qa 10:39 量出三张卡已过期、decides 事件 0 条，而牌桌
+ * 都在说「已按默认 X 执行」——最久的一张这样说了 6 小时 41 分。**那三张不能补落**：默认之所以正当，前提是它
+ * 真的发生、落成事件、人能翻案；这三件一件都没发生，所以那不是人的选择，是我们的机制没执行。追认等于替他拍板。
+ */
+describe("t-190 · 默认只有真落成事件才算数", () => {
+  const ask = (store: MemoryStore, c: ReturnType<typeof clock>) =>
+    emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+  const sweep = async (store: MemoryStore, c: ReturnType<typeof clock>) =>
+    runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 4 正例：到期不久就落了事件的，仍然算已决", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(61));                                    // 过期一分钟：机制照常在跑
+    const landed = await sweep(store, c);
+    expect(landed).toHaveLength(1);
+    expect((landed[0] as { body: string }).body).toBe(defaultApplied("B"));
+    const b = await at(store, c);
+    // t-189：投影带上 `note` 之后，这一条顺带钉住了「已决」的凭据——**那条事件的 id**，
+    // 而不只是「by 是 default」。已决与「该决而没决」的差别就在它有没有。
+    expect(b.instructions[0].chosen).toEqual({ option: "B", by: "default", at: landed[0].at, note: landed[0].id });
+    expect(b.instructions[0].says_default!.state).toBe("applied");
+    expect(b.needs_human).toHaveLength(0);
+    expect(q.default).toBe("B");
+  });
+
+  it("判据 1、4 反例：到期很久都没落事件的，不补落——记一笔「我们没有执行」，卡回到等人答", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));         // 机制当时没在跑
+    const out = await sweep(store, c);
+    expect(out).toHaveLength(1);
+    expect((out[0] as { body: string }).body).toBe(defaultMissed("B"));
+    expect((out[0] as { decides?: unknown }).decides).toBeUndefined();   // **一个字都没替他决定**
+    const b = await at(store, c);
+    expect(b.instructions[0].chosen).toBeUndefined();                    // 没有追认
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);              // 回到等他答
+    expect(b.instructions[0].says_default).toEqual({ state: "missed", line: DEFAULT_LINES.missed("B") });
+  });
+
+  it("判据 2：期限从人再看到那一刻重算——人没露过面就还没开始算，这张卡不算晚", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    await sweep(store, c);
+    c.tick(min(600));                                   // 十小时过去，人一直没来
+    let b = await at(store, c);
+    expect(b.overdue).toHaveLength(0);                  // 他没看到的时间不算进他的期限
+    expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
+    // 人来了：期限从这一刻起按原来那张卡给他的时长（60 分钟）重新算
+    const seen = c.now().toISOString();
+    await pull(store, HUMAN, null, c.now());
+    c.tick(min(30));
+    expect((await at(store, c)).overdue).toHaveLength(0);              // 还在期限内
+    const st = reduce(await store.read(), c.now()).instructions.get(q.id)!;
+    expect(st.ack_by_again).toBe(new Date(Date.parse(seen) + min(60)).toISOString());
+    c.tick(min(31));
+    expect((await at(store, c)).overdue.map((o) => o.instruction)).toEqual([q.id]);   // 这才叫晚
+  });
+
+  it("判据 1：重算后的期限再到期，才轮到默认真的生效——而且它落的是事件，不是追认", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    await sweep(store, c);
+    await pull(store, HUMAN, null, c.now());            // 人看到了，期限从这一刻算
+    c.tick(min(61));
+    const landed = await sweep(store, c);
+    expect(landed).toHaveLength(1);
+    expect((landed[0] as { body: string }).body).toBe(defaultApplied("B"));
+    const st = reduce(await store.read(), c.now()).instructions.get(q.id)!;
+    expect(st.chosen).toMatchObject({ option: "B", by: "default" });
+  });
+
+  it("不许悄悄改回：记过一笔之后牌桌一直这么说，直到人真的点", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const q = await ask(store, c);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    await sweep(store, c);
+    await pull(store, HUMAN, null, c.now());
+    c.tick(min(5));
+    // 期限已经重算、这张卡此刻只是在等他——说的仍然是「我们没有执行」，不是「不点的话…到期」
+    expect((await at(store, c)).instructions[0].says_default!.state).toBe("missed");
+    await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: A", decision: true, decides: { of: q.id, option: "A" } });
+    const b = await at(store, c);
+    expect(b.instructions[0].chosen).toMatchObject({ option: "A", by: HUMAN });
+    expect(b.instructions[0].says_default).toBeUndefined();
+  });
+
+  it("只记一笔：同一张卡不会被反复退回", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await ask(store, c);
+    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    expect(await sweep(store, c)).toHaveLength(1);
+    c.tick(min(600));
+    expect(await sweep(store, c)).toHaveLength(0);      // 人还没露面，没有新的期限，也就没有新的到期
+  });
+
+  it("判据 3：这条通则在 core 一处，说明书填它、不抄它的字", () => {
+    const md = readFileSync(new URL("../manual/common.md", import.meta.url), "utf8");
+    expect(md).toContain("{{default_rule}}");
+    expect(md).not.toContain("只有服务真落成一条事件才算按了默认");   // markdown 里一个字都没有
+    const filled = manual("dev")!;
+    expect(filled).toContain(DEFAULT_RULE);
+    expect(filled).toContain("期限从你再看到那一刻重算");
+    expect(filled).not.toContain("{{default_rule}}");
   });
 });

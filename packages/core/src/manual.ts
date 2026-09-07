@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { WATCH_INTERVAL, REACH_RULE, SHOWS_RULE, PROMISE_RULE, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
+import { WATCH_INTERVAL, REACH_RULE, SHOWS_RULE, PROMISE_RULE, DEFAULT_RULE, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -35,7 +35,9 @@ function common(): string {
     // t-179: 第 6 步那一段同样只有一处出处。它与拒绝话共用 EMPTY_IS_NOT_NO_IMPACT / NO_SYMBOL_MEANS_UNCLEAR，
     // 所以改了行为，说明书与被拒的人看到的是同一句话——不会再出现「说明书还在教旧话」。
     .replaceAll("{{shows_rule}}", SHOWS_RULE)
-    .replaceAll("{{promise_rule}}", PROMISE_RULE);
+    .replaceAll("{{promise_rule}}", PROMISE_RULE)
+    // t-190 判据 3：默认只有真落成事件才算数。同上，说明书填它，不抄。
+    .replaceAll("{{default_rule}}", DEFAULT_RULE);
 }
 
 /** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */

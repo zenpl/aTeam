@@ -397,6 +397,17 @@ export function createApp(opts: ServerOptions) {
           return res.end();
         }
         if (!boardPublic && !isAdmin && !isOwner) return html(res, 401, unauthorizedPage());
+        // t-190 判据 2：**人打开牌桌，就是「人再看到那一刻」。**一张被退回待答的卡，期限从这一刻起重算，
+        // 而在此之前它不算晚——他没看到的时间不该算进他的期限里。agent 那头这件事早就有（`pull` 记游标），
+        // 人这头一直没有：他只是看，从不拉。所以这里记一次，与 agent 的 pull 同一个意思、同一份 presence。
+        // 只在他真的有权看这块牌桌时记；匿名的一眼不算他看过。
+        //
+        // **`last_event_id` 要原样带上**：这一行是 upsert，写 null 会把他读到哪儿抹掉，于是发给他的每一条都
+        // 变回「还没读到」，t-050 那套「人很久没答」的外呼就会照着一个假前提去叫人。这里只动时间，不动位置。
+        if (isAdmin || isOwner) {
+          const before = await stateFor(projectId, store);
+          await store.setCursor({ actor: human, last_event_id: before.read_upto.get(human) ?? null, at: real().toISOString() });
+        }
         await remind();
         const state = await stateFor(projectId, store);
         const b = board(state, human, now());

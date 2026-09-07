@@ -65,7 +65,7 @@ export interface BoardInFlight { id: string; title: string; owner?: string; upda
  * 时刻只取到分（`hhmm`）：卡上要的是「还剩多久」的量级，秒是噪音。这三句在 core 一处（`DEFAULT_LINES`），
  * 页面与命令行都印它，不各写一份。
  */
-export type DefaultState = "waiting" | "stuck" | "applied";
+export type DefaultState = "waiting" | "stuck" | "applied" | "missed";
 export interface DefaultSay { state: DefaultState; line: string }
 
 /** 到期时刻在卡上的写法：`2026-09-07T10:15:00Z` → `10:15`。 */
@@ -76,6 +76,9 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   if (i.default === undefined || !i.options?.length) return undefined;
   if (st.chosen?.by === DEFAULT_DECIDER) return { state: "applied", line: DEFAULT_LINES.applied(st.chosen.option) };
   if (st.chosen) return undefined;                       // 有人真的点了：这张卡不再是「到期会怎样」的事
+  // t-190：记过一次「本该执行没执行」就一直这么说，直到人真的点。**不许悄悄改回**——人要看得见我们没执行过，
+  // 所以哪怕期限已经重算、这张卡此刻只是在等他，说的也是这一句，不是「不点的话…到期」。
+  if (st.default_missed) return { state: "missed", line: DEFAULT_LINES.missed(i.default) };
   if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
   // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
   return { state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(i.ack_by) - now.getTime()), i.default) };
