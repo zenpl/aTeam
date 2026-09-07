@@ -174,11 +174,36 @@ describe("t-161 判据 2 · html.ts 里不许再出现那三个字的字面量",
     expect(offenders, `html.ts 里这些字面量写死了「${DEFER_WORDS}」，该读 core 的 DEFER_PREFIX：${offenders.join(" / ")}`).toEqual([]);
   });
 
-  it("扫法自己是准的：注释里那三个字不算违规，字面量里的算", () => {
-    // 正反各一个，跑在同一个扫法上——闸自己没被测过，就是下一个缺陷
-    expect(stringLiterals(`// human 说了${DEFER_WORDS}\nconst a = "干净";`).filter((l) => l.includes(DEFER_WORDS))).toEqual([]);
-    expect(stringLiterals(`const a = "${DEFER_WORDS}";`).filter((l) => l.includes(DEFER_WORDS))).toHaveLength(1);
-    // 第一版栽的那一处：注释里的撇号不该把后面整段吞成字符串
-    expect(stringLiterals(`/* the human's 「${DEFER_WORDS}」 */\nconst a = "干净";`).filter((l) => l.includes(DEFER_WORDS))).toEqual([]);
+  /**
+   * t-168：扫法自己的正反例。**每个例子都要能把一个真的坏扫法认出来**——否则它只是看起来在守着。
+   *
+   * qa 08:19 抓到我第一版这里的一条假断言：为撇号 bug 写的那个 snippet 只有一个撇号，正则的 `'[^']*'` 配不上，
+   * 于是那条断言在它要防的 bug 面前也是绿的。修法是把 snippet 换成带第二个撇号的（qa 给的），并且不再只靠人眼
+   * 判断「这个例子够不够」：下面把两个真的坏扫法摆在这里，逐个例子断言好扫法与坏扫法**给出不同的答案**。
+   * 一个连坏扫法都认不出来的例子，就是一条不会红的断言。
+   */
+  /** 第一版那个正则扫法：看不见注释，撇号会被当成字符串起头。 */
+  const regexScan = (src: string) => src.match(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/gs) ?? [];
+  /** 按行切：完全看不见注释与字面量的分别。 */
+  const naiveScan = (src: string) => src.split("\n");
+  /** 整个扫法坏掉，什么都扫不出来——静默变绿的那一种。 */
+  const emptyScan = () => [] as string[];
+  const hits = (scan: (s: string) => string[], src: string) => scan(src).filter((l) => l.includes(DEFER_WORDS)).length;
+
+  const cases: { name: string; src: string; want: number; caught: (s: string) => string[] }[] = [
+    { name: "注释里那三个字不算违规", src: `// human 说了${DEFER_WORDS}\nconst a = "干净";`, want: 0, caught: naiveScan },
+    // 这一条配的是 emptyScan 不是 naiveScan：按行切的扫法在这个 snippet 上也报 1，与好扫法同答案，挡不住它。
+    // 我第一版就把它配成了 naiveScan，是这条「例子认不认得出坏扫法」的用例当场把它揪出来的。
+    { name: "字面量里那三个字算", src: `const a = "${DEFER_WORDS}";`, want: 1, caught: emptyScan },
+    // 两个撇号：正则的 '[^']*' 会从第一个撇号一路吞到第二个，把中间整段注释当成字符串
+    { name: "注释里的撇号不该把后面整段吞成字符串", src: `/* the human's 「${DEFER_WORDS}」 and it's fine */\nconst a = "干净";`, want: 0, caught: regexScan },
+  ];
+
+  it.each(cases)("扫法自己是准的：$name", ({ src, want }) => {
+    expect(hits(stringLiterals, src)).toBe(want);
+  });
+
+  it.each(cases)("而这个例子认得出坏扫法（否则它是一条不会红的断言）：$name", ({ src, want, caught }) => {
+    expect(hits(caught, src), "好扫法与这个坏扫法给出同一个答案，说明这个例子挡不住它").not.toBe(want);
   });
 });
