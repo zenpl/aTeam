@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -1030,7 +1030,14 @@ function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
 }
 
 export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
-  if (gate !== "seam") return null;   // 今天只有接缝闸产生可被核对的结论
+  // t-170 判据 10：有些闸的缺陷不是「报错过几条」，是**它按定义看不见某一类**。那种缺陷没有可核对的结论可数，
+  // 只有一句实话和一件修法——修法在生产上验过之后，这句话自己消失，与接缝闸那一档同一个规矩。
+  if (gate === "shows") {
+    const fix = gateFix(s, gate);
+    if (!fix || fix.in_production) return null;
+    return { gate, reported: 0, judged: 0, false_positives: 0, missed: 0, unjudged: 0, fix, line: SHOWS_GATE_BLIND(fix.task) };
+  }
+  if (gate !== "seam") return null;   // 其余的闸还没有可被核对的结论
   const seams = [...s.seams.values()];
   const judged = seams.filter((x) => x.resolution?.verdict);
   const h = {

@@ -281,10 +281,10 @@ export const KEY_SYMBOLS = [
   "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
   "INVITE_SENT_PREFIX", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "REACH_RULE",
   "REACH_STALE_MS", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX",
-  "SEAM_SAME_FILE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "alertContact", "allocationSummary", "batches",
-  "board", "capabilityKey", "coverage", "deployHistory", "followUps", "lightSeamLine",
-  "manualFor", "missingCard", "overdueByPresence", "owedSentences", "responsibilityAppendix", "runtimeAllocation",
-  "saidHops", "sayReading", "shapeFor", "standIns", "staticAllocation",
+  "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "alertContact", "allocationSummary",
+  "batches", "board", "capabilityKey", "coverage", "deployHistory", "followUps",
+  "lightSeamLine", "manualFor", "missingCard", "overdueByPresence", "owedSentences", "responsibilityAppendix",
+  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "standIns", "staticAllocation",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -429,7 +429,7 @@ export const DECLINE_PREFIX = "不办：";
  * t-149: 一道闸（一条自动判断，做出结论并据此挡人）的名字。判决与「修哪道闸」都指它，所以两边说的是同一道闸。
  * 今天只有接缝闸有过被人核对的历史；再加一道闸，就在这里加一个名字，不在别处另起一套。
  */
-export const GATES = ["seam"] as const;
+export const GATES = ["seam", "shows"] as const;
 export type Gate = (typeof GATES)[number];
 
 /**
@@ -450,6 +450,19 @@ export const SEAM_VERDICT_WORDS: Record<SeamVerdict, string> = { real: "真接�
  * 它只是个指针；「这道闸此刻可不可信」不由它决定，由被判过的结论算出来（见 gateHonesty）。
  */
 export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
+
+/**
+ * t-170 判据 10 (pm 08:55，按 pd 06:37)：**一道闸知道自己看不见什么时，要把这句话带在结论上。**
+ *
+ * 「不改变人看到的东西」这道闸按两类判人可见的改动（pd 08:22）：那句话是什么、哪句话出现在哪儿。它此刻只认得
+ * 第一类。第二类没有名字可数——`inFlightGroups` 改了牌桌在途那四行字，而它一个中文字面量都没有（qa 08:54 在
+ * 合并后的树上实测，闸没红）。修法要等「哪个 key 在哪显示」变成可算的数据。
+ *
+ * 与 t-149 同一个机制：这句话由 `project:gate.shows.fix` 指的那件任务的状态决定，那件在生产上验过之后它自己
+ * 消失，不用谁去关掉它。
+ */
+export const SHOWS_GATE_BLIND = (fix: string) =>
+  `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」——改了在途分组该印 shows 还是 title 这种，它看不见。修法在 ${fix}。`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";

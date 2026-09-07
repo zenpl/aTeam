@@ -209,7 +209,16 @@ describe("t-173 · CLI 的开关名单与它的用法对得上", () => {
  */
 describe("t-170 · core 里会说人话的符号，名单是量出来的不是数出来的", () => {
   const CJK = /[一-龥]/;
-  /** core 源码里「函数体或常量里含给人看的整句中文」的导出符号。 */
+  /**
+   * core 源码里「函数体或常量里含给人看的整句中文」的导出符号——**只有 pd 08:22 那两类中的第一类**：
+   * 那句话是什么。第二类「哪句话出现在哪儿」这段扫法按定义看不见：`inFlightGroups` 决定在途每一行印 `shows`
+   * 还是 `title`，一个中文字面量都没有，而它改了牌桌四行字（qa 08:54 在合并后的树上量出来的，闸没红）。
+   *
+   * 我试过用「读 .shows / .title」去补第二类，它确实抓得住 inFlightGroups——但那是又一次按名字打地鼠：
+   * 一个在两个 UI key 之间选一个、根本不碰 .shows 的函数，它照样看不见。这一整类要等 t-143 的 key 表让
+   * 「哪个 key 在哪显示」变成可算的数据（pm 08:55 已搬去 t-178）。在那之前，这道闸自己说出这件事——见
+   * gateHonesty 里 shows 那一档。
+   */
   const speaking = (): string[] => {
     const out = new Set<string>();
     for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts", "manual.ts", "verifyflow.ts"]) {
