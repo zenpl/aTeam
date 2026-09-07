@@ -1,9 +1,79 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS } from "./events.js";
-import { type State, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE } from "./events.js";
+import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+import { projectRoles, roleResponsibilities } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
   return [...s.instructions.values()].some((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(MIGRATION_ASK_TITLE) && st.chosen?.option === MIGRATION_OK && st.chosen.by !== DEFAULT_DECIDER);
+}
+
+/**
+ * t-101 + t-104 (M4：拒绝要带出路)。谁能在这个项目里落 **pass**？由下面 `case "verify"` 里同一套规则算出来，不另存一份名单——
+ * 名单与它描述的规则分开维护必然漂移（同 omitted 的教训）。
+ *
+ * t-104（pd 23:59 的裁定）：pass 与 fail 不对称。说「达标」是放行，需要独立性，所以只有持 R6 验收职责、且没被三条分离规则
+ * 排除的角色能落；说「没达标」与自身利益相反，只挡发布不放行，所以对所有人开放，不需要这份名单。候选是项目声明的角色
+ * （`project:roles`），human 不在其中：human 什么都能验，把他算进去就永远不会出现「一个都没有」，而那正是最该说清楚的一种。
+ */
+/** t-106: the ids a `project:roles` value declares, whatever shape it is written in. Nothing else is validated here. */
+export function declaredRoleIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((x): x is string => typeof x === "string");
+  if (typeof value === "string") return value.split(",").map((x) => x.trim()).filter(Boolean);
+  if (value && typeof value === "object") return Object.keys(value as object);
+  return [];
+}
+
+export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
+  const authors = criteriaAuthors(t);
+  const holds = roleResponsibilities(s);
+  const here = surface ? t.verifications.filter((v) => v.round === t.round && v.surface === surface) : [];
+  const standing = here[here.length - 1];
+  const passers = standing?.pass ? new Set([standing.by]) : new Set<string>();
+  const failedHere = here.find((v) => !v.pass); // t-104 ②: one fail closes this surface to every pass until a new done
+  const eligible: string[] = [];
+  const blocked: { role: string; why: string }[] = [];
+  for (const role of projectRoles(s)) {
+    if (role === human) continue;
+    const why: string[] = [];
+    if (!(holds[role] ?? []).includes(VERIFY_RESPONSIBILITY)) why.push(`不持 ${VERIFY_RESPONSIBILITY}`); // t-104: pass 要独立，先要是验收角色
+    if (role === t.owner) why.push("是 owner");                              // the owner cannot pass their own task
+    if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
+    if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // a pass does not override a pass
+    else if (failedHere) why.push(`这一轮 ${surface} 上已有 ${failedHere.by} 的 fail，要等新的 done`); // t-104 ②
+    if (why.length) blocked.push({ role, why: why.join("、") });
+    else eligible.push(role);
+  }
+  return { eligible, blocked };
+}
+
+/**
+ * The way out, appended to every rejection of a **pass**: who could pass instead. A fail needs no such line — since
+ * t-104 anyone may fail, so a fail is only ever refused for what its evidence says, never for who is saying it.
+ * pd 23:50：一个都没有时先说自动会发生什么，再说人要做的选择，否则人以为系统卡住在等他救场。但「验收自动进 human 的
+ * 需要你」（t-055）看的是项目里有没有 qa 类角色，不是这一件有没有合格的人——所以那句也现算，不照抄。
+ */
+export function whoCanVerify(s: State, t: TaskState, surface: string | undefined, human: string): string {
+  const { eligible, blocked } = verifierEligibility(s, t, surface, human);
+  if (eligible.length) return `。可以由谁来落 pass：${eligible.join("、")}`;
+  const why = blocked.length ? blocked.map((b) => `${b.role} ${b.why}`).join("；") : `${projectRoles(s).join("、")} 里除了 ${human} 没有别人`;
+  const escalates = !projectRoles(s).some((r) => VERIFIER_ROLES.includes(r)); // t-055 的自动退化：整个项目没有验收角色时才发生
+  const next = escalates
+    ? `这件的验收会进 ${human} 的「需要你」由他来判；要恢复三方分离，请 ${PM_ACTOR} 把一个新角色加进 ${PROJECT_SURFACE}:${ROLES_KEY}`
+    : `项目里有验收角色，所以验收不会自动转给 ${human}：这一件要么请 ${human} 亲自判，要么请 ${PM_ACTOR} 再给一个角色 ${VERIFY_RESPONSIBILITY}`;
+  return `。本项目没人能给这一件落 pass：${why}。${next}。fail 不受此限，谁都能落`;
+}
+
+/**
+ * t-104 ①：自我推翻的证据要指名推翻的是哪一条判据。一个不指名的「我漏验了」既没法复核，也没法说清改完算不算好了。
+ * 认「判据 3」「第 3 条」「criterion 3」「#3」这些写法，数字必须落在这件任务的判据条数之内。
+ */
+export function namesCriterion(evidence: string, count: number): boolean {
+  if (count <= 0) return false;
+  for (const m of evidence.matchAll(/(?:判据|criterion|criteria|条|#)\s*[第]?\s*(\d+)|第\s*(\d+)\s*条/gi)) {
+    const n = Number(m[1] ?? m[2]);
+    if (n >= 1 && n <= count) return true;
+  }
+  return false;
 }
 
 export class Rejected extends Error {
@@ -45,6 +115,14 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       // t-089 (M4): a reading carried in from somewhere else says when it was measured there; without that it is a number
       // with no time and nobody can tell what it is worth. It lands expired either way — whoever needs it measures again.
       if (e.from && !e.measured_at) throw new Rejected("reading", "搬进来的事实必须带 measured_at（它在原处是什么时候测的）；缺 measured_at，不写入");
+      // t-106 (M4): a role id travels in an HTTP header, and a header is latin-1. A non-ASCII id therefore does not fail
+      // loudly — it becomes a different, unreadable identity, and the whole team shows up missing. Say so at declaration
+      // time, when it is one edit away, rather than never (qa 00:14 found this by making a team called 主编/写手/审稿).
+      if (e.surface === PROJECT_SURFACE && e.key === ROLES_KEY) {
+        const bad = declaredRoleIds(e.value).filter((x) => !ROLE_ID_RE.test(x));
+        if (bad.length)
+          throw new Rejected("reading", `角色 id 只能是 ASCII 小写（${ROLE_ID_RE.source}），这些不行：${bad.join("、")}。id 要走 HTTP 头（X-Actor），头按规矩只放 latin-1，非 ASCII 的 id 不会报错、会变成另一个谁也读不出的身份，整队在牌桌上显示不在场。出路：id 用 ASCII 小写，名字放显示名里——把 {"审稿": ["R6"]} 写成 {"reviewer": {"name": "审稿", "responsibilities": ["R6"]}}，把 {"主编": ["R1"]} 写成 {"editor": {"name": "主编", "responsibilities": ["R1"]}}。显示名不限语言、不限长度，人看到的到处都是它`);
+      }
       if (e.measured_at !== undefined) {
         const m = Date.parse(e.measured_at);
         if (Number.isNaN(m)) throw new Rejected("reading", `measured_at ${JSON.stringify(e.measured_at)} is not a time`);
@@ -211,28 +289,58 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
       return;
-    case "done":
+    case "done": {
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("done", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.owner !== e.actor) throw new Rejected("done", `${t.id} is owned by ${t.owner ?? "nobody"}`);
       if (t.status !== "working") throw new Rejected("done", `${t.id} is ${t.status}`);
+      // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
+      // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it
+      // blocks the done. Seams that were already open stay the caller's business, as before: done never judged them.
+      const revised = e.touches === undefined ? undefined : [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))];
+      if (revised) {
+        const before = new Set(blockingSeamsIfTouches(state, t, t.touches).map((x) => x.with));
+        const fresh = blockingSeamsIfTouches(state, t, revised).filter((x) => !before.has(x.with));
+        if (fresh.length) {
+          const added = revised.filter((x) => !t.touches.includes(x));
+          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），再与对方定下来（task seam ${t.id} ${fresh[0].with} --resolution "..."），然后 done。不属于这件的触点就去掉`);
+        }
+      }
       return;
+    }
     // R2: done is a claim; verified is another identity's act, on a named surface, with no open seam.
     // Verified on one surface is not verified on another: a verified task may be verified again on a new surface.
+    // t-104 (pd 23:59): pass and fail are not the same act. A pass releases, so it needs independence — R6, and none of
+    // the three separation rules. A fail only blocks, and saying "not met" runs against the speaker's own interest, so
+    // anyone may say it, including the one who passed it and the owner. What a fail still owes is evidence, not standing.
     case "verify": {
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("verify", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
       if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
-      // t-076: a pass on a surface is final for passes; a fail may overturn it, by someone who is neither the owner, a criteria
-      // author, nor the one who passed it. Evidence that is merely misworded is not this path: that is an evidence: note.
-      if (passedOn(t, e.surface)) {
-        if (e.pass) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
-        const passer = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface && v.pass).map((v) => v.by).pop();
-        if (passer === e.actor) throw new Rejected("verify", `${e.actor} passed ${t.id} on ${e.surface}; the one who passed it cannot overturn it, someone else must`);
+      // What stands on this surface right now: the latest verification of this round. A pass that was overturned no
+      // longer blocks (t-104 ② presupposes the next pass is possible — by someone else); a standing pass still does.
+      const mine = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface);
+      const standing = mine[mine.length - 1];
+      const passer = standing?.pass ? standing.by : undefined;
+      if (e.pass) {
+        if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
+        // t-104 ② (pd 00:12, superseding 23:59): after *any* fail on this surface, the next pass there waits for a new
+        // done — whoever would give it. "Someone else passes it instead" is not overturning a fail, it is changing judges.
+        // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
+        const failed = mine.find((v) => !v.pass);
+        if (failed)
+          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么`);
+        if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}`);
+        if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
+          throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}`);
+        // t-104 ①: 放行要独立，先要是这个项目的验收角色。human 是策略权威，不受此限。
+        if (e.actor !== human && !(roleResponsibilities(state)[e.actor] ?? []).includes(VERIFY_RESPONSIBILITY))
+          throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass；fail 不受此限，谁都能落${whoCanVerify(state, t, e.surface, human)}`);
+      } else if (passer !== undefined) {
+        // overturning a pass: what it owes is what it found, and — when overturning your own — which criterion.
         if (!e.evidence?.trim()) throw new Rejected("verify", `overturning a pass on ${e.surface} needs --evidence: what was found that the pass missed`);
+        if (passer === e.actor && !namesCriterion(e.evidence, t.criteria.length))
+          throw new Rejected("verify", `你在推翻自己在 ${e.surface} 上判的 pass：证据要指名推翻的是哪一条判据（写「判据 3」或「第 3 条」，这件共 ${t.criteria.length} 条），否则没人复核得了，也说不清改完算不算好了`);
       }
-      if (e.actor === t.owner) throw new Rejected("verify", "the owner cannot verify their own task");
-      if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
-        throw new Rejected("verify", "whoever wrote the criteria cannot judge them met");
       const seams = openSeamsFor(state, t.id);
       if (seams.length)
         throw new Rejected("verify", `unresolved seam ${seams.map((s) => s.id + " [" + s.overlap.join(",") + "]").join(", ")}`);

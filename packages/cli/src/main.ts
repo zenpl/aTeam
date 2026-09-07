@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
@@ -8,6 +9,8 @@ import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
+import { watchState, deafNotice } from "./deaf.js";
+import { revise, type Diff } from "./touches.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -45,7 +48,10 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+                                             claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
+                                             --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份，
+                                             --no-touches 原样沿用声明。重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
@@ -91,6 +97,37 @@ function common(a: Args): { refs?: string[]; writes?: string[] } {
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`missing ${what}`);
   return v;
+}
+
+/**
+ * t-105: this project's way of knowing what a task actually touched. The base is the branch's head at claim time,
+ * kept beside the cursor in .ateam/ — local, never in the log, because it is this checkout's business. A checkout
+ * with no git, or a task claimed before this existed, simply has no base, and the revision falls back to hand.
+ */
+function baseFile(task: string) { return join(process.cwd(), ".ateam", `base.${task}`); }
+function gitDiff(): Diff {
+  const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
+  return {
+    head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
+    base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
+    changed: (base) => {
+      const r = git(["diff", "--name-only", base]);          // committed and uncommitted, against the claim point
+      if (r.status !== 0) return null;
+      const u = git(["ls-files", "--others", "--exclude-standard"]); // files created since and not yet added
+      // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
+      return [...r.stdout.split("\n"), ...(u.status === 0 ? u.stdout.split("\n") : [])].map((x) => x.trim()).filter((x) => x && !x.startsWith(".ateam/"));
+    },
+  };
+}
+
+/** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+  if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
+  const d = gitDiff();
+  const base = d.base(task);
+  if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
+  const changed = d.changed(base);
+  return revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
 }
 
 async function main(argv: string[]) {
@@ -144,7 +181,8 @@ async function main(argv: string[]) {
       const lockPath = join(process.cwd(), ".ateam", `watch.${cfg.me}.lock`);
       const other = blockingLock(lockPath, new Date(), 3 * interval);
       if (other && !bool(a, "force")) throw new UsageError(`another watch is already listening as ${cfg.me} in this checkout (pid ${other.pid}, heartbeat ${other.at}). Two watches replay old instructions to each other. Stop it first: kill ${other.pid}; or run with --force if it is really gone.`);
-      const beat = () => writeLock(lockPath, process.pid);
+      const started = `ateam ${["watch", ...process.argv.slice(3).filter((x) => x !== "--force")].join(" ")}`; // t-102: what to re-run, in this node's own words
+      const beat = () => writeLock(lockPath, process.pid, new Date(), started);
       beat();
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
@@ -248,9 +286,22 @@ async function main(argv: string[]) {
           console.log(fmt.created(title, criteria));
           return;
         }
-        case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
+        case "claim": {
+          const t = need(id, "<id>");
+          await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
+          // t-105: remember where this branch stood, so done can measure what the task actually touched. Only the
+          // *first* claim sets it (qa 00:29): widening a claim is this rule's own way out, and re-basing there would
+          // move the measuring point to "now" and make every later diff empty — silently, on exactly the tasks that
+          // need this most.
+          const head = gitDiff().head();
+          if (head && !existsSync(baseFile(t))) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
+          return;
+        }
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
+          // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
+          const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"));
+          for (const line of rev.lines) console.error(line);
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else {
             const b = await client.board();
@@ -258,7 +309,7 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), touches: rev.touches });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
@@ -290,14 +341,34 @@ async function main(argv: string[]) {
   }
 }
 
-main(process.argv.slice(2)).catch((err) => {
+/**
+ * t-102: after any command but `watch` itself, tell this node — and only this node — that its own watch stopped.
+ * On stderr so `board --json` stays pipeable while a person still reads it at the end of the output. Best effort:
+ * a node with no config, or no readable .ateam/, simply has nothing to say.
+ */
+function sayIfDeaf(argv: string[]): void {
+  try {
+    if (argv[0] === "watch") return;
+    const file = configFile();
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
+    const me = process.env.ATEAM_ME || stored.me;   // just the identity: a half-configured node still deserves the reminder
+    if (!me) return;
+    const path = join(process.cwd(), ".ateam", `watch.${me}.lock`);
+    const line = deafNotice(watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date()));
+    if (line) console.error(line);
+  } catch { /* never let the reminder break the command that carried it */ }
+}
+
+main(process.argv.slice(2)).then(() => sayIfDeaf(process.argv.slice(2))).catch((err) => {
+  // the reminder goes last, after whatever this command had to say — including its failure
+  const bye = (code: number) => { sayIfDeaf(process.argv.slice(2)); process.exit(code); };
   if (err instanceof ClientError) {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
-    process.exit(err.status === 409 ? 2 : 1);
+    return bye(err.status === 409 ? 2 : 1);
   }
-  if (err instanceof ShapeError) { console.error(err.message); process.exit(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); process.exit(2); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); process.exit(2); }
+  if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2); }
   console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
+  return bye(1);
 });

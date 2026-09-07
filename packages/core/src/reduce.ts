@@ -322,6 +322,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "done"; t.evidence = e.evidence; t.round += 1;
       if (e.shows?.trim()) t.shows = e.shows.trim();
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
+      // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
+      // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
+      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; detectSeams(s, t); }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
@@ -426,6 +429,21 @@ function evidenceShaOf(evidence: string | undefined): string | null {
 /** The evidence names `sha` in short or long form. */
 export function namesSha(evidence: string, sha: string): boolean {
   return [...evidence.matchAll(/[0-9a-f]{7,40}/g)].some((m) => sha.startsWith(m[0]) || m[0].startsWith(sha));
+}
+
+/**
+ * t-105: which seams would block `t` if its touches were `touches` and it were done right now? Used to judge a revision
+ * *before* it is written, so the answer must come from the same rules the log already runs — detectSeams/judgeSeam —
+ * not a second judgement. Pure: the shadow state it walks is thrown away, the real one is untouched.
+ */
+export function blockingSeamsIfTouches(s: State, t: TaskState, touches: string[]): { with: string; overlap: string[] }[] {
+  const AFTER_EVERYTHING = "\uffff"; // a done happening now cannot precede a claim already in the log
+  const mine: TaskState = { ...t, touches: [...new Set(touches.map((x) => x.trim()).filter(Boolean))], status: "done",
+    history: [...t.history, { op: "done", id: AFTER_EVERYTHING, by: t.owner ?? "", at: AFTER_EVERYTHING, round: t.round + 1, evidence: t.evidence }] };
+  const shadow: State = { ...s, tasks: new Map(s.tasks), seams: new Map([...s.seams].map(([id, x]) => [id, { ...x }])) };
+  shadow.tasks.set(t.id, mine);
+  detectSeams(shadow, mine);
+  return openSeamsFor(shadow, t.id).map((x) => ({ with: x.tasks.find((id) => id !== t.id) ?? "", overlap: x.overlap }));
 }
 
 /** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */

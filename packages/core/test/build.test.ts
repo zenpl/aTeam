@@ -37,7 +37,7 @@ describe("t-062 · Builder", () => {
     await expect(b.task.done("dev", "t-1")).rejects.toBeInstanceOf(Rejected);
     await b.task.claim("dev", "t-1", ["x"]);
     await b.task.done("dev", "t-1", { evidence: "abc1234" });
-    await expect(b.task.verify("dev", "t-1", "repo", true)).rejects.toThrow(/owner cannot verify/);
+    await expect(b.task.verify("dev", "t-1", "repo", true)).rejects.toThrow(/owner cannot pass/);
     await b.task.verify("qa", "t-1", "repo", false, { evidence: "不对" });
     await expect(b.task.done("dev", "t-1")).rejects.toThrow(/is failed/); // must reopen (or claim) first
     await b.task.reopen("dev", "t-1", "改");
