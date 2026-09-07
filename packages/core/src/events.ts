@@ -168,7 +168,19 @@ export type TaskOp =
   /** Back to working after done or failed, same owner and touches: the owner has more to change (a review, a fail). */
   | { op: "reopen"; task: string; reason: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
-  | { op: "criteria"; task: string; add: string[] }
+  /**
+   * t-166：追加判据，或**标注某一条已经搬到别的任务上**。
+   *
+   * 两件事共用一个 op，因为它们是同一个动作的两面：判据表变了。`add` 追加，`moved` 标注——**标注不删除、不改
+   * 原文**（判据 1）：搬走的那条一字不动地留在原处，只是显示时说清它已由哪一件承接。
+   *
+   * 为什么需要它：pm 今天自己被绊过一次——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事。
+   * **只读判据不读 note 的人，会去做一件已经不属于这件任务的活。** 今晚这样的搬迁至少三次（t-141 判据 3 →
+   * t-148、t-149 判据 5 → t-158、t-137 判据 4 → t-140）。
+   *
+   * `index` 是 1 起的序号——人读判据时数的就是那个数（「判据 3」），不是数组下标。
+   */
+  | { op: "criteria"; task: string; add?: string[]; moved?: { index: number; to: string } }
   | {
       op: "seam"; tasks: [string, string]; resolution: string;
       /** t-149: 对闸本身的判决——这条是真撞车（real）还是它报错了（false）。不写就是没判过，句子里如实说。 */
@@ -222,7 +234,15 @@ export const PROJECT_SURFACE = "project";
 export const SURFACES = ["repo", "staging", "production"] as const;
 export type Surface = (typeof SURFACES)[number];
 /** t-132 判据 4：人真的看得到的那一个。「验过」只有落在它上面才等于「人那边好了」。 */
-export const HUMAN_SURFACE = "production";
+export const HUMAN_SURFACE: Surface = "production";
+/**
+ * 代码里判「在仓库上验过没有」的那一个。
+ *
+ * t-213：**只给此刻真有人用的表面立常量。** staging 也在 SURFACES 里，但产品代码里一处都没比较过它，所以这里
+ * 没有 STAGING_SURFACE——`HUMAN_SURFACE` 今天之所以是个摆设（定义在这儿、读它的地方 0 处），正是因为它当初
+ * 是先立起来再等人用。要用的时候现加一个，比留一个没人读的名字好。
+ */
+export const REPO_SURFACE: Surface = "repo";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
@@ -291,6 +311,71 @@ export const PUSH_LEVELS = ["none", "own-branch", "integration", "production"] a
 export type PushLevel = (typeof PUSH_LEVELS)[number];
 /** Surface of the per-node capability fact; its key is `<role>:能力`. */
 export const NODE_SURFACE = "node";
+
+/**
+ * t-212：**一次被规则挡下来的写入，也是一件发生过的事。**
+ *
+ * 今晚这个洞三次以不同面目出现（pm 14:49 记的）：默认到期没落成事件、署名更正只写在正文里、以及这一条——
+ * **拒绝只是一个 HTTP 响应**。于是「这道闸挡住过谁、挡了几次、挡对没有」，机器一条都数不出来：qa 09:04 那条
+ * 反例走了也没有证据（它 14:57 因此结不掉），dev 15:14 只证得出「没有一条路能走到」，证不出「今天没人走到过」。
+ * pm 一个人今晚被拒过至少 12 次，**全部只活在它自己的终端里**。
+ *
+ * **不存被拒的正文**（判据 1）：那里可能是没落地的内容，存下来等于让被拒的东西从后门进了日志。存的是能数的
+ * 那几样：规则名、谁被拒、被拒的是哪种写入、什么时候。
+ */
+export interface Refused {
+  kind: "refused";
+  id: string;
+  at: string;
+  /** 谁被拒了。`null` 是说不出（连 actor 都没带的写入——那本身就是被拒的理由之一）。 */
+  who: string | null;
+  /** 规则名，与拒绝话开头那个词是同一个（shape / done / criteria / …）。能按它分组。 */
+  rule: string;
+  /** 被拒的是哪种写入：`task:done`、`reading`、`instruction` 这样。**不含正文。** `null` 是说不出。 */
+  op: string | null;
+}
+
+/**
+ * **拒绝不进事件流，进它自己的账。** 一次被拒的写入并没有发生，把它混进日志会改变每一处「日志里有什么」的
+ * 含义（pull 会把它发给所有人、每个数事件的地方都要记得滤掉它）。所以它有自己的一本账：能数、能按规则名
+ * 分组，但不假装自己发生过。
+ */
+
+/**
+ * 一条写入在这份记录里叫什么：task 事件带上 op，其余就是它的 kind。**说不出就给 null，不造一个词**——
+ * 「说不出」与「叫某个名字」要分得开，而且这里一造词就是一句新的人可见的字。
+ */
+export const refusedOp = (e: { kind?: unknown; op?: unknown }): string | null =>
+  typeof e?.kind === "string" ? (e.kind === "task" && typeof e.op === "string" ? `task:${e.op}` : e.kind) : null;
+
+/** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
+export interface RefusalCount {
+  total: number;
+  /** 按规则名分组，多的在前。 */
+  by_rule: { rule: string; n: number }[];
+  /** 按被拒的人分组，多的在前。 */
+  by_who: { who: string; n: number }[];
+  /** 最早与最近那一条的时刻，据此说得出「这段时间里」。 */
+  first: string | null;
+  last: string | null;
+}
+
+/** 把一本拒绝账数成上面那个样子。空账数出来是 total 0——那与「存储答不出来」不同，后者由调用方给 null。 */
+export function countRefusals(rs: readonly Refused[]): RefusalCount {
+  const by = (pick: (r: Refused) => string | null) => {
+    const m = new Map<string, number>();
+    for (const r of rs) { const k = pick(r); if (k) m.set(k, (m.get(k) ?? 0) + 1); }
+    return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n || (a.k < b.k ? -1 : 1));
+  };
+  const ats = rs.map((r) => r.at).sort();
+  return {
+    total: rs.length,
+    by_rule: by((r) => r.rule).map(({ k, n }) => ({ rule: k, n })),
+    by_who: by((r) => r.who).map(({ k, n }) => ({ who: k, n })),
+    first: ats[0] ?? null,
+    last: ats[ats.length - 1] ?? null,
+  };
+}
 export const capabilityKey = (role: string) => `${role}:能力`;
 /** `shows` on done/verify: one sentence for the owner, at most this long. */
 export const SHOWS_MAX_CHARS = 120;
@@ -338,6 +423,7 @@ export const KEY_SYMBOLS = [
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
   "BATCH_LINES",
+  "CLI_SHA_METHOD",
   "CONTACT_ASK",
   "CONTACT_ASK_WAS",
   "CONTACT_FILL",
@@ -390,6 +476,7 @@ export const KEY_SYMBOLS = [
   "STAND_IN_ASK_TITLE",
   "STAND_IN_OPTIONS",
   "STOOD_IN_PREFIX",
+  "SURFACE_GATE_BLIND_SPOTS",
   "UNTIL_UNDER_A_MINUTE",
   "VERIFY_ASK",
   "WATCH_LINES",
@@ -408,6 +495,8 @@ export const KEY_SYMBOLS = [
   "capabilityKey",
   "checkShape",
   "classifyFollowUp",
+  "cliBehindLine",
+  "cliStaleBuildLine",
   "coverage",
   "defaultMissed",
   "denominatorIs",
@@ -432,6 +521,7 @@ export const KEY_SYMBOLS = [
   "manual",
   "manualFor",
   "missingCard",
+  "movedTrace",
   "noOutputSeam",
   "noRealOverlap",
   "noSuchObject",
@@ -805,6 +895,58 @@ export const realOverlapIs = (other: string, real: string[], reported: string[])
  */
 export const unknownSpanReason = (tasks: string[]) =>
   `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
+
+/**
+ * t-166：一条判据**已经搬到别的任务上**时，显示上怎么把它与仍然有效的那几条分开。
+ *
+ * pd 的措辞冻结开着，所以这里**没有句子**，只有一个记号和承接方的任务 id：`→ t-148`。pm 15:03 拦下了我第一版
+ * （它往人的任务页加了一句新话），并指出判据 2 要的是「分得开」，不是「写一句话」——记号加淡化就满足它。
+ * 记号住在 core，是为了让命令行、任务页、回溯三处指的是同一个记号；等冻结解开、pd 定了话，再在这里加句子。
+ *
+ * 为什么需要它：pm 今天自己被绊过——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事，
+ * **只读判据不读 note 的人会去做一件已经不属于这件任务的活**。今晚这样的搬迁至少三次。
+ */
+export const MOVED_MARK = "→";
+
+/**
+ * t-211：**命令行是各人各自 build 的，发车只换服务端。** 于是「上线了」与「我手上这份跑的是上线的那一版」
+ * 是两件事，而今晚没有任何一处告诉人他在哪一种里——qa 14:50 用早上的构建落了一条带两个 `--refs` 的 note，
+ * 服务只收到一个；**「我动过」被算成了没动，而且事后从日志里查不出来**。
+ *
+ * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
+ */
+export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/**
+ * t-211 第二种旧法，qa 16:02 量出来的：**只 git pull 不重编，那句「旧 N 次上线」当场消失，而跑着的还是旧的。**
+ * HEAD 不是「跑着的那一版」，dist 才是；两者不一致时，按 HEAD 算出来的那个数偏乐观。
+ */
+export const cliStaleBuildLine = "你手上的 dist 比源码旧，跑着的不是这棵树的代码，跑 pnpm build";
+
+/** t-211 判据 2：这条节点事实是怎么量出来的。住在 core，命令行那侧不留人可见的字。 */
+export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
+
+/**
+ * 落后几次上线：上线过的 sha 里，本地这棵树**没有**的那几次。
+ *
+ * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
+ * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
+ */
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null): number | null {
+  if (!mine || !deploys?.length) return null;
+  let n = 0;
+  for (const d of deploys) {
+    const got = has(d);
+    if (got === null) return null;   // git 答不上来：整句不说，不猜
+    if (!got) n++;
+  }
+  return n;
+}
+/**
+ * 回溯里那一行的整句。它住在 core 而不是 trace.ts，是因为「人可见的话一律进 core」（t-143）：
+ * 一个记号加一个任务 id 也是话。用的两个字（`判据`）在 core 里早就有（R3～R6 那几条），不是新造的字。
+ */
+export const movedTrace = (index: number, to: string) => `判据 ${index} ${MOVED_MARK} ${to}`;
 
 export const orphanReason = (shas: string[]) =>
   `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;

@@ -1,7 +1,7 @@
-import { type Event, type NewEvent, type Log, type Cursor, type Delivery } from "./events.js";
+import { type Event, type NewEvent, type Log, type Cursor, type Delivery, type Refused, refusedOp } from "./events.js";
 import { ulid } from "./ulid.js";
 import { reduce, advance, settle, empty, type State } from "./reduce.js";
-import { validate } from "./rules.js";
+import { validate, Rejected } from "./rules.js";
 
 export interface EventStore {
   /** Full log, oldest first. */
@@ -16,6 +16,13 @@ export interface EventStore {
    */
   readSince?(mark: LogMark | null): Promise<{ log: Log; mark: LogMark; events: number }>;
   appendRaw(e: Event): Promise<void>;
+  /**
+   * t-212：记下一次被规则挡掉的写入。**可选**：答不出的存储就是数不出来——「不知道」不是「零次」，
+   * 读它的地方据此说「说不出」而不是报一个假的 0。
+   */
+  recordRefusal?(r: Refused): Promise<void>;
+  /** t-212：至今被挡掉的那些，老的在前。 */
+  refusals?(): Promise<Refused[]>;
   setCursor(c: Cursor): Promise<void>;
   recordDelivery(d: Delivery): Promise<void>;
 }
@@ -98,7 +105,20 @@ export async function appendFrom(store: EventStore, ne: NewEvent, opts: AppendOp
     const seen = state.from.get(ne.from);
     if (seen) return { event: seen, created: false };
   }
-  validate(state, ne, opts.human, now);
+  // t-212：**拒绝也落一条**。记在这里而不是 HTTP 处理器里，是因为这里是唯一的写入路径——服务、core 自己的
+  // Builder、用例，谁走这条路都被数进去；记在处理器里就只数得到走 HTTP 那一半。
+  // 这条记录**不过 validate**（它自己被规则拒了就成了死循环），直接落；也因此客户端伪造不出来——`refused`
+  // 这种 kind 在形状闸里根本不是合法的输入。
+  try {
+    validate(state, ne, opts.human, now);
+  } catch (err) {
+    if (err instanceof Rejected && store.recordRefusal) {
+      await store.recordRefusal({ kind: "refused", who: ne.actor ?? null, rule: err.rule,
+        op: refusedOp(ne as { kind?: unknown; op?: unknown }), id: (opts.mint ?? ulid)(now.getTime()), at: now.toISOString() });
+      err.recorded = true;   // t-212：外层那个出口据此跳过，同一次拒绝不记两遍
+    }
+    throw err;
+  }
   const e = { ...ne, id: (opts.mint ?? ulid)(now.getTime()), at: now.toISOString() } as Event;
   await store.appendRaw(e);
   return { event: e, created: true };
@@ -106,6 +126,7 @@ export async function appendFrom(store: EventStore, ne: NewEvent, opts: AppendOp
 
 export class MemoryStore implements EventStore {
   events: Event[] = [];
+  refused: Refused[] = [];
   cursors = new Map<string, Cursor>();
   deliveries: Delivery[] = [];
 
@@ -129,6 +150,12 @@ export class MemoryStore implements EventStore {
   }
   async appendRaw(e: Event): Promise<void> {
     this.events.push(e);
+  }
+  async recordRefusal(r: Refused): Promise<void> {
+    this.refused.push(r);
+  }
+  async refusals(): Promise<Refused[]> {
+    return [...this.refused];
   }
   async setCursor(c: Cursor): Promise<void> {
     this.cursors.set(c.actor, c);

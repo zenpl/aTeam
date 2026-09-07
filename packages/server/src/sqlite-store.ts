@@ -4,7 +4,7 @@ const { DatabaseSync } = (process as unknown as { getBuiltinModule(id: string): 
 import { mkdirSync, existsSync, statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import { append, SERVICE_ACTOR, PROJECT_SURFACE } from "@ateam/core";
-import type { EventStore, Event, Log, Cursor, Delivery, LogMark } from "@ateam/core";
+import type { EventStore, Event, Log, Cursor, Delivery, LogMark, Refused } from "@ateam/core";
 import { randomBytes } from "node:crypto";
 import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, OWNER_AGENT, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
 
@@ -46,6 +46,7 @@ export class SqliteDb {
       CREATE TABLE IF NOT EXISTS keys (hash TEXT PRIMARY KEY, project TEXT NOT NULL, role TEXT, agent_id TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, project TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS event_counts (project TEXT PRIMARY KEY, n INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS refusals (id TEXT PRIMARY KEY, project TEXT NOT NULL, at TEXT NOT NULL, who TEXT, rule TEXT NOT NULL, op TEXT);
     `);
     const cols = (table: string) => (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -140,6 +141,19 @@ export class SqliteStore implements EventStore {
   async appendRaw(e: Event): Promise<void> {
     this.db.prepare("INSERT INTO events (id, at, actor, kind, json, project) VALUES (?, ?, ?, ?, ?, ?)").run(e.id, e.at, e.actor, e.kind, JSON.stringify(e), this.project);
     this.db.prepare("INSERT INTO event_counts (project, n) VALUES (?, 1) ON CONFLICT(project) DO UPDATE SET n = n + 1").run(this.project);
+  }
+
+  // t-212：被规则挡掉的写入自己一本账（表 refusals，建在上面的 schema 里）。**不进 events**：它没有发生，
+  // 混进日志会改变每一处「日志里有什么」的含义——pull 会把它发给所有人，每个数事件的地方都要记得滤掉它。
+  // 不存正文，只存能数的那几样。（这段说明写在这儿而不是 SQL 里：模板串里的注释算字面量，t-166 上栽过一次。）
+  async recordRefusal(r: Refused): Promise<void> {
+    this.db.prepare("INSERT OR IGNORE INTO refusals (id, project, at, who, rule, op) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(r.id, this.project, r.at, r.who, r.rule, r.op);
+  }
+
+  async refusals(): Promise<Refused[]> {
+    const rows = this.db.prepare("SELECT id, at, who, rule, op FROM refusals WHERE project = ? ORDER BY id").all(this.project) as { id: string; at: string; who: string | null; rule: string; op: string | null }[];
+    return rows.map((r) => ({ kind: "refused", ...r }));
   }
 
   async setCursor(c: Cursor): Promise<void> {

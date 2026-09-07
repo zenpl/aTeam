@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -223,6 +223,9 @@ export function createApp(opts: ServerOptions) {
   };
 
   const server = createServer(async (req, res) => {
+    // t-212：统一出口（catch 里）要用的两样，声明在 try 之外。
+    let whoIsAsking = human;
+    let refusalStore: EventStore | null = null;
     try {
       await ready;
       const url = new URL(req.url ?? "/", "http://x");
@@ -343,6 +346,11 @@ export function createApp(opts: ServerOptions) {
       if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
       const store = storeFor(projectId);
       const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
+      // t-212：这一请求是谁在发、往哪本账记，供统一出口用。牌桌那几个按钮是人点的，所以先按人算；
+      // 走 API 那一路解析出 x-actor 之后会改写它。存储也要在这里留一份引用——统一出口在 catch 里，
+      // 而 catch 看不见 try 里声明的那个 store。
+      whoIsAsking = human;
+      refusalStore = store;
 
       // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
       // token is the default project's admin key. A key of another project is refused outright.
@@ -458,6 +466,21 @@ export function createApp(opts: ServerOptions) {
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
       // run the same action right after the key is entered (docs/board.md: buttons are always clickable).
       const ACTIONS = new Set(["/ack", "/say", "/decide", "/fact"]);
+      /**
+       * t-212（qa 16:19 找到的洞）：**牌桌按钮那条路不走 validate**，所以它被挡住的那几次一条都没被数进
+       * 拒绝账——而那正是最该数的一条路：全队只有它是**人**被挡住。
+       * 记在这一处而不是每一个 `return { status: 409 }` 上，与 core 里记在唯一那条写入路径上是同一条道理：
+       * 下一个人再加一条拒绝分支，不必记得来这里加一行。
+       */
+      const actAndCount = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
+        const r = await act(then, form);
+        if (r.status >= 400 && store.recordRefusal) {
+          const b = (r.body ?? {}) as { rule?: unknown; error?: unknown };
+          const rule = typeof b.rule === "string" ? b.rule : typeof b.error === "string" ? b.error : "unknown";
+          await store.recordRefusal({ kind: "refused", who: human, rule, op: `${req.method} ${then}`, id: ulid(now().getTime()), at: now().toISOString() });
+        }
+        return r;
+      };
       const act = async (then: string, form: URLSearchParams): Promise<{ status: number; body: unknown }> => {
         if (then === "/ack") {
           // 「知道了」/「做好了」/「起好了」: ack. 「先不做」: the same, with a note saying why it is not happening now (t-036);
@@ -495,8 +518,10 @@ export function createApp(opts: ServerOptions) {
           const st = (await stateFor(projectId, store)).instructions.get(of);
           if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
           const i = st.instruction;
-          if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
-          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
+          // t-212（pm 16:23）：**这两条从「自己拼一个 409」改成 throw Rejected，走统一出口。** 在两处各补
+          // 一次记账等于又一份靠人维护的名单，而这件事的全部教训就是名单会漏（今晚已漂四次）。
+          if (!i.options?.includes(option)) throw new Rejected("decide", `"${option}" is not one of: ${(i.options ?? []).join(" | ")}`);
+          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${of} already decided: ${st.chosen.option} by ${st.chosen.by}`);
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
           const filling = isContactAsk(i.body) && (option === CONTACT_FILL || option === CONTACT_FILL_WAS);   // 老卡带的是旧那个词
@@ -545,7 +570,7 @@ export function createApp(opts: ServerOptions) {
           }
           return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         }
-        const r = await act(path, new URLSearchParams(body));
+        const r = await actAndCount(path, new URLSearchParams(body));
         if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
       }
@@ -566,7 +591,7 @@ export function createApp(opts: ServerOptions) {
         const secure = proto === "https";
         const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure ? "; Secure" : ""}`;
         const then = fields.then ?? "";
-        const r = ACTIONS.has(then) ? await act(then, new URLSearchParams(fields)) : { status: 204, body: null };
+        const r = ACTIONS.has(then) ? await actAndCount(then, new URLSearchParams(fields)) : { status: 204, body: null };
         if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
         res.writeHead(303, { location: `${base}/`, "set-cookie": setCookie });
         return res.end();
@@ -575,6 +600,7 @@ export function createApp(opts: ServerOptions) {
       // The API: a key of this project, and an identity. A node key is bound to its role; an admin key may speak as anyone.
       if (!record) return json(res, 401, { error: "unauthorized" });
       const actor = String(req.headers["x-actor"] ?? "").trim();
+      whoIsAsking = actor || human;
       if (!actor) return json(res, 400, { error: "X-Actor header is required" });
       if (record.role !== null && actor !== record.role) return json(res, 403, { error: "forbidden", message: `这把钥匙是 ${record.role} 的，不能以 ${actor} 说话` });
       // t-103: the service's own identity is never lent out, and the owner's is lent only until they first arrive.
@@ -593,7 +619,9 @@ export function createApp(opts: ServerOptions) {
 
       if (req.method === "GET" && path === "/board") {
         await remind();
-        const b = board(await stateFor(projectId, store), human, now());
+        // t-212：拒绝账从存储取，交给 board 数。**存储答不出来就不交，牌桌上那一格是 null 而不是 0**——
+        // 「数不出来」与「一次都没被拒过」是两件事，今晚这个洞的形状就是把前者说成了后者。
+        const b = board(await stateFor(projectId, store), human, now(), { refusals: await store.refusals?.() });
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
         // t-070/t-080 (pm 22:45): the slim board goes to a client that says it knows it (X-Ateam-Client: <shape it speaks>);
@@ -632,8 +660,13 @@ export function createApp(opts: ServerOptions) {
         // t-147 criterion 6: what this role owes right now, on the way out. It comes off the reduction the server
         // already keeps moving (t-128), so it costs no full read of the log and no second request; and it is computed
         // after `pull` recorded the cursor, so everything in this batch already counts as read.
-        const owed = owedNow(await stateFor(projectId, store), actor);
-        return json(res, 200, { shape: BOARD_SHAPE, ...result, owed }); // t-080: sync checks the shape before reading fields
+        const st = await stateFor(projectId, store);
+        const owed = owedNow(st, actor);
+        // t-211：**每一次 pull 都顺带说一句服务此刻跑的是哪一版、至今上过几次线。** 命令行各人各自 build，
+        // 发车只换服务端，所以「我手上这份是不是上线的那一版」这个问题今晚没有任何一处答得出。两样都从
+        // 已经算好的那份状态里取，不多读一次日志、不多发一次请求——与 owed 同一条路。
+        const deploys = deployHistory(st).map((d) => d.sha);
+        return json(res, 200, { shape: BOARD_SHAPE, ...result, owed, sha, deploys }); // t-080: sync checks the shape before reading fields
       }
 
       if (req.method === "POST" && path === "/events") {
@@ -650,7 +683,14 @@ export function createApp(opts: ServerOptions) {
 
       return json(res, 404, { error: "not found" });
     } catch (err) {
-      if (err instanceof Rejected) return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
+      if (err instanceof Rejected) {
+        // t-212：**Rejected 的唯一出口，也是记账的唯一出口。** 任何一条走到这里的拒绝都被数进去，
+        // 不管它是 validate 抛的还是某个处理器自己抛的——下一个人再加一条拒绝，不必记得来这里补一行。
+        // t-212（qa 16:32）：从 appendFrom 抛出来的那一条已经在写入路径上记过了，这里跳过——否则走 API
+        // 那一路记两次、处理器自己抛的记一次，账是不均匀的虚高。
+        if (!err.recorded) await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
+        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
+      }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
       console.error(err);
       return json(res, 500, { error: "internal", message: (err as Error).message });

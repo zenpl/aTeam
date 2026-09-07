@@ -97,7 +97,8 @@ describe("t-070 · GET /board is slim by default", () => {
     const served = await (await get("/board")).text();
     expect(Buffer.byteLength(served) / Buffer.byteLength(JSON.stringify(await (await get("/board?full=1")).json()))).toBeLessThan(0.12);
     const servedFull = await (await get("/board?full=1")).json();
-    const expected = JSON.parse(JSON.stringify(board(await b.state(new Date(t)), "human", new Date(t))));
+    // t-212：服务那份从存储取了拒绝账，本地这份也要取同一本，否则比的是两件不同的东西
+    const expected = JSON.parse(JSON.stringify(board(await b.state(new Date(t)), "human", new Date(t), { refusals: await b.store.refusals?.() })));
     delete servedFull.invite_url;
     expect(servedFull.owner_key).toEqual({ state: "none" });   // t-103: comes from the keys, not the log
     delete servedFull.owner_key;

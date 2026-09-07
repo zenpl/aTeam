@@ -2,7 +2,7 @@
  * `ateam trace <task-id | sha>`: from a change that shipped back to what asked for it, who decided what, and who
  * judged it where. Pure over the raw log, so it is testable without a server and does not touch the board.
  */
-import { SAID_PREFIX, type Event } from "@ateam/core";
+import { SAID_PREFIX, movedTrace, type Event } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 const SHA = /^[0-9a-f]{7,40}$/;
@@ -60,7 +60,11 @@ export function traceTask(events: Event[], id: string): string[] | null {
       case "unblock": add(e, [`${who(e)} 解除阻塞`]); break;
       case "reopen": add(e, [`${who(e)} 重开：${e.reason}`]); break;
       case "withdraw": add(e, [`${who(e)} 撤回：${e.reason}`]); break;
-      case "criteria": add(e, [`${who(e)} 追加判据：${e.add.map((c) => `「${c}」`).join(" ")}`]); break;
+      // t-166：搬走的判据在回溯里也要看得见——只读判据不读 note 的人，正是靠这一行知道它不再属于这件。
+      case "criteria": add(e, [e.moved
+        // 记号加任务 id，不新造句子（冻结开着）；整句住在 core，这里不留人可见的字面量
+        ? `${who(e)} ${movedTrace(e.moved.index, e.moved.to)}`
+        : `${who(e)} 追加判据：${(e.add ?? []).map((c) => `「${c}」`).join(" ")}`]); break;
     }
   }
 

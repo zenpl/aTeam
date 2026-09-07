@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -32,6 +32,8 @@ export interface BoardTask {
   evidence?: string;
   /** The sha in the evidence, if any: what release and the seam check need without the text (t-070). */
   evidence_sha?: string;
+  /** t-166：已经搬到别的任务上的那几条判据（1 起的序号）。原文仍在 `criteria` 里，一字不动。 */
+  criteria_moved?: { index: number; to: string; by: string; at: string }[];
   /** t-209：这一轮的起点 sha（`done` 记下的 claim 起点）。缺席 = 这件没记过，它的产出区间不可知。 */
   base_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
@@ -313,6 +315,12 @@ export const IN_FLIGHT_SHOWN = 5;
 /** What every session reads first. Derived; nobody moves cards. */
 export interface Board {
   now: string;
+  /**
+   * t-212：这道闸挡住过谁、挡了几次、挡对没有。**`null` 是「这个存储数不出来」，不是「一次都没有」**——
+   * 今晚这个洞的形状就是「量不出被当成量出来是 0」，这里不许再犯一次。
+   * 位置按 t-149 判据 3：进挖层与报告，不上首屏。**要给人看的那句话归 pd**（冻结开着，我没写）。
+   */
+  refusals: RefusalCount | null;
   focus?: { body: unknown; set_by: string; at: string };
   /** Only what the human must answer: open instructions addressed to the human. Nothing else, ever. */
   needs_human: {
@@ -554,9 +562,23 @@ export interface BoardPresence {
   idle_s: number | null;
   /** Missing or deaf since its last pull (null if it never pulled); listening since its last pull. */
   since: string | null;
+  /**
+   * t-211 判据 2：这个节点自报的本机构建版本（事实 `node:<role>:cli.sha`），没自报过就是 null。
+   * **这里只出数据，不出话**：谁在跑旧的、那句话怎么说，是人可见的字，冻结开着，归 pd。
+   * 有了它，一条判决的证据也说得出它是用哪一版命令行量出来的。
+   */
+  cli_sha: string | null;
 }
 
-export interface BoardOptions { /** How long since the last pull a node still counts as listening; default 5 minutes. */ listenWindowMs?: number }
+export interface BoardOptions {
+  /** How long since the last pull a node still counts as listening; default 5 minutes. */
+  listenWindowMs?: number;
+  /**
+   * t-212：这本拒绝账。**不给就是 null，不是 0**——存储答不出来与「一次都没被拒过」是两件事，牌桌上不许
+   * 把前者说成后者。它不在 State 里（拒绝没有发生，进不了事件流），所以由调用方从存储取来交进来。
+   */
+  refusals?: readonly Refused[];
+}
 
 /**
  * A fail notice (t-054) or a verify ask (t-055) is about one round of one task; once the owner did the task again
@@ -624,6 +646,14 @@ export function pushLevelOf(s: State, role: string): PushLevel {
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   const push = v && typeof v === "object" && !Array.isArray(v) ? (v as { push?: unknown }).push : undefined;
   return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
+}
+
+/** t-211：这个节点自报的本机构建 sha（事实 `node:<role>:cli.sha`），没自报过、或那条已失效就是 null。 */
+export function cliShaOf(s: State, role: string): string | null {
+  const id = s.latestReading.get(`${NODE_SURFACE}:${role}:cli.sha`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  return typeof v === "string" && v ? v : null;
 }
 
 /** t-069: the state of "how to reach the human": the fact, or the card's answer, or neither. */
@@ -879,6 +909,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const nowIso = now.toISOString();
   const b: Board = {
     now: nowIso,
+    refusals: opts.refusals ? countRefusals(opts.refusals) : null,
     needs_human: [],
     undelivered: [],
     overdue: [],
@@ -982,7 +1013,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
   const deploys = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
@@ -1009,7 +1040,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     // t-068: the t-026 rule for the "recent" list, applied to every task: production-verified before the current sha, or
     // ended (withdrawn/obsolete) before it, is earlier; anything the current version brought or that is still open is this version
-    const prodPasses = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass);
+    const prodPasses = t.verifications.filter((v) => v.round === t.round && v.surface === HUMAN_SURFACE && v.pass);
     const prodPassId = prodPasses.map((v) => v.id).sort().pop();
     const endedAt = t.withdrawn?.at ?? t.obsolete?.at;
     const before = (at: string | undefined) => !!at && b.live.since_sha !== null && currentSince !== undefined && at < currentSince;
@@ -1025,19 +1056,19 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
       // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
-      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
     });
-    if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
+    if (surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass)) {
       b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
       const recent = b.live.since_sha === null || currentSinceId === undefined || prodPassId! >= currentSinceId;
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title, shows: t.shows });
     }
     const results = surfaceResults(t);
     // Only a task that is done or verified can ship: a reopened one is being changed, so its old repo pass is not a candidate.
-    if ((t.status === "done" || t.status === "verified") && results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
+    if ((t.status === "done" || t.status === "verified") && results.some((r) => r.surface === REPO_SURFACE && r.pass) && !results.some((r) => r.surface === HUMAN_SURFACE && r.pass)) {
       const verified_by: Record<string, string> = {};
       for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
       const lastDone = [...t.history].reverse().find((h) => h.op === "done");
@@ -1057,7 +1088,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
     const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
     const linked = tasks.filter((t) => t.refs.includes(n.id));
-    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === "production" && r.pass));
+    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass));
     const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
     const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
@@ -1101,7 +1132,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // t-202：三态从 presenceStatus 来，卡那一层读的是同一份——这里原本自己算一遍，于是两层各算各的
     const status = presenceStatus(s, actor, now, listenWindow);
     const listening = status === "listening";
-    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
+    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), cli_sha: cliShaOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   b.coverage = coverage(s, now, listenWindow);
@@ -1182,7 +1213,7 @@ export interface ReadingSaying {
  */
 export const READING_SAYINGS: { surface: string; key: string; prefix?: boolean; saying: ReadingSaying }[] = [
   {
-    surface: "production", key: DEPLOYED_TASKS_KEY,
+    surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY,
     saying: {
       name: "这一版带上的活",
       // 判据 4：这一句就是 pm 07:1x 定的那句。数从值里数出来，不从别处抄。
@@ -1301,7 +1332,7 @@ function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
   const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
   if (!rs || !rs.valid || rs.expired || !task) return undefined;
   const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
-  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes("production") };
+  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes(HUMAN_SURFACE) };
 }
 
 export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
@@ -1544,7 +1575,7 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   // work already running in production that nobody walked there has no lever at all and leaves every surface.
   const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
   const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
+  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
   const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
   const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
   const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
@@ -1743,7 +1774,7 @@ export function batches(s: State, deployed: string | null, why: string | null, f
   // 每一个当过生产头的 sha。日志本来就记着它们（production:deployed.sha 的每一条），所以「这一批上过线没有」
   // 是算出来的，不是谁声明的。
   const everDeployed = new Set([...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .map((r) => shortSha(r.value as string)));
   for (const [key, id] of s.latestReading) {
     if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
@@ -1846,7 +1877,7 @@ export function deployHistory(s: State, tz = "UTC"): Deploy[] {
     return p;   // MM-DD
   };
   const readings = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .sort((a, b) => a.id.localeCompare(b.id));
   const out: Deploy[] = [];
   const perDay = new Map<string, number>();

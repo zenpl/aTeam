@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
@@ -84,7 +84,7 @@ function standInBlocker(s: State, t: TaskState): string | null {
   if (fact && head && fact.sha.slice(0, 7) === head.slice(0, 7)) {
     return fact.contained.includes(t.id) ? `的代码已经在生产上（production:${DEPLOYED_TASKS_KEY} 对 ${head.slice(0, 7)} 测的）` : null;
   }
-  return t.verifications.some((v) => v.round === t.round && v.surface === "production" && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
+  return t.verifications.some((v) => v.round === t.round && v.surface === HUMAN_SURFACE && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
 }
 
 /** The sha the latest valid production:deployed.sha reading names. */
@@ -121,6 +121,14 @@ export const PASS_ONLY_GATE = "。这挡住的是通过，不是不通过；要�
 export const PASS_ONLY_REGION = "if (e.pass) {";
 
 export class Rejected extends Error {
+  /**
+   * t-212（qa 16:32）：**这一条已经被记进拒绝账了吗。**
+   *
+   * 拒绝有两条出口各记一次（写入路径上的 `appendFrom`、服务的统一 catch），而一条从 `appendFrom` 抛出来的
+   * Rejected 会**两条都路过**——于是走 API 那一路记两次、处理器自己抛的记一次，账变成不均匀的虚高
+   * （qa 实测三次真拒绝数出 4）。记号打在拒绝本身上，外层见了就跳过：**两处出口都保住结构，不靠谁维护名单。**
+   */
+  recorded = false;
   constructor(public readonly rule: string, message: string) {
     super(`${rule}: ${message}`);
   }
@@ -155,7 +163,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   "task:withdraw": { task: "string", reason: "string" },
   "task:obsolete": { task: "string", decision: "string" },
   "task:reopen": { task: "string", reason: "string" },
-  "task:criteria": { task: "string", add: "strings" },
+  "task:criteria": { task: "string" },
   "task:seam": { tasks: "pair", resolution: "string" },
 };
 /** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
@@ -167,6 +175,17 @@ const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   "task:seam": { verdict: "string", missed: "boolean" },
   "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
   "task:obsolete": { reason: "string" },
+  // t-166：`add` 与 `moved` 谁都不是必填，但两个都不给这条事件就没有内容——那一句归形状闸（见 EITHER）。
+  // `moved` 的字段类型也在形状闸里查；它的**含义**（序号在范围内、目标任务真的存在）要读任务表，只能留在业务规则里。
+  "task:criteria": { add: "strings" },
+};
+
+/**
+ * t-166: ops where no single field is required but the event is empty without one of them. Missing all of them is a
+ * shape problem, not a business one — the same as a missing required field, and it says so in the same voice.
+ */
+const EITHER: Record<string, string[]> = {
+  "task:criteria": ["add", "moved"],
 };
 
 const holds = (v: unknown, k: FieldKind): boolean =>
@@ -198,6 +217,16 @@ export function checkShape(e: NewEvent): void {
   }
   for (const [field, kind] of Object.entries(OPTIONAL[slot] ?? {})) {
     if (rec[field] !== undefined && !holds(rec[field], kind)) throw new Rejected("shape", `${slot} 的 ${field} 可以不带，带了就要是${SHAPE_OF[kind]}，收到 ${valueForm(rec[field])}`);
+  }
+  const either = EITHER[slot];
+  if (either && either.every((f) => rec[f] === undefined))
+    throw new Rejected("shape", `${slot} 要带 ${either.join(" 或 ")} 之一，这条一个都没带：${either.join("、")} 各自可以不写，但两个都不写这条事件就什么也没说`);
+  // t-166: the one nested shape the criteria rule reaches into — its meaning is checked there, its type here.
+  const mv = (e as { moved?: unknown }).moved;
+  if (mv !== undefined) {
+    const o = mv as { index?: unknown; to?: unknown };
+    if (!mv || typeof mv !== "object" || Array.isArray(mv) || typeof o.index !== "number" || !holds(o.to, "string"))
+      throw new Rejected("shape", `task:criteria 的 moved 要是 {index: <判据序号，从 1 起>, to: "<任务 id>"}，收到 ${valueForm(mv)}`);
   }
   // one nested shape a rule reaches into: a note that decides an instruction
   const d = (e as { decides?: unknown }).decides;
@@ -340,9 +369,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.reason?.trim()) throw new Rejected("disown", "说明为什么它不是你做的（--reason）：一条没有理由的署名更正，读的人无从判断该不该信");
       const who = state.actorOf.get(e.of);
       if (!who) throw new Rejected("disown", `找不到 ${e.of} 的署名，没法更正它`);
+      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
+      // t-216：**被误署成 human 的那一种，本人正好是不在的那个人。** 于是按 t-196 谁都动不了它——今天它真的
+      // 卡住了一件事（qa 03:36 误落的那条 ack，16:05 正保护着一张过期的卡）。这里开一条路，但不交给任何单个
+      // agent：署着 human 的事件，别的角色可以**声明**它不是 human 发的，两个不同角色各来一次才生效，
+      // 而且 human 回来可以对那条声明本身再发一条 disown 把它推翻。
+      if (who === human && e.actor !== human) {
+        const c = state.contested.get(e.of);
+        if (c?.by.includes(e.actor)) throw new Rejected("disown", `${e.actor} 已经声明过 ${e.of} 了：要生效还差另一个角色，同一个人说两次不算两个人`);
+        return;
+      }
       if (who !== e.actor && e.actor !== human)
         throw new Rejected("disown", `${e.of} 署的是 ${who}，不是 ${e.actor}：署名更正只能由本人自报，或由 ${human} 发。替别人说「这不是他做的」要人拍板——请 ${who} 自己发，或把这件交给 ${human}`);
-      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
       return;
     }
 
@@ -461,12 +499,28 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       return;
     // R7: criteria can grow while the task is unfinished, only from those who own its scope; the adder then owns it too.
     case "criteria": {
+      // t-166：一个 op 两件事——追加，或标注某一条已经搬到别的任务上。「两个都不给」由形状闸挡（EITHER）；
+      // 这里只管「给了 add，但里面是空白」——那是内容问题，形状闸看不出来。
       const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
-      if (!add.length || add.length !== (e.add ?? []).length) throw new Rejected("criteria", "give at least one non-empty criterion");
+      if (e.add !== undefined && (!add.length || add.length !== e.add.length)) throw new Rejected("criteria", "give at least one non-empty criterion");
       if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
+      if (e.moved) {
+        // t-166 判据 4：只有判据作者、pm 或 human 能标。**这一条比 add 那一行严**——add 还允许 pd。
+        // 我按判据 4 的字面实现，并把这处不一致说给了 pm：搬迁是「这条不再归这件」的裁定，判据里没写 pd。
+        if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== human)
+          throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR} or ${human} can mark a criterion moved on ${t.id}, not ${e.actor}`);
+        const n = e.moved.index;
+        if (!Number.isInteger(n) || n < 1)
+          throw new Rejected("criteria", `判据序号要是从 1 起的整数，就是人在 task show 里读到的那个数，收到 ${JSON.stringify(n)}`);
+        if (n > t.criteria.length)
+          throw new Rejected("criteria", `${t.id} 只有 ${t.criteria.length} 条判据，标不了第 ${n} 条——序号从 1 起，就是人读到的那个数`);
+        if (!e.moved.to?.trim()) throw new Rejected("criteria", "说出它搬到哪一件去了（--to <任务 id>）：一条只说「搬走了」的标注，读的人还是不知道该去哪儿看");
+        if (e.moved.to === t.id) throw new Rejected("criteria", `${t.id} 搬不到它自己身上`);
+        if (!state.tasks.has(e.moved.to)) throw new Rejected("criteria", `${e.moved.to} 不是这个日志里的任务——搬到一件不存在的任务上，等于把判据搬进空气里`);
+      }
       return;
     }
     // R6b: finished work that a later decision made moot ends as obsolete, pointing at the decision. Verified is final either way.

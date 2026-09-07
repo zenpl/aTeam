@@ -48,7 +48,9 @@ describe("t-062 · built log ≡ served log", () => {
       }
     }
     const now = new Date(t + 60_000);
-    const built = mapIds(board(await b.state(now), HUMAN, now));
+    // t-212：两边都要带上各自那本拒绝账——服务那份从它的存储取，builder 这份从它的存储取。
+    // 不带就是拿「有账」比「没账」，比的不是同一件事。
+    const built = mapIds(board(await b.state(now), HUMAN, now, { refusals: await b.store.refusals?.() }));
     t = now.getTime();
     const served = await (await fetch(`${base}/board?full=1`, { headers: hdr("qa") })).json();
     // the one thing the server adds for the admin key is the invite link; it is not derived from the log

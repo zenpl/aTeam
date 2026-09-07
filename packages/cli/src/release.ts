@@ -4,7 +4,8 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { readdirSync, statSync } from "node:fs";
+import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -70,9 +71,9 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
     spans.push({ task: t.id, base: t.base_sha, evidence: s });
-    const passedRepo = (t.surfaces ?? []).some((r) => r.surface === "repo" && r.pass);
+    const passedRepo = (t.surfaces ?? []).some((r) => r.surface === REPO_SURFACE && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
-    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
+    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === HUMAN_SURFACE && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
     for (const seam of b.seams) if (seam.open && seam.tasks.includes(t.id)) reasons.push(`${t.id} 有未解决的接缝 ${seam.id}`);
   }
   // t-209：**这道闸原来只数任务，于是不是任务的东西它看不见。**
@@ -167,10 +168,10 @@ export function containmentFact(b: Board, measured: ReturnType<typeof containmen
   // 当「生产上有什么」的全集，而那份名单缺了一桶。
   //
   // 三桶一个不少地写下去，比较也比三桶（少了这一条，unmeasured 变了不会触发新事实，那一桶就永远停在旧值）。
-  const current = b.readings.find((r) => r.valid && r.surface === "production" && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
+  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
   const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
   if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained) && same(current.unmeasured, measured.unmeasured)) return null;
-  return { kind: "reading", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
+  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {
@@ -261,7 +262,7 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   const current = b.live?.deployed_sha ?? null;
   if (already) {
     deps.print(`${setting.branch} 已经在 ${sha.slice(0, 7)}，不再推。`);
-    if (!current || !(current === sha || sha.startsWith(current) || current.startsWith(sha))) await deps.reading("deployed.sha", sha, { surface: "production", writes: ["production:deployed.sha"], method: `ateam release --deploy：${setting.branch} 已在此 sha` });
+    if (!current || !(current === sha || sha.startsWith(current) || current.startsWith(sha))) await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy：${setting.branch} 已在此 sha` });
     return "already";
   }
   try {
@@ -273,6 +274,55 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
     return "failed";
   }
   deps.print(`已推 ${sha.slice(0, 7)} 到 ${setting.branch}（包含 ${p.included.length ? p.included.join("、") : "无候选任务"}）。`);
-  await deps.reading("deployed.sha", sha, { surface: "production", writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
+  await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
   return "pushed";
+}
+
+/**
+ * t-211：本地这棵树的版本，给 `sync` 那一句用。**每一步答不上来都给 null**：不是 git 检出、git 不在、
+ * 或者那个 sha 本地没有——三种都只说明「说不出」，而 `behindDeploys` 见 null 就整句不说。
+ */
+export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null; built(): boolean | null } {
+  const git = realGit(cwd, undefined);
+  return {
+    head: () => git.resolve("HEAD"),
+    // **本地根本没有这个对象 ⇒ 我没有它，不是「说不出」。** 第一版把它当说不出，于是
+    // qa 16:02 量出一个反过来的结果：**最该看到这句提醒的节点（只跑 ateam、从不 fetch）
+    // 恰恰一个字都收不到**，而 fetch 过的那棵树印「旧 6 次」。同一个 HEAD、两种答案。
+    // 真正的「说不出」只剩两种：不是 git 检出、git 自己出错（isAncestor 给 null）。
+    has: (sha) => (git.resolve("HEAD") === null ? null : git.resolve(sha) === null ? false : git.isAncestor(sha, "HEAD")),
+    built: () => buildIsCurrent(cwd, ["core", "cli", "server"]),
+  };
+}
+
+/**
+ * t-211（qa 16:02）：`dist` 跟得上 `src` 吗。**HEAD 不是跑着的那一版，dist 才是**——只 `git pull` 不重编，
+ * 按 HEAD 算出来的「旧 N 次」当场变成 0，而跑着的还是旧代码。
+ * 说不出就给 null：没有 dist、读不到时间戳。取的是每个包里最新的源码与最旧的产物比。
+ */
+export function buildIsCurrent(root: string, packages: string[]): boolean | null {
+  let newestSrc = -1, oldestDist = Infinity;
+  for (const p of packages) {
+    const src = `${root}/packages/${p}/src`, dist = `${root}/packages/${p}/dist`;
+    const srcT = newestMtime(src), distT = newestMtime(dist);
+    if (srcT === null || distT === null) return null;       // 没有 dist、或读不到：说不出
+    newestSrc = Math.max(newestSrc, srcT);
+    oldestDist = Math.min(oldestDist, distT);
+  }
+  if (newestSrc < 0 || !Number.isFinite(oldestDist)) return null;
+  return oldestDist >= newestSrc;
+}
+
+function newestMtime(dir: string): number | null {
+  let out: number | null = null;
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return null; }
+  for (const e of entries) {
+    const p = `${dir}/${e}`;
+    let st;
+    try { st = statSync(p); } catch { continue; }
+    const t = st.isDirectory() ? newestMtime(p) : st.mtimeMs;
+    if (t !== null) out = out === null ? t : Math.max(out, t);
+  }
+  return out;
 }
