@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -1202,6 +1202,19 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
 export interface OwedNow {
   unanswered: { instruction: string; from: string; body: string; sent: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
   untouched: { instruction: string; from: string; body: string; sent: string }[];
+  /**
+   * t-193 判据 7：**t-147 上线之前的那一批，进这个具名的旁桶，不进任何人的活欠账。**
+   *
+   * 桶名（`legacy_before_acted_rule`）说的就是它是什么：那时还没有「引用才算办了」这条规矩，签收就是当时的
+   * 正确做法。所以把它算进今天的欠账，等于用今天的规矩去数昨天的人——量出来是 1690 条，每个人的第一句会
+   * 一次变成三位数，而那不是谁突然不干活了。
+   *
+   * **它不归零**：它是历史，只作为一个不再增长的数存在（写完这句我核过：起算点由日志算出来，所以新的指令
+   * 不可能落进这个桶）。活欠账只从 t-147 上线那一刻起算。
+   *
+   * 这里只有数据。**这个桶在牌桌上怎么说、说不说，我没自拟**——pm 11:17 起人可见的字冻结，等 pd。
+   */
+  legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[];
 }
 
 /**
@@ -1236,13 +1249,39 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
 }
 
 export function owedNow(s: State, to: string): OwedNow {
-  const out: OwedNow = { unanswered: [], untouched: [] };
+  const out: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
+  // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
+  // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
+  const since = ruleLiveAt(s, ACTED_RULE_TASK);
   for (const st of owedTo(s, to)) {
     const i = st.instruction;
     if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    else if (since && i.at < since) out.legacy_before_acted_rule.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;
+}
+
+/**
+ * t-193 判据 7：**一条规矩是什么时候开始管事的，由日志算出来。**
+ *
+ * 那条规矩随某一件任务上线，而一件任务什么时候到生产，日志里已经有了：`batch.*` 那些事实各带一个 `contains`，
+ * 记着这一批包含哪些任务，写下它的那一刻就是这一批到生产的那一刻。所以这里找的是**第一批含它的**，取那条
+ * 事实的时间。
+ *
+ * 找不到就返回 undefined，而不是猜一个时刻——调用方据此决定怎么办。写死一个时间戳是同一条毛病的又一次：
+ * 一个数与它描述的东西分开维护，改了部署顺序没人记得改它。
+ */
+export function ruleLiveAt(s: State, task: string): string | undefined {
+  const times: string[] = [];
+  for (const rs of s.readings.values()) {
+    const r = rs.reading;
+    if (!r.key.startsWith(BATCH_PREFIX)) continue;
+    const v = r.value as BatchValue | undefined;
+    if (v && Array.isArray(v.contains) && v.contains.includes(task)) times.push(r.at);
+  }
+  return times.sort()[0];
 }
 
 /**

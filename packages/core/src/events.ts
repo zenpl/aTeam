@@ -691,6 +691,14 @@ export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
 export const SHOWS_GATE_BLIND = (fix: string) =>
   `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」：比如在途那几行改成印「这件干了什么」（shows）还是印任务标题（title），它看不见。这一类改动请作者自己在判据里说出人会看到什么变化。修法在 ${fix}。`;
 
+/**
+ * t-193 判据 7：**「引用才算办了」这条规矩随哪一件任务上线。**
+ *
+ * 它是一个 id，不是一个时刻——时刻由日志算（`ruleLiveAt`）。id 是永远的，而时刻会随部署顺序变；把时刻写死，
+ * 就是又一次「一个数与它描述的东西分开维护」。
+ */
+export const ACTED_RULE_TASK = "t-147";
+
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
 export interface BatchValue { sha: string; base: string; contains: string[] }

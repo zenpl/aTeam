@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, owedSentences, ruleLiveAt, ACTED_RULE_TASK, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -258,5 +258,63 @@ describe("t-193 · 签收不是答复，也不是做过", () => {
     const didAct = src.slice(src.indexOf("function didAct"), src.indexOf("function dirtySeams"));
     expect(didAct, "didAct 里还认 ack，那用例名说的口径就还是假的").not.toMatch(/kind === "ack"/);
     expect(didAct, "untell 留着：撤回是发的人说「不用做了」，不是收件人替自己签收").toMatch(/kind === "untell"/);
+  });
+});
+
+/**
+ * t-193 判据 7（pm 11:25，按 10:54 定的通则）：**t-147 上线之前的那一批，进一个具名的旁桶，不进任何人的活欠账。**
+ *
+ * 那 1690 条不是谁突然不干活了：那时还没有「引用才算办了」这条规矩，签收就是当时的正确做法。把它算进今天的
+ * 欠账，等于用今天的规矩去数昨天的人——每个人 sync 的第一句会一次变成三位数。
+ *
+ * 起算点**由日志算出来**：那条规矩随 t-147 上线，而一件任务什么时候到生产，`batch.*` 那些事实里的 `contains`
+ * 已经记着了。写死一个时间戳是同一条毛病的又一次：一个数与它描述的东西分开维护。
+ */
+describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩上线起算", () => {
+  const batchAt = (w: Awaited<ReturnType<typeof world>>, mins: number, contains: string[]) =>
+    w.put({ kind: "reading", actor: "release", surface: "repo", key: "batch.14", value: { sha: "736967c", base: "b23b325", contains } }, mins);
+
+  it("起算点由日志算出来，不写死：那一批到生产的时刻就是它", async () => {
+    const w = await world();
+    expect(ruleLiveAt(await st(w.s), ACTED_RULE_TASK), "还没有那一批，就没有起算点").toBeUndefined();
+    const b = await batchAt(w, -30, ["t-140", ACTED_RULE_TASK, "t-154"]);
+    expect(ruleLiveAt(await st(w.s), ACTED_RULE_TASK)).toBe(b.at);
+    expect(ruleLiveAt(await st(w.s), "t-999"), "不在任何一批里的任务没有起算点").toBeUndefined();
+  });
+
+  it("旧的进旁桶、新的进活欠账；那句话数的是活欠账", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
+    await batchAt(w, -30, [ACTED_RULE_TASK]);
+    const fresh = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "上线之后的一条", ack_by: at(15).toISOString() }, -10);
+    await w.s.setCursor({ actor: "dev", last_event_id: fresh.id, at: at(-5).toISOString() });   // 两条都读到了，都没动
+    const owed = owedNow(await st(w.s), "dev");
+    expect(owed.legacy_before_acted_rule.map((x) => x.instruction)).toEqual([old.id]);
+    expect(owed.untouched.map((x) => x.instruction)).toEqual([fresh.id]);
+    const line = owedSentences(owed, at(0)).find((l) => l.includes("读过还没动"))!;
+    expect(line, "那句话把历史也数进去了").toContain("有 1 条");
+    expect(line).toContain("上线之后的一条");
+  });
+
+  it("旁桶不归零，也不会再长：起算点之后的指令按定义进不来", async () => {
+    const w = await world();
+    await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
+    await batchAt(w, -30, [ACTED_RULE_TASK]);
+    const before = owedNow(await st(w.s), "dev").legacy_before_acted_rule.length;
+    const news = [];
+    for (let i = 0; i < 3; i++) news.push(await w.put({ kind: "instruction", actor: "pm", to: "dev", body: `新的第 ${i} 条`, ack_by: at(15).toISOString() }, -5));
+    await w.s.setCursor({ actor: "dev", last_event_id: news[news.length - 1].id, at: at(-4).toISOString() });
+    const after = owedNow(await st(w.s), "dev");
+    expect(after.legacy_before_acted_rule.length, "旁桶又长了：那它就不是历史").toBe(before);
+    expect(after.untouched.length, "新的都该进活欠账").toBe(3);
+  });
+
+  it("算不出起算点时，一条都不进旁桶——宁可把历史算进活欠账，也不悄悄把今天的欠账藏起来", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
+    await w.s.setCursor({ actor: "dev", last_event_id: old.id, at: at(-50).toISOString() });
+    const owed = owedNow(await st(w.s), "dev");     // 日志里没有那一批
+    expect(owed.legacy_before_acted_rule).toEqual([]);
+    expect(owed.untouched.map((x) => x.instruction)).toEqual([old.id]);
   });
 });
