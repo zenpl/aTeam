@@ -186,6 +186,14 @@ describe("t-220 判据 3 · 人名不被第一次调用定死", () => {
     await put({ kind: "disown", actor: "boss", of: note.id, reason: "这条是我让它代发的" }, "boss", -260);
 
     const s1 = reduce(await s.read(), at(0), "boss");
-    expect(s1.disowned.get(note.id)?.by, "换了人名之后仍按旧名走：缓存把第一次的名字定死了").toBe("boss");
+    expect(s1.disowned.get(note.id)?.by).toBe("boss");
+
+    // **这一条才盯得住缓存**：上面那句读的是一份新折的 state，与缓存无关。写入路径用的是缓存里那一份，
+    // 而它是否知道人叫 boss，决定了「boss 那条更正生效了没有」——生效了，第二条更正就该被规则拒。
+    // 缓存若把第一次的名字（human）定死，boss 那条只会被当成一票声明，于是第二条更正不但不被拒，还会生效。
+    const again = await put({ kind: "disown", actor: "qa", of: note.id, reason: "我也来更正一次" }, "boss", -250).catch((e) => e as Error);
+    expect(again, "第二条更正没有被拒：写入路径那份 state 不知道 boss 已经更正过了").toBeInstanceOf(Error);
+    expect((again as { rule?: string }).rule).toBe("disown");
+    expect((again as Error).message).toContain("已经更正过了");
   });
 });
