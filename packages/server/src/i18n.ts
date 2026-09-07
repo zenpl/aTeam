@@ -48,9 +48,14 @@ export const UI = {
   copied: "已复制",
   missing: (min: number) => `缺人 ${min} 分钟`,
   missingNever: "缺人",
-  deaf: (min: number) => `没在听 ${min} 分钟`,
-  deafNever: "没在听",
-  undelivered: (n: number) => `${n} 条没送到`,
+  /**
+   * t-140 · pd 05:42: the board says only what the server can actually see — how long since this role last read the
+   * log. Not 「没在听」: whether it is listening is a state we do not observe. Whether its own watch process died is
+   * something only that node knows, and it says so in its own terminal (t-102).
+   */
+  deaf: (min: number) => `${min} 分钟没读日志了`,
+  deafNever: "没读过日志",
+  undelivered: (n: number) => `${n} 条还没送到`,
   started: "起好了",
 
   // 说一句

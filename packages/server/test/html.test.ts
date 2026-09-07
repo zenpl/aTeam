@@ -577,10 +577,14 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
     const who = html.slice(html.indexOf('<span class="label">谁在</span>'), html.indexOf("</section>", html.indexOf('<span class="label">谁在</span>')));
     expect(who).toMatch(/<span class="who-chip" data-role="pm" data-status="listening"><i><\/i>pm<span class="meta"><time[^>]*>2 分钟前<\/time><\/span><\/span>/);
     expect(who).toMatch(/<span class="who-chip" data-role="dev" data-status="listening"><i><\/i>dev<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
-    expect(who).toContain('<span class="who-chip away" data-role="qa" data-status="missing"><i></i>qa<span class="meta">缺人 12 分钟 · 1 条没送到</span></span>');
+    expect(who).toContain('<span class="who-chip away" data-role="qa" data-status="missing"><i></i>qa<span class="meta">缺人 12 分钟 · 1 条还没送到</span></span>');
     expect(who).toContain('<span class="who-chip away" data-role="pd" data-status="missing"><i></i>pd<span class="meta">缺人 45 分钟</span></span>');
     expect(who).toContain('<span class="who-chip away" data-role="frontend" data-status="missing"><i></i>frontend<span class="meta">缺人</span></span>');
-    expect(who).toContain('<span class="who-chip away" data-role="ops" data-status="deaf"><i></i>ops<span class="meta">没在听 30 分钟 · 3 条没送到</span></span>');   // t-047 deaf + t-048 undelivered
+    // t-140 · pd 05:42: the board says how long since it read the log, which is what the server can see — never
+    // 「没在听」, which claims to know a state we do not observe
+    expect(who).toContain('<span class="who-chip away" data-role="ops" data-status="deaf"><i></i>ops<span class="meta">30 分钟没读日志了 · 3 条还没送到</span></span>');   // t-047 + t-048
+    // scoped to the chips: 「没在听」 also survives in the service's own card text (app.ts), which is dev's to change
+    expect(who.slice(who.indexOf("who-chip"))).not.toContain("没在听");
     expect(who).not.toContain("human");
     expect(html).not.toContain('<span class="count">');                         // nobody is waiting on the human: no card, no red
 
