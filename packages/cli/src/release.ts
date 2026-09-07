@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -32,6 +32,62 @@ export type RevList = (from: string, to: string) => string[] | null;
 /** t-209：一件任务声称的那一段产出。`base` 缺席时区间不可知——那不是「没有产出」，是「说不清」。 */
 export interface Span { task: string; base?: string; evidence: string }
 
+/**
+ * t-222：**起点是人手边那棵树在 claim／reopen 那一刻的 HEAD，而人往往先提交、后跑命令。** 于是 `base` 落在
+ * 自己的产出之后，区间 `(base, evidence]` 一条都装不下，那件任务的提交全成了「没人认领」。
+ *
+ * 这不是推测，是量出来的：生产头 d57acbc 到 31b92ae 之间 12 条提交，闸点名 10 条为孤儿，而**12 条每一条都属于
+ * 一件已验任务**（t-166×2、t-219×2、t-220×2、t-215×2、t-216×3、…）。假阳性 10/10。四件里三件的 base 与自己的
+ * evidence 是同一个 sha，一件的 base 比 evidence 还新。
+ *
+ * 这里只做**证得出来的两件事**，不猜谁写了哪条提交：
+ * · `base` 若不能证明早于 `evidence`（缺席、相等、或反过来是 evidence 的后代），它就不是这一轮的起点；
+ *   退到**上一轮的证据 sha**——那是同一件任务自己在日志里写下的、可核的前一个点。
+ * · 两者都拿不到时给 `undefined`，进 `unknown_span`（说不清），**不进 orphans**（那是诬告）。
+ *
+ * **代价说在明处**：退到上一轮证据之后，那段窗口里若真有一条没人认领的提交，它会被这件任务的区间盖住。
+ * 窗口是这件任务两轮之间，不是整条历史；而另一边的代价是今天这样——每一次发车都要 `--anyway`，
+ * 一道每次被越过的闸等于没有。
+ */
+export function effectiveBase(t: BoardTask, evidence: string, isAncestor: IsAncestor): { base?: string; widened: boolean } {
+  const base = t.base_sha;
+  const before = (x: string) => !sameCommit(x, evidence) && isAncestor(x, evidence) === true;
+  if (base && before(base)) return { base, widened: false };
+  const dones = (t.history ?? []).filter((h) => h.op === "done");
+  for (let i = dones.length - 2; i >= 0; i--) {
+    const prev = evidenceSha(dones[i].evidence);
+    if (prev && before(prev)) return { base: prev, widened: true };
+  }
+  return { base: undefined, widened: false };
+}
+
+/** 同一个提交的两种写法（一方可能是另一方的缩写）——牌桌上到处是 7 位缩写，git 给的是 40 位。 */
+export const sameCommit = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
+
+/**
+ * t-222：一件任务的每一轮各算一段。相邻两轮之间（上一轮证据, 这一轮证据] 是后一轮的产出——**这两个点都是这件
+ * 任务自己在日志里写下的**，比那个会戳歪的起点可核。最早那一轮用 `base`，它若也证不出早于自己的产出就给
+ * `undefined`（说不清，进 unknown_span，并且只把它那一段划成不可判）。
+ */
+export function roundSpans(t: BoardTask, evidence: string, isAncestor: IsAncestor): { base?: string; evidence: string; widened: boolean }[] {
+  const before = (x: string, y: string) => !sameCommit(x, y) && isAncestor(x, y) === true;
+  const dones = (t.history ?? []).filter((h) => h.op === "done");
+  // 这一批只关心还没上线的那几轮：证据 sha 认得出、且落在这条线上的
+  const shas: string[] = [];
+  for (const h of dones) { const x = evidenceSha(h.evidence); if (x && !shas.some((y) => sameCommit(x, y))) shas.push(x); }
+  if (!shas.length || !shas.some((x) => sameCommit(x, evidence))) shas.push(evidence);
+  const out: { base?: string; evidence: string; widened: boolean }[] = [];
+  for (const [i, ev] of shas.entries()) {
+    if (i === 0) {
+      const b = t.base_sha;
+      out.push({ base: b && before(b, ev) ? b : undefined, evidence: ev, widened: false });
+    } else {
+      out.push({ base: shas[i - 1], evidence: ev, widened: true });
+    }
+  }
+  return out;
+}
+
 export interface Plan {
   ok: boolean; reasons: string[]; included: string[];
   /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[];
@@ -50,6 +106,11 @@ export interface Plan {
    * 这一格不并进 `orphans`（那是诬告），也不并进「已覆盖」（那是把它们变没）。这正是 t-203 第三桶那件事的第三次。
    */
   unknown_span: string[];
+  /**
+   * t-222：**区间被退到上一轮证据的那几件任务**，按 id 列出来。它们的 `base` 证不出早于自己的产出（先提交、后
+   * claim／reopen 是常态），所以这个答案比 `(base, evidence]` 宽——宽在哪里、宽了几件，要说得出来，不能悄悄放行。
+   */
+  wide_base: string[];
 }
 /** t-093: the rule a refusal names (M4). */
 export const DEPLOY_RULE = "deploy-unverified";
@@ -59,6 +120,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   const reasons: string[] = [];
   const included: string[] = [];
   const unverified: string[] = [];
+  const wide_base: string[] = [];
   const spans: Span[] = [];
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
@@ -70,7 +132,12 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     // t-093: only what this push *adds* — a task already inside the running sha is not this push's to answer for
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
-    spans.push({ task: t.id, base: t.base_sha, evidence: s });
+    // t-222：**一件重开过的任务有好几轮，每一轮各有自己的产出。** state 里只留得下最后一轮的起点，但每一轮的
+    // 证据 sha 都在 history 里——相邻两轮之间那一段就是后一轮的产出，可核，不用猜。第一轮的起点若也证不出来，
+    // 那一段才是真说不清。
+    const rounds = roundSpans(t, s, isAncestor);
+    if (rounds.some((r) => r.widened)) wide_base.push(t.id);
+    for (const r of rounds) spans.push({ task: t.id, base: r.base, evidence: r.evidence });
     const passedRepo = (t.surfaces ?? []).some((r) => r.surface === REPO_SURFACE && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
     else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === HUMAN_SURFACE && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
@@ -99,7 +166,8 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 真孤儿——有名有姓、确实没人认领的那些——照旧拦。
   const blocking = [...reasons];
   if (unknown_span.length) reasons.push(unknownSpanReason(unknown_span));
-  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span };
+  if (wide_base.length) reasons.push(wideBaseReason(wide_base));
+  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span, wide_base };
 }
 
 /**
@@ -126,7 +194,6 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
   // 于是**它们全被算成孤儿**。那正是我在上一段注释里说要避免的诬告，而我一边写下它一边做了它。
   // 说不清哪几条属于那几件，就说不清剩下的是不是没人认领的——所以这里答 null，并把「为什么算不出」交给
   // unknown_span 说。**不猜，也不诬告。**
-  if (unknown_span.length) return { orphans: null, unknown_span };
   if (!revList || !deployed) return { orphans: null, unknown_span };
   const all = revList(deployed, sha);
   if (all === null) return { orphans: null, unknown_span };
@@ -137,7 +204,27 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
     if (seg === null) return { orphans: null, unknown_span };   // 有一段问不出来，整个答案就不可信
     for (const c of seg) covered.add(c);
   }
-  return { orphans: all.filter((c) => !covered.has(c)), unknown_span };
+  // t-222 删掉过一条规矩，写在这里因为它是我自己的假覆盖：我先加了「一件任务的证据 sha 永远算它自己的产出」，
+  // 还在注释里写下「10 条假孤儿里有 6 条是这么来的」。**注入验它时两处都没红：用例一条不红，真样本的数一个不变。**
+  // 那 6 条其实是下面这个「说不清的窗口」盖住的。一条谁都不需要的放行规矩，比没有更坏——它会在别处悄悄放过东西，
+  // 而没有任何用例盯着它。
+  // t-222：**「说不清」缩到它真正说不清的那一段，不再整盘作废。**
+  //
+  // t-209 定的是「只要有一件任务的区间不可知，整个『谁是孤儿』就不可知」——当时对：那时的选择是「诬告」或
+  // 「不答」，不答对。但它的代价今天量出来了：**先提交后 claim 是常态**，于是几乎每一批都有一件说不清的任务，
+  // 而它一出现，这道闸对整批闭眼。
+  //
+  // 说不清的其实只有一段：那件任务的证据 sha 及其之前（它可能一路做过来）。**它的证据之上那些提交，与它无关**，
+  // 照样判得出。所以这里把不可判的范围缩成「(生产头, 那件任务的证据]」这个窗口，窗口之外仍然点名。
+  // 仍然不诬告：窗口里的提交既不算覆盖也不算孤儿。
+  const blind = new Set<string>();
+  for (const x of spans) {
+    if (x.base) continue;
+    const win = revList(deployed, x.evidence);
+    if (win === null) return { orphans: null, unknown_span };   // 这一段问不出来，那就真的答不了
+    for (const c of win) blind.add(c);
+  }
+  return { orphans: all.filter((c) => !covered.has(c) && !blind.has(c)), unknown_span };
 }
 
 /**
