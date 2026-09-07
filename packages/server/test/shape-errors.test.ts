@@ -99,3 +99,20 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
     expect((await post("pm", { kind: "reading", key: "k", surface: "project", value: { any: "shape" } })).status).toBe(201);
   });
 });
+
+describe("t-127 · 键里说了两遍表面名，服务当场拒绝", () => {
+  it("409、点名规则、印出会落成什么和该怎么写；日志里不留这一条", async () => {
+    const r = await post("pm", { kind: "reading", surface: "project", key: "project:roles", value: ["pm", "dev"] });
+    expect(r.status).toBe(409);                       // 不是 201，也不是 500
+    expect(r.body.rule).toBe("reading");
+    expect(r.body.message).toContain("project:project:roles");        // 会落成什么
+    expect(r.body.message).toContain("--surface project <键> roles"); // 该怎么写
+    const log = await (await fetch(`${base}/log`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "pm" } })).json() as { events: { key?: string }[] };
+    expect(log.events.some((e) => e.key === "project:roles")).toBe(false);
+  });
+
+  it("不带前缀照写；键里本来就有冒号的（node:release:能力）不受影响", async () => {
+    expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] })).status).toBe(201);
+    expect((await post("release", { kind: "reading", surface: "node", key: "release:能力", value: ["R9"] })).status).toBe(201);
+  });
+});

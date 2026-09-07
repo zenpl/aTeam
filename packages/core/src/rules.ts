@@ -192,6 +192,13 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
     // it never leaks to another surface (staging:users.count is not production:users.count).
     case "reading": {
       if (!e.key || !e.surface) throw new Rejected("reading", "key and surface are required");
+      // t-127 (M4, pd 02:18): a key that repeats its own surface lands as project:project:roles, and nothing that reads
+      // project:roles will ever see it. What makes this one worth a rule is that it *looks* like it worked: 201 back, a
+      // row in the log, no consumer — harder to notice than an error. pm wrote it that way once and the reading was
+      // invisible for hours. A key may still contain a colon (node:release:能力 is a real one); only its own surface,
+      // said twice, is the mistake.
+      if (e.key.startsWith(`${e.surface}:`))
+        throw new Rejected("reading", `键里不要再说一遍表面名：--surface ${e.surface} 已经说了这是 ${e.surface} 的。键写成 ${JSON.stringify(e.key)} 会落成 ${e.surface}:${e.key}，而要读它的人找的是 ${e.surface}:${e.key.slice(e.surface.length + 1)}，对不上，谁也读不到——命令还会返回 201、日志里有一条，比报错更难发现。正确写法：--surface ${e.surface} <键> ${e.key.slice(e.surface.length + 1)}`);
       // t-098 (M7): "the move is finished" may not be recorded before the human said 对 on the check card. The button is the
       // authorisation to touch the old channel; without it, nothing may claim the move is over.
       if (e.key === MIGRATION_DONE_KEY && !migrationApproved(state)) {
