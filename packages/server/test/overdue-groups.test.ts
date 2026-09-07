@@ -64,6 +64,10 @@ describe("t-152 · 在途只留人有杠杆的那一堆", () => {
     expect(inflight).toContain("推一次就没了");
     // 没有杠杆：只会单调增长，从任何界面上拿掉，留在我们自己的账上
     expect(inflight).not.toContain("已经在生产上跑着");
+    // pd 07:07: two numbers that mean the same thing must be one number — the group is exactly what the standing
+    // line counts, so a person never sees 「1 件验过了，等一次上线」 beside 「验过了，等上线 2 件」
+    const shown = (inflight.match(/推一次就没了/g) ?? []).length;
+    expect(shown).toBe(b.release.counts.pending_deploy);
   });
 
   it("a task verified somewhere other than production, whose code was never shipped, is still ours to push", async () => {
@@ -78,8 +82,14 @@ describe("t-152 · 在途只留人有杠杆的那一堆", () => {
     const s = reduce(await store.read());
     const b = board(s, HUMAN);
     const html = renderBoard(b, s, { sha: "abc1234", human: HUMAN });
-    // it is in no release group at all, so an "include only pending_deploy" filter would have dropped it silently
+    // pd 07:07: it is waiting for a repo verification, not a deploy, so it is grouped by what it actually waits for
     expect(b.release.counts.deployed_unverified).toBe(0);
-    expect(html.slice(html.indexOf("在途"), html.indexOf("谁在"))).toContain("只在预演上验过");
+    const inflight = html.slice(html.indexOf("在途"), html.indexOf("谁在"));
+    expect(inflight).toContain("只在预演上验过");
+    const waitLabel = inflight.indexOf("验过了，等上线"), verifyLabel = inflight.indexOf("做完了，等验");
+    const at = inflight.indexOf("只在预演上验过");
+    expect(verifyLabel).toBeGreaterThanOrEqual(0);
+    // it sits under 等验, not under 等上线 — and it never went missing, which was the first version's bug
+    if (waitLabel >= 0) expect(Math.abs(at - verifyLabel)).toBeLessThan(Math.abs(at - waitLabel));
   });
 });
