@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -681,12 +681,12 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
 
   // 装好的几批 — 只剩还在等人推的。一个都没有时说一句 core 的话，不留一片空白（pd 08:18：清单空着时的样子
   // 也是产品问题）。今天这一支就会被走到：五批全上过线，候选数是 0。
-  // 一批都没装过时这一节整个不出现（t-129 以来如此，本件不动它）；装过而没有一批在等人推时，说 core 那句话。
+  // t-176 (pd 08:47): 空着时说什么由 core 决定（哪几种状态、各说哪一句、以及第三种要带的那个数），页面只印。
+  // 这一页是人专门来看上线的，所以空着也要说话：一节凭空消失读起来像我们忘了做。
+  const empty = batchesEmptyLine(batches, unpackedCount(b));
   const pending = batches.filter((x) => x.pending);
-  if (batches.length) {
-    out.push(`<h3>${UI.releaseBatches}</h3>`);
-    out.push(pending.length ? `<ul class="plain batches">${pending.map(row).join("")}</ul>` : `<p class="quiet">${esc(BATCH_LINES.none())}</p>`);
-  }
+  out.push(`<h3>${UI.releaseBatches}</h3>`);
+  out.push(pending.length ? `<ul class="plain batches">${pending.map(row).join("")}</ul>` : `<p class="quiet">${esc(empty ?? "")}</p>`);
 
   // 下一次上线 — never a count (the board says that); the units, and what each is waiting on.
   out.push(`<h3>${UI.releaseNext}</h3>`);

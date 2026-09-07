@@ -1334,8 +1334,18 @@ export const BATCH_LINES = {
    * 会说话的行里像坏了**。不写「已作废」：它没作废，它发生过。
    */
   shipped: () => "这一批上过线，后来被更新的一版盖过。",
-  /** t-167 (pd 08:18)：一批可上线的都没有时，印这句，而不是一片空白。 */
-  none: () => "没有可上线的东西",
+  /**
+   * t-176 (pd 08:47)：这一段空着时说的是**两件独立的事**——批次那边什么样，以及有没有验过了却还没装进批次的。
+   * 所以先说批次，再说没装的，各一句；哪一句出现只看两个数。
+   *
+   * pd 退役了原来那句「没有做完等上线的东西。」：它想同时说这两件事，于是对「装过、都上线了、还有没装的」
+   * 那一种必然说假话——今天生产正是那一种（五批全上过线，7 件已验的一批都没进）。这条是 pd 自己 07:4x 定的
+   * 「一句话不许同时说两件事」的一个实例，而它是我量了生产板才发现的：**空态最容易被想象出来，因为写的时候
+   * 手边没有那个世界**（pd 08:47）。
+   */
+  neverPacked: () => "还没装过批次。",
+  allShipped: () => "装好的批次都上线了。",
+  unpacked: (n: number) => `还有 ${n} 件验过了，没装进任何一批。`,
   stale: (base: string) => `这批是以 ${base.slice(0, 7)} 为底装的，生产已经往前走了；重装一次就能把新验的一起带上。`,
   rollback: (base: string, loses: string[]) =>
     `这批是以 ${base.slice(0, 7)} 为底装的，推它会把 ${loses.join("、")} 从生产上退回去。重装，别推。`,
@@ -1371,6 +1381,25 @@ export function standIns(s: State, now: Date): Board["stand_ins"] {
     ? `人顶了 ${total} 次（${rows.map((r) => `${r.task} ${r.count} 次`).join("、")}）——都是本可以自动、现在由人做的`
     : "人顶了 0 次";
   return { total, since, by_task: rows, summary };
+}
+
+/**
+ * t-176 (pd 08:47)：上线清单空着时说什么。两件独立的事，先说批次、再说没装的，各一句；哪一句出现只看两个数。
+ * 还有批次在等人推时这里返回 null——那一段本来就在列它们。
+ *
+ * 判断与措辞都在这里，渲染方只印：两个渲染方各判一遍状态名，就是 t-142 那一族。
+ */
+export function batchesEmptyLine(batches: BoardBatch[], unpacked: number): string | null {
+  if (batches.some((x) => x.pending)) return null;
+  const said = [batches.length ? BATCH_LINES.allShipped() : BATCH_LINES.neverPacked()];
+  if (unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
+  return said.join("");
+}
+
+/** 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。 */
+export function unpackedCount(b: Board): number {
+  const packed = new Set((b.batches ?? []).flatMap((x) => x.contains));
+  return (b.release?.counts?.pending_deploy ?? 0) === 0 ? 0 : (b.release.pending_deploy ?? []).filter((c) => !packed.has(c.task)).length;
 }
 
 export function batches(s: State, deployed: string | null, why: string | null, fact: ReturnType<typeof deployedTasksFact>): BoardBatch[] {

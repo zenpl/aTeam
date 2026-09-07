@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, BATCH_LINES } from "@ateam/core";
+import { MemoryStore, BATCH_LINES, batchesEmptyLine } from "@ateam/core";
 import { UI } from "../src/i18n.js";
 import { createApp } from "../src/app.js";
 
@@ -55,7 +55,7 @@ describe("t-169 · 已经发生的不占「接下来要发生什么」的位置"
         await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: shaOf(n), method: "推上去了" });
       }
       const sec = batchesSection(await v.release());
-      expect(sec).toContain(BATCH_LINES.none());
+      expect(sec).toContain(BATCH_LINES.allShipped());
       // 已经发生的那两批没有消失，它们搬去了「上过线的几批」
       const html = await v.release();
       expect(html).toContain(UI.releaseShipped);
@@ -77,7 +77,7 @@ describe("t-169 · 已经发生的不占「接下来要发生什么」的位置"
       const html = await v.release();
       const sec = batchesSection(html);
       expect(sec).toContain("2222222");                 // 那一批在清单里
-      expect(sec).not.toContain(BATCH_LINES.none());    // 清单不空，就不说那句
+      expect(sec).not.toContain(BATCH_LINES.allShipped());   // 清单不空，就不说那句
       expect(html).not.toContain(UI.releaseShipped);    // 没有已发生的批次，那一段整个不出现
     } finally { await v.stop(); }
   });
@@ -114,8 +114,40 @@ describe("t-169 · 已经发生的不占「接下来要发生什么」的位置"
 
   it("措辞全取 core：页面不为这两格自拟任何一句", async () => {
     const src = await import("node:fs").then((fs) => fs.readFileSync(new URL("../src/html.ts", import.meta.url), "utf8"));
-    for (const said of [BATCH_LINES.deployed(), BATCH_LINES.shipped(), BATCH_LINES.none()]) {
+    for (const said of [BATCH_LINES.deployed(), BATCH_LINES.shipped(), BATCH_LINES.allShipped(), BATCH_LINES.neverPacked()]) {
       expect(src, `html.ts 里写死了「${said}」，该取 core 的 BATCH_LINES`).not.toContain(said);
     }
+  });
+});
+
+/**
+ * t-176 (pd 08:47)：这一段空着时说的是两件独立的事——批次那边什么样，以及有没有验过了却没装进批次的。
+ *
+ * 这一件的由来是一句**量出来的假话**：pd 08:38 先给了两句，我拿今天的生产板一比，两句对今天都是假的
+ * （批次 5、在等推 0，而 pending_deploy 有 7 件）。所以下面四种状态逐个断言，第三种就是今天生产的那一种。
+ */
+describe("t-176 · 空着的原因不止一种，各说各的", () => {
+  it("① 一批都没装过、也没有等上线的：只说批次那一句", () => {
+    expect(batchesEmptyLine([], 0)).toBe("还没装过批次。");
+  });
+
+  it("② 装过、都上线了、没有没装的：只说批次那一句", () => {
+    const shipped = [{ pending: false } as never];
+    expect(batchesEmptyLine(shipped, 0)).toBe("装好的批次都上线了。");
+  });
+
+  it("③ 装过、都上线了、还有没装的——今天生产就是这一种，两句都说，带上那个数", () => {
+    const shipped = [{ pending: false } as never, { pending: false } as never];
+    expect(batchesEmptyLine(shipped, 7)).toBe("装好的批次都上线了。还有 7 件验过了，没装进任何一批。");
+    // 退役的那句一个字都不该再出现：它想同时说两件事，对这一种必然说假话
+    expect(batchesEmptyLine(shipped, 7)).not.toContain("没有做完等上线的东西");
+  });
+
+  it("④ 还有没推的批次：这一段本来就在列它们，一句都不说", () => {
+    expect(batchesEmptyLine([{ pending: true } as never], 3)).toBeNull();
+  });
+
+  it("一批都没装过、却有等上线的：也要说清那个数（①与③之间那一格）", () => {
+    expect(batchesEmptyLine([], 2)).toBe("还没装过批次。还有 2 件验过了，没装进任何一批。");
   });
 });

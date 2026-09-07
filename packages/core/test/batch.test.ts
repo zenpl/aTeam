@@ -183,7 +183,7 @@ describe("t-167 · 补的是格不是 if", () => {
     expect(r["甲"].pending).toBe(false);   // 早先上过线的
     // 一批候选都没有时，那句话也在 core 一处，渲染方不印一片空白
     expect(Object.values(r).some((x) => x.pending)).toBe(false);
-    expect(BATCH_LINES.none()).toBe("没有可上线的东西");
+    expect(BATCH_LINES.allShipped()).toBe("装好的批次都上线了。");   // t-176：那句改名并拆开了
   });
 
   it("反例：真该说「退回去」的那一种，一个字都没被这次修改动过", async () => {

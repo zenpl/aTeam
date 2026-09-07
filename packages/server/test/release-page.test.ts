@@ -86,7 +86,11 @@ describe("t-133 · 上线详情页", () => {
     try {
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
       await task(v, "t-1", "灰字", "ccccccc3333", "verified");
-      expect(await v.page()).not.toContain("装好的几批");
+      // t-176 (pd 08:47)：这一节不再凭空消失——上线详情页是人专门来看上线的，一节不见了读起来像我们忘了做。
+      // 一批都没装过时它说的是「还没装过批次。」（牌桌首屏不同：那里整节不出现，一眼层不放空的东西）。
+      const none = await v.page();
+      expect(none).toContain("装好的几批");
+      expect(none).toContain("还没装过批次。");
 
       // packed on the head production is actually running: nothing stands in its way, and nothing is warned about
       await v.post("release", { kind: "reading", surface: "repo", key: "batch.2.10", value: { sha: "eeeeeee5555", base: "aaaaaaa1111", contains: ["t-1"] } });
