@@ -28,8 +28,12 @@ async function sixGroups() {
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-f1", surface: "repo", pass: false, evidence: "没过" });
   await mk("t-v1", "仓库验过等上线的一件"); await claim("t-v1"); await done("t-v1", "ccccccc3");
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-v1", surface: "repo", pass: true, evidence: "过了" });
+  // t-173：这一件是「已经在生产上跑着、但没人在生产表面验过」那一类（t-078 的 deployed_unverified）。
+  // 夹具原来没有它，于是那条守着「这一类六组一个都不装」的用例在空集合上空转——名字写着它守什么，它就是不守。
+  await mk("t-u1", "已经在生产上跑着、没人在生产验过的一件"); await claim("t-u1"); await done("t-u1", "eeeeeee5");
+  await emit({ kind: "task", op: "verify", actor: "qa", task: "t-u1", surface: "repo", pass: true, evidence: "仓库过了，生产没人走过" });
   await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "ddddddd4", method: "读 /health" });
-  await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.tasks", value: { sha: "ddddddd4", contained: [], not_contained: ["t-v1"] }, method: "git-ancestor" });
+  await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.tasks", value: { sha: "ddddddd4", contained: ["t-u1"], not_contained: ["t-v1"] }, method: "git-ancestor" });
   return board(reduce(await store.read()), HUMAN, new Date(t + 60_000));
 }
 
