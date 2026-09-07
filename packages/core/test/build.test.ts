@@ -470,3 +470,30 @@ describe("t-184 · 按钮上的字也算人可见", () => {
     expect(oldRuler.every((x) => newRuler.includes(x)), "新尺子应当只多不少").toBe(true);
   });
 });
+
+/**
+ * t-197：**REPEATABLE 也是一份手写名单，而它一直没有闸。**
+ *
+ * 与 t-173 同一根因，症状更安静：漏一个开关时 `--refs a --refs b` 不报错、不重复，**后一个静默盖掉前一个**，
+ * 命令照常成功。frontend 11:36 实测：九个里五个不在名单里（refs、touches、writes、depends-on、enum）。
+ *
+ * 后果不是小事：**touches 少一个就是一次不会被发现的接缝；refs 少一个就是一次「我动过」被算成没动**——
+ * t-193 之后 refs 正是「办了」的唯一凭据。
+ */
+describe("t-197 · CLI 的可重复参数名单与它的用法对得上", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const declared = () => new Set([...(read("../../cli/src/args.ts").match(/const REPEATABLE = new Set\(\[([^\]]*)\]\)/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+
+  it("判据 1：list() 读到的每一个参数都在 REPEATABLE 里", () => {
+    const used = [...new Set([...read("../../cli/src/main.ts").matchAll(/list\(\s*a\s*,\s*"([^"]+)"\s*\)/g)].map((m) => m[1]))].sort();
+    expect(used.length, "名单本身没被读空").toBeGreaterThan(5);
+    const missing = used.filter((x) => !declared().has(x));
+    expect(missing, `这些参数给两次会静默丢掉前一个：${missing.join("、")}——touches 丢一个是一次不会被发现的接缝，refs 丢一个是一次「我动过」被算成没动`).toEqual([]);
+  });
+
+  it("判据 2：frontend 11:36 点名的那五个现在真的在里面", () => {
+    for (const flag of ["refs", "touches", "writes", "depends-on", "enum"]) {
+      expect(declared(), `${flag} 还不在名单里`).toContain(flag);
+    }
+  });
+});

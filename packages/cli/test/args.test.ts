@@ -2,7 +2,7 @@
  * t-023: a stray positional argument is refused and echoed, never folded silently into a title or body.
  */
 import { describe, it, expect } from "vitest";
-import { exact, UsageError, parse, measuredAtOf } from "../src/args.js";
+import { exact, UsageError, parse, list, measuredAtOf } from "../src/args.js";
 import * as fmt from "../src/format.js";
 
 describe("t-023 · exact positionals", () => {
@@ -75,4 +75,22 @@ describe("t-173 · 布尔开关必须真的设得上", () => {
     expect(f["no-human-impact"]).toBe(true);
     expect(f.evidence).toBe("abc1234");   // 原来 evidence 静默丢失，不报错
   });
+});
+
+/**
+ * t-197 判据 2：**重复给不再静默覆盖。**
+ *
+ * 漏一个开关时的症状最安静：`--refs a --refs b` 不报错、不重复，后一个盖掉前一个，命令照常成功。所以这里
+ * 一正一反地钉住每一个：给两次两个都落，给一次落一个。
+ */
+describe("t-197 · 可重复的参数给几次落几个", () => {
+  for (const flag of ["refs", "touches", "writes", "depends-on", "enum", "criteria", "assumes", "option", "internal-only"]) {
+    it(`--${flag} 给两个，两个都在`, () => {
+      const a = parse([`--${flag}`, "一", `--${flag}`, "二"]);
+      expect(list(a, flag), `--${flag} 给两次只落了一个：后一个静默盖掉了前一个`).toEqual(["一", "二"]);
+    });
+    it(`--${flag} 给一个，就落一个`, () => {
+      expect(list(parse([`--${flag}`, "一"]), flag)).toEqual(["一"]);
+    });
+  }
 });
