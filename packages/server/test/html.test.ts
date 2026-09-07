@@ -1030,8 +1030,11 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
       expect(c).toContain('<p class="q">搬过来了，对吗？</p>');
       // the four numbers are the service's, shown as body rather than folded away; the importer's 99/88 never appear
       expect(c).toContain('<p class="body">在途 1 件、1 条现行决定、1 个数字、1 个等你答的问题。搬来的数字都标了要重测。旧的那边一条没删。</p>');
-      expect(c).not.toContain("99");
-      expect(c).not.toContain("88");
+      // t-120 (qa 01:43): the numbers, not the whole card. The article carries the instruction's ULID in a hidden
+      // field, and a random id containing 88 or 99 turned this into a coin flip — it lost once in a full run.
+      const body = c.slice(c.indexOf('<p class="body">'), c.indexOf("</p>", c.indexOf('<p class="body">')));
+      expect(body).not.toContain("99");
+      expect(body).not.toContain("88");
       expect(c).not.toContain("<details");
       expect(c).toContain('<button class="btn primary" type="submit" name="option" value="对">对</button>');
       expect(c).toContain('<button class="btn" type="submit" name="option" value="有漏">有漏</button>');
