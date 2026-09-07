@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, movedCriterion, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -637,10 +637,10 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
   const d: string[] = [];
   d.push(`<div class="meta">${esc(UI.criteriaBy(who(st.criteria_by), ago(st.created_at)))}</div>`);
   // t-166：搬走的判据仍然列着（原文不动、历史不改），但要与仍然有效的那几条一眼分得开：加一个 class 让它淡下去，
-  // 句尾跟一句说清由哪一件承接。整句来自 core（movedCriterion），命令行与这里共用一处。
+  // 句尾不写句子（pd 的措辞冻结开着）：淡化加一个记号与承接方的任务 id，判据 2 要的分得开由 CSS 那一半承担。
   d.push(`<ol class="criteria">${st.criteria.map((c, i) => {
     const moved = st.criteria_moved?.find((m) => m.index === i + 1);
-    return `<li${moved ? ' class="moved"' : ""}>${esc(c)}${moved ? ` <span class="meta">（${esc(movedCriterion(moved.to))}）</span>` : ""}</li>`;
+    return `<li${moved ? ' class="moved"' : ""}>${esc(c)}${moved ? ` <span class="meta">${MOVED_MARK} ${esc(moved.to)}</span>` : ""}</li>`;
   }).join("")}</ol>`);
   if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
   const evidence = st.evidence && href ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;

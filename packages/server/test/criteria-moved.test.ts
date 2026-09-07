@@ -3,7 +3,7 @@
  * 人看的是这一页；「搬走了」如果只在命令行里看得见，判据 2 保护不到读页面的人。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, reduce, board, append, movedCriterion, type NewEvent } from "@ateam/core";
+import { MemoryStore, reduce, board, append, MOVED_MARK, type NewEvent } from "@ateam/core";
 import { renderTask, esc } from "../src/html.js";
 
 const HUMAN = "human";
@@ -30,8 +30,8 @@ describe("t-166 · 判据 2：牌桌的任务页上分得开", () => {
     const { store } = await fixture();
     const html = await pageOf(store, "t-141");
     expect(html).toContain("已经搬到 t-148 的那条");
-    expect(html).not.toContain("不再据它验收");
     expect(items(html).some((li) => li.includes("moved"))).toBe(false);
+    expect(items(html).some((li) => li.includes(MOVED_MARK))).toBe(false);
   });
 
   it("标之后：那一条仍然列着（原文不动），但带上 class 与承接方那句话", async () => {
@@ -43,7 +43,10 @@ describe("t-166 · 判据 2：牌桌的任务页上分得开", () => {
     const moved = li.filter((x) => x.includes('class="moved"'));
     expect(moved).toHaveLength(1);                                     // 只有被标的那一条带 class
     expect(moved[0]).toContain("已经搬到 t-148 的那条");                 // 原文一字不动
-    expect(moved[0]).toContain(esc(movedCriterion("t-148")));           // 承接方，整句与命令行共用一处
+    expect(moved[0]).toContain(`${MOVED_MARK} t-148`);                   // 记号 + 承接方，与命令行同一个记号
+    // 冻结开着：这一条上不许多出汉字，分得开靠 CSS（淡化 + 删除线）与记号，不靠新话
+    const han = (x: string) => (x.match(/[\u4e00-\u9fff]/g) ?? []).length;
+    expect(han(moved[0])).toBe(han("已经搬到 t-148 的那条"));
     // 样式表里那条规则也要真的在，否则 class 只是个看不见的记号
     expect(html).toContain("ol.criteria li.moved");
   });

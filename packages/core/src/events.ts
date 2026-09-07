@@ -444,8 +444,7 @@ export const KEY_SYMBOLS = [
   "manual",
   "manualFor",
   "missingCard",
-  "movedCriterion",
-  "movedCriterionTrace",
+  "movedTrace",
   "noOutputSeam",
   "noRealOverlap",
   "noSuchObject",
@@ -821,17 +820,21 @@ export const unknownSpanReason = (tasks: string[]) =>
   `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
 
 /**
- * t-166：一条判据**已经搬到别的任务上**时，显示在它后面的那一句。
+ * t-166：一条判据**已经搬到别的任务上**时，显示上怎么把它与仍然有效的那几条分开。
  *
- * 原文一字不动地留在原处（判据 1：标注不是删除，历史不改），后面跟这一句说清它由哪一件承接。
- * 为什么要它：pm 今天自己被绊过——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事，
+ * pd 的措辞冻结开着，所以这里**没有句子**，只有一个记号和承接方的任务 id：`→ t-148`。pm 15:03 拦下了我第一版
+ * （它往人的任务页加了一句新话），并指出判据 2 要的是「分得开」，不是「写一句话」——记号加淡化就满足它。
+ * 记号住在 core，是为了让命令行、任务页、回溯三处指的是同一个记号；等冻结解开、pd 定了话，再在这里加句子。
+ *
+ * 为什么需要它：pm 今天自己被绊过——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事，
  * **只读判据不读 note 的人会去做一件已经不属于这件任务的活**。今晚这样的搬迁至少三次。
- *
- * 住在 core，命令行与页面共用一句；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
  */
-export const movedCriterion = (to: string) => `已搬到 ${to}，这件不再据它验收`;
-export const movedCriterionTrace = (index: number, to: string) =>
-  `标注：判据 ${index} 已搬到 ${to}（原文不动，这件不再据它验收）`;
+export const MOVED_MARK = "→";
+/**
+ * 回溯里那一行的整句。它住在 core 而不是 trace.ts，是因为「人可见的话一律进 core」（t-143）：
+ * 一个记号加一个任务 id 也是话。用的两个字（`判据`）在 core 里早就有（R3～R6 那几条），不是新造的字。
+ */
+export const movedTrace = (index: number, to: string) => `判据 ${index} ${MOVED_MARK} ${to}`;
 
 export const orphanReason = (shas: string[]) =>
   `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;

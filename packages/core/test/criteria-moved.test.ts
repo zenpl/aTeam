@@ -8,7 +8,7 @@
  * 时间一律相对 now。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, boardTask, Rejected, movedCriterion, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, boardTask, Rejected, movedTrace, MOVED_MARK, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -161,7 +161,8 @@ describe("t-166 · 判据 3：今晚那两次要能重放", () => {
     expect(find("t-149").criteria_moved).toEqual([{ index: 5, to: "t-158", by: "pm", at: expect.any(String) }]);
     // 没被标的那些不带这个字段——否则「搬走了」就成了每条判据都有的噪音
     expect(find("t-148").criteria_moved).toBeUndefined();
-    // 承接方写在句子里，读的人不用再去翻 note 才知道该看哪一件
-    expect(movedCriterion("t-148")).toContain("t-148");
+    // 承接方由记号带出来，不写句子（pd 的措辞冻结开着）：显示上只有记号与任务 id
+    expect(movedTrace(3, "t-148")).toContain(`${MOVED_MARK} t-148`);
+    expect((movedTrace(3, "t-148").match(/[\u4e00-\u9fff]/g) ?? []).length).toBe(2);   // 只有「判据」两个字，core 里早就有
   });
 });

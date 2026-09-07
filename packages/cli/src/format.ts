@@ -1,4 +1,4 @@
-import { band, type Band, movedCriterion, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -245,10 +245,11 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
     if (!t.criteria.length) out.push("  (none)");
     t.criteria.forEach((c, i) => {
       const added = t.criteria_added?.find((a) => a.index === i);
-      // t-166：搬走的那几条与仍然有效的那几条要一眼分得开——序号后面加一个记号，句尾说清由哪一件承接。
-      // 整句来自 core（movedCriterion），页面与这里共用一处。
+      // t-166：搬走的那几条与仍然有效的那几条要一眼分得开。**这里不写句子**——pd 的措辞冻结开着，而判据 2 要的是
+      // 分得开，不是写一句话（pm 15:03）。记号加承接方的任务 id 就够：`3. 原文  → t-148`。记号来自 core，
+      // 命令行、任务页、回溯三处指的是同一个。
       const moved = t.criteria_moved?.find((m) => m.index === i + 1);
-      out.push(`  ${i + 1}.${moved ? "→" : ""} ${c}${moved ? `  （${movedCriterion(moved.to)}）` : ""}${added ? `  (added by ${who(added.by)} ${hhmm(added.at)})` : ""}`);
+      out.push(`  ${i + 1}. ${c}${moved ? `  ${MOVED_MARK} ${moved.to}` : ""}${added ? `  (added by ${who(added.by)} ${hhmm(added.at)})` : ""}`);
     });
   }
   out.push(`touches    ${left("touches") ? `(not in the default board; ateam task show ${t.id} has them)` : touches.length ? touches.join(", ") : "—"}`);
