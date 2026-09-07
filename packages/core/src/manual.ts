@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
+import { WATCH_INTERVAL, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -18,7 +18,16 @@ export function manualRoles(): string[] {
 export function manual(role: string): string | null {
   const file = join(DIR, "roles", `${role}.md`);
   if (!/^[a-z][a-z0-9_-]*$/.test(role) || !existsSync(file)) return null;
-  return `${readFileSync(join(DIR, "common.md"), "utf8").trimEnd()}\n\n---\n\n${readFileSync(file, "utf8").trimEnd()}\n`;
+  return `${common()}\n\n---\n\n${readFileSync(file, "utf8").trimEnd()}\n`;
+}
+
+/**
+ * The part of the manual every role reads. t-108's rule again (t-145): a number the prose teaches is filled from the
+ * constant that decides it, never retyped — a copy drifts from the thing it describes, and this one had drifted into
+ * three different numbers in four places.
+ */
+function common(): string {
+  return readFileSync(join(DIR, "common.md"), "utf8").trimEnd().replaceAll("{{watch_interval}}", WATCH_INTERVAL);
 }
 
 /** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */
@@ -37,7 +46,7 @@ export function manualFor(role: string, ids: string[] | undefined): string | nul
   const written = manual(role);
   if (written) return written;
   if (!ids) return null;
-  return `${readFileSync(join(DIR, "common.md"), "utf8").trimEnd()}\n\n---\n\n# 角色 · ${role}\n\n这个项目声明了 ${role} 这个角色。你要做的事，就是下面这些职责；说明书的其余部分对所有角色都一样。\n`;
+  return `${common()}\n\n---\n\n# 角色 · ${role}\n\n这个项目声明了 ${role} 这个角色。你要做的事，就是下面这些职责；说明书的其余部分对所有角色都一样。\n`;
 }
 
 /** The manual for an agent that has not joined yet: what this is, how to start a project, how to join. `base` fills the address. */

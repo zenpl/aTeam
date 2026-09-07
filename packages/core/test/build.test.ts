@@ -3,7 +3,9 @@
  * Times relative to now.
  */
 import { describe, it, expect } from "vitest";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults } from "../src/index.js";
+import { readFileSync } from "node:fs";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL } from "../src/index.js";
+import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ulidTime = (id: string) => [...id.slice(0, 10)].reduce((n, c) => n * 32 + ALPHABET.indexOf(c), 0);
@@ -74,5 +76,45 @@ describe("t-062 · Builder", () => {
     expect(b.instructions.find((i) => i.to === "dev")).toMatchObject({ status: "acked" });
     expect(b.instructions.find((i) => i.to === "human")!.chosen).toMatchObject({ option: "A", by: "human" });
     expect(b.needs_human).toEqual([]);
+  });
+});
+
+/**
+ * t-145: the watch interval is one number in one place. It was four places holding three: the CLI's real default
+ * (20s), the manual and CLAUDE.md teaching 25s, and t-139's reminder suggesting 60s — and pm ruled on 25 while the
+ * default was 20, because nobody could see all four at once.
+ *
+ * Same instrument as t-108: the prose is filled from the constant that decides it, and a hard-coded one turns the
+ * build red. What the number should *be* is not settled — see WATCH_INTERVAL — but where it lives now is.
+ */
+describe("t-145 · watch 的间隔只有一处", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+
+  it("说明书教的间隔是填进去的，不是抄的", () => {
+    expect(read("../manual/common.md")).toContain("--interval {{watch_interval}}");
+    const filled = manual("dev")!;
+    expect(filled).toContain(`--interval ${WATCH_INTERVAL}`);
+    expect(filled).not.toContain("{{watch_interval}}");            // the hole is filled, never shown to a reader
+  });
+
+  it("说明书与帮助文本里都不再写死一个间隔数字", () => {
+    const hard = /--interval\s+\d+\s*(?:s|ms|m)\b/g;
+    for (const [what, text] of [["说明书", read("../manual/common.md")], ["CLI 帮助", read("../../cli/src/main.ts")], ["提醒", read("../../cli/src/deaf.ts")]] as const) {
+      const found = [...text.matchAll(hard)].map((m) => m[0]);
+      expect(found, `${what} 里写死了间隔：${found.join("、")}——它该从 WATCH_INTERVAL 取`).toEqual([]);
+    }
+  });
+
+  it("三处说的是同一个数：从常量取的那一个", () => {
+    const cmd = DEFAULT_WATCH_CMD;
+    expect(cmd).toBe(`ateam watch --interval ${WATCH_INTERVAL}`);
+    expect(manual("dev")!).toContain(cmd.replace("ateam ", "ateam "));
+    expect(read("../../cli/src/main.ts")).toContain("--interval ${WATCH_INTERVAL}");   // the help line, as a template
+  });
+
+  it("改常量就是改全部：没有第二处需要跟着改", () => {
+    // every place that teaches the interval reads the same source, so this test is the whole list of them
+    const sources = ["../manual/common.md", "../../cli/src/main.ts", "../../cli/src/deaf.ts"];
+    for (const p of sources) expect(read(p)).toMatch(/watch_interval|WATCH_INTERVAL/);
   });
 });

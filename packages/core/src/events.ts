@@ -302,6 +302,17 @@ export const STAND_IN_OPTIONS = ["上线它", "先这样"] as const;
 export const STAND_IN_TRIGGER = 3;
 export const STAND_IN_DAY_MS = 24 * 3600_000;
 
+/**
+ * t-145: how often a watching node asks for what is new — **one number, in one place**. It was in four: the CLI's real
+ * default (20s), the manual and CLAUDE.md teaching 25s, and the reminder suggesting 60s. Nobody chose any of them
+ * against the others; three of the four were simply never revisited, and pm ruled on 25 while the default was 20.
+ *
+ * The number itself is a judgement, not a measurement (pm, t-145 判据 4). What should really set it is how often six
+ * nodes can ask this machine for news without getting in each other's way, and nobody has measured that. When there
+ * are numbers — machine limits, or a run at a slower rate — this is the one line to change.
+ */
+export const WATCH_INTERVAL = "60s";
+
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
 export interface BatchValue { sha: string; base: string; contains: string[] }
