@@ -4,7 +4,7 @@
  * covered the half where the process is killed from outside. All times relative; no absolute timestamp.
  */
 import { describe, it, expect } from "vitest";
-import { watchState, deafNotice, DEFAULT_WATCH_CMD } from "../src/deaf.js";
+import { watchState, deafNotice, behindNotice, listeningNotices, pullIdle, DEFAULT_WATCH_CMD } from "../src/deaf.js";
 
 const NOW = new Date(Date.parse("2026-09-06T12:00:00Z"));
 const min = (n: number) => n * 60_000;
@@ -54,5 +54,65 @@ describe("t-102 · a node notices its own watch died", () => {
     expect(line.split("\n")).toHaveLength(1);
     expect(watchState).toHaveLength(2);                       // pure: (raw, now[, windowMs]) — no store, no client
     expect(deafNotice).toHaveLength(1);
+  });
+});
+
+/**
+ * t-137: there are two ways of not listening and they were one word. Your own watch process died — the heartbeat file
+ * stops, which t-102 already reads. Or your watch is alive and beating and the *server* has still not seen you pull:
+ * nothing said anything about that, and dev found it at 04:54 by running a command while the board called it deaf.
+ *
+ * They are not one boolean, because they are not one problem: a stopped watch is re-armed, a lagging cursor is caught
+ * up, and re-arming a watch that never stopped fixes nothing. Times relative to now.
+ */
+describe("t-137 · 心跳停了，和心跳活着但服务端没见你拉", () => {
+  const beating = (): string => JSON.stringify({ pid: 1, at: new Date().toISOString(), cmd: "ateam watch --interval 25s" });
+  const stopped = (minsAgo: number): string => JSON.stringify({ pid: 1, at: new Date(Date.now() - minsAgo * 60_000).toISOString(), cmd: "ateam watch --interval 25s" });
+  const st = (raw: string | null) => watchState(raw, new Date());
+
+  it("reads the header the server sends, and says nothing about what it did not send", () => {
+    expect(pullIdle("42")).toEqual({ kind: "seconds", s: 42 });
+    expect(pullIdle("never")).toEqual({ kind: "never" });
+    expect(pullIdle(null)).toBeNull();          // an older service, or a command that made no request
+    expect(pullIdle("")).toBeNull();
+    expect(pullIdle("狗")).toBeNull();
+    expect(behindNotice(null)).toBeNull();      // never invent a verdict out of a missing header
+  });
+
+  it("heartbeat alive, cursor stale: told, and told the remedy that fits *this* one", () => {
+    const [line, ...rest] = listeningNotices(st(beating()), pullIdle(String(40 * 60)));
+    expect(rest).toEqual([]);
+    expect(line).toContain("服务端说你");
+    expect(line).toContain("你的监听还在跳");        // says plainly that this is not the other problem
+    expect(line).toContain("ateam sync");
+    expect(line).not.toContain("重挂");              // re-arming a watch that never stopped fixes nothing
+  });
+
+  it("both fine: not a word", () => {
+    expect(listeningNotices(st(beating()), pullIdle("9"))).toEqual([]);
+    expect(listeningNotices(st(beating()), null)).toEqual([]);
+    expect(listeningNotices(st(null), pullIdle("9"))).toEqual([]);       // never watched here, and caught up: nothing to say
+  });
+
+  it("the watch stopped: one line, the one with the remedy — not the same news twice in two voices", () => {
+    const lines = listeningNotices(st(stopped(40)), pullIdle(String(40 * 60)));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("你的监听");
+    expect(lines[0]).toContain("重挂");
+    expect(lines[0]).not.toContain("服务端说你");   // the cursor stopped *because* the watch did
+  });
+
+  it("the server has never seen this node pull: said, and it is its own case", () => {
+    const [line] = listeningNotices(st(beating()), pullIdle("never"));
+    expect(line).toContain("从没见过你拉取");
+    expect(line).toContain("ateam sync");
+  });
+
+  it("the two are never one verdict: each is computed from its own fact", () => {
+    // a live heartbeat says nothing about the cursor, and a fresh cursor says nothing about the heartbeat
+    expect(deafNotice(st(beating()))).toBeNull();
+    expect(behindNotice(pullIdle(String(40 * 60)))).toBeTruthy();
+    expect(deafNotice(st(stopped(40)))).toBeTruthy();
+    expect(behindNotice(pullIdle("9"))).toBeNull();
   });
 });

@@ -15,6 +15,9 @@ export function checkShape(data: unknown): void {
 
 export interface Config { url: string; token?: string; me: string }
 
+/** t-137: what the last answer said about this node, for whoever prints the reminders at the end of a command. */
+export const seen: { pullIdle: string | null } = { pullIdle: null };
+
 export class ClientError extends Error {
   constructor(public status: number, public body: { error: string; rule?: string; message?: string }) {
     super(body.message ?? body.error);
@@ -35,6 +38,9 @@ export class Client {
     const res = await fetch(this.cfg.url.replace(/\/$/, "") + path, {
       method, headers: this.headers(), body: body === undefined ? undefined : JSON.stringify(body),
     });
+    // t-137: every answer says how long the server has gone without seeing this node pull. Kept, not acted on: the
+    // command that carried it decides whether to say anything, and only it knows whether the watch is alive.
+    seen.pullIdle = res.headers.get("x-ateam-pull-idle");
     const data = (await res.json().catch(() => ({ error: res.statusText }))) as never;
     if (!res.ok) throw new ClientError(res.status, data);
     checkShape(data);

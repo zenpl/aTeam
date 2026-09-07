@@ -3,14 +3,14 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { Client, ClientError, ShapeError } from "./client.js";
+import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
-import { watchState, deafNotice } from "./deaf.js";
-import { revise, baseAt, type Diff } from "./touches.js";
+import { watchState, listeningNotices, pullIdle } from "./deaf.js";
+import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -120,13 +120,9 @@ function gitDiff(): Diff {
   return {
     head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
     base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
-    changed: (base) => {
-      const r = git(["diff", "--name-only", base]);          // committed and uncommitted, against the claim point
-      if (r.status !== 0) return null;
-      const u = git(["ls-files", "--others", "--exclude-standard"]); // files created since and not yet added
-      // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
-      return [...r.stdout.split("\n"), ...(u.status === 0 ? u.stdout.split("\n") : [])].map((x) => x.trim()).filter((x) => x && !x.startsWith(".ateam/"));
-    },
+    // t-138: what this task changed, not what the branch did — a merge brings in other people's files, and merging
+    // is what the seam rules ask for. The three questions and their blind spots live next to changedFiles.
+    changed: (base) => changedFiles((args) => { const r = git(args); return r.status === 0 ? r.stdout : null; }, base),
   };
 }
 
@@ -407,8 +403,10 @@ function sayIfDeaf(argv: string[]): void {
     const me = process.env.ATEAM_ME || stored.me;   // just the identity: a half-configured node still deserves the reminder
     if (!me) return;
     const path = join(process.cwd(), ".ateam", `watch.${me}.lock`);
-    const line = deafNotice(watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date()));
-    if (line) console.error(line);
+    // t-137: two ways of not listening, told apart. The heartbeat file says whether this node's own watch died; the
+    // header the server sent says whether the server has seen it pull. Same place, same shape, never one verdict.
+    const st = watchState(existsSync(path) ? readFileSync(path, "utf8") : null, new Date());
+    for (const line of listeningNotices(st, pullIdle(seen.pullIdle))) console.error(line);
   } catch { /* never let the reminder break the command that carried it */ }
 }
 

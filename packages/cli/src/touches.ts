@@ -22,6 +22,45 @@ export interface Revision {
   measured: boolean;
 }
 
+/** Run a git command and return its stdout, or null when git could not answer. */
+export type Git = (args: string[]) => string | null;
+
+/**
+ * t-138: which files *this task* changed, on a branch that also carries other people's work.
+ *
+ * `git diff base..HEAD` cannot tell "I wrote this" from "I merged this", and merging is not an exception here — the
+ * seam rules require it, and on a busy night everyone is doing it. t-136 was claimed at 7be4d67, merged frontend's
+ * c441b39 on the way, and came out claiming sixteen files and one seam that was not its own. So the diff is replaced
+ * by three questions, each answered from its own place:
+ *
+ *   my own commits      `git log --first-parent --no-merges` over the range: what I committed on this branch, with
+ *                       everything a merge dragged in left out.
+ *   what a merge itself  a merge's combined diff (`diff-tree -c`) lists only the files that differ from *every*
+ *   changed             parent — which is exactly the conflict resolution, the part of a merge I really did write.
+ *   not committed yet   the working tree against HEAD, plus untracked files.
+ *
+ * **Where it is wrong, said out loud (pm, t-138 判据 1).** Every filter has a blind spot and this one has three.
+ * ① Work I do on another branch and merge in looks like somebody else's and is not counted. ② Someone else's commit
+ * landing on my first-parent chain — a cherry-pick, or another agent pushing to my branch — counts as mine. ③ An
+ * "evil merge" edit that happens to leave a file identical to one parent is invisible to the combined diff.
+ *
+ * Filtering by commit author would have none of those blind spots and is not available: every agent in this repo
+ * commits as the same git author (`Claude <noreply@anthropic.com>`; `git log --format=%an` says so), so an author
+ * filter here separates nothing at all. That is not a weaker option, it is no option.
+ */
+export function changedFiles(git: Git, base: string): string[] | null {
+  const lines = (out: string | null) => (out ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
+  const mine = git(["log", "--first-parent", "--no-merges", "--name-only", "--format=", `${base}..HEAD`]);
+  if (mine === null) return null;                     // git cannot answer at all: the manual path takes over
+  const out = new Set(lines(mine));
+  for (const merge of lines(git(["rev-list", "--first-parent", "--merges", `${base}..HEAD`])))
+    for (const f of lines(git(["diff-tree", "-c", "--name-only", "--no-commit-id", "-r", merge]))) out.add(f);
+  for (const f of lines(git(["diff", "--name-only", "HEAD"]))) out.add(f);
+  for (const f of lines(git(["ls-files", "--others", "--exclude-standard"]))) out.add(f);
+  // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
+  return [...out].filter((x) => !x.startsWith(".ateam/"));
+}
+
 /**
  * t-135: where the round being measured started. A first claim records the branch's head; **widening** a claim must
  * not move it (qa 00:29: re-basing there moves the measuring point to "now" and makes every later diff empty —
