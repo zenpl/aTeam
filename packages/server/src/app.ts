@@ -424,8 +424,17 @@ export function createApp(opts: ServerOptions) {
         return { status: 404, body: { error: "not found" } };
       };
 
+      /**
+       * t-103 (qa 01:05): these four write as `human`, so the same rule governs them as governs POST /events — the page
+       * is not a second door with older locks. The owner's own key presses their own buttons; the shared key may still
+       * do it during the upgrade window, and not one moment after the owner has arrived.
+       */
+      const mayActAsHuman = async () => isOwner || (isAdmin && !(await ownerArrived()));
       if (req.method === "POST" && ACTIONS.has(path)) {
-        if (!isAdmin) return html(res, 401, unauthorizedPage());
+        if (!(await mayActAsHuman())) {
+          if (!isAdmin && !isOwner) return html(res, 401, unauthorizedPage());
+          return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
+        }
         const r = await act(path, new URLSearchParams(await readText(req)));
         if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
@@ -440,7 +449,10 @@ export function createApp(opts: ServerOptions) {
         const given = form.get("token");
         if (given === null) return html(res, 200, tokenPage(fields, false, base));
         const r0 = await registry.lookup(given);
-        if (!r0 || r0.project !== projectId || r0.role !== null) return html(res, 401, tokenPage(fields, true, base));
+        // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.
+        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base));
+        if (r0.role === null && (await ownerArrived())) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
+        await registry.markUsed(given, now());
         const secure = proto === "https";
         const setCookie = `${cookieName}=${encodeURIComponent(given)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE_S}${secure ? "; Secure" : ""}`;
         const then = fields.then ?? "";
