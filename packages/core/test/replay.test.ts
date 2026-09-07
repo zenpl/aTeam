@@ -3167,3 +3167,77 @@ describe("t-192 · 守着阈值的用例，输入不许由那个阈值算出来"
     expect(derived, `这些推进量由阈值自己算出来：${derived.join("、")}——调大阈值它们跟着走，守的就是自洽不是行为`).toEqual([]);
   });
 });
+
+/**
+ * t-157：**一件多轮任务对外的触点是各轮的并集，不是最后一轮。**
+ *
+ * dev 07:22 实测：t-147 两轮碰了 17 个文件，done 之后记录上只剩 3 个——而它真正与 t-152 相撞的
+ * html.ts / i18n.ts / app.ts / format.ts / loop.ts 全在第一轮里。那次没漏挡是因为那条接缝当时已经解决过，
+ * **不是因为规则挡住了它**（判据 5 要求把这一点写清楚，所以这里有一条专门跑「没有现成解决时会不会漏」）。
+ *
+ * 判据 2 的那条界线也在这里守着：每一轮自己那一份仍然只算本轮（t-135 是对的），并集攒的是**已经交出去的
+ * 那些轮**。所以本轮的声明仍然改得窄——t-105 的「done 按事实取代声明」与 t-113 的「收细成符号让接缝变轻」
+ * 都靠它，把本轮也并进去，那两条当场坏掉。
+ */
+describe("t-157 · 多轮任务的触点，对外给并集", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"], no_human_impact: true });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 1：两轮各碰一批，对外的答案是两批之和", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts", "i18n.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts", "i18n.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb", touches: ["board.ts"] });
+    const t = boardTask(await at(store, c), "A")!;
+    expect([...t.touches!].sort(), "第一轮那两个不见了").toEqual(["board.ts", "html.ts", "i18n.ts"]);
+  });
+
+  it("判据 4、5：第一轮碰 A、第二轮碰 B，另一件碰 A——接缝必须报出来，且这次没有现成的解决兜着", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    // 另一件碰的是第一轮那个文件，而且是在 A 第二轮 claim 之后才认领的——所以时序那条（t-160）不放行它
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["html.ts"] });
+    const b = await at(store, c);
+    const seam = b.seams.find((x) => x.tasks.includes("A") && x.tasks.includes("B"));
+    expect(seam, "第一轮碰过的东西，第二轮没碰，接缝就看不见了").toBeDefined();
+    expect(seam!.overlap).toContain("html.ts");
+    expect(seam!.resolved, "这次没有现成的解决兜着——判据 5 要的就是这一条").toBeUndefined();
+  });
+
+  it("判据 2：本轮的声明仍然改得窄——并集攒的是已经交出去的那几轮", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts", "board.ts"] });
+    // 还没 done：这一轮的声明改窄（done 按事实取代声明），并集里此刻什么都没有
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    const t = boardTask(await at(store, c), "A")!;
+    expect([...t.touches!].sort(), "本轮改窄的那一个又被并回来了").toEqual(["html.ts"]);
+  });
+
+  it("并集攒的是**事实**：一轮明说「什么都没碰」，那一轮的声明就不进并集", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb", touches: [] });
+    const t = boardTask(await at(store, c), "A")!;
+    // 第二轮 claim 时声明了 board.ts，done 时明说「这一轮什么都没碰」——那是一条事实，它更正了自己的声明
+    // （t-105/qa 00:29：`[]` 说的是「它什么都没碰」，和别的事实一样）。所以并集里只有第一轮那条事实。
+    // **并集只增不减说的是「已经交出去的那些轮」不会消失**，不是「说过的每一句声明都作数」。
+    expect([...t.touches!].sort()).toEqual(["html.ts"]);
+  });
+});
