@@ -101,9 +101,35 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
  * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
  */
 export function ago(ms: number): string {
-  return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
+  return band(ms).unit === "second" ? AGO_JUST_NOW : `${span(ms)}前`;
 }
 export const AGO_JUST_NOW = "刚刚";
+
+/**
+ * 分档与取整本身，从三把梯子里拿出来单独放着（t-199）。
+ *
+ * 到这一件之前，「把毫秒算成第几档、那一档是几」这段逻辑在 `span`、`until`、`ago` 里各写了一遍——**三处写法一致，
+ * 靠的是三次都写对，不是靠结构**。而第四处（`cli/format.ts` 那个紧凑记法）就没写对：它四舍五入、带小数、
+ * 没有「天」档，于是 3599 秒被说成 `60m`——一个还没到的整点被说成已经到了，正是 pd 09:09 第一条硬规矩要挡的。
+ *
+ * pm 在 t-199 判据 3 里的裁定：**可以两种写法，不许两套算法**。所以这里分开的是「算」与「写」：这个函数只回答
+ * 「第几档、那一档是几」，一个字都不说；说法留给调用方——中文由下面三把梯子说，紧凑记法（`30s`/`59m`，给 agent 看的）
+ * 由 `cli/format.ts` 说。想让两种记法在某个时刻各说各话，得先把这个函数改坏。
+ *
+ * 取整只在这里做一次，一律向下。**`second` 那一档带着秒数**：中文用不上它（时长没有「30 秒」这一说，
+ * pd 定的是「不到 1 分钟」），紧凑记法要用——它给 agent 判断新旧，一秒和五十秒是两回事。
+ *
+ * 负数这里照旧落进 `second` 档（于是三把梯子仍会把「已经过去」说成「还有不到 1 分钟」）。**那是 t-200 的账，
+ * 这一件不动它**：t-200 要改的说法归 pd，而分档搬到一处之后，它只剩这一个地方要改。
+ */
+export type Band = { unit: "second" | "minute" | "hour" | "day"; n: number };
+export function band(ms: number): Band {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return { unit: "second", n: sec };
+  if (sec < 3600) return { unit: "minute", n: Math.floor(sec / 60) };
+  if (sec < 86400) return { unit: "hour", n: Math.floor(sec / 3600) };
+  return { unit: "day", n: Math.floor(sec / 86400) };
+}
 
 /**
  * 同一道梯子的另一半：**一段时长**说成几个字，不带「前」。
@@ -116,11 +142,11 @@ export const AGO_JUST_NOW = "刚刚";
  * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
  */
 export function span(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return SPAN_UNDER_A_MINUTE;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天`;
+  const { unit, n } = band(ms);
+  if (unit === "second") return SPAN_UNDER_A_MINUTE;
+  if (unit === "minute") return `${n} 分钟`;
+  if (unit === "hour") return `${n} 小时`;
+  return `${n} 天`;
 }
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 
@@ -135,11 +161,11 @@ export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
  * 不到一分钟那一档 pd 没定，我按前两把的形状写成「还有不到 1 分钟」，已单独发它过目。
  */
 export function until(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return UNTIL_UNDER_A_MINUTE;
-  if (sec < 3600) return `还有 ${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `还有 ${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天后`;
+  const { unit, n } = band(ms);
+  if (unit === "second") return UNTIL_UNDER_A_MINUTE;
+  if (unit === "minute") return `还有 ${n} 分钟`;
+  if (unit === "hour") return `还有 ${n} 小时`;
+  return `${n} 天后`;
 }
 export const UNTIL_UNDER_A_MINUTE = "还有不到 1 分钟";
 const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));

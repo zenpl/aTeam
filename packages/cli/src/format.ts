@@ -1,4 +1,4 @@
-import { DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { band, type Band, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -39,6 +39,22 @@ export function event(e: Event, me: string): string {
   return `${t} ${who} ${JSON.stringify(e)}`;
 }
 
+/**
+ * 紧凑记法（t-199）：`30s` / `59m` / `3h` / `2d`。**这里只管怎么写，不管怎么分档**——档位与取整全部来自
+ * core 的 `band`，与牌桌上那三把中文梯子是同一段代码。
+ *
+ * pm 在判据 3 里裁的是「可以两种写法，不许两套算法」：这一份留成拉丁字母、留得密，是因为它给 agent 看，
+ * 一屏要塞下几十行；人看的那一版在 `GET /` 上，说的是「3 分钟前」。**两种写法，一套算法。**
+ *
+ * 这一把原来自带分档，三条都踩在 pd 09:09 的硬规矩上：四舍五入（3599 秒说成 `60m`，把没到的整点说成到了）、
+ * 带小数（`1.5h`）、没有「天」档（400 天说成 `9600.0h`）。它们不是各自的笔误，是**自带分档**这一件事的三个症状。
+ */
+const LETTER: Record<Band["unit"], string> = { second: "s", minute: "m", hour: "h", day: "d" };
+export function compact(ms: number): string {
+  const { unit, n } = band(ms);
+  return `${n}${LETTER[unit]}`;
+}
+
 /** " at a, b" when the board carries the overlap; nothing when the slim board dropped it (t-075). */
 function at(overlap: string[] | undefined): string {
   return overlap?.length ? ` at ${overlap.join(", ")}` : "";
@@ -48,10 +64,7 @@ export function board(b: Board, me: string): string {
   const out: string[] = [];
   const who = roleNamer(b); // t-107: the CLI shows the same names the board does
   const now = Date.parse(b.now);
-  const ago = (iso: string) => {
-    const s = Math.round((now - Date.parse(iso)) / 1000);
-    return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`;
-  };
+  const ago = (iso: string) => compact(now - Date.parse(iso));
 
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${who(b.focus.set_by)}, ${ago(b.focus.at)} ago)` : "—"}`);
 

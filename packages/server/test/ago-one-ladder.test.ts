@@ -94,4 +94,54 @@ describe("t-180 · 页面不自带梯子", () => {
     // 反例：只说一个单位的不是梯子，是一句话（它的重复归 t-144）
     expect(judge('const s = `缺人 ${n} 分钟`;')).toEqual([]);
   });
+
+  /**
+   * t-199 判据 5：**把那句盲区自白改成一道会红的闸。**
+   *
+   * 上面那条按中文档位（`}\s*分钟` 之类）找梯子，所以它在注释里自认「用英文写的抓不住」。这不是假设，是账：
+   * `cli/format.ts` 那个紧凑记法（`60m`/`1.5h`）就一直住在这句自白后面，一道全绿的闸从它旁边走过去四十天。
+   * **写下盲区不等于守住了盲区**——一句自白只是把漏洞记在案，漏洞照旧开着。
+   *
+   * 这一条换一个不认字的判法：不看它说什么单位，看它**拿什么数在分档**。任何一段把时长分档的代码，无论
+   * 中文、英文还是记号，都得知道 60、3600、86400（或它们的毫秒版）里的至少两个——**分档就是拿这些数去比大小**。
+   * 于是这条闸对语言免疫：把梯子改写成英文、改成表情符号，它照样红。
+   *
+   * 判法与上面那条同一个形状（「恰好是 core 那一处」，不是「core 之外没有」），理由也同一个：qa 10:16 那三次
+   * 都栽在「以为自己在看的地方比真正看的地方大」。少了 core 那一处也要红——那说明梯子被删了或搬走了，
+   * 而不是说明天下太平。
+   */
+  const MAGNITUDES = [/\b60\b/, /\b3600\b/, /\b86400\b/, /\b60000\b/, /\b3600000\b/, /\b86400000\b/];
+  const bandingBy = (src: string) =>
+    MAGNITUDES.filter((re) => re.test(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""))).length;
+
+  it("判据 5：按「拿什么数分档」找，整个仓库也恰好只有 core 那一处——这一条不认字", () => {
+    const repo = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+    const srcs = sourceFiles(`${repo}/packages`, "packages");
+    const banding = srcs.filter((f) => bandingBy(readFileSync(`${repo}/${f}`, "utf-8")) >= 2);
+    expect(srcs.length, "一个文件都没扫到——这条断言此刻什么也没守").toBeGreaterThan(20);
+    expect(banding, `拿时间量级分档的地方应当只有 core 一处，实际是：\n${banding.join("\n")}`).toEqual([LADDER_HOME]);
+  });
+
+  /**
+   * pd 06:29：**一道闸交付时要带一个它该抓住的用例，和一个它不该抓住的用例。**两个都在这里，都是真代码不是描述。
+   *
+   * 该抓住的那个，就是这一件动手前 `cli/format.ts:51-54` 的原文——一字未改抄下来。上面那条中文闸对它是全绿的
+   * （0 个中文档位），这条闸看得见（2 个量级常数）。**这两个数并排放在这里，就是那句盲区自白被换成用例的样子。**
+   */
+  it("判据 5 的两个用例：旧的那一把会被抓住，一句只用一个单位的话不会", () => {
+    const THE_OLD_LADDER = [
+      "const ago = (iso: string) => {",
+      "  const s = Math.round((now - Date.parse(iso)) / 1000);",
+      "  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`;",
+      "};",
+    ].join("\n");
+    expect(bandingBy(THE_OLD_LADDER), "旧的那一把要被这条闸抓住").toBeGreaterThanOrEqual(2);
+    // 同一段代码在上面那条中文闸眼里是干净的——这正是它注释里那句自白，现在有数了
+    expect([/\}\s*分钟/, /\}\s*小时/, /\}\s*天/].filter((re) => re.test(THE_OLD_LADDER)).length,
+      "中文那条闸本来就看不见它，所以才需要这一条").toBe(0);
+
+    // 不该抓住的：只知道一个量级的不是分档。超时判断、轮询间隔都长这样，它们不该被叫去改。
+    expect(bandingBy("const WATCH_INTERVAL = 60;"), "只有一个量级常数，不是梯子").toBeLessThan(2);
+    expect(bandingBy('const s = `缺人 ${n} 分钟`;'), "一句只说一个单位的话，不是梯子").toBeLessThan(2);
+  });
 });
