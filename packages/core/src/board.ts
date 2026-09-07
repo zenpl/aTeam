@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -209,12 +209,23 @@ export interface Board {
    * because they need opposite things done. On every board — a batch nobody can act on is the thing that goes wrong.
    */
   batches: BoardBatch[];
+  /**
+   * t-149: 每一道**此刻不可信**的闸的那一句实话。可信的闸不在这里，也不留占位符（判据 4）。
+   * 判据 3：它的位置是挖层与报告——不进首屏、不生成给人的卡，所以瘦身板里没有它。
+   */
+  gate_honesty: GateHonesty[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
+    /**
+     * t-147: how far it actually got — `unread` / `read` / `acted`, worked out from the recipient's own pulls and
+     * events, not from a receipt. This is what a renderer shows; `status` is the older delivery bookkeeping.
+     * `acted_by_event` is the event that proves it, so a reader can go look instead of taking the word for it.
+     */
+    reach: Reach; acted_by_event?: string;
     /** t-087: set when a service notice stopped being true, with why and who took over. */
     stale?: NoticeStaleness;
     /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
@@ -615,6 +626,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     undelivered: [],
     overdue: [],
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
+    gate_honesty: [],
     instructions: [],
     readings: [],
     tasks: {},
@@ -646,6 +658,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
       kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
+      reach: st.reach, acted_by_event: st.acted_by_event,
       options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
@@ -662,7 +675,13 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }
-    else if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
+    // t-147: overdue is now「读到了、带选项、到期仍没答案」, and options may only be addressed to the human
+    // (rules.ts), so every overdue thing is a card the human is sitting on. It used to be pushed here only for
+    // *non*-human recipients, which after the redefinition would have left this list permanently empty — and the
+    // team would have had nowhere to see that a decision it is waiting on has gone past its time. It is not a second
+    // count of NEEDS HUMAN: that list says 「你要做的」, this one says 「这件晚了」, and t-139's three states never
+    // hold the human, so nothing is counted twice.
+    if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
   }
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
@@ -810,8 +829,132 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));
   }
-  b.overdue_by_presence = overdueByPresence(b);   // t-139: needs the presence rows, so it goes last
+  // The human is not grouped by presence: NEEDS HUMAN is its own list, and 「起一个 human」 is not a thing to say.
+  b.gate_honesty = GATES.map((g) => gateHonesty(s, g)).filter((x): x is GateHonesty => x !== null);
+  b.overdue_by_presence = overdueByPresence(b, owedTo(s).filter((st) => st.instruction.to !== human).map((st) => ({ instruction: st.instruction.id, to: st.instruction.to })));
   return b;
+}
+
+/**
+ * t-147: what an agent still owes — everything addressed to it that nobody has acted on. Read off `reach`, not off
+ * `overdue`: since t-147 only a card with options can be overdue, so counting the unanswered pile from `overdue`
+ * would have lost every plain instruction and double-counted the cards. A notice whose reason stopped being true
+ * (t-087: the owner redid it, another role took the task over) is owed by nobody — it is still unread, and chasing
+ * somebody for work already done is worse than silence. The human is not in here: NEEDS HUMAN is its own list.
+ *
+ * One definition, two readers: the board's `overdue_by_presence` and the service's 「起一个」 card. When they were
+ * two filters they drifted, and a role could be quiet with three unread instructions and no card raised for it.
+ */
+export function owedTo(s: State, to?: string): InstructionState[] {
+  return [...s.instructions.values()].filter(
+    (st) =>
+      !st.withdrawn && !st.chosen && st.reach !== "acted" &&
+      (to === undefined || st.instruction.to === to) &&
+      (st.instruction.actor !== SERVICE_ACTOR || !noticeStaleness(s, st.instruction)),
+  );
+}
+
+/**
+ * t-149: 一道闸知道自己不可信时，它的每条结论都要带上实话。
+ *
+ * 「不可信」不是一个手写的开关，也不是谁的印象：它由日志算出来——这道闸报过的结论里，有多少条被人核对之后
+ * 判为误报或漏报，以及是否存在一件以它为成因、还没在生产上验过的修法。两个条件都成立，这句话才出现；任何一个
+ * 不成立，它就不出现，也不留占位符（判据 4：今晚 t-139 那种「两处各编一个数」的形状不许再有）。
+ *
+ * 数只数**被声明过的判决**（seam 事件上的 verdict/missed 字段）。没判过的既不算真也不算假，句子里如实说还有
+ * 几条没判——一道自陈不可信的闸，绝不该顺手替谁编一个数。
+ */
+export interface GateHonesty {
+  gate: Gate;
+  /** 这道闸至今产生过多少条结论（接缝闸：它检出的每一条接缝）。 */
+  reported: number;
+  /** 其中被人核对并声明过判决的。 */
+  judged: number;
+  /** 判为误报的。 */
+  false_positives: number;
+  /** 声明过「它还漏报了」的。与判决正交：真接缝也可能同时是一次漏报。 */
+  missed: number;
+  /** 还没有人判过的。 */
+  unjudged: number;
+  /** 修法：`project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。 */
+  fix?: { task: string; status: string; verified_on: string[]; in_production: boolean };
+  /** 判据 1 的那一句，core 一处算出，唯一 key。 */
+  line: string;
+}
+
+/** t-149 判据 1 的那一句。措辞待 pd 定稿（我已发给它）；在那之前这是唯一一处出处，改也只改这里。 */
+function honestyLine(h: Omit<GateHonesty, "line">): string {
+  const what = h.false_positives || h.missed
+    ? `${h.judged} 条经核对，其中 ${h.false_positives} 条是误报${h.missed ? `、${h.missed} 条还漏报了` : ""}`
+    : `${h.judged} 条经核对`;
+  const rest = h.unjudged ? `，另有 ${h.unjudged} 条没人判过` : "";
+  const fix = h.fix
+    ? `修法在 ${h.fix.task}，${h.fix.in_production ? "已在生产上" : h.fix.verified_on.length ? `已验（${h.fix.verified_on.join("、")}），还没上生产` : `此刻 ${h.fix.status}`}`
+    : "还没有一件任务认领它的修法";
+  return `这道闸至今报过 ${h.reported} 条，${what}${rest}；${fix}。据它下的结论，先自己核一遍。`;
+}
+
+/** t-149: `project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。事实无效或指向不存在的任务时，当作没有。 */
+function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${gateFixKey(gate)}`);
+  const rs = id ? s.readings.get(id) : undefined;
+  const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
+  if (!rs || !rs.valid || rs.expired || !task) return undefined;
+  const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
+  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes("production") };
+}
+
+export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
+  if (gate !== "seam") return null;   // 今天只有接缝闸产生可被核对的结论
+  const seams = [...s.seams.values()];
+  const judged = seams.filter((x) => x.resolution?.verdict);
+  const h = {
+    gate,
+    reported: seams.length,
+    judged: judged.length,
+    false_positives: judged.filter((x) => x.resolution!.verdict === "false").length,
+    missed: seams.filter((x) => x.resolution?.missed).length,
+    unjudged: seams.length - judged.length,
+    fix: gateFix(s, gate),
+  };
+  // 判据 2：两个条件都成立才叫「已知缺陷」——有被判过的错，且修法还没在生产上。都不成立就没有这句话。
+  const broken = h.false_positives > 0 || h.missed > 0;
+  if (!broken || !h.fix || h.fix.in_production) return null;
+  return { ...h, line: honestyLine(h) };
+}
+
+/**
+ * t-147 criterion 6 (pm 06:37): what one role owes at this instant, in the new model's two kinds.
+ *
+ * `unanswered` — a card with options that has reached them and still has no answer. That is an answer, not a
+ * receipt, and it is the only thing anybody is still required to send back.
+ * `untouched` — read, and no event of theirs has touched it yet. Not a debt the way a card is: the way to close one
+ * is to do it, or to say 「不办：<原因>」 (DECLINE_PREFIX), which is an answer too.
+ *
+ * Nothing here is unread: a pull records its cursor before this is computed, so by the time it is answered, the
+ * puller has read everything the log holds. What is unread belongs to whoever has *not* pulled, and that is the
+ * board's `overdue_by_presence`, not this.
+ *
+ * For a role `unanswered` is empty and will stay empty while options may only be addressed to the human
+ * (rules.ts: 「options are for the human」). It is here because the human is a puller too, and because a role that
+ * one day may be asked to choose should not need a second field invented for it.
+ *
+ * Deliberately data only. The sentence a person reads at `sync` is t-140's, and one wording in two places is how the
+ * page once promised an address nobody had ever delivered to (t-126).
+ */
+export interface OwedNow {
+  unanswered: { instruction: string; from: string; body: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
+  untouched: { instruction: string; from: string; body: string; sent: string }[];
+}
+
+export function owedNow(s: State, to: string): OwedNow {
+  const out: OwedNow = { unanswered: [], untouched: [] };
+  for (const st of owedTo(s, to)) {
+    const i = st.instruction;
+    if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
+  }
+  return out;
 }
 
 /**
@@ -822,35 +965,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
  * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
  * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
  */
-/**
- * t-140 (pd 06:23): what this node itself still owes, said only to it, only at sync. Two sentences because under the
- * model of 05:39 it owes two different things: an answer to a card, and an action on everything else. The second
- * ends with both legitimate ways out on purpose — silence is no longer an answer, and a refusal is information, so
- * a line that offered neither would read as nagging.
- */
-export function owedLines(forMe: { id: string; at: string; body?: string; options?: string[] }[], now: Date): string[] {
-  const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
-  type Owed = { id: string; at: string; body?: string; options?: string[] };
-  const oldest = (xs: Owed[]) => xs.reduce((a, b) => (a.at < b.at ? a : b));
-  const first = (x: Owed) => splitTitle(x.body ?? "").title || (x.body ?? "").trim().slice(0, 30);
-  const out: string[] = [];
-  const asks = forMe.filter((i) => i.options?.length), rest = forMe.filter((i) => !i.options?.length);
-  if (asks.length) {
-    const o = oldest(asks);
-    out.push(`有 ${asks.length} 条在等你答，最久的 ${mins(o.at)} 分钟：${first(o)}`);
-  }
-  if (rest.length) {
-    const o = oldest(rest);
-    out.push(`你读过还没动的有 ${rest.length} 条，最久 ${mins(o.at)} 分钟：${first(o)}。办了它，或者写一句「不办：原因」。`);
-  }
-  return out;
-}
-
-export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
+export function overdueByPresence(b: Board, owed: { instruction: string; to: string }[]): Board["overdue_by_presence"] {
   const state = new Map(b.presence.map((p) => [p.actor, p]));
   const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });
   const out = { missing: empty(), deaf: empty(), listening: empty() };
-  for (const o of b.overdue) {
+  for (const o of owed) {
     const p = state.get(o.to);
     const g = out[p?.status ?? "missing"];   // a recipient with no presence row at all has never been here
     g.count++;
@@ -870,7 +989,9 @@ export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
     out.deaf.line = out.deaf.away_s === null
       ? `从没读过日志，${out.deaf.count} 条没送到`
       : `有 ${mins(out.deaf.away_s)} 分钟没读日志了，${out.deaf.count} 条没送到`;
-  if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条没确认`;
+  // pd 05:40 retired 「确认」 with the receipt it named: what is true of a node that is here is that it read them and
+  // has not moved yet, and that is what the line says now.
+  if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条读到了还没动`;
   return out;
 }
 
@@ -909,7 +1030,8 @@ export function slimBoard(b: Board): Board {
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
   const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
-  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, omitted: [] };
+  // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
+  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
   slim.omitted = omittedPaths(b, slim);
   return slim;
 }

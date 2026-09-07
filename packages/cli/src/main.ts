@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -61,7 +61,7 @@ tasks
   ateam task obsolete <id> --by <decision note id> [--reason "..."]   terminal; a done/failed task a decision made moot, by the criteria author, pm, pd or human
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
-  ateam task seam <a> <b> --resolution "..."
+  ateam task seam <a> <b> --resolution "..." [--verdict real|false] [--missed]
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
 
@@ -341,7 +341,15 @@ async function main(argv: string[]) {
           if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);
           return emit({ kind: "task", op, task, add: [text] });
         }
-        case "seam": { const [x, y] = exact([id, ...more].filter((v) => v !== undefined), "a", "b"); return emit({ kind: "task", op, tasks: [x, y], resolution: str(a, "resolution") ?? "" }); }
+        // t-149: --verdict/--missed judge the *gate*, separately from what the resolution does about the two tasks.
+        // Both optional: a resolution that does not judge the gate says nothing about it, and the gate's own line
+        // counts it as unjudged rather than as either answer.
+        case "seam": {
+          const [x, y] = exact([id, ...more].filter((v) => v !== undefined), "a", "b");
+          const verdict = str(a, "verdict") as SeamVerdict | undefined;
+          if (verdict !== undefined && !SEAM_VERDICTS.includes(verdict)) throw new Error(`--verdict must be one of ${SEAM_VERDICTS.join(" | ")}`);
+          return emit({ kind: "task", op, tasks: [x, y], resolution: str(a, "resolution") ?? "", ...(verdict ? { verdict } : {}), ...(bool(a, "missed") ? { missed: true } : {}) });
+        }
         default: throw new Error(`unknown task op "${op}"`);
       }
     }

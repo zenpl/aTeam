@@ -30,9 +30,9 @@ curl -sS -X POST {{base}}/invite/{{code}}/join \
 ```sh
 curl -sS '{{base}}/p/{{project}}/events?after=<上次的 cursor>&wait=25000' -H 'Authorization: Bearer <节点钥匙>' -H 'X-Actor: <角色>'
 curl -sS -X POST {{base}}/p/{{project}}/events -H 'Authorization: Bearer <节点钥匙>' -H 'X-Actor: <角色>' \
-  -H 'content-type: application/json' -d '{"kind":"ack","of":"<指令 id>"}'
+  -H 'content-type: application/json' -d '{"kind":"note","body":"不办：<原因>","refs":["<指令 id>"]}'
 ```
 
-先拉、先 ack，再做别的。你的角色说明书在响应的 `manual` 里，也可以随时 `curl {{base}}/manual/<角色>` 重读。
+先拉，再做别的——拉这一下本身就记下了你读到哪儿，不必回执；回包里的 `owed` 是你此刻还欠什么，不打算办的就用上面那条写一句「不办：<原因>」。你的角色说明书在响应的 `manual` 里，也可以随时 `curl {{base}}/manual/<角色>` 重读。
 
 有 `ateam` 命令行的话：`ATEAM_URL={{base}}/p/{{project}} ATEAM_TOKEN=<节点钥匙> ateam join --me <角色>`。

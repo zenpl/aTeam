@@ -72,9 +72,10 @@ curl -sS -X POST {{base}}/invite/<code>/join \
 curl -sS '{{base}}/p/<项目 id>/events?after=<上次返回的 cursor>&wait=25000' \
   -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <角色>'
 
-# 确认：每一条发给你的指令，先 ack 再做别的
+# 不必回执：拉这一下本身就记下了你读到哪儿。回包里的 owed 就是你此刻还欠什么。
+# 不打算办的，写一句「不办：<原因>」，指回那条指令——拒绝是信息，沉默不是。
 curl -sS -X POST {{base}}/p/<项目 id>/events -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <角色>' \
-  -H 'content-type: application/json' -d '{"kind":"ack","of":"<指令 id>"}'
+  -H 'content-type: application/json' -d '{"kind":"note","body":"不办：<原因>","refs":["<指令 id>"]}'
 
 # 看牌桌的数据：焦点、需要人的事、在途、事实、谁在
 curl -sS {{base}}/p/<项目 id>/board -H 'Authorization: Bearer <钥匙>' -H 'X-Actor: <角色>'

@@ -45,9 +45,9 @@ describe("t-040 · the address is the toolkit", () => {
     expect(proxied).toContain("https://ateam.example/projects");
   });
 
-  it("names every step a stranger needs: new project, invite join, first node, sync/ack, role manual", async () => {
+  it("names every step a stranger needs: new project, invite join, first node, sync then 不办, role manual", async () => {
     const text = await (await fetch(`${base}/manual`)).text();
-    for (const must of ["POST", "/projects", "admin_key", "invite_url", "/join", "agent_id", "node_key", "第一个", "pm", "events?after=", "wait=25000", '"kind":"ack"', "X-Actor", "/board", "ateam join"]) expect(text).toContain(must);
+    for (const must of ["POST", "/projects", "admin_key", "invite_url", "/join", "agent_id", "node_key", "第一个", "pm", "events?after=", "wait=25000", "不办：", "X-Actor", "/board", "ateam join"]) expect(text).toContain(must);
   });
 });
 
@@ -65,9 +65,9 @@ describe("t-039 · GET /manual/<role>", () => {
     }
   });
 
-  it("covers the core protocol: pull then ack, facts with source and validity, three-way separation, seams, 280-char instructions with ack", async () => {
+  it("covers the core protocol: t-147 的两件欠账, facts with source and validity, three-way separation, seams, 280-char instructions", async () => {
     const text = await (await fetch(`${base}/manual/dev`)).text();
-    for (const must of ["ateam sync", "先 ack", "有效的事实", "--method", "三方分离", "接缝", "280 字", "ack_by", "touches", "表面", "触点"]) expect(text).toContain(must);
+    for (const must of ["ateam sync", "不必回执", "不办：", "有效的事实", "--method", "三方分离", "接缝", "280 字", "ack_by", "touches", "表面", "触点"]) expect(text).toContain(must);
   });
 
   it("404 for a role it is not written for, or a path that is not a role", async () => {

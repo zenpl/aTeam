@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
@@ -371,6 +371,9 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
     if (!seam) throw new Rejected("seam", `no seam between ${e.tasks[0]} and ${e.tasks[1]}`);
     if (seam.resolution) throw new Rejected("seam", `already resolved by ${seam.resolution.by}`);
     if (!e.resolution?.trim()) throw new Rejected("seam", "resolution is required");
+    // t-149: the verdict on the gate itself is a declared value, never a word fished out of the prose.
+    if (e.verdict !== undefined && !SEAM_VERDICTS.includes(e.verdict)) throw new Rejected("seam", `verdict must be one of ${SEAM_VERDICTS.join(" | ")}, not "${e.verdict}"`);
+    if (e.missed !== undefined && typeof e.missed !== "boolean") throw new Rejected("seam", "missed is true or nothing: it says the gate also failed to report something it should have");
     return;
   }
   const t = state.tasks.get(e.task);

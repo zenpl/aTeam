@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, pull, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, type Event, type State } from "@ateam/core";
+import { MemoryStore, reduce, board, pull, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, type Board, type Event, type State } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { followUps } from "@ateam/core";
 
@@ -21,6 +21,9 @@ const post = async (actor: string, body: unknown) => {
 const decide = (id: string, option: string) =>
   fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id, option }) });
 const state = async (now = new Date()) => reduce(await store.read(), now);
+// t-147: a fail notice carries no options, so it is never in `overdue` — what it is, is owed by its owner until
+// somebody acts on it. That pile is `overdue_by_presence`.
+const owed = (b: Board) => Object.values(b.overdue_by_presence).flatMap((g) => g.instructions);
 const notices = (s: State, to: string, marker: string) => [...s.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.to === to && st.instruction.body.includes(marker)).map((st) => st.instruction);
 const task = async (id: string, title: string, owner = "dev") => {
   await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] });
@@ -61,13 +64,13 @@ describe("t-054 · verify --fail notifies the owner", () => {
     // once the owner has done it again, the notice is stale: it leaves overdue by itself, unacked
     const later = new Date(Date.now() + 20 * 60_000);
     let b = board(await state(later), HUMAN, later);
-    expect(b.overdue.map((o) => o.instruction)).toContain(n.id);
+    expect(owed(b)).toContain(n.id);
     await post("dev", { kind: "task", op: "reopen", task: "t-1", reason: "改" });
     expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "def5678: 改了" })).status).toBe(201);
     s = await state(later);
     b = board(s, HUMAN, later);
     expect(s.instructions.get(n.id)!.acked_at).toBeUndefined();
-    expect(b.overdue.map((o) => o.instruction)).not.toContain(n.id);
+    expect(owed(b)).not.toContain(n.id);
     // a fail in the new round is a new notice
     const v2 = await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: false });
     const all = notices(await state(), "dev", FAIL_NOTICE);
@@ -145,11 +148,11 @@ describe("t-087 · a fail notice goes stale when another role takes the task ove
     expect(v.status).toBe(201);
     const later = new Date(Date.now() + 30 * 60_000);
     const notice = notices(await state(later), "dev", FAIL_NOTICE).find((i) => i.body.startsWith("t-9"))!;
-    expect(board(await state(later), HUMAN, later).overdue.map((o) => o.instruction)).toContain(notice.id);
+    expect(owed(board(await state(later), HUMAN, later))).toContain(notice.id);
     const claim = await post("frontend", { kind: "task", op: "claim", task: "t-9", touches: ["t-9"] });
     expect(claim.status).toBe(201);
     const b = board(await state(later), HUMAN, later);
-    expect(b.overdue.map((o) => o.instruction)).not.toContain(notice.id);
+    expect(owed(b)).not.toContain(notice.id);
     expect(b.instructions.find((i) => i.id === notice.id)!.stale).toEqual({ reason: "taken_over", task: "t-9", by: "frontend", claim: claim.body.id });
     const events = (await store.read()).events;
     expect(events.find((e) => e.id === notice.id)).toBeTruthy(); // nothing deleted, nothing edited

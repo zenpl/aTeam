@@ -120,11 +120,14 @@ export const UI = {
 
   // 其余
   rest: "其余：团队自己的状态",
-  restSummary: (agents: number, overdue: number, seams: number, facts: number) => `session 之间的指令 ${agents} · 逾期 ${overdue} · 接缝 ${seams} 条未解决 · 事实 ${facts} 条有效`,
+  restSummary: (agents: number, overdue: number, seams: number, facts: number) => `session 之间的指令 ${agents} · 到期没人选 ${overdue} · 接缝 ${seams} 条未解决 · 事实 ${facts} 条有效`,
   collabReport: "最近一份协作报告：",
   collabNone: "还没有协作报告",
-  overdue: "逾期",
-  overdueLine: (to: string, body: string, from: string) => `${to} 还没有确认来自 ${from} 的「${body}」`,
+  // t-147: 「逾期」不再是「没回执」。这里只剩一件事：带选项的卡到点了还没有人给答案。没人动的那一堆在它下面，
+  // 用 core 算好的三句话（pd 的措辞），这里不另写一遍。
+  overdue: "到期没人选",
+  overdueLine: (to: string, body: string, from: string) => `${to} 还没有回答 ${from} 的「${body}」`,
+  owed: "没人办",
   due: (when: string) => `期限 ${when}`,
   none: "无",
   agentInstructions: "session 之间的指令",
@@ -199,7 +202,6 @@ export const UI = {
   supersededBy: "已被取代",
   invalidatedBy: "已失效，原因",
   expired: "已过期",
-  instrStatus: { pending: "待送达", delivered: "已送达", acked: "已确认", overdue: "逾期", withdrawn: "已撤回" } as Record<string, string>,
   surface: { repo: "仓库", staging: "staging", production: "生产" } as Record<string, string>,
 
   // token 小页面

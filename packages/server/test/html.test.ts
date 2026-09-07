@@ -107,7 +107,11 @@ describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句�
     const html = await w.authedPage();
     const rest = html.slice(html.indexOf('<details class="rest"'));
     expect(rest).toContain("claim t-1 now");
-    expect(rest).toMatch(/逾期[\s\S]*dev 还没有确认来自 pm 的「claim t-5 now/);
+    // t-147: 过了期限、但没带选项的指令不再算「逾期」——欠的是答案，不是回执。它在页面上是 dev「读到了，还没动」
+    // 的一条，落在「没人办」那一堆里；「到期没人选」只装带选项的卡。
+    expect(rest).toContain("到期没人选");
+    expect(rest).toMatch(/读到了，还没动<\/span> pm → dev：claim t-5 now/);
+    expect(rest).toMatch(/没人办[\s\S]*<b>dev<\/b>：(在听|从没读过日志|有 \d+ 分钟没读日志了)[^<]*/);
     expect(rest).toContain("production:deployed.sha");
     expect(rest).toContain("Card page for the human");
     expect(rest).toContain("cookie is SameSite=Lax");
@@ -486,8 +490,11 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
         // t-152: 「验过了，等上线」 is not in this list on purpose — unlike 在做/卡住 it appears only when the board
         // can tell something is waiting on a push (the containment fact), so asserting it here would pin a fixture,
-        // not a translation. Its own tests cover it.
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        // not a translation. Its own tests cover it. 「仓库验过，还没在生产验」 was that same label before t-152
+        // renamed it; it is gone from the page, so the list names neither.
+        // t-147 renamed two of these in place: 逾期 → 到期没人选 (only a card with options can be late now) and
+        // 待送达 → 还没读到 (delivery is computed from the reader's own cursor, not from a receipt).
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "到期没人选", "接缝", "事实", "已定", "human 选择了「报表」", "还没读到", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)

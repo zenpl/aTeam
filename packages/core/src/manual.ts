@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { WATCH_INTERVAL, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
+import { WATCH_INTERVAL, REACH_RULE, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -27,7 +27,11 @@ export function manual(role: string): string | null {
  * three different numbers in four places.
  */
 function common(): string {
-  return readFileSync(join(DIR, "common.md"), "utf8").trimEnd().replaceAll("{{watch_interval}}", WATCH_INTERVAL);
+  // t-141: 「你欠什么」那一段是 pd 的字，从 REACH_RULE 填进来，说明书里不留第二份——同一句话抄两处，改了行为忘了
+  // 说明书，就是 pd 06:27 说的「一边停一边教」。
+  return readFileSync(join(DIR, "common.md"), "utf8").trimEnd()
+    .replaceAll("{{watch_interval}}", WATCH_INTERVAL)
+    .replaceAll("{{reach_rule}}", REACH_RULE);
 }
 
 /** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */
