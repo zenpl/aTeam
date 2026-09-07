@@ -430,6 +430,12 @@ export interface Board {
    * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
    */
   disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
+  /**
+   * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被别的角色声明「这不是 human 发的」，两个不同角色
+   * 各来一次才生效；这里是只来了一个的那些——牌桌据此看得出「这一条在争议中，等第二个人或等 human」。
+   * **只出数据，不出话**：要给人看的那句归 pd（冻结开着）。
+   */
+  contested: { of: string; actor: string; by: string[]; at: string; reason: string }[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -924,6 +930,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     batches: [],
     said: [],
     disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
+    contested: [...s.contested].map(([of, c]) => ({ of, actor: c.actor, by: [...c.by], at: c.at, reason: c.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],
     roles: projectRoles(s),

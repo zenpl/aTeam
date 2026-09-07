@@ -101,3 +101,21 @@ describe("t-216 判据 5 · 一正一反", () => {
     expect((await st(w.s)).disowned.has(w.bad.id)).toBe(false);   // 一票不够，哪怕他就是造痕迹的那个人
   });
 });
+
+describe("t-216 判据 3 · 牌桌看得出「在争议中」，但只出数据不出话", () => {
+  it("一个人声明过：牌桌那一格说得出是谁、原来署谁、为什么；生效之后它从争议里消失、进 disowned", async () => {
+    const { board } = await import("../src/index.js");
+    const w = await world();
+    await w.put({ kind: "disown", actor: "qa", of: w.bad.id, reason: "我试共享 token 时误落的" }, -200);
+    const b1 = board(await st(w.s), HUMAN, at(0));
+    expect(b1.contested).toHaveLength(1);
+    expect(b1.contested[0]).toMatchObject({ of: w.bad.id, actor: HUMAN, by: ["qa"] });
+    expect(b1.contested[0].reason).toBeTruthy();
+    expect(b1.disowned).toHaveLength(0);
+
+    await w.put({ kind: "disown", actor: "release", of: w.bad.id, reason: "被它挡住撤不了卡" }, -190);
+    const b2 = board(await st(w.s), HUMAN, at(0));
+    expect(b2.contested).toHaveLength(0);
+    expect(b2.disowned).toHaveLength(1);
+  });
+});
