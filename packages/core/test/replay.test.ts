@@ -2402,3 +2402,62 @@ describe("t-105 · an empty touches list is a fact, not a missing field", () => 
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual([]);
   });
 });
+
+/**
+ * t-112 (pd 00:51 的通则)。qa 00:51 要给一个已知坏掉的版本落 fail，被接缝闸拒了：那个版本既记不成坏也记不成好，
+ * 「它坏了」这条信息只留在一个 agent 嘴上。防止过早**放行**的闸，一律只拦 pass。
+ */
+describe("t-112 · a gate against releasing early never blocks the news that it is broken", () => {
+  const collided = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["shared.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["shared.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "abc1234" });
+    return { store, c };
+  };
+
+  it("qa 00:51 的那一幕：接缝未解时 fail 落得下去，pass 仍被拦", async () => {
+    const { store, c } = await collided();
+    expect(openSeamsFor(reduce(await store.read(), c.now()), "B")).toHaveLength(1);
+    // 坏消息畅通
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "pnpm build 退出码 2：format.ts(178,36) TS2345" });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("failed");
+    // 好消息仍要先把接缝定下来，并且说清它挡的是哪一边
+    await emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "B", reason: "修类型" });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "def5678" });
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }));
+    expect(r.rule).toBe("verify");
+    expect(r.message).toContain("unresolved seam");
+    expect(r.message).toContain("这挡住的是通过，不是不通过；要记它坏了，直接落 fail。");
+    // 定了接缝就放行
+    await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "frontend 先落，dev 合它的 sha" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
+  });
+
+  it("the other pass-only gate says the same thing in the same words", async () => {
+    const { store, c } = await collided();
+    await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "frontend 先落" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", pass: true }));
+    expect(again.message).toContain("a pass does not override a pass");
+    expect(again.message).toContain("这挡住的是通过，不是不通过；要记它坏了，直接落 fail。");
+    // 而那条 fail 真的落得下去，不需要任何旁路
+    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", pass: false, evidence: "判据 1 不成立：build 是坏的" });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("done");
+  });
+
+  it("no bypass exists for a fail, because a fail never needed one", async () => {
+    const src = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
+    const verify = src.slice(src.indexOf('case "verify": {'), src.indexOf('case "block":'));
+    // 拒绝 fail 的只剩三条，全是对 fail 本身的要求，不是防止放行的闸：不是 done、没写表面、推翻 pass 没给证据/没指名判据
+    const passOnly = verify.slice(verify.indexOf("if (e.pass) {"), verify.indexOf("} else if (passer !== undefined) {"));
+    expect(passOnly).toContain("openSeamsFor");                  // 接缝闸在 pass 那一支里
+    expect(verify.slice(verify.indexOf("} else if")).includes("openSeamsFor")).toBe(false);
+    expect(verify).not.toMatch(/anyway|--force|旁路/);            // 没有给 fail 开的口子
+  });
+});

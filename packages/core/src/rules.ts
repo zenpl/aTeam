@@ -76,6 +76,13 @@ export function namesCriterion(evidence: string, count: number): boolean {
   return false;
 }
 
+/**
+ * t-112 (pd 00:51 的通则)：凡是为了防止**过早放行**而设的闸，一律只拦 pass，不拦 fail。理由是不对称的那条：
+ * 放行需要独立与前提，报坏消息不需要——一道拦住「它坏了」的闸，只会让那条消息留在某个人嘴上。
+ * 不给 fail 开带理由的旁路：带理由的旁路会被习惯性使用。
+ */
+export const PASS_ONLY_GATE = "。这挡住的是通过，不是不通过；要记它坏了，直接落 fail。";
+
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
     super(`${rule}: ${message}`);
@@ -400,7 +407,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       const standing = mine[mine.length - 1];
       const passer = standing?.pass ? standing.by : undefined;
       if (e.pass) {
-        if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
+        if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass${PASS_ONLY_GATE}带上你发现了什么（--evidence）`);
         // t-104 ② (pd 00:12, superseding 23:59): after *any* fail on this surface, the next pass there waits for a new
         // done — whoever would give it. "Someone else passes it instead" is not overturning a fail, it is changing judges.
         // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
@@ -413,15 +420,18 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // t-104 ①: 放行要独立，先要是这个项目的验收角色。human 是策略权威，不受此限。
         if (e.actor !== human && !(roleResponsibilities(state)[e.actor] ?? []).includes(VERIFY_RESPONSIBILITY))
           throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass；fail 不受此限，谁都能落${whoCanVerify(state, t, e.surface, human)}`);
+        // t-112: an open seam means nobody has said how these two pieces fit — a reason not to release, never a reason
+        // to refuse the news that it is broken. qa 00:51 hit this: a version known to be broken could be recorded
+        // neither as broken nor as good, and the only copy of that fact was in one agent's mouth.
+        const seams = openSeamsFor(state, t.id);
+        if (seams.length)
+          throw new Rejected("verify", `unresolved seam ${seams.map((x) => x.id + " [" + x.overlap.join(",") + "]").join(", ")}${PASS_ONLY_GATE}`);
       } else if (passer !== undefined) {
         // overturning a pass: what it owes is what it found, and — when overturning your own — which criterion.
         if (!e.evidence?.trim()) throw new Rejected("verify", `overturning a pass on ${e.surface} needs --evidence: what was found that the pass missed`);
         if (passer === e.actor && !namesCriterion(e.evidence, t.criteria.length))
           throw new Rejected("verify", `你在推翻自己在 ${e.surface} 上判的 pass：证据要指名推翻的是哪一条判据（写「判据 3」或「第 3 条」，这件共 ${t.criteria.length} 条），否则没人复核得了，也说不清改完算不算好了`);
       }
-      const seams = openSeamsFor(state, t.id);
-      if (seams.length)
-        throw new Rejected("verify", `unresolved seam ${seams.map((s) => s.id + " [" + s.overlap.join(",") + "]").join(", ")}`);
       return;
     }
     case "block":
