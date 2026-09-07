@@ -338,6 +338,7 @@ export const KEY_SYMBOLS = [
   "REACH_RULE",
   "REACH_WORDS",
   "READING_SAYINGS",
+  "REAL_OVERLAP_PREFIX",
   "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING",
   "SAID_LABEL",
@@ -388,9 +389,11 @@ export const KEY_SYMBOLS = [
   "manualFor",
   "missingCard",
   "noOutputSeam",
+  "noRealOverlap",
   "nobodyElse",
   "overdueByPresence",
   "owedSentences",
+  "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
   "runtimeAllocation",
@@ -717,6 +720,16 @@ export const noOutputSeam = (other: string, claimedAt: string, mine: string) =>
 /** t-191：判不了「对方有没有提交」时说的那句。**看不见就当有**，所以这条接缝照旧挡着，只是把原因说出来。 */
 export const cannotSeeOutput = (other: string, claimedAt: string) =>
   `警告：判不了 ${other} 自 ${claimedAt} 认领以来有没有提交（没有 git，或它只声明了符号没声明路径）——按「有」处理，这条接缝照旧挡着`;
+
+/**
+ * t-182：三方比较之后，这条接缝真正撞在哪儿。两句都住在 core（新的人可见的话一律进这里），**措辞是我写的、
+ * pd 没过目**（人可见的字 11:17 起冻结）——判断本身不需要等谁，但说法要 pd 定，我另发了 note。
+ */
+export const REAL_OVERLAP_PREFIX = "按三方比较：";
+export const noRealOverlap = (other: string, reported: string[]) =>
+  `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
+export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
+  `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";

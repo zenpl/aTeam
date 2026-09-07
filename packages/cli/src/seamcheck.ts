@@ -3,7 +3,7 @@
  * sha really contains the other side's evidence sha. A warning only: the log records what you claim; git knows the truth.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, type Board, type ClientEvent } from "@ateam/core";
+import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, noRealOverlap, realOverlapIs, type Board, type ClientEvent } from "@ateam/core";
 
 /** true/false from git; null when git or either object is unavailable (not a repo, sha not fetched). */
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
@@ -186,6 +186,82 @@ export function unjudgeableSeams(b: Board, id: string, commitsSince: CommitsSinc
     }
     out.events.push({ kind: "task", op: "seam", tasks: [seam.tasks[0], seam.tasks[1]],
       resolution: noOutputSeam(otherId, other.claimed_at ?? "", id) });
+  }
+  return out;
+}
+
+/**
+ * t-182：**闸拦对了，但报出来的文件不是两侧真正都改过的那些。**
+ *
+ * 今晚的实例（补记里三条之一）：t-139+t-140 报 `packages/cli/src/deaf.ts`——两侧都没碰它，它是祖先里改的；
+ * 而真正撞的 `server/test/release-page.test.ts` 一个字没说。被拦下来的人照着那个名单去查，查的是一个两边都
+ * 没碰过的文件。
+ *
+ * 根在这儿：接缝的 overlap 是两份**触点清单**的交集，而清单里没有「自共同祖先以来」这回事。我拿那两条真
+ * 证据 sha 核过：`git merge-base c838dec 9867803` 就是 `c838dec` 自己——**9867803 早已包含 c838dec**，两边
+ * 根本没有分叉，真交集是空的。清单却仍然相交，于是闸报出一份谁都没在撞的名单。
+ *
+ * 所以判定要问 git，不能只看清单（同 t-160 判据 6 的理由：服务端没有仓库，判定放在有仓库的这一头）。
+ * 「看不见就当有」照旧：没 fetch 过对方的 sha、清单里没有路径、git 不在——都答 null，接缝照旧挡着。
+ */
+export type ChangedSince = (from: string, to: string) => string[] | null;
+
+/** `from` 与 `to` 的共同祖先到 `to` 之间改过的文件。null = 判不了（没有 git，或哪个 sha 本地没有）。 */
+export function gitChangedSince(cwd = process.cwd()): ChangedSince {
+  return (from, to) => {
+    const base = spawnSync("git", ["merge-base", from, to], { cwd, encoding: "utf8" });
+    if (base.error || base.status !== 0) return null;
+    const r = spawnSync("git", ["diff", "--name-only", `${base.stdout.trim()}..${to}`], { cwd, encoding: "utf8" });
+    if (r.error || r.status !== 0) return null;
+    return r.stdout.split("\n").map((x) => x.trim()).filter(Boolean);
+  };
+}
+
+/**
+ * 两侧**自共同祖先以来真正都改过**的那些文件。null = 判不了。
+ *
+ * 一侧是另一侧的祖先时，后者那一边的 `merge-base..to` 覆盖了前者的全部改动，而前者那一边的 `merge-base..to`
+ * 是空的——交集自然是空的，这正是今晚那三条的形状。
+ */
+export function realOverlap(mine: string, theirs: string, changed: ChangedSince): string[] | null {
+  const a = changed(theirs, mine), b = changed(mine, theirs);
+  if (a === null || b === null) return null;
+  const set = new Set(a);
+  return b.filter((x) => set.has(x)).sort();
+}
+
+/** t-182：一条接缝按三方比较真正撞在哪几个文件上，以及那份判定说得准不准。 */
+export interface SeamTruth { seam: string; other: string; reported: string[]; real: string[] | null }
+
+/**
+ * t-182：每一条挡着 `id` 的接缝，按三方比较看它真正撞在哪儿。
+ *
+ * 只看**两侧都交过活**的（两边都有证据 sha）：一侧还在途时没有 sha 可比，那是 t-191 管的那一半（对方没写代码
+ * 就无从判定）。两条各管一半，都不拿猜的当判定。
+ */
+export function seamTruths(b: Board, id: string, changed: ChangedSince): SeamTruth[] {
+  const out: SeamTruth[] = [];
+  for (const seam of b.seams) {
+    if (!seam.open || !seam.tasks.includes(id)) continue;
+    const otherId = seam.tasks.find((t) => t !== id)!;
+    const mine = boardTask(b, id)?.evidence_sha ?? evidenceSha(boardTask(b, id)?.evidence);
+    const theirs = boardTask(b, otherId)?.evidence_sha ?? evidenceSha(boardTask(b, otherId)?.evidence);
+    if (!mine || !theirs) continue;
+    out.push({ seam: seam.id, other: otherId, reported: seam.overlap ?? [], real: realOverlap(mine, theirs, changed) });
+  }
+  return out;
+}
+
+/** t-182：把三方比较的结论落回日志——真交集为空的接缝解掉；不空的把真名单说出来，让被拦的人查对地方。 */
+export function seamTruthEvents(truths: SeamTruth[], id: string): { events: ClientEvent[]; notes: string[] } {
+  const out: { events: ClientEvent[]; notes: string[] } = { events: [], notes: [] };
+  for (const t of truths) {
+    if (t.real === null) continue;                     // 判不了：照旧挡着，别的地方已经说过为什么
+    if (t.real.length === 0) {
+      out.events.push({ kind: "task", op: "seam", tasks: [id, t.other] as [string, string], resolution: noRealOverlap(t.other, t.reported) });
+    } else if (t.real.join() !== [...t.reported].sort().join()) {
+      out.notes.push(realOverlapIs(t.other, t.real, t.reported));   // 真撞，但名单报错了：把对的说出来
+    }
   }
   return out;
 }

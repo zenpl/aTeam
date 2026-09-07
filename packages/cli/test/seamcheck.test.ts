@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore, append, reduce, board, NO_OUTPUT_PREFIX, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, outputSinceClaim, type CommitsSince } from "../src/seamcheck.js";
+import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -277,5 +277,59 @@ describe("t-191 · 对方还没写代码时，接缝无从判定", () => {
     expect(outputSinceClaim("2026-09-07T00:00:00Z", [], none)).toBe("unknown");
     expect(outputSinceClaim(undefined, ["a/b.ts"], none), "没有认领时刻就没有「自那以后」").toBe("unknown");
     expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts#sym"], none), "「文件#符号」取得出文件名").toBe("none");
+  });
+});
+
+/**
+ * t-182：**闸拦对了，但报出来的文件不是两侧真正都改过的那些。**
+ *
+ * 今晚的实例：t-139+t-140 报 `packages/cli/src/deaf.ts`——两侧都没碰它，它是祖先里改的；而真正撞的
+ * `server/test/release-page.test.ts` 一个字没说。被拦下来的人照那份名单去查，查的是一个两边都没碰过的文件。
+ *
+ * 根在于接缝的 overlap 是两份**触点清单**的交集，清单里没有「自共同祖先以来」这回事。我拿那两条真证据 sha
+ * 核过：`git merge-base c838dec 9867803` 就是 `c838dec` 自己——两边根本没有分叉，真交集是空的。
+ */
+describe("t-182 · 报的是三方比较的交集，不是两份清单的交集", () => {
+  // 判据 3 一正一反，都在构造的 changed 上跑，不依赖本仓库的历史
+  const changed = (map: Record<string, string[]>): ChangedSince => (from, to) => map[`${from}->${to}`] ?? null;
+
+  it("判据 3 正例：真撞的逐个文件报准", () => {
+    const c = changed({ "b->a": ["x.ts", "y.ts"], "a->b": ["y.ts", "z.ts"] });
+    expect(realOverlap("a", "b", c)).toEqual(["y.ts"]);
+  });
+
+  it("判据 3 反例：祖先里改的、两侧都没碰的，不出现在名单里", () => {
+    // deaf.ts 在两边的 merge-base..to 里都不出现——它是祖先里改的
+    const c = changed({ "b->a": ["board.ts"], "a->b": ["html.ts"] });
+    expect(realOverlap("a", "b", c), "两边改的东西不相交，就没有真撞").toEqual([]);
+  });
+
+  it("判据 1、2：一侧是另一侧的祖先时真交集为空——今晚那三条的形状", () => {
+    const c = changed({ "b->a": [], "a->b": ["board.ts", "deaf.ts"] });   // a 是 b 的祖先：a 那一边没有独有改动
+    expect(realOverlap("a", "b", c)).toEqual([]);
+  });
+
+  it("判不了就答 null，接缝照旧挡着——不拿猜的当判定", () => {
+    expect(realOverlap("a", "b", changed({ "b->a": ["x.ts"] })), "只答得出一半也是判不了").toBeNull();
+    expect(realOverlap("a", "b", changed({}))).toBeNull();
+  });
+
+  it("落回日志：真交集为空的解掉；不空但名单报错的把对的说出来；判不了的什么都不写", () => {
+    const empty = seamTruthEvents([{ seam: "seam:t-1+t-2", other: "t-2", reported: ["deaf.ts"], real: [] }], "t-1");
+    expect(empty.events).toHaveLength(1);
+    expect((empty.events[0] as { resolution: string }).resolution).toContain("没有一个文件是两边都改过的");
+    expect((empty.events[0] as { resolution: string }).resolution, "把先前报错的那个也说出来，读的人才知道换了什么").toContain("deaf.ts");
+
+    const wrong = seamTruthEvents([{ seam: "s", other: "t-2", reported: ["deaf.ts"], real: ["release-page.test.ts"] }], "t-1");
+    expect(wrong.events).toEqual([]);                       // 真撞：接缝该挡就挡
+    expect(wrong.notes[0]).toContain("release-page.test.ts");
+    expect(wrong.notes[0], "也说出先前报的是什么，否则人不知道该改看哪儿").toContain("deaf.ts");
+
+    expect(seamTruthEvents([{ seam: "s", other: "t-2", reported: ["x"], real: null }], "t-1")).toEqual({ events: [], notes: [] });
+  });
+
+  it("名单本来就报得准时，不多说一句", () => {
+    const same = seamTruthEvents([{ seam: "s", other: "t-2", reported: ["a.ts", "b.ts"], real: ["a.ts", "b.ts"] }], "t-1");
+    expect(same).toEqual({ events: [], notes: [] });
   });
 });

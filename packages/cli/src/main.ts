@@ -7,7 +7,7 @@ import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
@@ -355,6 +355,11 @@ async function main(argv: string[]) {
             const un = unjudgeableSeams(b, task, gitCommitsSince());
             for (const n of un.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
             for (const e of un.events) await emit(e);
+            // t-182：再按三方比较看一遍——真交集为空的接缝解掉，不空但名单报错的把对的说出来。
+            // 两条各管一半：t-191 管「对方还没写代码」，这一条管「两边都交过活，但名单与真交集对不上」。
+            const truth = seamTruthEvents(seamTruths(b, task, gitChangedSince()), task);
+            for (const n of truth.notes) console.error(n);
+            for (const e of truth.events) await emit(e);
           }
           return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
