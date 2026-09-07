@@ -1,4 +1,5 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
@@ -488,10 +489,17 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // 上一版让它对所有被拦的触点都生效，于是多打一个编出来的符号名，就能把「只装文本的地方」和「key 本身」
         // 一起放过去——`i18n.ts` 加一个 `#随便编` 就过，而 markdown 文件里根本没有符号这种东西。pd 08:33 给这条
         // 出路的原话就是给内部符号的；被拦在①②两档的，本来就该写 shows。
-        const noExit = seen.filter((x) => !RENDERING_FILES.some((f) => x.split("#")[0] === f));
+        // t-143 判据 6 (pm 09:19)：**这条出路的退役条件是一个可测的状态，不是某件任务的状态。**
+        // 它存在，是因为人可见的话还住在 core 之外（SECOND_HOME_FROZEN 条）；那个数归零，就说明「哪个 key 在
+        // 哪显示」已经算得出来，这条出路当场失去理由，不需要谁记得去删它。那个数由 sayings.test.ts 那条闸盯着，
+        // 只减不增，且比实际大就红——所以它是真的，不是一个可以随手改小的声明。
+        const exitRetired = SECOND_HOME_FROZEN === 0;
+        const noExit = exitRetired ? seen : seen.filter((x) => !RENDERING_FILES.some((f) => x.split("#")[0] === f));
         const named = (e.internal_only ?? []).map((x) => x.trim()).filter(Boolean);
         if (noExit.length && named.length)
-          throw new Rejected("done", `这几处不能用 --internal-only 解释掉：${noExit.join("、")}——那里改的就是给人看的字（只装文本的地方，或 core 里那些 key 本身），没有「内部符号」这一说。用 --shows 说一句人现在能看到什么`);
+          throw new Rejected("done", exitRetired
+            ? `--internal-only 已经退役了：人可见的话都收进 core 之后，碰了这几处就是碰了给人看的字（${noExit.join("、")}）。用 --shows 说一句人现在能看到什么`
+            : `这几处不能用 --internal-only 解释掉：${noExit.join("、")}——那里改的就是给人看的字（只装文本的地方，或 core 里那些 key 本身），没有「内部符号」这一说。用 --shows 说一句人现在能看到什么`);
         if (seen.length && named.length) {
           const covers = (f: string) => named.some((n) => n.startsWith(`${f.split("#")[0]}#`));
           const bare = named.filter((n) => !n.includes("#"));
