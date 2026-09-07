@@ -145,6 +145,18 @@ export type TaskOp =
        * 这里没有 git）。`0` 与「没带」是两件事，闸只对明确的 `0` 放行——一个没量过的 done 说不出自己改了什么。
        */
       changed_files?: number;
+      /**
+       * t-209：**这一轮从哪儿开始算的**——claim（或 reopen）那一刻分支所在的那个 sha。
+       *
+       * CLI 一直知道它（`.ateam/base.<task>`，claim 时 `stampBase` 戳下的，`done` 就是从它开始量改动的），
+       * 但它**只活在敲命令那台机器上，日志里没有**。qa 14:31 指出来的：没有它，「这条提交属于哪件任务」就只能
+       * 退回「从某个证据 sha 可达」，而那样任何一条孤儿提交只要被后来的任务盖在下面就永远消失（它 14:29 在真
+       * 仓库上量到 9ac8cee 正是这样消失的）。
+       *
+       * 有了它，一件任务声称的产出就是一段区间 `(base, evidence]`——**那也正是判决真正覆盖过的范围**。
+       * 缺这个字段的老任务按「区间不可知」处理：明说算不出，不许猜（判据 7）。
+       */
+      base_sha?: string;
     }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
@@ -446,6 +458,7 @@ export const KEY_SYMBOLS = [
   "symbolsMeasured",
   "symbolsUnnamed",
   "taskHeading",
+  "unknownSpanReason",
   "until",
   "validate",
   "validateTask",
@@ -781,6 +794,18 @@ export const realOverlapIs = (other: string, real: string[], reported: string[])
  *
  * 住在 core（新的人可见的话一律进这里）；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
  */
+/**
+ * t-209 判据 7：**区间算不出来的那几件任务。**
+ *
+ * 一件任务声称的产出是 `(claim 起点, 证据 sha]`，而那个起点是 `done` 从 t-209 起才记进事件的——**这条规矩之前
+ * 落的 done 没有它**。缺了它就说不清那件任务盖住了哪几条提交，于是那几条也说不清是不是孤儿。
+ * 明说算不出，不许猜：不并进孤儿（那是诬告），也不并进「已覆盖」（那是把它们变没）。
+ *
+ * 住在 core；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
+ */
+export const unknownSpanReason = (tasks: string[]) =>
+  `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
+
 export const orphanReason = (shas: string[]) =>
   `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;
 

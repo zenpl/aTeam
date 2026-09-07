@@ -350,6 +350,10 @@ async function main(argv: string[]) {
           const internal = list(a, "internal-only")?.length ? { internal_only: list(a, "internal-only")! } : {};
           // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
           const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
+          // t-209：把这一轮的起点也记进事件。CLI 一直知道它（claim 时 stampBase 戳的），但它只活在本机的
+          // .ateam/base.<task> 里——日志里没有，于是「这条提交属于哪件任务」在别的机器上只能靠可达性猜，
+          // 而那样任何一条孤儿提交被后来的任务盖在下面就消失（qa 14:29 在真仓库上量到 9ac8cee 正是这样没的）。
+          const baseSha = gitDiff().base(task) ?? undefined;
           for (const line of rev.lines) console.error(line);
           // t-201：--no-seam-check 是把所有接缝义务一起免掉的那把钥匙，留着但不再是唯一的出路；
           // --no-seam-check-for <接缝 id | 对方任务 id> 只免一条，其余照判，且被免的那条会随 done 落在日志上。
@@ -361,14 +365,14 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }) });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
             for (const e of check.absorbs) await emit(e);
             return;
           }
-          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }) });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");

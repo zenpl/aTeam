@@ -9,7 +9,8 @@ const HUMAN = "human";
 const A = "aaaaaaa" + "1".repeat(33), B = "bbbbbbb" + "1".repeat(33), C = "ccccccc" + "1".repeat(33); // 40-char shas
 // history: A -> B -> C ; X is unrelated
 const X = "0000000" + "2".repeat(33);
-const lineage: Record<string, string[]> = { [A]: [A], [B]: [A, B], [C]: [A, B, C], [X]: [X] };
+const D = "ddddddd" + "1".repeat(33);   // t-209: A -> B -> C -> D，用来把「区间」与「可达」分开
+const lineage: Record<string, string[]> = { [A]: [A], [B]: [A, B], [C]: [A, B, C], [D]: [A, B, C, D], [X]: [X] };
 const fakeGit = (opts: { tip?: string | null; pushFails?: string } = {}) => {
   const pushes: string[] = [];
   const g: Git & { pushes: string[] } = {
@@ -277,7 +278,8 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
     await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "题", criteria: ["x"], no_human_impact: true });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["a"] });
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${B} 完成`, no_human_impact: true });
+    // t-209：done 记下这一轮的起点。生产在 A，这件从 A 开始做，证据是 B ⇒ 它声称的产出是 (A, B]
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${B} 完成`, base_sha: A, no_human_impact: true });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true });
     return board(reduce(await store.read()), HUMAN);
   };
@@ -296,10 +298,42 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     const b = await orphanWorld();
     // 同一批，但任务的证据就是 C 本身：这一批里每一条提交都有任务盖着
     const withC = JSON.parse(JSON.stringify(b)) as Board;
-    for (const t of Object.values(withC.tasks).flat()) if (t.id === "t-1") t.evidence_sha = C;
+    for (const t of Object.values(withC.tasks).flat()) if (t.id === "t-1") { t.evidence_sha = C; t.base_sha = A; }
     const p = plan(withC, C, fakeGit().isAncestor, A, fakeGit().revList);
     expect(p.orphans, "证据链盖住了 B 与 C，一条孤儿都不该剩").toEqual([]);
     expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
+  });
+
+  /**
+   * **这一条是这次 fail 的核心，也是我上一版整套用例漏掉的那一格。**
+   *
+   * qa 14:29 证伪的是「被盖住 = 从某个证据 sha 可达」：那样一来，孤儿只要被后来的任务盖在下面就永远消失。
+   * 上一版三条用例造的都是「孤儿挂在头上」，那一种**两种口径给出同一个答案**，所以它们分不出对错——
+   * 我把它们当成了闸，其实是自我描述。这一条造的是唯一能分开两者的形状：**孤儿夹在生产头与某件任务的起点之间。**
+   */
+  it("判据 6：孤儿夹在中间时也点得出来——这正是「可达」口径看不见的那一格", async () => {
+    const b = await orphanWorld();
+    // 生产在 A；B 是那条没人认领的提交；任务从 B 开始做，证据是 D ⇒ 它声称的产出是 (B, D] = {C, D}
+    const mid = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(mid.tasks).flat()) if (t.id === "t-1") { t.evidence_sha = D; t.base_sha = B; }
+    const p = plan(mid, D, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "B 在任务的区间之外，没人认领它").toEqual([B]);
+    expect(p.ok).toBe(false);
+    expect(p.reasons.join("\n")).toContain(B.slice(0, 7));
+    // 按可达口径（deployed..evidence）B 是可达的，于是它会消失——那正是被证伪的那一版
+    const reachable = fakeGit().revList(A, D)!;
+    expect(reachable, "可达口径把 B 也算成被盖住了").toContain(B);
+  });
+
+  it("判据 7：有一件任务没记起点，整个答案就说不清——不猜，也不诬告", async () => {
+    const b = await orphanWorld();
+    const noBase = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(noBase.tasks).flat()) if (t.id === "t-1") delete (t as { base_sha?: string }).base_sha;
+    const p = plan(noBase, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.unknown_span, "说不清的是哪几件，要点得出名字").toEqual(["t-1"]);
+    expect(p.orphans, "它的提交没有区间盖着，若照算就会被诬告成孤儿").toBeNull();
+    expect(p.reasons.join("\n")).toContain("没记下自己这一轮从哪儿开始");
+    expect(p.ok, "说不清不拦车——一道挡住一切的闸，下一步就是被整个关掉").toBe(true);
   });
 
   it("问不出来答 null，不是空数组——「没问出来」与「一条都没有」是两件事", async () => {

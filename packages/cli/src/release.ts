@@ -4,7 +4,7 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, orphanReason, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -28,16 +28,27 @@ export type IsAncestor = (ancestor: string, descendant: string) => boolean | nul
 /** t-209：`from` 之后、`to` 之前的提交（不含 from、含 to），新到旧。null = 问不出来（没有 git，或哪个 sha 本地没有）。 */
 export type RevList = (from: string, to: string) => string[] | null;
 
+/** t-209：一件任务声称的那一段产出。`base` 缺席时区间不可知——那不是「没有产出」，是「说不清」。 */
+export interface Span { task: string; base?: string; evidence: string }
+
 export interface Plan {
   ok: boolean; reasons: string[]; included: string[];
   /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[];
   /**
-   * t-209：这一批里**不属于任何任务证据链**的提交。
+   * t-209：这一批里**没有任何一件任务声称自己产出**的提交。
    *
    * `null` 表示问不出来（没有 git、算不出提交表、或没有生产头可比）——**与空数组不是一回事**：空是「问过了，一条都没有」，
    * null 是「没问出来」。这个区别就是 t-203 那件事的教训，同一个形状的第二次。
    */
   orphans: string[] | null;
+  /**
+   * t-209 判据 7：**区间算不出来的那几件任务**，按 id 列出来。
+   *
+   * 一件任务的产出是区间 `(base, evidence]`，而 `base` 是 `done` 记下的这一轮起点——**这条规矩之前落的 done 没有它**。
+   * 缺了它就说不清那件任务盖住了哪几条提交，于是那几条也说不清是不是孤儿。**明说算不出，不许猜**：
+   * 这一格不并进 `orphans`（那是诬告），也不并进「已覆盖」（那是把它们变没）。这正是 t-203 第三桶那件事的第三次。
+   */
+  unknown_span: string[];
 }
 /** t-093: the rule a refusal names (M4). */
 export const DEPLOY_RULE = "deploy-unverified";
@@ -47,7 +58,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   const reasons: string[] = [];
   const included: string[] = [];
   const unverified: string[] = [];
-  const evidenceShas: string[] = [];
+  const spans: Span[] = [];
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
     if (t.status === "withdrawn" || t.status === "open") continue;
@@ -58,7 +69,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     // t-093: only what this push *adds* — a task already inside the running sha is not this push's to answer for
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
-    evidenceShas.push(s);
+    spans.push({ task: t.id, base: t.base_sha, evidence: s });
     const passedRepo = (t.surfaces ?? []).some((r) => r.surface === "repo" && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
     else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
@@ -74,28 +85,58 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 两次都是「算不到的东西等于不存在」。
   //
   // 算法：`deployed..sha` 里的每一个提交，减去从任何一个已算进来的证据 sha 可达的那些。剩下的就是没人盖着的。
-  const orphans = orphanCommits(sha, deployed, evidenceShas, revList);
+  const { orphans, unknown_span } = orphanCommits(sha, deployed, spans, revList);
   if (orphans?.length) reasons.push(orphanReason(orphans));
-  return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans };
+  // t-209 判据 7：**「说不清」要说出来，但它不拦车。**
+  //
+  // 拦不拦这一条我想了两遍。此刻**每一件老任务都没有起点**（这个字段从这一件才开始记），所以一旦让它拦，
+  // 这道闸今天会挡住每一次发车——而一道挡住一切的闸，下一步就是被整个关掉。今晚我已经修过三次那个形状
+  // （t-151 死掉的出路、--no-seam-check 两次），不能在这里亲手造第四次。
+  //
+  // 也不能反过来把它咽下去：那就成了「算不到的东西等于不存在」，正是这件任务要修的那件事。
+  // 所以它进 `reasons`（发车前照样印在人眼前）、进 `unknown_span`（能被别处读），**但不改 `ok`**。
+  // 真孤儿——有名有姓、确实没人认领的那些——照旧拦。
+  const blocking = [...reasons];
+  if (unknown_span.length) reasons.push(unknownSpanReason(unknown_span));
+  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span };
 }
 
 /**
- * t-209：这一批里没有任何任务证据链盖着的提交。
+ * t-209：这一批里没有任何一件任务声称自己产出的提交。
  *
- * `null` 与 `[]` 分得开：问不出来（没有 git、没有生产头、revList 答不上）是 null，问过了一条都没有是 `[]`。
- * **null 不放行也不报警**——它只是说不出来；报警要有东西可指，而这里连名单都没有。
+ * **「被盖住」是区间，不是可达性。** 上一版算的是「从任何一个证据 sha 出发可达」，qa 14:29 在真仓库上证伪了它：
+ * 那些证据 sha 都在同一条线性分支上，所以**任何一条孤儿提交，只要有人在它之上再落一件任务的证据，它就永远消失**。
+ * 它量到的正是这件任务自己的样本——头 = 9ac8cee 时点名它，头 = 50ed4ab 之后再也不点名。而真实发车时目标 sha
+ * 通常就是最新那件任务的证据 sha，于是这道闸只看得见「排在所有证据之后、还挂在头上」的那几条。
+ *
+ * 现在按 pm 判据 6 的口径：一条提交被盖住，当且仅当它落在某件任务的 `(base, evidence]` 之间——`base` 是那件活
+ * claim 时戳下的起点，`done` 从 t-209 起把它记进事件。**那一段才是那件任务声称的产出，也才是判决覆盖过的范围。**
+ *
+ * 三个答案分得开（判据 7，也是 t-203 第三桶那件事的第三次）：
+ * · `orphans` 有名字：没有任何一件任务的区间盖住它们；
+ * · `unknown_span`：这几件任务没记起点，**说不清它们盖住了哪几条**——不诬告、也不当作已覆盖；
+ * · `orphans === null`：整个问不出来（没有 git、没有生产头、哪一段 git 答不上）。
  */
-export function orphanCommits(sha: string, deployed: string | null | undefined, evidenceShas: string[], revList?: RevList): string[] | null {
-  if (!revList || !deployed) return null;
+export function orphanCommits(sha: string, deployed: string | null | undefined, spans: Span[], revList?: RevList): { orphans: string[] | null; unknown_span: string[] } {
+  const unknown_span = spans.filter((x) => !x.base).map((x) => x.task);
+  // t-209 判据 7：**只要有一件任务的区间不可知，整个「谁是孤儿」就不可知。**
+  //
+  // 我第一版只把那几件任务报进 unknown_span，孤儿照算——跑出来才看见它的后果：那几件任务的提交没有区间盖着，
+  // 于是**它们全被算成孤儿**。那正是我在上一段注释里说要避免的诬告，而我一边写下它一边做了它。
+  // 说不清哪几条属于那几件，就说不清剩下的是不是没人认领的——所以这里答 null，并把「为什么算不出」交给
+  // unknown_span 说。**不猜，也不诬告。**
+  if (unknown_span.length) return { orphans: null, unknown_span };
+  if (!revList || !deployed) return { orphans: null, unknown_span };
   const all = revList(deployed, sha);
-  if (all === null) return null;
+  if (all === null) return { orphans: null, unknown_span };
   const covered = new Set<string>();
-  for (const e of evidenceShas) {
-    const reach = revList(deployed, e);
-    if (reach === null) return null;      // 有一条证据链问不出来，整个答案就不可信——宁可说「问不出来」
-    for (const c of reach) covered.add(c);
+  for (const x of spans) {
+    if (!x.base) continue;                 // 区间不可知：它不盖住任何东西，也不因此让谁变成孤儿——单独报在 unknown_span
+    const seg = revList(x.base, x.evidence);
+    if (seg === null) return { orphans: null, unknown_span };   // 有一段问不出来，整个答案就不可信
+    for (const c of seg) covered.add(c);
   }
-  return all.filter((c) => !covered.has(c));
+  return { orphans: all.filter((c) => !covered.has(c)), unknown_span };
 }
 
 /**

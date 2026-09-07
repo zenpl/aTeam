@@ -162,7 +162,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count", base_sha: "string" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
   "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
