@@ -29,7 +29,17 @@ cd "$root"
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "$root 不是 git 仓库，还原没有依据，拒绝注入" >&2; exit 2; }
 git diff --quiet -- "$file" || { echo "$file 有未提交的改动：还原会把它一起丢掉。先提交或 stash。" >&2; exit 2; }
 
-restore() { git checkout -- "$file"; }
+# t-205：**还原源码不等于还原这棵树。** 上一版只 `git checkout` 那个文件，而 `dist` 仍是**按注入过的源码**编出来的
+# ——下一条不重新 build 的命令读到的是一棵源码里已经不存在的树。frontend 13:10 就据此看到过一次假的「基线 3 failed」，
+# 差点当成本件的真失败报上去。这与它自己在这个脚本头上记的那个坑（「一次失败的注入把已经损坏的树备份了进去」）
+# 是同一类，只是坏的不是源码是产物。
+#
+# 所以还原分两步：先把源码放回去，再按放回去的源码重编一次。**重编失败就把 dist 删掉**——宁可让下一条命令
+# 报「没有 dist」，也不要让它读到一份对不上号的。两步都在 trap 里，所以中途失败（判据 2）走的是同一条路。
+restore() {
+  git checkout -- "$file"
+  pnpm -r build >/dev/null 2>&1 || rm -rf packages/*/dist
+}
 trap restore EXIT INT TERM        # 注入中途出任何事都还原，包括 set -e 打断
 
 python3 - "$file" "$from" "$to" <<'PY'
