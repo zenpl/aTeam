@@ -138,6 +138,11 @@ export const UI = {
   seamOpen: "未解决",
   olderStale: (n: number) => `另有 ${n} 条更早的已失效`,
   seamsElsewhere: (n: number) => `另有 ${n} 条已解决或先后落地，见各任务页`,
+  // t-114 · pd 01:01: the dig layer splits seams in two. A light seam is a heads-up for whoever merges second,
+  // never a thing to do — no button, no red, and it is not counted in "N 条未解决".
+  seamsUndecided: "等人裁决",
+  seamsSameFile: "都动了同一个文件",
+  seamLight: (a: string, b: string, files: string) => `${a} 与 ${b} 都动了 ${files}，各自的符号不相交，验收不挡。`,
   // 任务页 (t-065)
   taskPage: "任务",
   backToBoard: "← 回牌桌",

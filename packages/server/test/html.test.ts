@@ -1309,3 +1309,79 @@ describe("t-110 · 钥匙三分后人看到的四处文字", () => {
     }
   });
 });
+
+describe("t-114 · 轻接缝在牌桌上说一句", () => {
+  /** Two in-flight tasks on one file. Symbols disjoint => light; symbols absent or meeting => a real seam. */
+  const pair = async (v: ReturnType<typeof server>, a: string, b: string, ta: string[], tb: string[]) => {
+    await v.post("pm", { kind: "task", op: "create", task: a, title: `任务 ${a}`, criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: b, title: `任务 ${b}`, criteria: ["可用"] });
+    await v.post("dev", { kind: "task", op: "claim", task: a, touches: ta });
+    await v.post("frontend", { kind: "task", op: "claim", task: b, touches: tb });
+  };
+  const seamSection = (html: string) => {
+    const i = html.indexOf('<section id="seams">');
+    expect(i).toBeGreaterThan(0);
+    return html.slice(i, html.indexOf("</section>", i));
+  };
+
+  it("the dig layer splits seams in two groups, in pd's words; a light one carries no button, no red, and no count", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // 只有轻接缝: both sides named symbols in the same file and they do not meet.
+      await pair(v, "t-1", "t-2", ["packages/core/test/replay.test.ts#seams"], ["packages/core/test/replay.test.ts#readings"]);
+      let html = await v.page();
+      let seams = seamSection(html);
+      expect(seams).toContain("都动了同一个文件");
+      expect(seams).toContain("都动了 <code>packages/core/test/replay.test.ts</code>，各自的符号不相交，验收不挡。");
+      // pd 01:01 ①②: no button, no red tag, and it is not one of the "N 条未解决"
+      expect(seams).not.toContain("<form");
+      expect(seams).not.toContain("tag warn");
+      expect(seams).not.toContain("等人裁决");
+      expect(seams).toContain("0 条未解决");
+      expect(seams).not.toContain("另有");
+      // never above the fold, never a thing the human is asked to do
+      expect(fold(html)).not.toContain("都动了同一个文件");
+      const b = await (await fetch(`${v.base}/board`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa" } })).json() as Board;
+      expect(b.needs_human.map((x) => x.body).join(" ")).not.toContain("都动了");
+      expect(b.seams.filter((x) => x.open)).toHaveLength(0);
+
+      // 两组都有: a second pair on one file with nobody saying which half of it.
+      await pair(v, "t-3", "t-4", ["src/io.ts"], ["src/io.ts"]);
+      seams = seamSection(await v.page());
+      expect(seams).toContain("等人裁决");
+      expect(seams).toContain("都动了同一个文件");
+      expect(seams).toContain("1 条未解决");
+      expect(seams.indexOf("等人裁决")).toBeLessThan(seams.indexOf("都动了同一个文件"));
+
+      // 任务页: the same sentence, not a second wording of it (criterion 3)
+      const page1 = await (await fetch(`${v.base}/task/t-1`, { headers: { accept: "text/html" } })).text();
+      expect(page1).toContain("都动了同一个文件");
+      expect(page1).toContain("都动了 <code>packages/core/test/replay.test.ts</code>，各自的符号不相交，验收不挡。");
+      expect(page1).not.toContain("接缝 <span class=\"meta\">1</span>");
+      const page3 = await (await fetch(`${v.base}/task/t-3`, { headers: { accept: "text/html" } })).text();
+      expect(page3).toContain("接缝 <span class=\"meta\">1</span>");
+      expect(page3).not.toContain("都动了同一个文件");
+    } finally { await v.stop(); }
+  });
+
+  it("只有等人裁决的、以及两组都没有: the light group leaves nothing behind when there is none", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // 两组都没有
+      expect(seamSection(await v.page())).toContain("无");
+      expect(seamSection(await v.page())).not.toContain("都动了同一个文件");
+
+      // 只有等人裁决的
+      await pair(v, "t-1", "t-2", ["src/io.ts"], ["src/io.ts"]);
+      const seams = seamSection(await v.page());
+      expect(seams).toContain("等人裁决");
+      expect(seams).toContain("1 条未解决");
+      expect(seams).not.toContain("都动了同一个文件");
+      expect(seams).not.toContain("<h4 class=\"seam-group\">都动了");
+      expect(seams).not.toContain("light-seams");
+      expect(seams).not.toContain("无");
+    } finally { await v.stop(); }
+  });
+});
