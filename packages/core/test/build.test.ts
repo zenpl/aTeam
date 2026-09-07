@@ -359,10 +359,10 @@ describe("t-179 · core 的句子在说明书里没有第二份", () => {
   it("判据 2：此刻还剩多少份，是量出来的，而且只减不增", () => {
     const left = manualCopies(cores(), manuals());
     // 比冻结的多：有人又抄了一句。比它少：搬走了却没把这个数改小，下一个人会以为还欠这么多。
-    // 数不对时把剩下的那几句原样印出来，读的人不用自己再去找。
-    expect(left.map((x) => `${x.from} → ${x.manual}: ${x.text}`).join("\n")).toSatisfy(
-      () => left.length === MANUAL_COPIES_FROZEN,
-    );
+    // 数不对时把剩下的那几句原样印在错误信息里——一道说「有 11 份」的闸，不告诉你是哪一份，等于让你自己再量一遍。
+    const list = left.map((x) => `  ${x.from} → manual/${x.manual}: ${x.text}`).join("\n");
+    expect(left.length, `说明书里此刻有 ${left.length} 份 core 的句子（冻结在 ${MANUAL_COPIES_FROZEN}）：\n${list}`)
+      .toBe(MANUAL_COPIES_FROZEN);
   });
 
   it("剩下的那几份说得出是哪几句，不是一个数——要清它的人不用自己再去找", () => {
