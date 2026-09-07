@@ -80,6 +80,21 @@ export function duplicateKeys(): string[] {
 }
 
 /**
+ * t-178：**人可见的数据字段。** 一个函数读了它们并据以选择输出，它就在决定「人看到哪句话」。
+ *
+ * pd 08:22 的口径有两半：那句话是什么、哪句话出现在哪儿。第二半按名字数不出来——qa 08:54 证明过：
+ * `inFlightGroups` 决定在途每一行印「这件干了什么」还是任务标题，**一个中文字面量都没有**。
+ *
+ * 所以第二半从**登记**推出来，不从名字数出来：这里登记人可见的字段，`SAYINGS` 登记人可见的话，
+ * 读前者或在后者之间做选择的函数，就是在决定人看到什么。**加一个字段进来，认得出的范围随之变大**——
+ * 这正是 t-143 建这张表的用处。
+ */
+export const HUMAN_FIELDS = ["shows", "title"] as const;
+
+/** t-178：这几张表本身只是名字的清单，引用一个名字不算「决定」——不排除它们，它们会把自己算进去。 */
+export const REGISTRY_SYMBOLS = ["KEY_SYMBOLS", "SAYINGS", "SECOND_HOMES", "LITERAL_CHECK_BLIND_SPOTS", "HUMAN_FIELDS", "REGISTRY_SYMBOLS"] as const;
+
+/**
  * t-143 判据 3：**这条检查唯一的例外，是构造性的，不是判出来的。**
  *
  * 从日志原样带出的内容——note 正文、证据、任务标题、人自己写的那些字——在渲染方的源码里**按构造就不是字面量**：

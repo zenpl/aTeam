@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -219,29 +219,69 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
    * 「哪个 key 在哪显示」变成可算的数据（pm 08:55 已搬去 t-178）。在那之前，这道闸自己说出这件事——见
    * gateHonesty 里 shows 那一档。
    */
+  /**
+   * t-178：**决定「哪句话出现在哪儿」的函数**——pd 08:22 那两半里的第二半。
+   *
+   * 它从登记推出来，不从名字数出来：读 `HUMAN_FIELDS` 里那些人可见字段的，或在 `SAYINGS` 登记过的话之间
+   * 做选择的，都是在决定人看到什么。qa 08:54 用 `inFlightGroups` 证明按名字数这一类按定义数不出来。
+   */
+  const deciding = (): string[] => {
+    const froms = new Set(SAYINGS.map((x) => x.from.split(".")[0]));
+    const out = new Set<string>();
+    for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts"]) {
+      let src: string;
+      try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
+      src = src.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length)).replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+      for (const m of src.matchAll(/export (?:const|function) (\w+)/g)) {
+        if ((REGISTRY_SYMBOLS as readonly string[]).includes(m[1])) continue;
+        const next = src.indexOf("\nexport ", m.index! + 1);
+        const body = src.slice(m.index!, next < 0 ? src.length : next);
+        if (!/=>|function/.test(body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
+        const byField = HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body));
+        const bySaying = [...froms].some((x) => x !== m[1] && new RegExp(`\\b${x}\\b`).test(body));
+        if (byField || bySaying) out.add(m[1]);
+      }
+    }
+    return [...out].sort();
+  };
+
   const speaking = (): string[] => {
     const out = new Set<string>();
     for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts", "manual.ts", "verifyflow.ts", "sayings.ts"]) {
       let src: string;
       try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
       src = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-      for (const m of src.matchAll(/export (?:const|function) (\w+)/g)) {
-        const next = src.indexOf("\nexport ", m.index! + 1);
-        const body = src.slice(m.index!, next < 0 ? src.length : next);
-        const strings = [...body.matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((x) => x[1]);
-        if (strings.some((t) => CJK.test(t) && [...t].length >= 6)) out.add(m[1]);
+      // frontend 09:27：**按「上一个 export 之后」归属是错的。** 非导出的函数紧跟在一个导出常量下面时，它那几句
+      // 会被记在常量头上——honestyLine 的 6 句记在了 nobodyElse 上，splitRelease 的 7 句记在 batches 上。
+      // 于是改 honestyLine 动 6 句人话，却不碰名单里任何一个符号。所以归属按**最近的一个声明**算，导出与否都算：
+      // 触点本来就写成「文件#符号」，一个非导出函数照样指得出来。
+      // 只认**顶层**声明（行首、不缩进）：函数体里的局部 const 不是谁碰得到的符号，把它们算进来会得到一堆
+      // `a`、`line`、`rest` 这样的名字——那是另一种「名单看着很全」。
+      const decls = [...src.matchAll(/^(?:export\s+)?(?:const|function)\s+(\w+)/gm)];
+      for (let d = 0; d < decls.length; d++) {
+        const from = decls[d].index!;
+        const to = d + 1 < decls.length ? decls[d + 1].index! : src.length;
+        const strings = [...src.slice(from, to).matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((x) => x[1]);
+        if (strings.some((t) => CJK.test(t) && [...t].length >= 6)) out.add(decls[d][1]);
       }
     }
     return [...out].sort();
   };
 
   it("量出来的每一个都在名单里——漏一个，那件活就能说「不改变人看到的东西」", () => {
-    const missing = speaking().filter((x) => !(KEY_SYMBOLS as readonly string[]).includes(x));
+    const missing = [...new Set([...speaking(), ...deciding()])].filter((x) => !(KEY_SYMBOLS as readonly string[]).includes(x));
     expect(missing, `core 里这些符号会说人话，但不在 KEY_SYMBOLS 里：${missing.join("、")}——碰了它们的活现在可以合法说「${NO_HUMAN_IMPACT}」`).toEqual([]);
   });
 
+  it("t-178 判据 1、2：决定「哪句话出现在哪儿」的也算——inFlightGroups 这一类不再看不见", () => {
+    const d = deciding();
+    expect(d, "一个都没认出来，说明这段推导本身失效了").not.toEqual([]);
+    expect(d, "qa 08:54 的那一个：它决定在途每一行印「这件干了什么」还是任务标题，一个中文字面量都没有").toContain("inFlightGroups");
+    for (const x of d) expect(KEY_SYMBOLS as readonly string[], `${x} 决定人看到什么，却不在名单里`).toContain(x);
+  });
+
   it("名单里没有已经不说人话的：它跟着源码走，不是只增不减", () => {
-    const live = new Set(speaking());
+    const live = new Set([...speaking(), ...deciding()]);
     const stale = (KEY_SYMBOLS as readonly string[]).filter((x) => !live.has(x));
     expect(stale, `名单里这些已经不在 core 里说人话了：${stale.join("、")}`).toEqual([]);
   });
