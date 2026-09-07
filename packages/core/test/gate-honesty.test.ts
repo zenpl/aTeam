@@ -23,7 +23,7 @@ async function world(pairs: number) {
   for (let i = 0; i < pairs; i++) {
     const a = `t-a${i}`, b = `t-b${i}`;
     for (const [id, who] of [[a, "dev"], [b, "frontend"]] as const) {
-      await put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] }, -200);
+      await put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] , no_human_impact: true}, -200);
       await put({ kind: "task", actor: who, op: "claim", task: id, touches: [`packages/core/src/f${i}.ts`] }, -190 + i);
     }
     ids.push([a, b]);
@@ -50,7 +50,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
   it("判出误报 + 修法还没在生产上验过：这才是已知缺陷", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "两侧其实没碰同一处", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ gate: "seam", reported: 2, judged: 1, false_positives: 1, missed: 0, unjudged: 1 });
@@ -60,7 +60,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
   it("修法已在生产上验过：缺陷不再是已知的，那句话自己消失，不用谁去关掉它", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -7);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -6);
@@ -76,7 +76,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
     // 七条误报，一条真接缝但闸同时漏报了它该报的文件——今晚的形状
     for (let i = 0; i < 7; i++) await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[i], resolution: `第 ${i + 1} 条：两侧其实没碰同一处`, verdict: "false" }, -20 + i);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[7], resolution: "真接缝，而且它还漏了两个真撞的文件", verdict: "real", missed: true }, -12);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -11);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -11);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -10);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -9);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -8);
@@ -95,7 +95,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
   it("没人判过的那些如实说出来，不被算成任何一边", async () => {
     const w = await world(5);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ reported: 5, judged: 1, false_positives: 1, unjudged: 4 });
@@ -108,7 +108,7 @@ describe("t-149 · 判据 3 与判决的写法", () => {
     const w = await world(2);
     // 今晚 01M1XAN1V2Z150HBEYY6RQQCGX 的形状：正文里「真接缝」与「假接缝」同时出现，后者在一句否定里
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "真接缝，但已被排期化解。这条不属于今晚那八条假接缝。", verdict: "real" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[1], resolution: "误报", verdict: "false" }, -7);
     const h = gateHonesty(await st(w.s), "seam")!;
@@ -142,7 +142,7 @@ describe("t-149 · 判据 3 与判决的写法", () => {
   it("判据 3：那句话在完整板上，不随瘦身板出门，也不是给人的卡", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const b = board(await st(w.s), HUMAN, at(0));
     expect(b.gate_honesty).toHaveLength(1);

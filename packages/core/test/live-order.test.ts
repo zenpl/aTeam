@@ -17,7 +17,7 @@ async function log(gap: number) {
   let t = Date.parse("2026-09-07T00:00:00.000Z");
   const emit = (e: NewEvent, ms: number) => append(store, e, { human: HUMAN, now: new Date(ms) });
   await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" }, (t += 1000));
-  await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] }, (t += 1000));
+  await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] , no_human_impact: true}, (t += 1000));
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/1.ts"] }, (t += 1000));
   await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" , no_human_impact: true}, (t += 1000));
   const passed = (t += 1000);
@@ -42,7 +42,7 @@ describe("t-120 · 线上 splits by log order, not by the clock", () => {
     let t = Date.parse("2026-09-07T00:00:00.000Z");
     const emit = (e: NewEvent, ms: number) => append(store, e, { human: HUMAN, now: new Date(ms) });
     await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" }, (t += 1000));
-    await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] }, (t += 1000));
+    await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] , no_human_impact: true}, (t += 1000));
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/1.ts"] }, (t += 1000));
     await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" , no_human_impact: true}, (t += 1000));
     const together = (t += 1000);

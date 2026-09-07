@@ -13,8 +13,8 @@ async function fixture() {
   let t = Date.parse("2026-09-06T06:00:00Z");
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-001", title: "Server reports which commit is deployed",
-    criteria: ["GET /health returns {ok, sha}", "missing sha shows as 'unknown'", "qa records production:deployed.sha"] });
-  await emit({ kind: "task", op: "create", actor: "pm", task: "t-002", title: "HTML board", criteria: ["GET / is html"] });
+    criteria: ["GET /health returns {ok, sha}", "missing sha shows as 'unknown'", "qa records production:deployed.sha"], no_human_impact: true });
+  await emit({ kind: "task", op: "create", actor: "pm", task: "t-002", title: "HTML board", criteria: ["GET / is html"] , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-001", touches: ["packages/server/src/app.ts", "GET /health"] });
   await emit({ kind: "task", op: "done", actor: "dev", task: "t-001", evidence: "fd76455: /health returns sha locally" , no_human_impact: true});
   return { store, emit };

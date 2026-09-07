@@ -16,7 +16,7 @@ async function fixture() {
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
   await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "frontend", "qa"] });
   for (const [id, title] of [["t-a", "牌桌那一行"], ["t-b", "我自己的另一件"], ["t-c", "已经交了的"]]) {
-    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] , no_human_impact: true});
   }
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-a", touches: ["packages/server/src/html.ts", "packages/server/src/i18n.ts"] });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-b", touches: ["packages/core/src/board.ts"] });

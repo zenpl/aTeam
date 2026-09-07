@@ -48,7 +48,7 @@ describe("t-036 · POST /ack", () => {
   });
 
   it("with a note: ack then a 'not now' note from the human that refs the instruction and, when named, hangs on the task", async () => {
-    await post("pm", { kind: "task", op: "create", task: "t-9", title: "一键部署", criteria: ["按钮"] });
+    await post("pm", { kind: "task", op: "create", task: "t-9", title: "一键部署", criteria: ["按钮"] , no_human_impact: true});
     const i = await post("pm", { kind: "instruction", to: HUMAN, body: "部署 t-9。合并后推到 production", ack_by: later() });
     const r = await ack({ id: i.id, note: "明天再部署" }, { ...auth, accept: "text/html" });
     expect(r.status).toBe(303);

@@ -268,33 +268,31 @@ export const NO_HUMAN_IMPACT = "不改变人看到的东西";
  * 那张表算出来，而不是在这里数符号名。在那之前，漏掉一个 key 的代价是一次没被拦下的顺手改。
  */
 export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual/"] as const;
-/** t-170: core 里装着给人看的整句话的那些符号。动它们就是动人看到的字。 */
+/**
+ * t-170: core 里装着给人看的整句话的那些符号。动它们就是动人看到的字，没有「内部符号」这一说。
+ *
+ * **这份名单不是我数出来的，是量出来的**：build.test.ts 里有一条闸，从 core 的源码里把「函数体或常量里含给人看
+ * 的整句中文」的导出符号全找出来，与这份名单逐个对；少一个就红。qa 08:46 判不过的第一条正是名单漏了一个
+ * （frontend 的 board.ts#inFlightGroups，它改的是牌桌在途那一段的四行字），而漏的原因就是当时这份名单靠手数。
+ *
+ * t-143 把人可见的每句话收进唯一 key 之后，这份名单该由那张表取代；在那之前，这条闸让它不会悄悄过时。
+ */
 export const KEY_SYMBOLS = [
-  "BATCH_LINES", "REACH_WORDS", "REACH_RULE", "NO_HUMAN_IMPACT", "READING_SAYINGS", "sayReading",
-  "missingCard", "lightSeamLine", "SEAM_UNDECIDED", "SEAM_SAME_FILE", "CONTACT_ASK", "CONTACT_OPTIONS",
-  "STAND_IN_ASK_TITLE", "STAND_IN_OPTIONS", "MIGRATION_ASK_TITLE", "FAIL_NOTICE", "VERIFY_ASK",
-  "overdueByPresence", "honestyLine", "alsoHere", "nobodyElse",
+  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
+  "INVITE_SENT_PREFIX", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "REACH_RULE",
+  "REACH_STALE_MS", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX",
+  "SEAM_SAME_FILE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "alertContact", "allocationSummary", "batches",
+  "board", "capabilityKey", "coverage", "deployHistory", "followUps", "lightSeamLine",
+  "manualFor", "missingCard", "overdueByPresence", "owedSentences", "responsibilityAppendix", "runtimeAllocation",
+  "saidHops", "sayReading", "shapeFor", "standIns", "staticAllocation",
 ] as const;
+
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
 export const RENDERING_FILES = ["packages/server/src/html.ts", "packages/cli/src/format.ts"] as const;
 
 /** t-170: 一个触点算不算「碰了人可见的东西」，以及算不算得准。 */
 export type TouchVerdict = "human_visible" | "internal" | "unsure";
 
-/**
- * t-170 第二轮 (pd 08:33)：**文件级拒绝继续用，另给一条具名出路。**
- *
- * 第一轮我按符号判：`html.ts#justDeferred` 直接放过。qa 判不过，理由是对的——t-163 今晚改了在途四行字，而它的
- * 真实触点在新口径下可以合法说「不改变人看到的东西」。**按符号自动放过，等于让「顺手改一个词」重新漏网**，
- * 那正是这条规则最想拦的东西。
- *
- * 所以拒绝仍按文件，出路改成一句**具体到符号**的话：「只动了 <文件> 里的内部符号：<符号名>」。它要求的不是一个
- * 开关，是一次注意——写不出符号名，就说明你没看清自己改了什么，那就该写 shows。这句话由 core 拼，人给的是符号名：
- * 措辞只有一处，而需要注意力的那一半在人手里。
- *
- * pd 08:33 同时说明这是暂行的：t-143 把人可见的每句话收进唯一 key 之后，按改动算才算得准，这条具名出路自动退役。
- */
-export const internalOnly = (symbols: string[]) => `${NO_HUMAN_IMPACT}（只动了内部符号：${symbols.join("、")}）`;
 
 export function touchesHumanVisible(touch: string): TouchVerdict {
   const path = touch.split("#")[0].trim();
@@ -302,7 +300,7 @@ export function touchesHumanVisible(touch: string): TouchVerdict {
   if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return "internal";   // 改一个用例不改变任何人看到的东西
   if (WORDS_FILES.some((x) => path === x || path.startsWith(x))) return "human_visible";        // ① 只装文本的地方
   if (symbol && KEY_SYMBOLS.includes(symbol as (typeof KEY_SYMBOLS)[number])) return "human_visible"; // ② key 本身
-  // t-170 第二轮：**不再按符号自动放过**。带不带符号都算碰了人可见的东西；要出去，走 internalOnly 那条具名出路。
+  // t-170 第二轮：**不再按符号自动放过**。带不带符号都算碰了人可见的东西；要出去，走 --internal-only 那条具名出路。
   if (RENDERING_FILES.some((x) => path === x)) return "human_visible";
   return "internal";
 }

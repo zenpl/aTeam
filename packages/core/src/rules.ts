@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
@@ -375,6 +375,10 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
     if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`);
     if (!e.title?.trim()) throw new Rejected("task", "title is required");
     if (!e.criteria?.length) throw new Rejected("task", "at least one acceptance criterion is required");
+    // t-171 (pd 08:27)：承诺那头也要有闸。一件任务在**被写下来的时候**就该说清它对人有什么影响，而不是等到
+    // 交活时才第一次被问——那时范围已经定死了，答案只能是把已经做的事描述一遍。今晚 83 件里 78 件说不出人能
+    // 看到什么，问题不在交活的人身上：没有人在建它的时候问过这个问题。
+    humanImpactPromised("create", e);
     return;
   }
   if (e.op === "seam") {
@@ -480,11 +484,23 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // t-170 第二轮 (pd 08:33)：具名出路。写得出「只动了哪几个内部符号」就放行——它要的不是一个开关，是一次
         // 注意；写不出符号名，就说明没看清自己改了什么，那就该写 shows。符号必须真的落在被拦的那几处文件里，
         // 否则这句话可以拿任何一个符号名蒙混过去。
+        // t-170 第三轮 (qa 08:46 ②)：**具名出路只属于「人可见文件里的内部符号」那一档。**
+        // 上一版让它对所有被拦的触点都生效，于是多打一个编出来的符号名，就能把「只装文本的地方」和「key 本身」
+        // 一起放过去——`i18n.ts` 加一个 `#随便编` 就过，而 markdown 文件里根本没有符号这种东西。pd 08:33 给这条
+        // 出路的原话就是给内部符号的；被拦在①②两档的，本来就该写 shows。
+        const noExit = seen.filter((x) => !RENDERING_FILES.some((f) => x.split("#")[0] === f));
         const named = (e.internal_only ?? []).map((x) => x.trim()).filter(Boolean);
+        if (noExit.length && named.length)
+          throw new Rejected("done", `这几处不能用 --internal-only 解释掉：${noExit.join("、")}——那里改的就是给人看的字（只装文本的地方，或 core 里那些 key 本身），没有「内部符号」这一说。用 --shows 说一句人现在能看到什么`);
         if (seen.length && named.length) {
           const covers = (f: string) => named.some((n) => n.startsWith(`${f.split("#")[0]}#`));
           const bare = named.filter((n) => !n.includes("#"));
           if (bare.length) throw new Rejected("done", `--internal-only 要写成「文件#符号」，具体到符号才算数：${bare.join("、")} 没说是哪个文件里的哪个符号`);
+          // t-170 判据 8 (pm 08:46)：符号名必须与这件真正碰过的东西对得上。不然谁都能编一个——qa 实测用
+          // `i18n.ts#随便编` 就过了。触点是这件碰了什么的唯一记录，所以名出来的每一个符号都要在触点里。
+          const invented = named.filter((n) => !touches.includes(n));
+          if (invented.length)
+            throw new Rejected("done", `这几个符号不在这件的触点里：${invented.join("、")}——名出来的符号要是你真的碰过的那个。先把它 claim 进触点（task claim <id> --touches ...），或者改用 --shows`);
           const uncovered = seen.filter((f) => !covers(f));
           if (uncovered.length) throw new Rejected("done", `这几处还没说清动了里面的什么：${uncovered.join("、")}——每一处都要有一个「文件#符号」，或者改用 --shows`);
         } else if (seen.length) {

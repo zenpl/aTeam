@@ -27,7 +27,7 @@ describe("t-149 · 闸的实话走一遍接口", () => {
     base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
     await post("pm", { kind: "reading", surface: PROJECT_SURFACE, key: "roles", value: ["pm", "dev", "frontend", "qa"] });
     for (const [id, who] of [["t-a", "dev"], ["t-b", "frontend"]] as const) {
-      await post("pm", { kind: "task", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] });
+      await post("pm", { kind: "task", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] , no_human_impact: true});
       await post(who, { kind: "task", op: "claim", task: id, touches: ["packages/core/src/board.ts"] });
     }
   });
@@ -45,7 +45,7 @@ describe("t-149 · 闸的实话走一遍接口", () => {
 
   it("判为误报 + 修法还没上生产：完整板上出现那句话，首屏没有，也不是给人的卡", async () => {
     expect((await post("pm", { kind: "task", op: "seam", tasks: ["t-a", "t-b"], resolution: "两侧其实没碰同一处：闸按合并后的累计 diff 算触点", verdict: "false", missed: true })).status).toBe(201);
-    await post("pm", { kind: "task", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] });
+    await post("pm", { kind: "task", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true});
     await post("pm", { kind: "reading", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" });
 
     const full = await board(true);

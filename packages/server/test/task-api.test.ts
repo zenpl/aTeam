@@ -17,8 +17,8 @@ beforeAll(async () => {
   app = createApp({ store: new MemoryStore(), token: TOKEN, human: "human", sha: "abc1234", alertIntervalMs: 0 });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
-  await post("pm", { kind: "task", op: "create", task: "t-1", title: "牌桌显示 sha", criteria: ["GET /health 有 sha", "牌桌显示它"] });
-  await post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["429"] });
+  await post("pm", { kind: "task", op: "create", task: "t-1", title: "牌桌显示 sha", criteria: ["GET /health 有 sha", "牌桌显示它"] , no_human_impact: true});
+  await post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["429"] , no_human_impact: true});
   await post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["app.ts"] });
   await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234: 本地看到", shows: "牌桌第一行是版本" });
   await post("frontend", { kind: "task", op: "claim", task: "t-2", touches: ["app.ts"] });

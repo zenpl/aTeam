@@ -26,7 +26,7 @@ const state = async (now = new Date()) => reduce(await store.read(), now);
 const owed = (b: Board) => Object.values(b.overdue_by_presence).flatMap((g) => g.instructions);
 const notices = (s: State, to: string, marker: string) => [...s.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && st.instruction.to === to && st.instruction.body.includes(marker)).map((st) => st.instruction);
 const task = async (id: string, title: string, owner = "dev") => {
-  await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] });
+  await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] , no_human_impact: true});
   await post(owner, { kind: "task", op: "claim", task: id, touches: [id] });
 };
 

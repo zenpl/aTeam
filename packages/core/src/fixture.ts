@@ -9,7 +9,7 @@ import { READING_SAYINGS } from "./board.js";
 export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder> {
   const b = new Builder({ stepMs: 60_000, ...opts });
   await b.reading("pm", "focus", "S1 开工：牌桌显示部署的版本", { surface: "team" });
-  await b.task.create("pm", "t-1", "牌桌显示部署的版本", ["GET /health 返回 {ok, sha}", "牌桌「线上」一行显示 sha"]);
+  await b.task.create("pm", "t-1", "牌桌显示部署的版本", ["GET /health 返回 {ok, sha}", "牌桌「线上」一行显示 sha"], { no_human_impact: true });
   const ask = await b.tell("pm", "dev", "先做 t-1，claim 时把 touches 写宽", { ackByMs: 15 * 60_000 });
   await b.pull("dev"); // delivered to dev; dev's cursor now points at the instruction
   await b.ack("dev", ask.id);

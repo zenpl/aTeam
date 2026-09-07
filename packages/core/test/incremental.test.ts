@@ -48,9 +48,9 @@ async function busyLog(store: MemoryStore): Promise<Event[]> {
   await put({ kind: "untell", actor: "pm", of: out[6].id, reason: "改主意了" }, 8);
 
   // two tasks that collide, one that stacks on a done, a round that fails and is reopened
-  await put({ kind: "task", op: "create", actor: "pm", task: "t-a", title: "甲", criteria: ["能用"] }, 9);
-  await put({ kind: "task", op: "create", actor: "pm", task: "t-b", title: "乙", criteria: ["能用"] }, 10);
-  await put({ kind: "task", op: "create", actor: "pm", task: "t-c", title: "丙", criteria: ["能用"] }, 11);
+  await put({ kind: "task", op: "create", actor: "pm", task: "t-a", title: "甲", criteria: ["能用"] , no_human_impact: true}, 9);
+  await put({ kind: "task", op: "create", actor: "pm", task: "t-b", title: "乙", criteria: ["能用"] , no_human_impact: true}, 10);
+  await put({ kind: "task", op: "create", actor: "pm", task: "t-c", title: "丙", criteria: ["能用"] , no_human_impact: true}, 11);
   await put({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["packages/core/src/x.ts"] }, 12);
   await put({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["packages/core/src/x.ts", "packages/core/src/y.ts"] }, 13);
   await put({ kind: "task", op: "claim", actor: "dev", task: "t-c", touches: ["docs"] }, 14);
@@ -59,7 +59,7 @@ async function busyLog(store: MemoryStore): Promise<Event[]> {
   await put({ kind: "task", op: "reopen", actor: "dev", task: "t-a", reason: "补测试" }, 17);
   await put({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "def5678: 补上了", touches: ["packages/core/src/x.ts#f"] , no_human_impact: true}, 18);
   await put({ kind: "task", op: "seam", actor: "pm", tasks: ["t-a", "t-b"], resolution: "frontend 合 dev 的" }, 19);
-  await put({ kind: "task", op: "create", actor: "pm", task: "t-d", title: "丁", criteria: ["能用"] }, 20);
+  await put({ kind: "task", op: "create", actor: "pm", task: "t-d", title: "丁", criteria: ["能用"] , no_human_impact: true}, 20);
   await put({ kind: "task", op: "withdraw", actor: "pm", task: "t-d", reason: "前提不成立" }, 20);
   await put({ kind: "note", actor: HUMAN, body: "decision: A 还是 B？ -> A", decision: true, decides: { of: out[4].id, option: "A" }, refs: [out[4].id] }, 21);
   return out;

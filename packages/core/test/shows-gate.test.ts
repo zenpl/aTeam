@@ -19,7 +19,7 @@ async function world() {
   const s = new MemoryStore();
   const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -300);
-  await put({ kind: "task", actor: "pm", op: "create", task: "t-1", title: "题", criteria: ["能用"] }, -200);
+  await put({ kind: "task", actor: "pm", op: "create", task: "t-1", title: "题", criteria: ["能用"] , no_human_impact: true}, -200);
   await put({ kind: "task", actor: "dev", op: "claim", task: "t-1", touches: ["x"] }, -190);
   return { s, put };
 }
@@ -76,7 +76,7 @@ describe("t-151 · 判据 2：只管新的，不追溯", () => {
     // 直接写进日志：这就是「口径之前」的那 78 件的形状——没有 shows，也没有那句「对人无影响」
     const old = { id: "01OLDDONE0000000000000000", at: at(-100).toISOString(), kind: "task", op: "done", actor: "dev", task: "t-9", evidence: "abc1234" };
     for (const e of [
-      { id: "01OLDCREATE00000000000000", at: at(-120).toISOString(), kind: "task", op: "create", actor: "pm", task: "t-9", title: "旧的一件", criteria: ["能用"] },
+      { id: "01OLDCREATE00000000000000", at: at(-120).toISOString(), kind: "task", op: "create", actor: "pm", task: "t-9", title: "旧的一件", criteria: ["能用"] , no_human_impact: true},
       { id: "01OLDCLAIM000000000000000", at: at(-110).toISOString(), kind: "task", op: "claim", actor: "dev", task: "t-9", touches: ["x"] },
       old,
     ]) await s.appendRaw(e as never);
@@ -221,7 +221,26 @@ describe("t-170 · 逐条重跑 qa 08:20 那份清单", () => {
   });
 
   it("具体到符号就放行——它要的不是一个开关，是一次注意", async () => {
-    expect(await donex(await world(), ["packages/server/src/html.ts"], ["packages/server/src/html.ts#justDeferred"])).toBe("过");
+    // 判据 8：名出来的符号要在触点里，所以触点本身就得带着它
+    expect(await donex(await world(), ["packages/server/src/html.ts", "packages/server/src/html.ts#justDeferred"], ["packages/server/src/html.ts#justDeferred"])).toBe("过");
+  });
+
+  it("判据 8 (pm 08:46)：编一个符号名过不去——qa 实测能用 `i18n.ts#随便编` 蒙混的那条路堵上了", async () => {
+    const r = await donex(await world(), ["packages/server/src/html.ts"], ["packages/server/src/html.ts#编的"]);
+    expect(r).not.toBe("过");
+    expect(r).toContain("不在这件的触点里");
+  });
+
+  it("qa 08:46 ②：具名出路只属于「人可见文件里的内部符号」，①②两档不接受它", async () => {
+    for (const [touch, named] of [
+      ["packages/server/src/i18n.ts", "packages/server/src/i18n.ts#随便编"],
+      ["packages/core/manual/common.md", "packages/core/manual/common.md#随便编"],
+      ["packages/core/src/events.ts#BATCH_LINES", "packages/core/src/events.ts#别的符号"],
+    ] as const) {
+      const r = await donex(await world(), [touch, named], [named]);
+      expect(r, touch).not.toBe("过");
+      expect(r).toContain("不能用 --internal-only 解释掉");
+    }
   });
 
   it("符号必须真的落在被拦的那几处文件里，否则一句话可以拿任何符号名蒙混过去", async () => {
@@ -234,5 +253,59 @@ describe("t-170 · 逐条重跑 qa 08:20 那份清单", () => {
     const r = await donex(await world(), ["packages/server/src/html.ts"], ["justDeferred"]);
     expect(r).not.toBe("过");
     expect(r).toContain("要写成「文件#符号」");
+  });
+});
+
+/**
+ * t-171 (pd 08:27)：**承诺那头也要有闸。**
+ *
+ * 今晚 83 件里 78 件说不出人能看到什么。问题不在交活的人身上：没有人在**建**它的时候问过这个问题，而等到交活时
+ * 才第一次被问，范围已经定死了，答案只能是把已经做的事描述一遍。所以两头同形状、同常量、同一句拒绝话。
+ */
+describe("t-171 · 建任务时也要说清它对人有什么影响", () => {
+  const create = async (w: Awaited<ReturnType<typeof world>>, extra: Record<string, unknown>) =>
+    w.put({ kind: "task", actor: "pm", op: "create", task: "t-新", title: "题", criteria: ["能用"], ...extra }, -10)
+      .then(() => "过" as const)
+      .catch((e) => (e as Rejected).message);
+
+  it("两句都没有：拒绝，出路与 done 那头一模一样", async () => {
+    const r = await create(await world(), {});
+    expect(r).not.toBe("过");
+    expect(r).toContain("--shows");
+    expect(r).toContain("--no-human-impact");
+    expect(r).toContain(NO_HUMAN_IMPACT);
+    expect(r).toContain("空着不算「没影响」");
+  });
+
+  it("说了人会看到什么、或明写没有：都过，而且承诺留在任务上", async () => {
+    const w1 = await world();
+    expect(await create(w1, { shows: "牌桌第一行会是版本号" })).toBe("过");
+    expect((await st(w1.s)).tasks.get("t-新")).toMatchObject({ promise: "牌桌第一行会是版本号" });
+    const w2 = await world();
+    expect(await create(w2, { no_human_impact: true })).toBe("过");
+    expect((await st(w2.s)).tasks.get("t-新")).toMatchObject({ promise_none: true, promise: undefined });
+  });
+
+  it("两句都写就是自相矛盾，也拒绝", async () => {
+    expect(await create(await world(), { shows: "人能看到 X", no_human_impact: true })).toContain("互相矛盾");
+  });
+
+  it("判据 2：同一句拒绝话——两头只写一遍，改一处两头一起变", () => {
+    const rules = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
+    // 这句话只有一个出处（humanImpactPromised），两头都调它；rules.ts 里搜不到第二份「空着不算」
+    expect([...rules.matchAll(/空着不算/g)]).toHaveLength(1);
+    expect([...rules.matchAll(/humanImpactPromised\(/g)].length).toBe(3);   // 一处定义 + create 与 done 各调一次
+  });
+
+  it("判据 4：不追溯——日志里已有的任务不受影响", async () => {
+    const s = new MemoryStore();
+    for (const e of [
+      { id: "01OLDCREATE00000000000000", at: at(-120).toISOString(), kind: "task", op: "create", actor: "pm", task: "t-旧", title: "口径之前建的", criteria: ["能用"] },
+      { id: "01OLDCLAIM000000000000000", at: at(-110).toISOString(), kind: "task", op: "claim", actor: "dev", task: "t-旧", touches: ["x"] },
+    ]) await s.appendRaw(e as never);
+    const t = (await reduce(await s.read(), at(0))).tasks.get("t-旧")!;
+    expect(t.status).toBe("working");
+    expect(t.promise).toBeUndefined();
+    expect(t.promise_none).toBeUndefined();   // 它没有承诺，但也不因此变成不合格
   });
 });

@@ -29,7 +29,7 @@ async function world(enable: unknown = true) {
   if (enable !== null) await emit({ kind: "reading", actor: "pm", key: "deploy.enabled", surface: "project", value: enable });
   await emit({ kind: "reading", actor: "pm", key: "pm:能力", surface: "node", value: { push: "production" }, method: "join" }); // t-058: pm said it may push production
   const ship = async (id: string, sha: string, verify = true) => {
-    await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
+    await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     await emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha.slice(0, 7)} 完成` , no_human_impact: true});
     if (verify) await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
@@ -188,7 +188,7 @@ describe("t-093 · the deploy entry refuses a sha that adds unverified work", ()
   };
   /** ship(id, sha, how): verified | done (repo-verified, not the whole task) | failed */
   const ship = async (w: Awaited<ReturnType<typeof world93>>, id: string, sha: string, how: "verified" | "done" | "failed") => {
-    await w.emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
+    await w.emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] , no_human_impact: true});
     await w.emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     await w.emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha.slice(0, 7)} 完成` , no_human_impact: true});
     if (how === "verified") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });

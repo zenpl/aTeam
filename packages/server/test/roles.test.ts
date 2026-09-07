@@ -56,7 +56,7 @@ describe("t-106 · role ids over the wire", () => {
 
   it("an ASCII id still works as an actor end to end, so the rule changed nothing for a team that was already fine", async () => {
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: { editor: { name: "主编", responsibilities: ["R1"] }, writer: { name: "写手", responsibilities: ["R5"] }, reviewer: { name: "审稿", responsibilities: ["R6"] } } });
-    expect((await post("editor", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] })).status).toBe(201);
+    expect((await post("editor", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] , no_human_impact: true})).status).toBe(201);
     expect((await post("writer", { kind: "task", op: "claim", task: "t-1", touches: ["x"] })).status).toBe(201);
     expect((await post("writer", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" , no_human_impact: true})).status).toBe(201);
     expect((await post("reviewer", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true })).status).toBe(201);

@@ -18,7 +18,7 @@ async function liveBlock(events: NewEvent[]) {
 
 const sha = (value: string, method?: string): NewEvent => ({ kind: "reading", actor: "qa", surface: "production", key: "deployed.sha", value, method } as NewEvent);
 const done = (id: string): NewEvent[] => [
-  { kind: "task", op: "create", actor: "pm", task: id, title: `任务 ${id}`, criteria: ["可用"] },
+  { kind: "task", op: "create", actor: "pm", task: id, title: `任务 ${id}`, criteria: ["可用"] , no_human_impact: true},
   { kind: "task", op: "claim", actor: "dev", task: id, touches: [`src/${id}.ts`] },
   { kind: "task", op: "done", actor: "dev", task: id, evidence: `1111111: 全绿` , no_human_impact: true},
   { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "测试通过" },

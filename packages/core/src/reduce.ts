@@ -5,6 +5,9 @@ import {
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
 export interface TaskState {
+  /** t-171: 建它时承诺人会看到什么；`promise_none` 是明写了「不改变人看到的东西」。与 done 的 `shows` 分开。 */
+  promise?: string;
+  promise_none?: boolean;
   id: string;
   title: string;
   /** All criteria in order: the ones from create, then every addition. */
@@ -512,6 +515,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
         from: e.from, label: e.label, // t-092, t-096
+        // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
+        // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
+        promise: e.shows?.trim() || undefined, promise_none: e.no_human_impact || undefined,
       });
       return;
     case "seam": {

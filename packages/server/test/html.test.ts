@@ -60,19 +60,19 @@ beforeAll(async () => {
   // dev is listening (one pull), so the service raises no missing-role card for it (t-042/t-048); the cards below are the human's own
   await w.api("/events", { "x-actor": "dev" });
   await w.api("/events", { "x-actor": "frontend" });   // present = listening (t-047): a pull, not a post
-  await w.post("pm", { kind: "task", op: "create", task: "t-1", title: "Cookie flags", criteria: ["cookie is SameSite=Lax", "no <script> on the page"] });
+  await w.post("pm", { kind: "task", op: "create", task: "t-1", title: "Cookie flags", criteria: ["cookie is SameSite=Lax", "no <script> on the page"] , no_human_impact: true});
   await w.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["api/session.ts"] });
   await w.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "sha 1234567" , no_human_impact: true});
   await w.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "tests 14/14" });
   await w.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", method: "GET /health" });
   await w.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "seen on ateam.fly.dev" });
-  await w.post("pm", { kind: "task", op: "create", task: "t-2", title: "Rate limit", criteria: ["429 after 100 rps"] });
-  await w.post("pm", { kind: "task", op: "create", task: "t-3", title: "Card page for the human", criteria: ["no ids above the fold"] });
+  await w.post("pm", { kind: "task", op: "create", task: "t-2", title: "Rate limit", criteria: ["429 after 100 rps"] , no_human_impact: true});
+  await w.post("pm", { kind: "task", op: "create", task: "t-3", title: "Card page for the human", criteria: ["no ids above the fold"] , no_human_impact: true});
   await w.post("frontend", { kind: "task", op: "claim", task: "t-3", touches: ["packages/server/src/html.ts"] });
-  await w.post("pm", { kind: "task", op: "create", task: "t-4", title: "Watch survives errors", criteria: ["retries"] });
+  await w.post("pm", { kind: "task", op: "create", task: "t-4", title: "Watch survives errors", criteria: ["retries"] , no_human_impact: true});
   await w.post("dev", { kind: "task", op: "claim", task: "t-4", touches: ["packages/cli/src/loop.ts"] });
   await w.post("dev", { kind: "task", op: "done", task: "t-4", evidence: "b6228e3 on the dev branch" , no_human_impact: true});
-  await w.post("pm", { kind: "task", op: "create", task: "t-6", title: "Env beats config file", criteria: ["env wins"] });
+  await w.post("pm", { kind: "task", op: "create", task: "t-6", title: "Env beats config file", criteria: ["env wins"] , no_human_impact: true});
   await w.post("dev", { kind: "task", op: "claim", task: "t-6", touches: ["packages/cli/src/config.ts"] });
   await w.post("dev", { kind: "task", op: "block", task: "t-6", on: "premise was wrong, see 01M1TP818FWVXP1YQV31X092RR and packages/cli/src/config.ts, waiting for pm to decide whether this is worth doing at all" });
   await w.post("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, method: "select count(*)", depends_on: ["production:users"] });
@@ -303,18 +303,18 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     await v.start();
     try {
       for (let i = 1; i <= 7; i++) {
-        await v.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: ["可用"] });
+        await v.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: ["可用"] , no_human_impact: true});
         await v.post("dev", { kind: "task", op: "claim", task: `t-${i}`, touches: [`src/${i}.ts`] });
       }
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
       for (const [id, title] of [["t-8", "登录修复"], ["t-9", "导出报表"]]) {
-        await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+        await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] , no_human_impact: true});
         await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
         await v.post("dev", { kind: "task", op: "done", task: id, evidence: "提交" , no_human_impact: true});
         await v.post("qa", { kind: "task", op: "verify", task: id, surface: "production", pass: true, evidence: "线上看到" });
       }
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
-      await v.post("pm", { kind: "task", op: "create", task: "t-10", title: "限流", criteria: ["可用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-10", title: "限流", criteria: ["可用"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-10", touches: ["src/10.ts"] });
       await v.post("dev", { kind: "task", op: "done", task: "t-10", evidence: "提交" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-10", surface: "production", pass: true, evidence: "线上看到" });
@@ -353,7 +353,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(section(await v.authedPage(), "now", "rest")).toContain('<span class="quiet">还没人核对过线上是哪一版</span>');
       // 2. a sha is deployed, one task verified on the previous version, nothing yet on this one: a sentence, not an empty heading
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["可用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["可用"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/1.ts"] });
       await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
@@ -372,7 +372,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
         expect(first).not.toContain("更早的");
       } finally { await f.stop(); }
       // 3. something verified on this version: the list is back, the sentence is gone
-      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["可用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["可用"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-2", touches: ["src/2.ts"] });
       await v.post("dev", { kind: "task", op: "done", task: "t-2", evidence: "提交" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-2", surface: "production", pass: true, evidence: "线上看到" });
@@ -436,7 +436,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       expect(s).toContain('<button class="btn" type="submit">说</button>');
       expect(s).toMatch(/<li><span class="said-body">登录页太慢了<\/span> <span class="meta"><time[^>]*>刚刚<\/time> · 已收到<\/span><\/li>/);
       const b = await (await v.api("/board?full=1")).json();
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录页加缓存", criteria: ["首屏 1 秒内"], refs: [b.said[0].id] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录页加缓存", criteria: ["首屏 1 秒内"], refs: [b.said[0].id] , no_human_impact: true});
       html = await v.page({ cookie });
       expect(section(html, "say", "now")).toContain("· 已成为任务：登录页加缓存</span>");
       expect(fold(html)).not.toContain(b.said[0].id);
@@ -455,20 +455,20 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署", ack_by: soon(), intent: "info" });
       await z.post("pm", { kind: "instruction", to: "dev", body: "认领 t-1", ack_by: new Date(Date.now() - 60_000).toISOString() });
       await z.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
-      await z.post("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] });
+      await z.post("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] , no_human_impact: true});
       await z.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["api/session.ts"] });
       await z.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" , no_human_impact: true});
       await z.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
-      await z.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次后返回 429"] });
+      await z.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次后返回 429"] , no_human_impact: true});
       await z.post("dev", { kind: "task", op: "claim", task: "t-2", touches: ["api/limit.ts"] });
       await z.post("dev", { kind: "task", op: "block", task: "t-2", on: "等 pm 定阈值" });
-      await z.post("pm", { kind: "task", op: "create", task: "t-3", title: "看板中文化", criteria: ["无英文界面文字"] });
-      await z.post("pm", { kind: "task", op: "create", task: "t-6", title: "导航改版", criteria: ["首页三步可达"] });
+      await z.post("pm", { kind: "task", op: "create", task: "t-3", title: "看板中文化", criteria: ["无英文界面文字"] , no_human_impact: true});
+      await z.post("pm", { kind: "task", op: "create", task: "t-6", title: "导航改版", criteria: ["首页三步可达"] , no_human_impact: true});
       await z.post("frontend", { kind: "task", op: "claim", task: "t-6", touches: ["web/nav.ts"] });
-      await z.post("pm", { kind: "task", op: "create", task: "t-4", title: "日志脱敏", criteria: ["日志里没有邮箱"] });
+      await z.post("pm", { kind: "task", op: "create", task: "t-4", title: "日志脱敏", criteria: ["日志里没有邮箱"] , no_human_impact: true});
       await z.post("dev", { kind: "task", op: "claim", task: "t-4", touches: ["api/log.ts"] });
       await z.post("dev", { kind: "task", op: "done", task: "t-4", evidence: "提交 2345678" , no_human_impact: true});
-      await z.post("pm", { kind: "task", op: "create", task: "t-5", title: "导出报表", criteria: ["能导出表格"] });
+      await z.post("pm", { kind: "task", op: "create", task: "t-5", title: "导出报表", criteria: ["能导出表格"] , no_human_impact: true});
       await z.post("dev", { kind: "task", op: "claim", task: "t-5", touches: ["api/export.ts"] });
       await z.post("dev", { kind: "task", op: "done", task: "t-5", evidence: "提交 3456789" , no_human_impact: true});
       await z.post("qa", { kind: "task", op: "verify", task: "t-5", surface: "repo", pass: true, evidence: "测试通过" });
@@ -509,7 +509,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     await v.start();
     try {
       const ship = async (id: string, title: string) => {
-        await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+        await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] , no_human_impact: true});
         await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
         await v.post("dev", { kind: "task", op: "done", task: id, evidence: "提交" , no_human_impact: true});
         await v.post("qa", { kind: "task", op: "verify", task: id, surface: "production", pass: true, evidence: "线上看到" });
@@ -685,8 +685,8 @@ describe("t-056 · the page shows the owner's sentence, and folds the evidence u
     const store = new MemoryStore();
     const log = [
       { kind: "reading", actor: HUMAN, surface: "production", key: "deployed.sha", value: "abc1234", depends_on: ["production:deployed.sha"] },
-      { kind: "task", op: "create", actor: "pm", task: "A", title: "牌桌显示 sha", criteria: ["works"] },
-      { kind: "task", op: "create", actor: "pm", task: "B", title: "限流", criteria: ["works"] },
+      { kind: "task", op: "create", actor: "pm", task: "A", title: "牌桌显示 sha", criteria: ["works"] , no_human_impact: true},
+      { kind: "task", op: "create", actor: "pm", task: "B", title: "限流", criteria: ["works"] , no_human_impact: true},
       { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["A"] },
       { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["B"] },
       { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234: <ul> 全绿", shows: "线上牌桌第一行是部署 sha" },
@@ -727,15 +727,15 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
     await v.start();
     try {
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录", "记住我"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录", "记住我"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
       await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567：两条都过" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上登录成功" });
       await v.post("qa", { kind: "note", body: "concern: 记住我在无痕窗口失效", task: "t-1" });
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       // two moving tasks on the same file: an open seam, listed; once pm resolves it, only a count remains
-      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "导出", criteria: ["可用"] });
-      await v.post("pm", { kind: "task", op: "create", task: "t-3", title: "导入", criteria: ["可用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "导出", criteria: ["可用"] , no_human_impact: true});
+      await v.post("pm", { kind: "task", op: "create", task: "t-3", title: "导入", criteria: ["可用"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-2", touches: ["src/io.ts"] });
       await v.post("frontend", { kind: "task", op: "claim", task: "t-3", touches: ["src/io.ts"] });
       let html = await v.page();
@@ -782,7 +782,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
     const p = server({ boardPublic: false });
     await p.start();
     try {
-      await p.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] });
+      await p.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] , no_human_impact: true});
       expect((await fetch(`${p.base}/task/t-1`, { headers: { accept: "text/html" } })).status).toBe(401);
       expect((await fetch(`${p.base}/task/t-1`, { headers: { accept: "text/html", authorization: `Bearer ${TOKEN}` } })).status).toBe(200);
     } finally { await p.stop(); }
@@ -795,7 +795,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
       const long = (n: number) => `第${n}条：${"这是一段很长的判据或证据文字，用来撑大页面。".repeat(8)}`;
       for (let i = 1; i <= 60; i++) {
-        await v.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: [long(1), long(2), long(3), long(4), long(5)] });
+        await v.post("pm", { kind: "task", op: "create", task: `t-${i}`, title: `任务${i}`, criteria: [long(1), long(2), long(3), long(4), long(5)] , no_human_impact: true});
         await v.post("dev", { kind: "task", op: "claim", task: `t-${i}`, touches: [`src/${i}.ts`, "src/shared.ts"] });
         await v.post("dev", { kind: "task", op: "done", task: `t-${i}`, evidence: long(6) + long(7) , no_human_impact: true});
         for (let k = 0; k < 5; k++) await v.post("qa", { kind: "note", body: long(10 + k), task: `t-${i}` });
@@ -967,7 +967,7 @@ describe("t-086 · 「线上」按来源署名：推的 / 核对", () => {
 
 describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", () => {
   const verified = async (v: ReturnType<typeof server>, id: string, title: string, sha: string) => {
-    await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] , no_human_impact: true});
     await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
     await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}: 全绿` , no_human_impact: true});
     await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "测试通过" });
@@ -1024,7 +1024,7 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
 describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
   const migrate = async (v: ReturnType<typeof server>) => {
     // one in-flight task, one decision, one fact and one open question, each carrying where it came from (t-088/t-089)
-    await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "jira://PROJ-1" });
+    await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "jira://PROJ-1" , no_human_impact: true});
     await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
     await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, from: "jira://PROJ-2" });
     await v.post("dev", { kind: "reading", surface: "staging", key: "users", value: 128, measured_at: new Date(Date.now() - 86_400_000).toISOString(), from: "jira://PROJ-3" });
@@ -1100,7 +1100,7 @@ describe("t-099 · 搬来的东西看得见来自哪一条", () => {
     const v = server();
     await v.start();
     try {
-      await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "https://tracker.example.com/PROJ-42" });
+      await v.post("dev", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"], from: "https://tracker.example.com/PROJ-42" , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
       await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "提交 1234567" , no_human_impact: true});
       await v.post("dev", { kind: "note", body: "决定：先做登录", decision: true, task: "t-1", from: "chat://msg/998" });
@@ -1119,8 +1119,8 @@ describe("t-099 · 搬来的东西看得见来自哪一条", () => {
     const v = server();
     await v.start();
     try {
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "导出报表", criteria: ["能导出"], from: "docs/plan.md#L20" });
-      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "导出报表", criteria: ["能导出"], from: "docs/plan.md#L20" , no_human_impact: true});
+      await v.post("pm", { kind: "task", op: "create", task: "t-2", title: "限流", criteria: ["每秒 100 次"] , no_human_impact: true});
       for (const id of ["t-1", "t-2"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
       const carried = await page(v, "t-1"), local = await page(v, "t-2");
       expect(carried).toContain('<div class="meta from">来自 <code>docs/plan.md#L20</code></div>');
@@ -1136,11 +1136,11 @@ describe("t-099 · 搬来的东西看得见来自哪一条", () => {
 describe("t-100 · 显示名撞了才附真 id", () => {
   const setup = async (v: ReturnType<typeof server>) => {
     // T-99 is another task's display name AND the third task's id: two different kinds of collision at once
-    await v.post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" });
-    await v.post("pm", { kind: "task", op: "create", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" });
-    await v.post("pm", { kind: "task", op: "create", task: "T-99", title: "限流", criteria: ["可用"] });
-    await v.post("pm", { kind: "task", op: "create", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" });
-    await v.post("pm", { kind: "task", op: "create", task: "L-4", title: "本地建的", criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" , no_human_impact: true});
+    await v.post("pm", { kind: "task", op: "create", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" , no_human_impact: true});
+    await v.post("pm", { kind: "task", op: "create", task: "T-99", title: "限流", criteria: ["可用"] , no_human_impact: true});
+    await v.post("pm", { kind: "task", op: "create", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" , no_human_impact: true});
+    await v.post("pm", { kind: "task", op: "create", task: "L-4", title: "本地建的", criteria: ["可用"] , no_human_impact: true});
     for (const id of ["L-1", "L-2", "T-99", "L-3", "L-4"]) await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
   };
   const rest = (html: string) => html.slice(html.indexOf('<details class="rest"'));
@@ -1192,7 +1192,7 @@ describe("t-107 · 人看到的角色一律显示名", () => {
     await v.start();
     try {
       await roles(v, { pm: { name: "主编", responsibilities: ["R1", "R3"] }, dev: { name: "写手", responsibilities: ["R5"] }, qa: ["R6"] });
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] , no_human_impact: true});
       await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
       await v.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
       const html = await v.authedPage();
@@ -1344,8 +1344,8 @@ describe("t-110 · 钥匙三分后人看到的四处文字", () => {
 describe("t-114 · 轻接缝在牌桌上说一句", () => {
   /** Two in-flight tasks on one file. Symbols disjoint => light; symbols absent or meeting => a real seam. */
   const pair = async (v: ReturnType<typeof server>, a: string, b: string, ta: string[], tb: string[]) => {
-    await v.post("pm", { kind: "task", op: "create", task: a, title: `任务 ${a}`, criteria: ["可用"] });
-    await v.post("pm", { kind: "task", op: "create", task: b, title: `任务 ${b}`, criteria: ["可用"] });
+    await v.post("pm", { kind: "task", op: "create", task: a, title: `任务 ${a}`, criteria: ["可用"] , no_human_impact: true});
+    await v.post("pm", { kind: "task", op: "create", task: b, title: `任务 ${b}`, criteria: ["可用"] , no_human_impact: true});
     await v.post("dev", { kind: "task", op: "claim", task: a, touches: ta });
     await v.post("frontend", { kind: "task", op: "claim", task: b, touches: tb });
   };

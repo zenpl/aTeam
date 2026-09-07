@@ -24,7 +24,7 @@ async function world() {
   const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, 0);
   for (const [id, title] of [["t-113", "接缝按符号判"], ["t-9", "还没验的一件"]] as const) {
-    await put({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] }, 1);
+    await put({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] , no_human_impact: true}, 1);
     await put({ kind: "task", op: "claim", actor: "dev", task: id, touches: [`packages/${id}.ts`] }, 2);
     await put({ kind: "task", op: "done", actor: "dev", task: id, evidence: `abc1234: ${id}` , no_human_impact: true}, 3);
   }

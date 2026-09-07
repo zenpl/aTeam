@@ -73,7 +73,7 @@ describe("t-112 · each gate, driven for real: the pass is refused with pd's sen
     const s = new MemoryStore();
     const put = (ne: NewEvent, mins: number) => append(s, ne, { human: HUMAN, now: at(mins) });
     await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa", "frontend"] }, 0);
-    await put({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "一件", criteria: ["能用", "能看"] }, 1);
+    await put({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "一件", criteria: ["能用", "能看"] , no_human_impact: true}, 1);
     await put({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["packages/x/a.ts"] }, 2);
     await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" , no_human_impact: true}, 3);
     return { s, put };
@@ -131,8 +131,8 @@ describe("t-112 · each gate, driven for real: the pass is refused with pd's sen
     const s = new MemoryStore();
     const put = (ne: NewEvent, mins: number) => append(s, ne, { human: HUMAN, now: at(mins) });
     await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa", "frontend"] }, 0);
-    await put({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "一件", criteria: ["能用", "能看"] }, 1);
-    await put({ kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["能用"] }, 2);
+    await put({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "一件", criteria: ["能用", "能看"] , no_human_impact: true}, 1);
+    await put({ kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["能用"] , no_human_impact: true}, 2);
     await put({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["packages/x/a.ts"] }, 3);
     await put({ kind: "task", op: "claim", actor: "frontend", task: "t-2", touches: ["packages/x/a.ts"] }, 4);
     await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" , no_human_impact: true}, 5);
