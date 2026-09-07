@@ -234,7 +234,15 @@ export const PROJECT_SURFACE = "project";
 export const SURFACES = ["repo", "staging", "production"] as const;
 export type Surface = (typeof SURFACES)[number];
 /** t-132 判据 4：人真的看得到的那一个。「验过」只有落在它上面才等于「人那边好了」。 */
-export const HUMAN_SURFACE = "production";
+export const HUMAN_SURFACE: Surface = "production";
+/**
+ * 代码里判「在仓库上验过没有」的那一个。
+ *
+ * t-213：**只给此刻真有人用的表面立常量。** staging 也在 SURFACES 里，但产品代码里一处都没比较过它，所以这里
+ * 没有 STAGING_SURFACE——`HUMAN_SURFACE` 今天之所以是个摆设（定义在这儿、读它的地方 0 处），正是因为它当初
+ * 是先立起来再等人用。要用的时候现加一个，比留一个没人读的名字好。
+ */
+export const REPO_SURFACE: Surface = "repo";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
@@ -402,6 +410,7 @@ export const KEY_SYMBOLS = [
   "STAND_IN_ASK_TITLE",
   "STAND_IN_OPTIONS",
   "STOOD_IN_PREFIX",
+  "SURFACE_GATE_BLIND_SPOTS",
   "UNTIL_UNDER_A_MINUTE",
   "VERIFY_ASK",
   "WATCH_LINES",

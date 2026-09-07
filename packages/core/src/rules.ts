@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
@@ -84,7 +84,7 @@ function standInBlocker(s: State, t: TaskState): string | null {
   if (fact && head && fact.sha.slice(0, 7) === head.slice(0, 7)) {
     return fact.contained.includes(t.id) ? `的代码已经在生产上（production:${DEPLOYED_TASKS_KEY} 对 ${head.slice(0, 7)} 测的）` : null;
   }
-  return t.verifications.some((v) => v.round === t.round && v.surface === "production" && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
+  return t.verifications.some((v) => v.round === t.round && v.surface === HUMAN_SURFACE && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
 }
 
 /** The sha the latest valid production:deployed.sha reading names. */

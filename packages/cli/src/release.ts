@@ -4,7 +4,7 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -70,9 +70,9 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
     spans.push({ task: t.id, base: t.base_sha, evidence: s });
-    const passedRepo = (t.surfaces ?? []).some((r) => r.surface === "repo" && r.pass);
+    const passedRepo = (t.surfaces ?? []).some((r) => r.surface === REPO_SURFACE && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
-    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
+    else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === HUMAN_SURFACE && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
     for (const seam of b.seams) if (seam.open && seam.tasks.includes(t.id)) reasons.push(`${t.id} 有未解决的接缝 ${seam.id}`);
   }
   // t-209：**这道闸原来只数任务，于是不是任务的东西它看不见。**
@@ -167,10 +167,10 @@ export function containmentFact(b: Board, measured: ReturnType<typeof containmen
   // 当「生产上有什么」的全集，而那份名单缺了一桶。
   //
   // 三桶一个不少地写下去，比较也比三桶（少了这一条，unmeasured 变了不会触发新事实，那一桶就永远停在旧值）。
-  const current = b.readings.find((r) => r.valid && r.surface === "production" && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
+  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
   const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
   if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained) && same(current.unmeasured, measured.unmeasured)) return null;
-  return { kind: "reading", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
+  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {
@@ -261,7 +261,7 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   const current = b.live?.deployed_sha ?? null;
   if (already) {
     deps.print(`${setting.branch} 已经在 ${sha.slice(0, 7)}，不再推。`);
-    if (!current || !(current === sha || sha.startsWith(current) || current.startsWith(sha))) await deps.reading("deployed.sha", sha, { surface: "production", writes: ["production:deployed.sha"], method: `ateam release --deploy：${setting.branch} 已在此 sha` });
+    if (!current || !(current === sha || sha.startsWith(current) || current.startsWith(sha))) await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy：${setting.branch} 已在此 sha` });
     return "already";
   }
   try {
@@ -273,6 +273,6 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
     return "failed";
   }
   deps.print(`已推 ${sha.slice(0, 7)} 到 ${setting.branch}（包含 ${p.included.length ? p.included.join("、") : "无候选任务"}）。`);
-  await deps.reading("deployed.sha", sha, { surface: "production", writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
+  await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
   return "pushed";
 }

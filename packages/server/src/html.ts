@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -316,7 +316,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   if (patching) out.push(`<p class="meta patching">${esc(UI.migrationPatching(who(patching)))}</p>`);
 
   const sha = b.live.deployed_sha ? String(b.live.deployed_sha).slice(0, 7) : null;
-  const shaReading = b.readings.find((r) => r.valid && r.surface === "production" && r.key === "deployed.sha");
+  const shaReading = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === "deployed.sha");
   const since = previousSha(b);
   // pd 22:47 (B): the count is this version's only; with nothing verified on this version there is no count at all.
   const onProd = b.live.recent.length;
@@ -398,7 +398,7 @@ export function previousSha(b: Board): string | null {
   const current = b.live.deployed_sha ? short(b.live.deployed_sha) : null;
   if (!current) return null;
   const prev = b.readings
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .sort((x, y) => y.at.localeCompare(x.at))
     .find((r) => short(r.value) !== current);
   const fallback = b.live.since_sha ? short(b.live.since_sha) : null;
@@ -801,7 +801,7 @@ export function latestReport(s: State, b: Board): { path: string; when: string; 
   }
   if (!best) return null;
   const when = `${best.stamp.slice(0, 10)} ${best.stamp.slice(11, 13)}:${best.stamp.slice(13, 15)}Z`;
-  const repo = b.readings.find((r) => r.valid && r.surface === "repo" && r.key === "url" && typeof r.value === "string");
+  const repo = b.readings.find((r) => r.valid && r.surface === REPO_SURFACE && r.key === "url" && typeof r.value === "string");
   const href = repo ? `${String(repo.value).replace(/\/$/, "")}/blob/${best.sha ?? "HEAD"}/${best.path}` : undefined;
   return { path: best.path, when, sha: best.sha, href };
 }

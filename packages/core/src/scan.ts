@@ -51,3 +51,59 @@ export function isSecondHome(path: string): boolean {
   if (/\.(test|spec)\.ts$/.test(p) || p.endsWith(".d.ts")) return false;
   return !p.startsWith(`${CORE_SRC}/`);
 }
+
+/**
+ * t-213：**表面名不许以裸字面量出现在「表面位置」上。**
+ *
+ * 此刻的形状：`HUMAN_SURFACE` 定义在 events.ts，而产品代码里读它的地方是 0 处（qa 在 t-132 上证过）——
+ * 边界完全由散在各处的 `r.surface === "production"` 承担。名单只有一个元素时它漂不了；**多一个表面的那一刻，
+ * 那些地方就是那么多个能各说各话的地方**，而且改一处漏一处没有任何东西会红。
+ *
+ * 这道闸只认**表面位置**，不认字面量本身：同一个 "production" 还可能是一个推送等级（PUSH_LEVELS）或一个分支名
+ * （release 推到哪条分支），把那些一起收拢是错的。所以配的是 `surface` 这个字段名周围的写法，而不是那五个字。
+ * **例外因此是构造出来的，不是判出来的**（与 PASSTHROUGH_IS_NOT_A_LITERAL 同一路子）：`export const
+ * HUMAN_SURFACE = "production"` 这样的声明本来就不长这个样，用不着任何「这一处放过」的名单。
+ */
+export const SURFACE_NAMES = ["repo", "staging", "production"] as const;
+
+const SURFACE_POSITIONS: RegExp[] = [
+  // r.surface === "production" / surface !== "repo" / { surface: "production" }
+  /\bsurface\s*(?:===|!==|==|:)\s*"(?:repo|staging|production)"/g,
+  // "production" === r.surface（反着写的比较）
+  /"(?:repo|staging|production)"\s*(?:===|!==|==)\s*[\w.]*\bsurface\b/g,
+  // verified_on.includes("production")：按表面名比对的另一种写法
+  /\bverified_on\b[^\n;]*"(?:repo|staging|production)"/g,
+];
+
+/**
+ * 注释按空格抹掉（保留换行，行号才不会错位）。**闸读的是代码，不是注释**：一句解释这道闸的话里写着
+ * `r.surface === "production"`，那不是一处判表面的代码——上面那段说明本身就会被自己抓住，第一版真的抓了 6 次。
+ * 抹掉而不是跳过整行，是因为同一行上可能一半是代码一半是注释。
+ */
+export function stripComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1: string) => p1 + " ".repeat(m.length - p1.length));
+}
+
+/** 源码里每一处「表面位置上的裸表面名」，按行号。空数组表示这份源码里一处都没有。 */
+export function bareSurfaceLiterals(src: string): { line: number; text: string }[] {
+  const out: { line: number; text: string }[] = [];
+  stripComments(src).split("\n").forEach((line, i) => {
+    for (const re of SURFACE_POSITIONS) {
+      re.lastIndex = 0;
+      for (const m of line.matchAll(re)) out.push({ line: i + 1, text: m[0].trim() });
+    }
+  });
+  return out;
+}
+
+/**
+ * t-213 判据 2：**这道闸看不见什么，说在明处。** 三条都不是理论上的，每一条在 surface-name.test.ts 里都有一个
+ * 会红的用例钉着——若哪天它们被收进来了，那些用例会告诉下一个人闸的范围变宽了，而不是让人以为一直如此。
+ */
+export const SURFACE_GATE_BLIND_SPOTS = [
+  "经变量绕一手：`const s = \"production\"; if (r.surface === s)`——比较的两边都不是字面量，配不到。",
+  "字段名不叫 surface：`verify(\"qa\", \"t-1\", \"repo\", true)` 这样按位置传的表面名，闸看不出第三个参数是个表面。",
+  "默认值写法：`opts.surface ?? \"repo\"`——引号前面不是 surface 那个字段名，而它确实是一个表面位置。",
+] as const;

@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -984,7 +984,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
   const deploys = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
@@ -1011,7 +1011,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   for (const t of [...s.tasks.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
     // t-068: the t-026 rule for the "recent" list, applied to every task: production-verified before the current sha, or
     // ended (withdrawn/obsolete) before it, is earlier; anything the current version brought or that is still open is this version
-    const prodPasses = t.verifications.filter((v) => v.round === t.round && v.surface === "production" && v.pass);
+    const prodPasses = t.verifications.filter((v) => v.round === t.round && v.surface === HUMAN_SURFACE && v.pass);
     const prodPassId = prodPasses.map((v) => v.id).sort().pop();
     const endedAt = t.withdrawn?.at ?? t.obsolete?.at;
     const before = (at: string | undefined) => !!at && b.live.since_sha !== null && currentSince !== undefined && at < currentSince;
@@ -1032,14 +1032,14 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
     });
-    if (surfaceResults(t).some((r) => r.surface === "production" && r.pass)) {
+    if (surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass)) {
       b.live.verified_on_production.push({ id: t.id, title: t.title, shows: t.shows });
       const recent = b.live.since_sha === null || currentSinceId === undefined || prodPassId! >= currentSinceId;
       (recent ? b.live.recent : b.live.earlier).push({ id: t.id, title: t.title, shows: t.shows });
     }
     const results = surfaceResults(t);
     // Only a task that is done or verified can ship: a reopened one is being changed, so its old repo pass is not a candidate.
-    if ((t.status === "done" || t.status === "verified") && results.some((r) => r.surface === "repo" && r.pass) && !results.some((r) => r.surface === "production" && r.pass)) {
+    if ((t.status === "done" || t.status === "verified") && results.some((r) => r.surface === REPO_SURFACE && r.pass) && !results.some((r) => r.surface === HUMAN_SURFACE && r.pass)) {
       const verified_by: Record<string, string> = {};
       for (const v of t.verifications) if (v.round === t.round && v.pass) verified_by[v.surface] = v.by;
       const lastDone = [...t.history].reverse().find((h) => h.op === "done");
@@ -1059,7 +1059,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
     const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
     const linked = tasks.filter((t) => t.refs.includes(n.id));
-    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === "production" && r.pass));
+    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass));
     const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
     const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
@@ -1184,7 +1184,7 @@ export interface ReadingSaying {
  */
 export const READING_SAYINGS: { surface: string; key: string; prefix?: boolean; saying: ReadingSaying }[] = [
   {
-    surface: "production", key: DEPLOYED_TASKS_KEY,
+    surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY,
     saying: {
       name: "这一版带上的活",
       // 判据 4：这一句就是 pm 07:1x 定的那句。数从值里数出来，不从别处抄。
@@ -1303,7 +1303,7 @@ function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
   const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
   if (!rs || !rs.valid || rs.expired || !task) return undefined;
   const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
-  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes("production") };
+  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes(HUMAN_SURFACE) };
 }
 
 export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
@@ -1546,7 +1546,7 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   // work already running in production that nobody walked there has no lever at all and leaves every surface.
   const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
   const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
+  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
   const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
   const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
   const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
@@ -1745,7 +1745,7 @@ export function batches(s: State, deployed: string | null, why: string | null, f
   // 每一个当过生产头的 sha。日志本来就记着它们（production:deployed.sha 的每一条），所以「这一批上过线没有」
   // 是算出来的，不是谁声明的。
   const everDeployed = new Set([...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .map((r) => shortSha(r.value as string)));
   for (const [key, id] of s.latestReading) {
     if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
@@ -1848,7 +1848,7 @@ export function deployHistory(s: State, tz = "UTC"): Deploy[] {
     return p;   // MM-DD
   };
   const readings = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
     .sort((a, b) => a.id.localeCompare(b.id));
   const out: Deploy[] = [];
   const perDay = new Map<string, number>();
