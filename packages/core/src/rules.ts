@@ -49,6 +49,9 @@ export function verifierEligibility(s: State, t: TaskState, surface: string | un
 /**
  * The way out, appended to every rejection of a **pass**: who could pass instead. A fail needs no such line — since
  * t-104 anyone may fail, so a fail is only ever refused for what its evidence says, never for who is saying it.
+ * t-112 (qa 03:53): it used to end by saying, in its own words, that a fail is still open. That is PASS_ONLY_GATE's
+ * sentence, and two ways of saying one thing is the drift t-118 exists to stop — so the callers append the sentence
+ * and this says only what is its own: who could pass instead.
  * pd 23:50：一个都没有时先说自动会发生什么，再说人要做的选择，否则人以为系统卡住在等他救场。但「验收自动进 human 的
  * 需要你」（t-055）看的是项目里有没有 qa 类角色，不是这一件有没有合格的人——所以那句也现算，不照抄。
  */
@@ -60,7 +63,7 @@ export function whoCanVerify(s: State, t: TaskState, surface: string | undefined
   const next = escalates
     ? `这件的验收会进 ${human} 的「需要你」由他来判；要恢复三方分离，请 ${PM_ACTOR} 把一个新角色加进 ${PROJECT_SURFACE}:${ROLES_KEY}`
     : `项目里有验收角色，所以验收不会自动转给 ${human}：这一件要么请 ${human} 亲自判，要么请 ${PM_ACTOR} 再给一个角色 ${VERIFY_RESPONSIBILITY}`;
-  return `。本项目没人能给这一件落 pass：${why}。${next}。fail 不受此限，谁都能落`;
+  return `。本项目没人能给这一件落 pass：${why}。${next}`;
 }
 
 /**
@@ -82,6 +85,16 @@ export function namesCriterion(evidence: string, count: number): boolean {
  * 不给 fail 开带理由的旁路：带理由的旁路会被习惯性使用。
  */
 export const PASS_ONLY_GATE = "。这挡住的是通过，不是不通过；要记它坏了，直接落 fail。";
+
+/**
+ * t-112 round 2 (qa 03:53): the first round surveyed the gates by hand, from what pd and pm had named out loud, and
+ * missed the R6 gate added the same night — the exact failure the criterion warned about ("数目以普查为准…今天已经栽过
+ * 一次只修报上来的那一处"), repeated. A count made once is wrong the next time someone adds a branch, so the survey
+ * stops being a count: `case "verify"`'s `if (e.pass)` block is, by construction, every gate that refuses a pass and
+ * nothing else, and a test reads it and requires PASS_ONLY_GATE of every throw inside it. Adding a gate without the
+ * sentence now fails the build rather than waiting to be noticed on production.
+ */
+export const PASS_ONLY_REGION = "if (e.pass) {";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -426,13 +439,13 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
         const failed = mine.find((v) => !v.pass);
         if (failed)
-          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么`);
-        if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么${PASS_ONLY_GATE}`);
+        if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
-          throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         // t-104 ①: 放行要独立，先要是这个项目的验收角色。human 是策略权威，不受此限。
         if (e.actor !== human && !(roleResponsibilities(state)[e.actor] ?? []).includes(VERIFY_RESPONSIBILITY))
-          throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass；fail 不受此限，谁都能落${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         // t-112: an open seam means nobody has said how these two pieces fit — a reason not to release, never a reason
         // to refuse the news that it is broken. qa 00:51 hit this: a version known to be broken could be recorded
         // neither as broken nor as good, and the only copy of that fact was in one agent's mouth.

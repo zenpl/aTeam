@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore } from "@ateam/core";
+import { MemoryStore, PASS_ONLY_GATE } from "@ateam/core";
 import { createApp } from "../src/app.js";
 
 const TOKEN = "secret-token";
@@ -39,10 +39,10 @@ describe("t-101/t-104 · 409 on a pass says who could pass instead", () => {
     expect(r.status).toBe(409);
     expect(r.body.rule).toBe("verify");
     expect(r.body.message).toContain("可以由谁来落 pass：frontend、qa");
-    // 不持 R6 的角色也被挡下，并被告知 fail 不受此限
+    // 不持 R6 的角色也被挡下，并被告知这挡的只是 pass（t-112 round 2：用 pd 定稿那一句，不另拟同义句）
     const noR6 = await post("pd", { kind: "task", op: "verify", task: "t-a", surface: "repo", pass: true });
     expect(noR6.body.message).toContain("pd 不持 R6 验收职责，落不了 pass");
-    expect(noR6.body.message).toContain("fail 不受此限，谁都能落");
+    expect(noR6.body.message).toContain(PASS_ONLY_GATE);
     // 名单跟着 project:roles 走：frontend 交出 R6 后就只剩 qa
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pd: ["R2"], pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
     const one = await post("dev", { kind: "task", op: "verify", task: "t-a", surface: "repo", pass: true });

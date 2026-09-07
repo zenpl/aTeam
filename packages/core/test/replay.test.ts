@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -2135,7 +2135,7 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     // a role with no R6 is refused even though no separation rule touches it (t-104 判据 1)
     const noR6 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "A", surface: "repo", pass: true }));
     expect(noR6.message).toContain("pd 不持 R6 验收职责，落不了 pass");
-    expect(noR6.message).toContain("fail 不受此限，谁都能落");
+    expect(noR6.message).toContain(PASS_ONLY_GATE);   // t-112 round 2: pd's one sentence, not a second way of saying it
     expect(noR6.message).toContain("可以由谁来落 pass：frontend、qa");
     // 判据：名单是算出来的。pd 给 frontend 补一条判据，frontend 就该从名单里消失，没人去改任何清单
     await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
@@ -2206,7 +2206,7 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     // pd 23:50：先说自动会发生的事。这个项目没有 qa 类角色，t-055 的自动退化确实会发生
     expect(r.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
     expect(r.message).toContain("project:roles");
-    expect(r.message).toContain("fail 不受此限，谁都能落");
+    expect(r.message).toContain(PASS_ONLY_GATE);
     expect(r.message).not.toMatch(/可以由谁来落 pass：/);
     expect(r.message).not.toMatch(/：\s*。/);                          // 不印空列表
     // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
