@@ -425,6 +425,7 @@ export const KEY_SYMBOLS = [
   "noSuchObject",
   "nobodyElse",
   "objectNotFound",
+  "orphanReason",
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
@@ -768,6 +769,20 @@ export const noRealOverlap = (other: string, reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
 export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-209：这一批里**没有任何任务证据链盖着**的提交。
+ *
+ * 发车闸原来只数任务——它问「每件任务的证据 sha 在不在这个 sha 里」，从不反过来问「这一批里有哪些提交不属于
+ * 任何一件任务」。于是一条谁都没判过的提交跟着一起上生产：真样本是 9ac8cee（补 t-206 那道闸自己的两处盲区），
+ * 在 b537a31 之后、不在 a134fcc 里，**没有任何任务盖着它，也就没有任何判决盖着它**。
+ *
+ * 这是 t-203 同一个形状的第二例：分母漏了一类，而「算不到的东西等于不存在」。
+ *
+ * 住在 core（新的人可见的话一律进这里）；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
+ */
+export const orphanReason = (shas: string[]) =>
+  `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;
 
 /**
  * t-203：包含事实的**第三桶**，以及分母算不算得出来。

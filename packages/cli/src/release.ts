@@ -4,7 +4,7 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, DEPLOYED_TASKS_KEY, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -25,15 +25,29 @@ export function deploySetting(b: Board): DeploySetting | null {
 
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
 
-export interface Plan { ok: boolean; reasons: string[]; included: string[]; /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[] }
+/** t-209：`from` 之后、`to` 之前的提交（不含 from、含 to），新到旧。null = 问不出来（没有 git，或哪个 sha 本地没有）。 */
+export type RevList = (from: string, to: string) => string[] | null;
+
+export interface Plan {
+  ok: boolean; reasons: string[]; included: string[];
+  /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[];
+  /**
+   * t-209：这一批里**不属于任何任务证据链**的提交。
+   *
+   * `null` 表示问不出来（没有 git、算不出提交表、或没有生产头可比）——**与空数组不是一回事**：空是「问过了，一条都没有」，
+   * null 是「没问出来」。这个区别就是 t-203 那件事的教训，同一个形状的第二次。
+   */
+  orphans: string[] | null;
+}
 /** t-093: the rule a refusal names (M4). */
 export const DEPLOY_RULE = "deploy-unverified";
 
 /** What the sha carries, and whether it may ship: every task whose evidence is inside it must be verified on repo with no open seam. */
-export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null): Plan {
+export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null, revList?: RevList): Plan {
   const reasons: string[] = [];
   const included: string[] = [];
   const unverified: string[] = [];
+  const evidenceShas: string[] = [];
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
     if (t.status === "withdrawn" || t.status === "open") continue;
@@ -44,12 +58,44 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     // t-093: only what this push *adds* — a task already inside the running sha is not this push's to answer for
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
+    evidenceShas.push(s);
     const passedRepo = (t.surfaces ?? []).some((r) => r.surface === "repo" && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
     else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === "production" && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
     for (const seam of b.seams) if (seam.open && seam.tasks.includes(t.id)) reasons.push(`${t.id} 有未解决的接缝 ${seam.id}`);
   }
-  return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)] };
+  // t-209：**这道闸原来只数任务，于是不是任务的东西它看不见。**
+  //
+  // 上面那个循环问的是「每件任务的证据 sha 在不在这个 sha 里」。反过来那一问从来没人问过：**这一批里有哪些提交
+  // 不属于任何一件任务的证据链？** 真样本是我自己的 9ac8cee（补 t-206 那道闸自己的两处盲区）——它在 b537a31
+  // 之后、不在 a134fcc 里，qa 14:05 量到没有任何任务盖着它，也就没有任何判决盖着它，而它照样会跟着上生产。
+  //
+  // 这是 t-203 同一个形状的第二例：**分母漏了一类**。那次漏的是「量不出」那一桶，这次漏的是「不是任务的提交」——
+  // 两次都是「算不到的东西等于不存在」。
+  //
+  // 算法：`deployed..sha` 里的每一个提交，减去从任何一个已算进来的证据 sha 可达的那些。剩下的就是没人盖着的。
+  const orphans = orphanCommits(sha, deployed, evidenceShas, revList);
+  if (orphans?.length) reasons.push(orphanReason(orphans));
+  return { ok: reasons.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans };
+}
+
+/**
+ * t-209：这一批里没有任何任务证据链盖着的提交。
+ *
+ * `null` 与 `[]` 分得开：问不出来（没有 git、没有生产头、revList 答不上）是 null，问过了一条都没有是 `[]`。
+ * **null 不放行也不报警**——它只是说不出来；报警要有东西可指，而这里连名单都没有。
+ */
+export function orphanCommits(sha: string, deployed: string | null | undefined, evidenceShas: string[], revList?: RevList): string[] | null {
+  if (!revList || !deployed) return null;
+  const all = revList(deployed, sha);
+  if (all === null) return null;
+  const covered = new Set<string>();
+  for (const e of evidenceShas) {
+    const reach = revList(deployed, e);
+    if (reach === null) return null;      // 有一条证据链问不出来，整个答案就不可信——宁可说「问不出来」
+    for (const c of reach) covered.add(c);
+  }
+  return all.filter((c) => !covered.has(c));
 }
 
 /**
@@ -94,6 +140,8 @@ export interface Git {
   push(sha: string, branch: string): void;
   /** Resolve a short sha to the full one, or null when unknown locally. */
   resolve(sha: string): string | null;
+  /** t-209: the commits `from` does not have and `to` does, newest first. null when git cannot say. */
+  revList: RevList;
 }
 
 /** Real git in `cwd`, pushing over https with the token from the environment (never printed, never logged). */
@@ -109,6 +157,8 @@ export function realGit(cwd: string, token: string | undefined): Git {
   return {
     isAncestor: (a, d) => { const r = run(["merge-base", "--is-ancestor", a, d]); return r.status === 0 ? true : r.status === 1 ? false : null; },
     remoteTip: (branch) => { const r = run(["ls-remote", remote(), `refs/heads/${branch}`]); return r.status === 0 && r.stdout.trim() ? r.stdout.trim().split(/\s+/)[0] : null; },
+    // t-209：`from..to` 里的提交。答不上来就答 null——「问不出来」与「一条都没有」是两件事。
+    revList: (from, to) => { const r = run(["rev-list", `${from}..${to}`]); return r.status === 0 ? r.stdout.split("\n").map((x) => x.trim()).filter(Boolean) : null; },
     push: (sha, branch) => { const r = run(["push", remote(), `${sha}:refs/heads/${branch}`]); if (r.status !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/x-access-token:[^@]+@/g, "x-access-token:***@")); },
     resolve: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{commit}`]); return r.status === 0 ? r.stdout.trim() : null; },
   };
@@ -152,7 +202,7 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return "refused"; }
   const sha = deps.git.resolve(shaArg);
   if (!sha) { deps.print(`本地没有提交 ${shaArg}；先 fetch。`); return "refused"; }
-  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null);
+  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null, deps.git.revList);
   if (!p.ok && !deps.anyway) {
     // t-093 (M4): a refusal names its rule, lists what is not verified, and says what would happen with a branch name
     deps.print(`REFUSED (${DEPLOY_RULE}): 不推 ${sha.slice(0, 7)}，它比生产多出的提交里有还没验收的东西：`);

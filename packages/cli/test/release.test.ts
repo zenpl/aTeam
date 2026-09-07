@@ -18,6 +18,12 @@ const fakeGit = (opts: { tip?: string | null; pushFails?: string } = {}) => {
     remoteTip: () => opts.tip ?? null,
     push: (sha, branch) => { if (opts.pushFails) throw new Error(opts.pushFails); pushes.push(`${sha}->${branch}`); },
     resolve: (sha) => Object.keys(lineage).find((k) => k.startsWith(sha)) ?? null,
+    // t-209：`from..to` 里的提交 = to 的祖先里去掉 from 的祖先。null 表示问不出来。
+    revList: (from, to) => {
+      if (!lineage[to] || !lineage[from]) return null;
+      const had = new Set(lineage[from]);
+      return lineage[to].filter((x) => !had.has(x)).reverse();
+    },
   };
   return g;
 };
@@ -251,5 +257,64 @@ describe("t-093 · the deploy entry refuses a sha that adds unverified work", ()
     const git3 = fakeGit();
     expect(await deploy(await w.b(), C, w.deps(git3))).toBe("pushed");
     expect(git3.pushes).toEqual([`${C}->production`]);
+  });
+});
+
+/**
+ * t-209 · **发车闸只数任务，于是不是任务的东西它看不见。**
+ *
+ * 它一直只问一个方向：「每件任务的证据 sha 在不在这个 sha 里」。反过来那一问从来没人问过——**这一批里有哪些
+ * 提交不属于任何一件任务的证据链？** 真样本是 9ac8cee（dev 补 t-206 那道闸自己的两处盲区）：在 b537a31 之后、
+ * 不在 a134fcc 里，qa 14:05 量到**没有任何任务盖着它，也就没有任何判决盖着它**，而它照样会跟着上生产。
+ *
+ * 这是 t-203 同一个形状的第二例：分母漏了一类。那次漏的是「量不出」那一桶，这次漏的是「不是任务的提交」。
+ */
+describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
+  const orphanWorld = async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 1000)) });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
+    await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "题", criteria: ["x"], no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["a"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${B} 完成`, no_human_impact: true });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true });
+    return board(reduce(await store.read()), HUMAN);
+  };
+
+  it("判据 1、4 正例：目标 sha 比任何任务的证据都新，多出来的那条提交被点名", async () => {
+    const b = await orphanWorld();
+    // 生产在 A；这一批推到 C，而唯一一件任务的证据是 B——C 自己没有任何任务盖着
+    const p = plan(b, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "C 没有任何任务盖着它").toEqual([C]);
+    expect(p.ok, "有孤儿提交就不该直接放行").toBe(false);
+    expect(p.reasons.join("\n")).toContain("不属于任何一件任务的证据链");
+    expect(p.reasons.join("\n"), "要说得出是哪一条").toContain(C.slice(0, 7));
+  });
+
+  it("判据 4 反例：把它并进任务的证据链之后，就不再被点名", async () => {
+    const b = await orphanWorld();
+    // 同一批，但任务的证据就是 C 本身：这一批里每一条提交都有任务盖着
+    const withC = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(withC.tasks).flat()) if (t.id === "t-1") t.evidence_sha = C;
+    const p = plan(withC, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "证据链盖住了 B 与 C，一条孤儿都不该剩").toEqual([]);
+    expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
+  });
+
+  it("问不出来答 null，不是空数组——「没问出来」与「一条都没有」是两件事", async () => {
+    const b = await orphanWorld();
+    expect(plan(b, C, fakeGit().isAncestor, A).orphans, "没有 revList 就问不出来").toBeNull();
+    expect(plan(b, C, fakeGit().isAncestor, null, fakeGit().revList).orphans, "没有生产头就没有「这一批」").toBeNull();
+    // git 答不上来（那个 sha 本地根本没有）：同样是 null，不许当成「一条都没有」
+    const unknown = "9999999" + "9".repeat(33);
+    expect(plan(b, C, fakeGit().isAncestor, unknown, fakeGit().revList).orphans).toBeNull();
+  });
+
+  it("null 不构成拒绝：它只是说不出来，报警要有东西可指", async () => {
+    const b = await orphanWorld();
+    const p = plan(b, B, fakeGit().isAncestor, A);   // 没有 revList
+    expect(p.orphans).toBeNull();
+    expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
   });
 });
