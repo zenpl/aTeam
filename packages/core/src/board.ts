@@ -709,6 +709,29 @@ export function missingCard(role: string, status: "missing" | "deaf", awayMin: n
 }
 
 /**
+ * t-210：这张服务卡此刻**照当下状态**该说的那句话；不是这一族的卡，或者算不出来，返回 undefined（照旧显示原文）。
+ *
+ * 只重算 `missingCard` 那一族——它是唯一一句「理由随时间变假」的卡文：说的是某个角色多久没读日志、欠着几条。
+ * 别的卡（给人的提问、外呼地址那张）说的是一件事本身，不随时间变。
+ *
+ * **不新写一个字**：同一个 `missingCard`，只是参数取自现在。数从哪儿来，与服务端发卡时那一处一样——
+ * 离开多久按 `last_pull` 算（从没拉过就没有「离开多久」这回事，那一档 `missingCard` 自己有话说），
+ * 条数优先用「没送到」那个数，没有就用「读到了还没办」的。
+ */
+function restated(s: State, i: Instruction, now: Date, listenWindow: number, b: Board): string | undefined {
+  if (i.actor !== SERVICE_ACTOR) return undefined;
+  const role = missingRoleOf(i.body);
+  if (!role) return undefined;
+  const status = presenceStatus(s, role, now, listenWindow);
+  if (status === "listening") return undefined;      // 这张卡此刻本来就该消失（t-202），不必替它重述
+  const last = s.presence.get(role)?.last_pull;
+  const away = last ? Math.max(1, Math.round((now.getTime() - Date.parse(last)) / 60_000)) : null;
+  const undelivered = b.undelivered.find((u) => u.to === role)?.count;
+  const count = undelivered ?? owedTo(s, role).filter((x) => x.reach === "unread").length;
+  return missingCard(role, status, away, count);
+}
+
+/**
  * The role a service card is about, from its first words; undefined for any other instruction.
  * The older openings stay recognised: cards sent before t-139 are still in the log and still name their role.
  */
@@ -911,8 +934,20 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
+      // t-210：**卡上给人的理由不许是发卡那一刻的快照。**
+      //
+      // 这几张服务卡的正文是 `missingCard(...)` 在发卡时算出来的一句话，之后再没人重述过它。qa 14:26 在生产上
+      // 量到的样子：frontend 那张仍写着「有 6 分钟没读日志了……**它还在写，只是没来读**」，而那个节点已经
+      // 62 分钟没动。**它骗过的不是粗心的读者，是给它写规矩的人**——pm 13:31 把那句话当成对当下的描述，据此落了
+      // 一条错读数（needs_human.false_cards=2），13:42 自己更正为 1。
+      //
+      // 所以这里按**当下状态**重新算一遍那句话。用的是同一个 `missingCard`、同一批参数名——**一个字都没有新写**
+      // （判据 3：冻结之下只让那句话说当下的事）。历史一个字没改：事件里的原文原样躺着，改的只是牌桌此刻显示什么。
+      //
+      // 与 t-202 的分工：那一件管**卡该不该在**（deaf 的不出卡，已在生产验过），这一件只管**卡上的话对不对**。
+      const body = restated(s, i, now, listenWindow, b) ?? i.body;
       b.needs_human.push({
-        kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
+        kind: instructionKind(i), ...splitTitle(body), id: i.id, from: i.actor, body, summary: `${i.actor}: ${body}${ask}`, since: i.at,
         ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st, now),
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
