@@ -34,7 +34,16 @@ const isPath = (x: string) => x.includes("/") && !x.includes("#") && !/\s/.test(
  * what the person added by hand. Measured paths replace the declared *paths*; everything the diff cannot see
  * (symbols, field names, `GET /health`) is kept, because dropping it would silently drop the seams it carries.
  */
-export function revise(declared: string[], changed: string[] | null, extra: string[], why: string): Revision {
+export function revise(declared: string[], changed: string[] | null, extra: string[], why: string, only = false): Revision {
+  if (only) {
+    // The person is saying "this list is the fact". A diff measures a branch, not a task: one branch carrying three
+    // tasks in a row measures all three every time, and no amount of measuring can tell them apart. When they know
+    // and the measurement cannot, they say so and it stands.
+    const mine = [...new Set(extra.map((x) => x.trim()).filter(Boolean))];
+    const gone = [...new Set(declared.map((x) => x.trim()).filter(Boolean))].filter((x) => !mine.includes(x));
+    return { touches: mine, measured: false,
+      lines: [`触点按你写的这 ${mine.length} 条算，量出来的不作数（--touches-only）`, ...(gone.length ? [`  claim 时声明了、这次没写：${gone.join("、")}`] : [])] };
+  }
   const clean = (xs: string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))];
   const dec = clean(declared), ext = clean(extra);
   if (changed === null) {
