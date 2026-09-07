@@ -132,6 +132,11 @@ export interface SeamState {
   resolution?: { by: string; at: string; text: string };
   /** t-073: both sides done and the later absorbed the earlier, by the project's declared form; blocks nothing. */
   absorbed?: { later: string; earlier: string; basis: string; by?: string };
+  /**
+   * t-113: both sides named symbols in the file they share, and named different ones. Worth saying out loud to whoever
+   * merges second; never a reason to hold a verification. Recomputed on every claim and done, like the overlap itself.
+   */
+  light?: boolean;
 }
 
 export interface State {
@@ -170,6 +175,37 @@ export function overlapOf(a: string[], b: string[]): string[] {
   for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
   for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
   return [...out];
+}
+
+const pathOf = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) : null);
+
+/**
+ * t-113 (pd 00:59): judge a seam at the finest granularity **both** sides declared. Two tasks that each named the
+ * symbols they would touch in one file, and named different ones, are not colliding — blocking them teaches people to
+ * declare less, which is the opposite of what the seam is for. It takes both sides: a side that only said "this file"
+ * has not told you which half of it, so anything it overlaps is still a collision.
+ *
+ * A directory-prefix overlap is never light: nobody declared symbols for a whole directory.
+ * No whitelist, no path pattern — a test file is not special, a declaration is (pm 01:00; the omitted lesson).
+ */
+export function overlapIsLight(a: string[], b: string[]): boolean {
+  const paths = new Set<string>();
+  let any = false;
+  for (const x of a) for (const y of b) {
+    if (!touchesOverlap(x, y)) continue;
+    any = true;
+    if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
+    paths.add(pathOf(x));
+  }
+  if (!any) return false;
+  for (const p of paths) {
+    const syms = (side: string[]) => side.filter((t) => pathOf(t) === p).map(symbolOf);
+    const as = syms(a), bs = syms(b);
+    if (as.includes(null) || bs.includes(null)) return false;            // one side only said "this file"
+    if (as.some((x) => bs.includes(x))) return false;                    // both named symbols, and they meet
+  }
+  return true;
 }
 
 /** The `chosen.by` of a decision that nobody made: the default took effect when ack_by passed. */
@@ -380,9 +416,10 @@ function detectSeams(s: State, t: TaskState) {
     }
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
+    const light = overlapIsLight(t.touches, other.touches) || undefined;
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner });
+    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
   }
   for (const seam of s.seams.values()) if (seam.tasks.includes(t.id)) judgeSeam(s, seam);
 }
@@ -453,5 +490,5 @@ export function blockingSeamsIfTouches(s: State, t: TaskState, touches: string[]
 
 /** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */
 export function openSeamsFor(s: State, task: string): SeamState[] {
-  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && x.tasks.includes(task));
+  return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && !x.light && x.tasks.includes(task));
 }

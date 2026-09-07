@@ -31,6 +31,14 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
   const board = async (key: string) => (await (await fetch(`${base}/board`, { headers: { authorization: `Bearer ${key}`, "x-actor": "pm" } })).json()) as { owner_key: { state: string; since?: string } };
   const note = (body: string) => ({ kind: "note", body });
 
+  const OWNER_ONLY = `你拿的是项目共享钥匙，它不能代 ${HUMAN} 说话——${HUMAN} 这个身份只有他自己那把钥匙能用。要人拍板就发一张卡等他点；牌桌地址丢了，持管理钥匙的节点可以再发一个。`;
+  /** A project of its own, so one test's upgrade does not decide another's. */
+  const fresh = async (name: string) => {
+    const created = await (await fetch(`${base}/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) })).json() as { project: string; board_url: string; admin_key: string };
+    const ownerKey = new URL(created.board_url).searchParams.get("k")!;
+    return { base: `${base}/p/${created.project}`, adminKey: created.admin_key, ownerKey, ownerUrl: created.board_url, cookie: `ateam_token_${created.project}` };
+  };
+
   beforeAll(async () => { w = world(); base = await w.ready; });
   afterAll(() => new Promise<void>((r) => w.app.close(() => r())));
 
@@ -110,6 +118,58 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
       expect(f.value!.cookie_max_age_s).toBe(2592000);
       expect(f.method).toBeTruthy();
     }
+  });
+
+  /**
+   * qa 01:05 找到的那一半：牌桌上的按钮也是以 human 的身份写事件，所以它们归同一条规则管。原先它们只认管理钥匙，
+   * 于是人打得开自己的牌桌却按不动任何按钮，而每一个持共享钥匙的节点都能替他点——方向正好是反的。
+   */
+  it("the board's buttons obey the same rule as the API: the owner presses their own, the shared key cannot press for them", async () => {
+    const p = await fresh("按钮项目");
+    const press = (key: string, action: string, body: Record<string, string>) =>
+      // 照浏览器真正发的样子：带 cookie、表单编码、accept: text/html，成功后 303 回牌桌
+      fetch(`${p.base}${action}`, { method: "POST", headers: { cookie: `${p.cookie}=${encodeURIComponent(key)}`, "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams(body), redirect: "manual" });
+    // 升级窗口内：管理钥匙还能代点（人还没来过），主人自己的钥匙当然也能
+    expect((await press(p.adminKey, "/say", { text: "升级前，管理钥匙代说" })).status).toBe(303);
+    // 人打开自己的地址，升级完成
+    await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });
+    // 现在：主人自己的钥匙按得动
+    expect((await press(p.ownerKey, "/say", { text: "我自己说的" })).status).toBe(303);
+    // 而共享钥匙按不动，拒绝话与 /events 那条一模一样
+    const denied = await press(p.adminKey, "/say", { text: "替他说" });
+    expect(denied.status).toBe(403);
+    expect((await denied.json() as { rule: string; message: string })).toEqual({ error: "forbidden", rule: "owner-key", message: OWNER_ONLY });
+    const decide = await press(p.adminKey, "/decide", { id: "01X", option: "要" });
+    expect(decide.status).toBe(403);
+    for (const action of ["/ack", "/fact"]) expect((await press(p.adminKey, action, { id: "01X" })).status, action).toBe(403);
+    // 落库的那一句确实是人自己说的，不是谁代签的
+    const log = await (await fetch(`${p.base}/log`, { headers: { authorization: `Bearer ${p.adminKey}`, "x-actor": "pm" } })).json() as { events: { kind: string; actor: string; body?: string }[] };
+    const said = log.events.filter((e) => e.kind === "note" && e.body?.includes("我自己说的"));
+    expect(said).toHaveLength(1);
+    expect(said[0].actor).toBe(HUMAN);
+  });
+
+  it("qa 01:08 ④：没带钥匙点按钮不是死路，是问一句地址再把这件事做掉", async () => {
+    const p = await fresh("按钮永远可点");
+    const r = await fetch(`${p.base}/say`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams({ text: "cookie 过期了还想说" }), redirect: "manual" });
+    const page = await r.text();
+    expect(page).toContain("<form");
+    expect(page).toContain('name="then" value="/say"');              // 把他按的那件事带着
+    expect(page).toContain('name="text" value="cookie 过期了还想说"'); // 连正文一起带着，不用重打
+    expect(page).not.toContain(p.ownerKey);                          // 页面从不回显钥匙（pd 01:02）
+    // 把地址里那段粘进来，刚才按的那一下就落下去了
+    const done = await fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: p.ownerKey, then: "/say", text: "cookie 过期了还想说" }), redirect: "manual" });
+    expect(done.status).toBe(303);
+    const log = await (await fetch(`${p.base}/log`, { headers: { authorization: `Bearer ${p.adminKey}`, "x-actor": "pm" } })).json() as { events: { kind: string; actor: string; body?: string }[] };
+    expect(log.events.filter((e) => e.kind === "note" && e.body?.includes("cookie 过期了还想说"))).toMatchObject([{ actor: HUMAN }]);
+  });
+
+  it("the token page takes the owner's key too, and stops taking the shared one once they have arrived", async () => {
+    const p = await fresh("小页面项目");
+    await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });
+    const enter = (key: string) => fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: key }), redirect: "manual" });
+    expect((await enter(p.ownerKey)).status).toBe(303);       // 人把整条地址里的那段粘进来，进得去
+    expect((await enter(p.adminKey)).status).toBe(403);       // 共享钥匙不再是「人」的入口
   });
 
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {

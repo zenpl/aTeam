@@ -2461,3 +2461,129 @@ describe("t-112 · a gate against releasing early never blocks the news that it 
     expect(verify).not.toMatch(/anyway|--force|旁路/);            // 没有给 fail 开的口子
   });
 });
+
+/**
+ * t-113 (T4, pd 00:59)。qa 的 friction：同一个测试文件三次挡住验收——两件毫不相干的任务，各自往 replay.test.ts 里加
+ * 自己那段 describe，谁也没碰谁的，却要等一次人工裁决。闸判在最细的**双方都声明了**的粒度上：都说了符号且不相交，
+ * 就只是一句提示；有一方只说了文件，它没告诉你它碰的是哪半边，那仍然是碰撞。不做白名单：测试文件不特殊，声明才特殊。
+ */
+describe("t-113 · a seam is judged at the finest granularity both sides declared", () => {
+  const pair = async (aTouches: string[], bTouches: string[]) => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: aTouches });
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: bTouches });
+    await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "abc1234" });
+    return { store, c };
+  };
+  const seamOf = async (w: { store: MemoryStore; c: ReturnType<typeof clock> }) => [...reduce(await w.store.read(), w.c.now()).seams.values()][0];
+  const canVerify = async (w: { store: MemoryStore; c: ReturnType<typeof clock> }) =>
+    emit(w.store, w.c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }).then(() => true, (e) => { if (e instanceof Rejected) return false; throw e; });
+
+  const F = "packages/core/test/replay.test.ts";
+
+  it("both sides named symbols, and different ones: light — it says so and holds nothing up", async () => {
+    const w = await pair([`${F}#t-112`], [`${F}#t-111`]);
+    const seam = await seamOf(w);
+    expect(seam.light).toBe(true);
+    expect([...seam.overlap].sort()).toEqual([`${F}#t-111`, `${F}#t-112`]);   // 说得出是哪个文件、各自哪一段
+    expect(openSeamsFor(reduce(await w.store.read(), w.c.now()), "B")).toEqual([]);
+    expect(await canVerify(w)).toBe(true);
+    // 牌桌上它在，但不是「未解」那一组：计数与首屏都不该把它算进去（渲染归 frontend）
+    const b = board(reduce(await w.store.read(), w.c.now()), HUMAN, w.c.now());
+    const bs = b.seams.find((x) => x.id === seam.id)!;
+    expect(bs.light).toBe(true);
+    expect(bs.open).toBe(false);
+    expect(b.seams.filter((x) => x.open)).toEqual([]);
+    expect(slimBoard(b).seams.find((x) => x.id === seam.id)).toMatchObject({ light: true, open: false });  // CLI 也看得见
+  });
+
+  it("both sides named symbols and they meet: blocks, as before", async () => {
+    const w = await pair([`${F}#t-112`, `${F}#shared`], [`${F}#shared`]);
+    expect((await seamOf(w)).light).toBeUndefined();
+    expect(await canVerify(w)).toBe(false);
+  });
+
+  it("one side only said the file: it never told you which half, so it still blocks", async () => {
+    for (const [a, b] of [[[F], [`${F}#t-111`]], [[`${F}#t-112`], [F]]] as const) {
+      const w = await pair([...a], [...b]);
+      expect((await seamOf(w)).light, `${a} × ${b}`).toBeUndefined();
+      expect(await canVerify(w), `${a} × ${b}`).toBe(false);
+    }
+  });
+
+  it("neither side named symbols: unchanged, it blocks", async () => {
+    const w = await pair([F], [F]);
+    expect((await seamOf(w)).light).toBeUndefined();
+    expect(await canVerify(w)).toBe(false);
+  });
+
+  it("判据 4：同一对任务，声明到符号时不挡、只声明到文件时挡——方向是「说得越细，闸越准」", async () => {
+    expect((await seamOf(await pair([`${F}#a`], [`${F}#b`]))).light).toBe(true);
+    expect((await seamOf(await pair([F], [F]))).light).toBeUndefined();
+  });
+
+  it("a directory that contains the other side's file is never light: nobody declares symbols for a directory", async () => {
+    const w = await pair(["packages/core/test/"], [`${F}#t-111`]);
+    expect((await seamOf(w)).light).toBeUndefined();
+    expect(await canVerify(w)).toBe(false);
+  });
+
+  it("no whitelist and no path pattern: a source file behaves exactly like a test file", async () => {
+    const src = "packages/core/src/rules.ts";
+    expect((await seamOf(await pair([`${src}#validate`], [`${src}#checkShape`]))).light).toBe(true);
+    expect((await seamOf(await pair([src], [src]))).light).toBeUndefined();
+    // 判据 2：代码里（注释不算）没有任何按路径模式的豁免
+    const code = readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/test\.ts|\.test\.|spec|whitelist|白名单|endsWith\("\./);
+  });
+
+  it("it is recomputed, not decided once: narrowing a claim to symbols turns a blocking seam light", async () => {
+    const w = await pair([F], [`${F}#t-111`]);
+    expect(await canVerify(w)).toBe(false);
+    // dev 把自己的声明说细：同一条接缝重算成轻的
+    await emit(w.store, w.c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: [`${F}#t-112`] });
+    expect((await seamOf(w)).light).toBeUndefined();                  // claim 是并集，文件级那条还在
+    await emit(w.store, w.c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678", touches: [`${F}#t-112`] });
+    expect((await seamOf(w)).light).toBe(true);                       // done 是事实：t-105 把它改准，这件才判得准
+    expect(await canVerify(w)).toBe(true);
+  });
+});
+
+/**
+ * t-113 判据 5：qa 撞了三次的那一幕，原样固定住。t-095/t-097/t-098 与 t-101、t-111/t-112 三对，每一对都只是各自往
+ * packages/core/test/replay.test.ts 里加了自己那段 describe，谁也没碰谁的，却各要一次人工裁决才能验收。
+ */
+describe("t-113 · 同一个测试文件三次挡住验收：现在只是一句提示", () => {
+  it("三对任务各写各的那一段，全部判为轻，没有一条挡住验收", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const F = "packages/core/test/replay.test.ts";
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
+    const pairs: [string, string, string, string][] = [
+      ["t-095", "frontend", "t-101", "dev"],
+      ["t-097", "dev", "t-098", "dev"],
+      ["t-111", "frontend", "t-112", "dev"],
+    ];
+    for (const [a, aBy, b, bBy] of pairs) {
+      for (const [id, by] of [[a, aBy], [b, bBy]] as const) {
+        await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["能用"] });
+        await emit(store, c, { kind: "task", op: "claim", actor: by, task: id, touches: [`${F}#${id}`] });
+        await emit(store, c, { kind: "task", op: "done", actor: by, task: id, evidence: `sha-${id}` });
+      }
+    }
+    const s = reduce(await store.read(), c.now());
+    const shared = [...s.seams.values()].filter((x) => x.overlap.every((o) => o.startsWith(F)));
+    expect(shared.length).toBeGreaterThanOrEqual(3);              // 每一对都看得见，一条也没被藏起来
+    expect(shared.every((x) => x.light || x.same_owner || x.stacked)).toBe(true);
+    for (const id of pairs.flatMap(([a, , b]) => [a, b])) expect(openSeamsFor(s, id), id).toEqual([]);
+    // qa 真正要做的事：一条条落验收，不必先去找人裁决
+    for (const id of pairs.flatMap(([a, , b]) => [a, b])) await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+    const after = reduce(await store.read(), c.now());
+    for (const id of pairs.flatMap(([a, , b]) => [a, b])) expect(after.tasks.get(id)!.status, id).toBe("verified");
+  });
+});
