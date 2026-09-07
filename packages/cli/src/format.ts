@@ -60,6 +60,8 @@ export function board(b: Board, me: string): string {
     // t-126: whichever of the four states we are in, say it. Printing only 「形状不对」 left the one that matters most
     // silent: an address recorded and never once delivered to looked exactly like one that works.
     if (b.alert?.line) out.push(`           ${b.alert.line}`);
+    // t-129: a packed batch that cannot go out says why, in core's words — the same sentence the page shows.
+    for (const x of b.batches ?? []) if (x.line) out.push(`           ${x.name} ${x.sha.slice(0, 7)}：${x.line}`);
     // t-091: the same sentence the board shows, from the same counts (t-078); nothing when nothing waits
     const c = b.release?.counts;
     const waiting = !c ? "" : c.pending_deploy > 0 ? `${c.pending_deploy} 件验过了，等一次上线${c.unknown ? `；另有 ${c.unknown} 件不知道上没上` : ""}。`

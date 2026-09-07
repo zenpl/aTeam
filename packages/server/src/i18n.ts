@@ -148,6 +148,9 @@ export const UI = {
   /** pd 03:32: a held batch must say why. Without a reason it should not be held. */
   releaseHeld: (why: string) => `按住没发：${why}`,
   releaseHeldBy: (who: string) => `等 ${who}`,
+  releaseBatches: "装好的几批",
+  /** t-129: a batch packed on the head production is actually running has nothing standing in its way. */
+  releaseCanGo: "可以推",
   releaseUnitMore: (n: number) => `还有 ${n} 件`,
   releaseFrom: (sha: string) => `从 ${sha} 快进`,
   releaseDetail: "上线详情",

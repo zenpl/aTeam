@@ -78,23 +78,32 @@ describe("t-133 · 上线详情页", () => {
     } finally { await v.stop(); }
   });
 
-  it("按住没发 appears only when a fact says so, and disappears with it (pm 03:45: provable before t-129 exists)", async () => {
+  it("a packed batch that cannot go out says why, in core's words, and one that can says so plainly (t-129)", async () => {
     const v = server();
     await v.start();
     try {
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
       await task(v, "t-1", "灰字", "ccccccc3333", "verified");
-      expect(await v.page()).not.toContain("按住没发");
+      expect(await v.page()).not.toContain("装好的几批");
 
-      await v.post("release", { kind: "reading", surface: "repo", key: "release.hold", value: "等 03:45 那次慢会不会自己回来的测量", method: "release 按住这一批" });
+      // packed on the head production is actually running: nothing stands in its way, and nothing is warned about
+      await v.post("release", { kind: "reading", surface: "repo", key: "batch.2.10", value: { sha: "eeeeeee5555", base: "aaaaaaa1111", contains: ["t-1"] } });
+      const ok = await v.page();
+      expect(ok).toContain("装好的几批");
+      expect(ok).toContain("2.10");
+      expect(ok).toContain("可以推");
+      expect(ok).not.toContain("按住没发");
+
+      // production moved on, and the batch would take two tasks back off it: core's sentence, printed as it stands
+      await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
+      await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
+      await v.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "bbbbbbb2222", contained: ["t-1", "t-2"], not_contained: [], method: "git merge-base --is-ancestor 逐件测" } });
       const held = await v.page();
-      expect(held).toContain("按住没发：等 03:45 那次慢会不会自己回来的测量");
-
-      // withdraw the fact and the whole line goes with it — no empty heading, no stale reason
-      await v.post("release", { kind: "reading", surface: "repo", key: "release.hold", value: "", method: "不再按住" });
-      const free = await v.page();
-      expect(free).not.toContain("按住没发");
-      expect(free).not.toContain("等 03:45");
+      expect(held).toContain("按住没发：");
+      expect(held).toContain("推它会把");
+      expect(held).toContain("从生产上退回去；要重装，别推。");
+      // the page must not have written a second sentence of its own about the same thing
+      expect(held).not.toContain("这批不能推");
     } finally { await v.stop(); }
   });
 

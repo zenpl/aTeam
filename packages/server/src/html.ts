@@ -627,16 +627,6 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
  * Null when the log has no such task. The raw id stays in the URL and in the 「给 agent 看的」 fold.
  */
 
-/** t-133: the key a held batch is recorded under. t-129 owns writing it; the page only reads it. */
-export const RELEASE_HOLD_KEY = "release.hold";
-
-/** The reason this batch is being held, or null when nothing is holding it. */
-export function releaseHold(b: Board): string | null {
-  const r = b.readings.find((x) => x.valid && x.surface === "repo" && x.key === RELEASE_HOLD_KEY);
-  const v = r?.value;
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-
 /**
  * GET /release (t-133): the detail page behind the 线上 row. pd 03:32 — it is not a second board: no cards, nothing
  * in 需要你, and the counts stay on the board, because one number computed in two places drifts (t-118 proved it
@@ -651,7 +641,10 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
   const deploys = deployHistory(s);
   const current = deploys.length ? deploys[deploys.length - 1] : null;
   const units = releaseUnits(b);
-  const held = releaseHold(b);
+  // t-129 (pm 04:54): the batches this project packed, each judged against where production actually is. core works
+  // out the sentence for each state; the page says that sentence and does not write a second one — the whole reason
+  // BoardBatch carries `line` at all. A batch packed on the current head has nothing to warn about and says nothing.
+  const batches = b.batches ?? [];
   const out: string[] = [];
   const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}">${esc(id)}</a>`;
 
@@ -666,8 +659,16 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
   }
 
-  // 按住没发 — only when something really is holding it, and then always with the reason (pd 03:32).
-  if (held) out.push(`<p class="held">${esc(UI.releaseHeld(held))}</p>`);
+  // 按住没发 — pd 03:32: a batch that is not going out must say why, and core already worked out why for each state.
+  if (batches.length) {
+    out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
+    for (const x of batches) {
+      const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
+      const why = x.line ? ` <span class="held">${esc(UI.releaseHeld(x.line))}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+      out.push(`<li>${named}${why}</li>`);
+    }
+    out.push(`</ul>`);
+  }
 
   // 下一次上线 — never a count (the board says that); the units, and what each is waiting on.
   out.push(`<h3>${UI.releaseNext}</h3>`);
