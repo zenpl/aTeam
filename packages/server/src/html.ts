@@ -484,9 +484,12 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
   const valid = b.readings.filter((r) => r.valid), stale = b.readings.filter((r) => !r.valid);
+  // t-155: what core marks 「说过了」 is not listed in the readings section, so it must not be counted for it either —
+  // a summary that promises more rows than the section holds is the same two-numbers-one-thing we keep removing.
+  const shownValid = valid.filter((r) => !r.said?.said_elsewhere), hiddenValid = valid.length - shownValid.length;
   const why = (r: Board["readings"][number]) => !r.why ? "" : r.why.startsWith("superseded by") ? `${UI.supersededBy} <code>${esc(r.why.slice(14))}</code>` : r.why.startsWith("invalidated by") ? `${UI.invalidatedBy} <code>${esc(r.why.slice(15))}</code>` : UI.expired;
 
-  d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, valid.length))}</span></summary>`);
+  d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, shownValid.length))}</span></summary>`);
 
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
@@ -556,10 +559,25 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   if (closedSeams) d.push(`<p class="meta">${esc(UI.seamsElsewhere(closedSeams))}</p>`);
   d.push(`</section>`);
 
-  d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(valid.length, stale.length))}</span></h3>`);
-  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} <span class="meta">${esc(who(r.by))}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`;
+  // t-155 (pd 07:14): a fact shows its sentence, never its raw value. core computes the sentence (t-154's
+  // `said`); the value folds one layer down, where whoever needs the bytes can open it. What core marks
+  // `said_elsewhere` is not repeated here at all — but the count says how many, because a row that vanishes
+  // without a word is the same silence we keep finding.
+  d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(shownValid.length, stale.length))}</span></h3>`);
+  // A degraded sentence (core found no saying for this key) already names who recorded it and how long ago, so the
+  // meta tail must not say either a second time; a declared sentence says neither, and keeps them.
+  const meta = (r: Board["readings"][number]) => {
+    const bits = [r.said && !r.said.declared ? "" : `${esc(who(r.by))}，${t(r.at)}`, why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean);
+    return bits.length ? `<span class="meta">${bits.join(" · ")}</span>` : "";
+  };
+  const raw = (r: Board["readings"][number]) => `<details class="dig"><summary>${UI.rawValue} <code>${esc(r.surface)}:${esc(r.key)}</code></summary><pre class="value">${esc(clip(str(r.value), VALUE_MAX))}</pre></details>`;
+  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> ${r.said
+    ? `${esc(r.said.line)} ${meta(r)}${raw(r)}`
+    : `<code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} ${meta(r)}`}</li>`;
   const staleShown = stale.slice().sort((x, y) => y.at.localeCompare(x.at)).slice(0, STALE_SHOWN);
-  d.push(b.readings.length ? `<ul class="plain">${[...valid, ...staleShown].map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const rows = [...shownValid, ...staleShown];
+  d.push(rows.length ? `<ul class="plain">${rows.map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  if (hiddenValid) d.push(`<p class="meta">${esc(UI.saidElsewhere(hiddenValid))}</p>`);
   if (stale.length > staleShown.length) d.push(`<p class="meta">${esc(UI.olderStale(stale.length - staleShown.length))}</p>`);
   d.push(`</section>`);
 
@@ -888,6 +906,9 @@ a.btn { text-decoration:none; display:inline-block; }
 .sha, code { font:.85rem var(--mono); background:var(--soft); padding:.1em .4em; border-radius:4px; }
 .ok { color:var(--good); font-weight:500; }
 .more-list summary, .grp summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
+/* t-155: a fact reads as its sentence; the bytes it was measured from are one fold down, for whoever needs them. */
+.dig { display:inline; } .dig summary { cursor:pointer; color:var(--muted); font-size:.8rem; display:inline; }
+.dig pre.value { white-space:pre-wrap; word-break:break-all; margin:.3rem 0 .1rem; padding:.4rem .5rem; background:var(--card,rgba(0,0,0,.04)); border-radius:4px; font-size:.8rem; }
 .more-list { margin-top:.25rem; }
 ul.plain { margin:.25rem 0 0; padding-left:1.1rem; color:var(--muted); font-size:.9rem; }
 ul.plain li { padding:.1rem 0; }
