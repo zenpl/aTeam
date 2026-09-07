@@ -292,9 +292,20 @@ describe("t-136 · 算好了没人印，构建当场红", () => {
  * hypothetical — t-126 was exactly it, and what the person read was a promise about an address that had never been
  * delivered to.
  *
- * The bar is calibrated on the real strings rather than picked: at babae6d, `i18n.contactEmail` was a byte-identical
- * copy of core's misconfigured line (1.000), while every legitimate neighbour scored at most 0.115 (contactTitle) —
- * contactNone 0.103, contactSet 0.085, contactBody 0.018. 0.6 sits in the middle of a gap that wide.
+ * **What the bar rests on, measured from the files rather than from memory** (an earlier version of this comment
+ * claimed a 1.000 copy that never existed; qa 05:52 went and looked). Every Chinese literal in `i18n.ts@babae6d`
+ * against every sentence core computes, all pairs:
+ *
+ *   1.000   a copy — by construction, not by observation. Copying a sentence makes it identical to itself; no such
+ *           pair has ever been in this repo, and the whole point is that none ever should be.
+ *   0.182   `contactTo`, the literal the page printed instead of core's — the real defect, and the highest pair the
+ *           repo's history contains.
+ *   0.179   `contactInvalid`, entirely innocent, three thousandths away from it.
+ *   0.115   `contactTitle`; 0.103 `contactNone`; 0.060 `contactEmail`.
+ *
+ * So 0.6 is not the middle of an observed gap between defects and innocents — there is no such gap. It is the middle
+ * of the gap between *writing your own words* (0.18 at worst) and *copying* (1.0), which is the only thing this
+ * distinguishes and all it claims to.
  */
 const DUP_BAR = 0.6;
 
@@ -365,19 +376,24 @@ describe("t-142 · core 已经有一句了，渲染方不许再拼一句", () =>
   });
 
   /**
-   * 判据 3, in numbers rather than in a hedge. This check cannot catch t-126, the case it was created for, and no
-   * threshold could: the literal the page printed — 「你不在时发到 ${v}」 — is *less* like core's sentence (0.085)
-   * than two legitimate neighbours are, 「你不在时，我们找不到你。」 at 0.103 and 「你不在时怎么找你？」 at 0.115.
-   * Anything low enough to catch it flags those first. Reported to pm rather than tuned until it looks caught.
+   * 判据 3, in numbers. This cannot catch t-126, the case it exists for, and no threshold could — but not for the
+   * reason I first wrote. I had claimed the synonym was *less* like core's sentence than innocent strings were, on a
+   * number I got by typing the literal out (with a URL in it) instead of reading it from the file. Read from the file
+   * it is 0.182: the **most** alike of the group, with an innocent — `contactInvalid` — at 0.179 beside it.
+   *
+   * The conclusion survives and is sharper for it: the real defect and an innocent string are three thousandths
+   * apart, so no threshold separates them. Anything low enough to catch t-126 catches contactInvalid in the same
+   * breath. Reported to pm rather than tuned until it looks caught.
    */
   it("它看不见的：改写到不像的同义句——包括 t-126 自己", async () => {
     const sentences = [...(await coreSentences()), ...(await alertLines())];
-    const t126 = "你不在时发到 https://hooks.example/team";
-    const legit = ["你不在时，我们找不到你。", "你不在时怎么找你？"];
     const score = (x: string) => Math.max(...sentences.map((c) => similarity(x, c)));
+    const t126 = "你不在时发到";              // i18n@babae6d contactTo, with its ${v} hole, as this check sees it
+    const innocent = "填一个 https:// 开头的 webhook 地址";   // i18n@babae6d contactInvalid, guilty of nothing
     expect(score(t126)).toBeLessThan(DUP_BAR);
-    for (const l of legit) expect(score(l)).toBeGreaterThan(score(t126));   // the synonym is less alike than the innocents
+    expect(Math.abs(score(t126) - score(innocent))).toBeLessThan(0.01);   // no bar can tell these two apart
     expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${t126}";` }], DUP_BAR)).toEqual([]);
+    expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${innocent}";` }], DUP_BAR)).toEqual([]);
     // and a sentence core never computed at all is nobody's duplicate
     expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "今天天气不错，适合发布。";` }], DUP_BAR)).toEqual([]);
   });
