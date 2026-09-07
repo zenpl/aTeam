@@ -42,10 +42,16 @@ export function str(a: Args, name: string): string | undefined {
   const v = a.flags[name];
   return typeof v === "string" ? v : undefined;
 }
+const commas = (xs: string[]) => xs.flatMap((x) => x.split(",")).map((s) => s.trim()).filter(Boolean);
+/**
+ * t-197 之后的一个回归，我自己刚踩到：把 `touches` 加进 REPEATABLE 之后，`--touches "a,b,c"` 走的是数组那一支，
+ * **逗号不再拆**——于是那一整串被当成一个触点存进日志（我 12:15 那次 claim 就是这么记下的），而说明书与 --help
+ * 教的正是 `--touches a,b`。两种写法都要成立：给几次就是几段，每段里的逗号照拆。
+ */
 export function list(a: Args, name: string): string[] | undefined {
   const v = a.flags[name];
-  if (Array.isArray(v)) return v;
-  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return commas(v);
+  if (typeof v === "string") return commas([v]);
   return undefined;
 }
 export function bool(a: Args, name: string): boolean {

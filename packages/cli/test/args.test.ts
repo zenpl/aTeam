@@ -126,3 +126,20 @@ describe("t-194 · 给本人的行带得出 id，别人的不带", () => {
     expect(line).not.toContain("01M1XVDXXXXXXXXXXXXXXXXXXX");
   });
 });
+
+/**
+ * t-197 之后我自己踩到的回归：把 `touches` 加进 REPEATABLE 之后，`--touches "a,b,c"` 走数组那一支，**逗号不再
+ * 拆**——那一整串被当成一个触点存进日志（我 12:15 那次 claim 就是这么记下的），而说明书与 --help 教的正是
+ * `--touches a,b`。两种写法都得成立，混着用也得成立。
+ */
+describe("t-197 续 · 可重复的参数里，逗号照拆", () => {
+  it("一段带逗号的：拆开", () => {
+    expect(list(parse(["--touches", "a.ts,b.ts,c.ts"]), "touches")).toEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+  it("给两次、每段又带逗号：全拆开，一个不丢", () => {
+    expect(list(parse(["--touches", "a.ts,b.ts", "--touches", "c.ts"]), "touches")).toEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+  it("空段与空白照旧丢掉，不产生空触点", () => {
+    expect(list(parse(["--refs", "x, ,y,"]), "refs")).toEqual(["x", "y"]);
+  });
+});
