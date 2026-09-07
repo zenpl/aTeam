@@ -49,7 +49,7 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check]
                                              claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
                                              --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份；
                                              --touches-only 表示「我写的这几条就是全部」——一条分支上连做几件时 diff 分不出是哪一件的，
@@ -303,6 +303,8 @@ async function main(argv: string[]) {
         }
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
+          // t-151: 一句「人现在能看到什么」，或者明写它对人没有影响。两个都不给，服务端会拒绝并说出这两条出路。
+          const impact = bool(a, "no-human-impact") ? { no_human_impact: true } : {};
           // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
           const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
           for (const line of rev.lines) console.error(line);
@@ -313,14 +315,14 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), touches: rev.touches });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, touches: rev.touches });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
             for (const e of check.absorbs) await emit(e);
             return;
           }
-          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");

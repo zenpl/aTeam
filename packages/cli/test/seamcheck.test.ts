@@ -31,7 +31,7 @@ async function scenario(otherEvidence: string | undefined, otherDone = true, res
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-b", title: "later", criteria: ["y"] });
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-a", touches: ["app.ts"] });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-b", touches: ["app.ts"] });
-  if (otherDone) await emit({ kind: "task", op: "done", actor: "frontend", task: "t-a", evidence: otherEvidence });
+  if (otherDone) await emit({ kind: "task", op: "done", actor: "frontend", task: "t-a", evidence: otherEvidence , no_human_impact: true});
   if (resolve) await emit({ kind: "task", op: "seam", actor: "pm", tasks: ["t-a", "t-b"], resolution: "t-b 后落地，合并 t-a" });
   return board(reduce(await store.read()), HUMAN);
 }
@@ -76,7 +76,7 @@ describe("t-067 · a seam the rule released: the later side must name the merged
     const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
     for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] });
     return board(reduce(await store.read()), "human");
   };
@@ -106,7 +106,7 @@ describe("t-073 · absorbEvents at done: git-ancestor form", () => {
     for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
     await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] }); // both in flight: a collision
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" , no_human_impact: true});
     return board(reduce(await store.read()), "human");
   };
   it("records one resolution with the basis when git says my sha contains theirs; nothing when git cannot tell, the form is unset, or the other side is not done", async () => {
@@ -132,7 +132,7 @@ describe("t-074 · one judgment for both checks: really contained, claimed but n
     if (form) await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: form });
     for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成" , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] }); // stacked: t-b on t-a
     return board(reduce(await store.read()), "human");
   };

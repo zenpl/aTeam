@@ -48,7 +48,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
       [{ kind: "task", op: "create", task: "t-1", title: "题" }, "task:create 要带 criteria"],
       [{ kind: "task", op: "label", task: "t-1" }, "task:label 要带 label"],
       [{ kind: "task", op: "claim", task: "t-1" }, "task:claim 要带 touches"],
-      [{ kind: "task", op: "done" }, "task:done 要带 task"],
+      [{ kind: "task", op: "done" , no_human_impact: true}, "task:done 要带 task"],
       [{ kind: "task", op: "verify", task: "t-1", pass: true }, "task:verify 要带 surface"],
       [{ kind: "task", op: "verify", task: "t-1", surface: "repo" }, "task:verify 要带 pass"],
       [{ kind: "task", op: "block", task: "t-1" }, "task:block 要带 on"],
@@ -77,7 +77,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
       [{ kind: "note", body: "x", decides: "01X" }, "note 的 decides 要是"],
       [{ kind: "note", body: "x", refs: "01X" }, "refs 要是一个字符串数组"],
       [{ kind: "note", body: "x", refs: 7 }, "refs 要是一个字符串数组"],   // 关掉形状闸时这条也是 TypeError（number is not iterable）
-      [{ kind: "task", op: "done", task: "t-1", touches: "a.ts" }, "task:done 的 touches 可以不带"],
+      [{ kind: "task", op: "done", task: "t-1", touches: "a.ts" , no_human_impact: true}, "task:done 的 touches 可以不带"],
       [{ kind: "instruction", to: "dev", body: "x", options: "A" }, "instruction 的 options 可以不带"],
       [{ kind: "task", task: "t-1" }, "task 事件要带 op"],
       [{ kind: "task", op: "frobnicate", task: "t-1" }, "不是其中之一"],
@@ -93,7 +93,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
   it("合法事件一字不变地照走（判据 3 的另一半：不是靠把所有东西都拒掉换来的）", async () => {
     expect((await post("pm", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] })).status).toBe(201);
     expect((await post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["a.ts"] })).status).toBe(201);
-    expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" })).status).toBe(201);
+    expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" , no_human_impact: true})).status).toBe(201);
     expect((await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true })).status).toBe(201);
     expect((await post("pm", { kind: "note", body: "记一笔" })).status).toBe(201);
     expect((await post("pm", { kind: "reading", key: "k", surface: "project", value: { any: "shape" } })).status).toBe(201);

@@ -40,7 +40,7 @@ afterAll(() => new Promise<void>((r) => app.close(() => r())));
 describe("t-054 · verify --fail notifies the owner", () => {
   it("one notice per round, to the owner, from the service, with the reason's first 60 chars; delivered like any instruction", async () => {
     await task("t-1", "牌桌显示 sha");
-    await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234: 加了端点" });
+    await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234: 加了端点" , no_human_impact: true});
     expect(notices(await state(), "dev", FAIL_NOTICE)).toHaveLength(0); // qa is in the default role set: nobody asks the human
     expect(notices(await state(), HUMAN, VERIFY_ASK)).toHaveLength(0);
 
@@ -66,7 +66,7 @@ describe("t-054 · verify --fail notifies the owner", () => {
     let b = board(await state(later), HUMAN, later);
     expect(owed(b)).toContain(n.id);
     await post("dev", { kind: "task", op: "reopen", task: "t-1", reason: "改" });
-    expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "def5678: 改了" })).status).toBe(201);
+    expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "def5678: 改了" , no_human_impact: true})).status).toBe(201);
     s = await state(later);
     b = board(s, HUMAN, later);
     expect(s.instructions.get(n.id)!.acked_at).toBeUndefined();
@@ -92,7 +92,7 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev"] });
     await task("t-2", "登录后回到原页");
     const evidence = "abc1234: " + "证".repeat(250);
-    const d = await post("dev", { kind: "task", op: "done", task: "t-2", evidence });
+    const d = await post("dev", { kind: "task", op: "done", task: "t-2", evidence , no_human_impact: true});
     const s = await state();
     const [ask] = notices(s, HUMAN, VERIFY_ASK);
     expect(ask).toMatchObject({ to: HUMAN, actor: SERVICE_ACTOR, intent: "ask", options: ["过", "不过"], refs: [d.body.id] });
@@ -114,7 +114,7 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
   it("不过 is a verify --fail by the human, and the owner gets the t-054 notice; the surface comes from project:verify.surface", async () => {
     await post("pm", { kind: "reading", surface: "project", key: "verify.surface", value: "staging" });
     await task("t-3", "牌桌上的邀请链接");
-    await post("dev", { kind: "task", op: "done", task: "t-3" });
+    await post("dev", { kind: "task", op: "done", task: "t-3" , no_human_impact: true});
     const [ask] = notices(await state(), HUMAN, VERIFY_ASK).filter((i) => i.body.startsWith("牌桌上的邀请链接"));
     expect(ask.body).toBe(`牌桌上的邀请链接${VERIFY_ASK}没给证据。判在 staging。`);
     expect((await decide(ask.id, "不过")).status).toBe(201);
@@ -126,7 +126,7 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
     expect(n.body).toBe(`t-3${FAIL_NOTICE}human 在牌桌上判不过。改完重新 done。`);
     // the owner does it again: a fresh ask, and the old one is stale for the board
     await post("dev", { kind: "task", op: "reopen", task: "t-3", reason: "改" });
-    expect((await post("dev", { kind: "task", op: "done", task: "t-3", evidence: "fed9876: 改了" })).status).toBe(201);
+    expect((await post("dev", { kind: "task", op: "done", task: "t-3", evidence: "fed9876: 改了" , no_human_impact: true})).status).toBe(201);
     const asks = notices(await state(), HUMAN, VERIFY_ASK).filter((i) => i.body.startsWith("牌桌上的邀请链接"));
     expect(asks).toHaveLength(2);
     expect(board(await state(), HUMAN).needs_human.map((x) => x.id)).toContain(asks[1].id);
@@ -135,7 +135,7 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
   it("with a verifier in the role set nothing changes", async () => {
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
     await task("t-4", "有 qa 的项目");
-    await post("dev", { kind: "task", op: "done", task: "t-4", evidence: "abc1234" });
+    await post("dev", { kind: "task", op: "done", task: "t-4", evidence: "abc1234" , no_human_impact: true});
     expect(notices(await state(), HUMAN, VERIFY_ASK).filter((i) => i.body.startsWith("有 qa 的项目"))).toHaveLength(0);
   });
 });
@@ -143,7 +143,7 @@ describe("t-055 · no verifier in the role set: the human is asked", () => {
 describe("t-087 · a fail notice goes stale when another role takes the task over", () => {
   it("over the API: the notice leaves the human's and the owner's lists with the reason in the data, and the events stay", async () => {
     await task("t-9", "接手用例");
-    await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234" });
+    await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234" , no_human_impact: true});
     const v = await post("qa", { kind: "task", op: "verify", task: "t-9", surface: "repo", pass: false, evidence: "少一条测试" });
     expect(v.status).toBe(201);
     const later = new Date(Date.now() + 30 * 60_000);

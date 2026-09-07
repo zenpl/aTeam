@@ -78,7 +78,7 @@ describe("runtime metrics over the last window", () => {
     expect(ws[0].hint).toBe("接缝 83% 由 pm 手工解决（5/6）。建议：把靠人手工做的改成规则或服务；等验的先验。");
     // five tasks done and waiting: the queue is deep, but only just — the seams are further past their bar, so they
     // are what gets said (t-123 判据 2: one line, the worst one, not everything found)
-    for (let i = 1; i <= 5; i++) await w.emit({ kind: "task", op: "done", actor: "dev", task: `a${i}` });
+    for (let i = 1; i <= 5; i++) await w.emit({ kind: "task", op: "done", actor: "dev", task: `a${i}` , no_human_impact: true});
     ws = runtimeAllocation(await w.state(), w.at(), HUMAN);
     expect(ws[0].evidence).toEqual(["接缝 83% 由 pm 手工解决（5/6）"]);
     // qa acks in a minute, dev takes half an hour, three times each

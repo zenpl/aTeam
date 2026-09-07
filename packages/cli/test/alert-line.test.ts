@@ -58,7 +58,7 @@ describe("t-129 · CLI 也说得出这批为什么推不了", () => {
     await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
     await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "灰字", criteria: ["能用"] });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/a.ts"] });
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "ccccccc3333：做完了" });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "ccccccc3333：做完了" , no_human_impact: true});
     await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.tasks", value: { sha: "bbbbbbb2222", contained: ["t-1", "t-2"], not_contained: [], method: "逐件测" } });
     // packed on an older head, and it would take t-1/t-2 back off production
     await emit({ kind: "reading", actor: "release", surface: "repo", key: "batch.2.10", value: { sha: "eeeeeee5555", base: "aaaaaaa1111", contains: [] } });

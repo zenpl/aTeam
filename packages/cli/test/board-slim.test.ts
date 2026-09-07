@@ -20,7 +20,7 @@ async function fixture() {
   }
   // t-a done first, t-b claims the same file later: a stacked seam
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["src/io.ts"] });
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "提交 1234567：两条都过" });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "提交 1234567：两条都过" , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["src/io.ts"] });
   await emit({ kind: "note", actor: "qa", body: "concern: 导出很慢", task: "t-b" });
   // t-c and t-d: same owner on the same file
@@ -30,9 +30,9 @@ async function fixture() {
   // t-e and t-f: a seam whose both sides are final, which the default board drops entirely (t-070)
   for (const [id, title] of [["t-e", "缓存"], ["t-f", "预热"]]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-e", touches: ["src/cache.ts"] });
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-e", evidence: "提交 2345678" });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-e", evidence: "提交 2345678" , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-f", touches: ["src/cache.ts"] });
-  await emit({ kind: "task", op: "done", actor: "frontend", task: "t-f", evidence: "提交 3456789：含 2345678" });
+  await emit({ kind: "task", op: "done", actor: "frontend", task: "t-f", evidence: "提交 3456789：含 2345678" , no_human_impact: true});
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-e", surface: "repo", pass: true });
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-f", surface: "repo", pass: true });
   await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], default: "登录", ack_by: new Date(t + 3_600_000).toISOString() });
