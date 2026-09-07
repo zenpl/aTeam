@@ -137,6 +137,20 @@ export const UI = {
   withdrawnBy: (who: string, when: string) => `${who} 于${when}撤回`,
   obsoleteBy: (decision: string, who: string, when: string) => `已被决策 ${decision} 取代（${who} 于${when}）`,
   decisionTag: "决策",
+  // t-133 · pd 03:32: the words are the ones the product already uses. No shipping metaphor, no second vocabulary —
+  // a person who has to learn two sets of words has none.
+  releaseTitle: "上线",
+  releaseNow: "线上这一版",
+  releaseNext: "下一次上线",
+  releaseBrings: "这次能带上",
+  releaseTogether: "必须一起上的几件",
+  releaseNothing: "没有可上线的东西。",
+  /** pd 03:32: a held batch must say why. Without a reason it should not be held. */
+  releaseHeld: (why: string) => `按住没发：${why}`,
+  releaseHeldBy: (who: string) => `等 ${who}`,
+  releaseUnitMore: (n: number) => `还有 ${n} 件`,
+  releaseFrom: (sha: string) => `从 ${sha} 快进`,
+  releaseDetail: "上线详情",
   seams: "接缝",
   openCount: (n: number) => `${n} 条未解决`,
   seamOpen: "未解决",

@@ -88,7 +88,9 @@ describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句�
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order.every((x) => x > 0)).toBe(true);
     const now = section(html, "now", "rest");
-    for (const label of ["焦点", "线上", "在途", "谁在"]) expect(now).toContain(`<span class="label">${label}</span>`);
+    for (const label of ["焦点", "在途", "谁在"]) expect(now).toContain(`<span class="label">${label}</span>`);
+    // t-133 (pd 03:32): 线上 is the one row you can open — clicking it is how you reach the 上线 detail page
+    expect(now).toContain('<span class="label"><a href="/release">线上</a></span>');
     expect(now).toContain(esc("P0: <login> broken & nobody on it"));  // focus, escaped
     expect(html).not.toContain("<login>");
     expect(html).not.toMatch(/<script\b/i);
