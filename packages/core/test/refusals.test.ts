@@ -90,3 +90,24 @@ describe("t-212 · 记在唯一那条写入路径上，所以每个调用方都�
     expect(refusedOp({ kind: "task", op: "done" })).toBe("task:done");
   });
 });
+
+describe("t-212 判据 3 · 数进得了牌桌，但只出数据不出话", () => {
+  it("交了账就数得出来，没交就是 null——「数不出来」不是「一次都没有」", async () => {
+    const { board, reduce } = await import("../src/index.js");
+    const w = await world();
+    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "a", no_human_impact: true }, -50).catch(() => {});
+    const st = reduce(await w.s.read(), at(0));
+    expect(board(st, HUMAN, at(0)).refusals).toBeNull();                       // 没交：说不出
+    const b = board(st, HUMAN, at(0), { refusals: await w.s.refusals!() });
+    expect(b.refusals?.total).toBe(1);
+    expect(b.refusals?.by_rule[0].rule).toBeTruthy();
+  });
+
+  it("空账交进来是 0，不是 null——两者分得开", async () => {
+    const { board, reduce } = await import("../src/index.js");
+    const w = await world();
+    const b = board(reduce(await w.s.read(), at(0)), HUMAN, at(0), { refusals: [] });
+    expect(b.refusals?.total).toBe(0);
+    expect(b.refusals).not.toBeNull();
+  });
+});

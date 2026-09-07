@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -315,6 +315,12 @@ export const IN_FLIGHT_SHOWN = 5;
 /** What every session reads first. Derived; nobody moves cards. */
 export interface Board {
   now: string;
+  /**
+   * t-212：这道闸挡住过谁、挡了几次、挡对没有。**`null` 是「这个存储数不出来」，不是「一次都没有」**——
+   * 今晚这个洞的形状就是「量不出被当成量出来是 0」，这里不许再犯一次。
+   * 位置按 t-149 判据 3：进挖层与报告，不上首屏。**要给人看的那句话归 pd**（冻结开着，我没写）。
+   */
+  refusals: RefusalCount | null;
   focus?: { body: unknown; set_by: string; at: string };
   /** Only what the human must answer: open instructions addressed to the human. Nothing else, ever. */
   needs_human: {
@@ -564,7 +570,15 @@ export interface BoardPresence {
   cli_sha: string | null;
 }
 
-export interface BoardOptions { /** How long since the last pull a node still counts as listening; default 5 minutes. */ listenWindowMs?: number }
+export interface BoardOptions {
+  /** How long since the last pull a node still counts as listening; default 5 minutes. */
+  listenWindowMs?: number;
+  /**
+   * t-212：这本拒绝账。**不给就是 null，不是 0**——存储答不出来与「一次都没被拒过」是两件事，牌桌上不许
+   * 把前者说成后者。它不在 State 里（拒绝没有发生，进不了事件流），所以由调用方从存储取来交进来。
+   */
+  refusals?: readonly Refused[];
+}
 
 /**
  * A fail notice (t-054) or a verify ask (t-055) is about one round of one task; once the owner did the task again
@@ -895,6 +909,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   const nowIso = now.toISOString();
   const b: Board = {
     now: nowIso,
+    refusals: opts.refusals ? countRefusals(opts.refusals) : null,
     needs_human: [],
     undelivered: [],
     overdue: [],

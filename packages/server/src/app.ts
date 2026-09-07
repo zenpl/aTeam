@@ -593,7 +593,9 @@ export function createApp(opts: ServerOptions) {
 
       if (req.method === "GET" && path === "/board") {
         await remind();
-        const b = board(await stateFor(projectId, store), human, now());
+        // t-212：拒绝账从存储取，交给 board 数。**存储答不出来就不交，牌桌上那一格是 null 而不是 0**——
+        // 「数不出来」与「一次都没被拒过」是两件事，今晚这个洞的形状就是把前者说成了后者。
+        const b = board(await stateFor(projectId, store), human, now(), { refusals: await store.refusals?.() });
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
         // t-070/t-080 (pm 22:45): the slim board goes to a client that says it knows it (X-Ateam-Client: <shape it speaks>);
