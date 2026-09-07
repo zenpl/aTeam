@@ -281,12 +281,12 @@ export const KEY_SYMBOLS = [
   "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
   "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
   "PASSTHROUGH_IS_NOT_A_LITERAL", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING",
-  "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago",
+  "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago",
   "alertContact", "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine",
   "blockedWhy", "board", "capabilityKey", "coverage", "deployHistory", "followUps",
   "gateHonesty", "honestyLine", "inFlightGroups", "judgeSeam", "lightSeamLine", "manualFor",
   "missingCard", "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix",
-  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard", "splitRelease",
+  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard", "span", "splitRelease",
   "standIns", "staticAllocation", "taskHeading", "whoElseTouches",
 ] as const;
 

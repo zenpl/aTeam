@@ -5,7 +5,7 @@
  * in its own output. It is a word to this node only: no event, no log line, nothing the team sees — who is
  * not listening is already on the board (t-047/t-048).
  */
-import { LISTEN_WINDOW_MS, WATCH_INTERVAL } from "@ateam/core";
+import { LISTEN_WINDOW_MS, WATCH_INTERVAL, ago, span } from "@ateam/core";
 import type { Lock } from "./lock.js";
 
 /**
@@ -38,17 +38,15 @@ export function watchState(raw: string | null, now: Date, windowMs = LISTEN_WIND
   return { kind: "stopped", sinceMs, cmd };
 }
 
-function howLong(ms: number): string {
-  const m = Math.round(ms / 60_000);
-  if (m < 60) return `${Math.max(m, 1)} 分钟`;
-  const h = ms / 3_600_000;
-  return h < 24 ? `${h.toFixed(1)} 小时` : `${(h / 24).toFixed(1)} 天`;
-}
+// t-180（qa 09:36 判出的第五道梯子）：这里曾经自己有一份 howLong——四舍五入、带小数、说不出「刚刚」，
+// 与 core 的梯子在 99.6% 的时刻说法不同。它没被那条按词扫的检查抓到，是因为它只吐「1.3 小时」，
+// 「前」由调用方拼上——按词找和按名字找是同一个毛病。现在两个调用点分别用 core 的 ago 与 span。
 
 /** The one line, or null when there is nothing to say. Never mentions a heartbeat that is still beating. */
 export function deafNotice(st: WatchState): string | null {
   if (st.kind === "never" || st.kind === "listening") return null;
-  const when = st.kind === "stopped" ? `在 ${howLong(st.sinceMs)}前停了` : "停了（心跳文件读不出来，说不出多久）";
+  // pd 09:17 的句框规矩：时间短语在句首，四档都得通顺——「你的监听 刚刚停了」「你的监听 1 小时前停了」。
+  const when = st.kind === "stopped" ? ` ${ago(st.sinceMs)}停了` : "停了（心跳文件读不出来，说不出多久）";
   return `⚠ 你的监听${when}，期间可能漏了指令，重挂：${st.cmd}`;
 }
 
@@ -74,7 +72,8 @@ export function behindNotice(idle: PullIdle, windowMs = LISTEN_WINDOW_MS): strin
   if (!idle) return null;
   if (idle.kind === "never") return "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync";
   if (idle.s * 1000 <= windowMs) return null;
-  return `⚠ 服务端说你 ${howLong(idle.s * 1000)}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`;
+  // 这一句说的是时长不是时刻（「你 12 分钟没拉过了」），所以用 span，不是 ago——同一道梯子，另一个句框。
+  return `⚠ 服务端说你 ${span(idle.s * 1000)}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`;
 }
 
 /**

@@ -65,13 +65,28 @@ export interface BoardInFlight { id: string; title: string; owner?: string; upda
  * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
  */
 export function ago(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return AGO_JUST_NOW;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
-  return `${Math.floor(sec / 86400)} 天前`;
+  return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
 }
 export const AGO_JUST_NOW = "刚刚";
+
+/**
+ * 同一道梯子的另一半：**一段时长**说成几个字，不带「前」。
+ *
+ * qa 09:36 判 t-180 不成立时找到的第五份拷贝（`packages/cli/src/deaf.ts` 的 `howLong`）就在这一半上：它说的是
+ * 「你 3 分钟没拉过了」这种时长，不是「多久以前」，所以 `ago` 的形状套不上去，于是它自己长了一份——用四舍五入、
+ * 带小数、说不出「刚刚」，三条全违反 pd 09:09 的梯子。
+ *
+ * 所以这里不是「再写一个格式化函数」，而是**把梯子本身单独拿出来，`ago` 也调它**：两种句框共用同一段分档与取整，
+ * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
+ */
+export function span(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return SPAN_UNDER_A_MINUTE;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时`;
+  return `${Math.floor(sec / 86400)} 天`;
+}
+export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
 
 export function instructionKind(i: Pick<Instruction, "intent" | "options">): InstructionIntent {

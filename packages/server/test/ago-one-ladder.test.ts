@@ -21,28 +21,34 @@ describe("t-180 · 页面不自带梯子", () => {
   });
 
   /**
-   * pd 09:09 把位置规则扩了一格：重复的不只是句子，还有把数变成句子的那段逻辑。所以这一条扫的是
-   * 「这几个词出现在 core 之外的源码里」——一处也不许有，包括写在别的名字底下的（命令行那份就叫 howLong，
-   * 我一开始 grep `ago` 时因此漏了它，四份数成了两份）。
+   * pd 09:09 把位置规则扩了一格：重复的不只是句子，还有把数变成句子的那段逻辑。
+   *
+   * **第一版这条闸正好漏掉了它要防的那一个**（qa 09:38）：它扫的是「分钟前/小时前/天前/刚刚」这几个**词**，
+   * 而 `packages/cli/src/deaf.ts` 那份只吐「1.3 小时」，「前」由调用方拼上去——按词找和按名字找是同一个毛病，
+   * 同一件东西被拆成两半就找不到了。**闸绿着，第五道梯子就在树里。**
+   *
+   * 所以这一版扫的不是词，是**形状**：一段代码里的人可见字面量若同时提到两个以上不同的时间单位
+   * （分钟 / 小时 / 天 / 刚刚），它就是在按量级分档——那正是「把毫秒差变成人话」，只许 core 一处做。
+   * 这条界线是可写下来的，也说得出它看不见什么：
+   * · 抓得住：改了名字的（`howLong`）、只吐半句的（「1.3 小时」）、全新写的一份。
+   * · 抓不住：只用一个单位的（`缺人 ${n} 分钟` 不是梯子，是一句话——它的重复归 t-144）、
+   *   用英文写的、以及把汉字拆开拼起来的。
    */
-  it("core 之外的源码里没有第二道梯子的任何一档", () => {
-    // 路径从这个文件自己算起，不从 cwd 算：第一版写的是 `process.cwd()/../..`，用 pnpm --filter 跑时
-    // 恰好对，从仓库根跑就指到了 /home，扫不到任何文件——**而扫不到文件的扫描器是全绿的**。
-    // 所以下面先钉「真的读到了这两处源码」，再钉「里面没有梯子」：一条断言若能在什么都没看的情况下通过，
-    // 它守的就不是它声称守的东西（今晚第六次同形）。
+  it("core 之外没有第二处按量级分档的地方（扫形状，不扫词）", () => {
+    const UNITS = ["分钟", "小时", "天", "刚刚"];
     const roots = { "packages/server/src": new URL("../src/", import.meta.url), "packages/cli/src": new URL("../../cli/src/", import.meta.url) };
     const hits: string[] = [];
     let scanned = 0;
     for (const [name, dir] of Object.entries(roots)) {
       for (const f of readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
         scanned++;
-        const src = readFileSync(new URL(f, dir), "utf-8");
-        src.split("\n").forEach((line, i) => {
-          for (const w of LADDER) if (line.includes(w)) hits.push(`${name}/${f}:${i + 1}  ${line.trim().slice(0, 70)}`);
-        });
+        const src = readFileSync(new URL(f, dir), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+        const lits = [...src.matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((m) => m[1]);
+        const used = UNITS.filter((u) => lits.some((t) => t.includes(u)));
+        if (used.length >= 2) hits.push(`${name}/${f}：同时说 ${used.join("、")}`);
       }
     }
     expect(scanned, "一个文件都没扫到——这条断言此刻什么也没守").toBeGreaterThan(8);
-    expect(hits, `这几处自己拼了「多久以前」，应当调 core 的 ago：\n${hits.join("\n")}`).toEqual([]);
+    expect(hits, `这几处在自己按量级分档，应当调 core 的 ago / span：\n${hits.join("\n")}`).toEqual([]);
   });
 });

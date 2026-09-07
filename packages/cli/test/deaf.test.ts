@@ -23,12 +23,13 @@ describe("t-102 · a node notices its own watch died", () => {
     const raw = beat(min(34), "ateam watch --interval 25s");
     expect(state(raw)).toEqual({ kind: "stopped", sinceMs: min(34), cmd: "ateam watch --interval 25s" });
     const line = notice(raw)!;
-    expect(line).toContain("你的监听在 34 分钟前停了");
+    // t-180 · pd 09:17：时间短语在句首，四档都得通顺（改前是「在 34 分钟前停了」，而「在 刚刚前停了」不是中文）。
+    expect(line).toContain("你的监听 34 分钟前停了");
     expect(line).toContain("期间可能漏了指令");
     expect(line).toContain("重挂：ateam watch --interval 25s");
     // 今天真实的两次停摆量级：小时，不是「312 分钟」
-    expect(notice(beat(min(312)))).toContain("你的监听在 5.2 小时前停了");
-    expect(notice(beat(min(2 * 24 * 60)))).toContain("2.0 天前");
+    expect(notice(beat(min(312)))).toContain("你的监听 5 小时前停了");   // t-180：向下取整、不出现小数（改前「5.2 小时前」）
+    expect(notice(beat(min(2 * 24 * 60)))).toContain("2 天前");
     // 老的心跳文件没有 cmd：仍要给一条能照抄的命令
     expect(notice(beat(min(30)))).toContain(`重挂：${DEFAULT_WATCH_CMD}`);
   });
