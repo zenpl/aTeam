@@ -70,3 +70,27 @@ describe("t-219 判据 4 · 不许把说不出的说成确定的", () => {
     expect(m.contained.length + m.not_contained.length + m.unmeasured.length + m.bad_evidence.length + m.no_evidence.length).toBe(cs.length);
   });
 });
+
+/**
+ * t-219 判据 4 的第二层，**是我自己撞出来的**：我为了复现一个发车闸的问题，在自己的检出里跑了 `ateam release`
+ * ——它顺手写事实，而我这棵树没有上线那个 sha 的对象。于是 127 件里 125 件判不出、`contained` 写成 0，
+ * 而牌桌那句分母就是从它算出来的。**「不许把说不出的说成确定的」还差一层：一棵解不出上线 sha 的树，
+ * 根本不该写这条事实。**
+ */
+describe("t-219 · 量不了的时候，连事实都不写", () => {
+  it("这棵树没有上线那个 sha ⇒ 一个候选也不测，返回 null（于是没有事实被写下去）", () => {
+    const m = containment(board([{ task: "a", evidence_sha: "in" }, { task: "b", evidence_sha: "out" }]), isAncestor,
+      { has: (sha) => sha !== "dep", shallow: () => false });
+    expect(m, "解不出上线 sha 却照样量了：那份「事实」全是 0 与量不出，还会盖掉别人从完整树量的那一份").toBeNull();
+  });
+
+  it("上线那个 sha 在 ⇒ 照常测（不许因为这道前提把整条路关掉）", () => {
+    const m = containment(board([{ task: "a", evidence_sha: "in" }]), isAncestor, { has, shallow: () => false })!;
+    expect(m.contained).toEqual(["a"]);
+  });
+
+  it("调用方根本没给 has（老调用方）⇒ 行为一字未改，照常测", () => {
+    const m = containment(board([{ task: "a", evidence_sha: "in" }]), isAncestor)!;
+    expect(m.contained).toEqual(["a"]);
+  });
+});

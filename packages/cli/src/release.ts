@@ -149,6 +149,9 @@ export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha
   { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; bad_evidence: string[]; no_evidence: string[]; method: string } | null {
   const sha = b.release?.deployed_sha;
   if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
+  // t-219：**连上线那个 sha 都解不出来，就一个候选也测不了**——那时写下的「事实」全是 0 与「量不出」，
+  // 而它会盖掉别人从完整的树量出来的那一份。这不是阈值，是前提；理由见 core 的 cannotMeasureHere。
+  if (opts.has && opts.has(sha) === false) return null;
   const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[],
     bad_evidence: [] as string[], no_evidence: [] as string[],
     method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };

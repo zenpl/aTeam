@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -269,7 +269,13 @@ async function main(argv: string[]) {
         const measured = containment(b, gitIsAncestor(), { has: (sha) => g.resolve(sha) !== null, shallow: () => g.isShallow() });
         const fact = containmentFact(b, measured);
         if (fact) { await emit(fact); b = await client.board(true); }
-        else if (!measured) console.error(`（没有测包含关系：${b.release.deployed_sha ? "项目没有声明 absorb.form=git-ancestor" : "生产没有 deployed.sha 事实"}）`);
+        // t-219：三种「没测」要分得开——尤其第三种（这棵树解不出上线的 sha），因为它此前会写下一份全是 0 的假事实。
+        else if (!measured) {
+          const dep = b.release.deployed_sha;
+          console.error(!dep ? "（没有测包含关系：生产没有 deployed.sha 事实）"
+            : g.resolve(dep) === null ? `（${cannotMeasureHere(dep)}）`
+            : "（没有测包含关系：项目没有声明 absorb.form=git-ancestor）");
+        }
         if (measured?.unmeasured.length) console.error(`（git 判不出 ${measured.unmeasured.join("、")}：本地没有它们的证据 sha，先 git fetch 各分支）`);
         console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
         return;

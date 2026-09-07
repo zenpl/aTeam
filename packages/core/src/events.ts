@@ -525,6 +525,7 @@ export const KEY_SYMBOLS = [
   "batchesEmptyLine",
   "blockedWhy",
   "board",
+  "cannotMeasureHere",
   "cannotSeeOutput",
   "capabilityKey",
   "checkShape",
@@ -959,6 +960,19 @@ export const cliStaleBuildLine = "你手上的 dist 比源码旧，跑着的不�
 
 /** t-211 判据 2：这条节点事实是怎么量出来的。住在 core，命令行那侧不留人可见的字。 */
 export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
+
+/**
+ * t-219（dev 17:12 自己撞出来的）：**一棵解不出上线 sha 的树，量不了包含关系，也就不该写那条事实。**
+ *
+ * 我为了复现一个发车闸的问题，在自己的检出里跑了一次 `ateam release`——它顺手写事实，而我这棵树没有
+ * `d57acbc` 这个对象（release 的合并提交在我没 fetch 的分支上）。于是 127 件里 125 件判不出、`contained`
+ * 写成 **0**，而牌桌那句分母就是从它算出来的。**这是今天第七次「量了看得见的那一份、报成想说的那一份」，
+ * 前六次都停在话里，这次进了共享事实。**
+ *
+ * 判准不是一个阈值（阈值要拍脑袋），是一条前提：**连上线那个 sha 都解不出来，就一个候选也测不了。**
+ */
+export const cannotMeasureHere = (sha: string) =>
+  `这棵树里没有 ${sha.slice(0, 7)} 这个对象，量不了谁在里面——先 git fetch，或换一棵有它的树。没有写下任何事实。`;
 
 /**
  * 落后几次上线：上线过的 sha 里，本地这棵树**没有**的那几次。
