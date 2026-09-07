@@ -311,6 +311,71 @@ export const PUSH_LEVELS = ["none", "own-branch", "integration", "production"] a
 export type PushLevel = (typeof PUSH_LEVELS)[number];
 /** Surface of the per-node capability fact; its key is `<role>:能力`. */
 export const NODE_SURFACE = "node";
+
+/**
+ * t-212：**一次被规则挡下来的写入，也是一件发生过的事。**
+ *
+ * 今晚这个洞三次以不同面目出现（pm 14:49 记的）：默认到期没落成事件、署名更正只写在正文里、以及这一条——
+ * **拒绝只是一个 HTTP 响应**。于是「这道闸挡住过谁、挡了几次、挡对没有」，机器一条都数不出来：qa 09:04 那条
+ * 反例走了也没有证据（它 14:57 因此结不掉），dev 15:14 只证得出「没有一条路能走到」，证不出「今天没人走到过」。
+ * pm 一个人今晚被拒过至少 12 次，**全部只活在它自己的终端里**。
+ *
+ * **不存被拒的正文**（判据 1）：那里可能是没落地的内容，存下来等于让被拒的东西从后门进了日志。存的是能数的
+ * 那几样：规则名、谁被拒、被拒的是哪种写入、什么时候。
+ */
+export interface Refused {
+  kind: "refused";
+  id: string;
+  at: string;
+  /** 谁被拒了。`null` 是说不出（连 actor 都没带的写入——那本身就是被拒的理由之一）。 */
+  who: string | null;
+  /** 规则名，与拒绝话开头那个词是同一个（shape / done / criteria / …）。能按它分组。 */
+  rule: string;
+  /** 被拒的是哪种写入：`task:done`、`reading`、`instruction` 这样。**不含正文。** `null` 是说不出。 */
+  op: string | null;
+}
+
+/**
+ * **拒绝不进事件流，进它自己的账。** 一次被拒的写入并没有发生，把它混进日志会改变每一处「日志里有什么」的
+ * 含义（pull 会把它发给所有人、每个数事件的地方都要记得滤掉它）。所以它有自己的一本账：能数、能按规则名
+ * 分组，但不假装自己发生过。
+ */
+
+/**
+ * 一条写入在这份记录里叫什么：task 事件带上 op，其余就是它的 kind。**说不出就给 null，不造一个词**——
+ * 「说不出」与「叫某个名字」要分得开，而且这里一造词就是一句新的人可见的字。
+ */
+export const refusedOp = (e: { kind?: unknown; op?: unknown }): string | null =>
+  typeof e?.kind === "string" ? (e.kind === "task" && typeof e.op === "string" ? `task:${e.op}` : e.kind) : null;
+
+/** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
+export interface RefusalCount {
+  total: number;
+  /** 按规则名分组，多的在前。 */
+  by_rule: { rule: string; n: number }[];
+  /** 按被拒的人分组，多的在前。 */
+  by_who: { who: string; n: number }[];
+  /** 最早与最近那一条的时刻，据此说得出「这段时间里」。 */
+  first: string | null;
+  last: string | null;
+}
+
+/** 把一本拒绝账数成上面那个样子。空账数出来是 total 0——那与「存储答不出来」不同，后者由调用方给 null。 */
+export function countRefusals(rs: readonly Refused[]): RefusalCount {
+  const by = (pick: (r: Refused) => string | null) => {
+    const m = new Map<string, number>();
+    for (const r of rs) { const k = pick(r); if (k) m.set(k, (m.get(k) ?? 0) + 1); }
+    return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n || (a.k < b.k ? -1 : 1));
+  };
+  const ats = rs.map((r) => r.at).sort();
+  return {
+    total: rs.length,
+    by_rule: by((r) => r.rule).map(({ k, n }) => ({ rule: k, n })),
+    by_who: by((r) => r.who).map(({ k, n }) => ({ who: k, n })),
+    first: ats[0] ?? null,
+    last: ats[ats.length - 1] ?? null,
+  };
+}
 export const capabilityKey = (role: string) => `${role}:能力`;
 /** `shows` on done/verify: one sentence for the owner, at most this long. */
 export const SHOWS_MAX_CHARS = 120;
