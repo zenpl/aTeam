@@ -198,9 +198,9 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect(wrong).not.toContain("再试一次");                          // 不告诉他重来，告诉他形态
     expect(wrong).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");   // 假值、代码体
     expect(wrong).not.toMatch(/<a[^>]*ateam\.fly\.dev\/p\/demo/);   // 例子不做成链接：点不到
-    // 粘错不清空，他能看见自己粘的是什么形态；但钥匙那一段是圆点——pd 01:17 ③ 与 pd 01:02（钥匙一字不回显）都要
-    expect(wrong).toContain("?k=••••••••");
-    expect(wrong).toContain(new URL(p.ownerUrl).pathname);
+    // pd 01:17 ③「粘错不清空」与 pd 01:02「钥匙一字不回显」撞了，先按已验收的后者做：输入框不回显任何东西
+    expect(wrong).toMatch(/<input type="password" name="token"/);
+    expect(wrong).not.toContain("value=\"http");
   });
 
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {
