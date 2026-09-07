@@ -190,7 +190,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(gate.status).toBe(200);
     const g = await gate.text();
     expect(g).toContain("<h2>输入 token</h2>");
-    expect(g).toContain("要作答，先输入一次项目 token；之后 30 天不用再输。");
+    expect(g).toContain("把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。"); // t-110 (pd 00:28 ④): the human holds a whole address, not a key
     expect(g).toContain('<input type="hidden" name="then" value="/decide">');
     expect(g).toContain(`<input type="hidden" name="id" value="${ask.id}">`);
     expect(g).toContain('<input type="hidden" name="option" value="公开">');

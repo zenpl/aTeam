@@ -79,6 +79,9 @@ export const UI = {
   // t-099: where a carried-in task or decision came from (pd 23:42: machine strings are code, after the human words, a
   // link only when the link goes somewhere)
   carriedFrom: "来自",
+  // t-110 (pd 00:28 ②③): whether this board has an owner's key yet, in the 谁在 row; a statement, never a card
+  noOwnerKey: "这张牌桌还没有主人的钥匙。",
+  ownerKeyUnused: "已把牌桌地址给出去了，还没人打开过。",
   thisVersion: "这一版带来了什么",
   earlier: (n: number) => `更早的 ${n} 件`,
   sinceLast: (sha: string) => `自上一版 ${sha} 以来`,
@@ -160,7 +163,8 @@ export const UI = {
 
   // token 小页面
   tokenTitle: "输入 token",
-  tokenLead: "要作答，先输入一次项目 token；之后 30 天不用再输。",
+  // t-110 (pd 00:28 ④): what the human has is the whole board address, not a key they must cut out of it
+  tokenLead: "把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。",
   tokenLabel: "token",
   tokenSubmit: "继续",
   tokenWrong: "token 不对，再试一次。",
