@@ -65,6 +65,29 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
 };
 
 /**
+ * t-187 · `bin/inject` 对人说的八句话（pd 10:21、10:22）。
+ *
+ * 它是仓库里唯一一份**在 `packages/` 之外、又对人说话**的东西：一个 shell 脚本，读它的是 agent。
+ * pd 的裁定分两半，两半缺一不可：
+ * ① 出处只有一个——八句登记在这里，`where: ["script"]`；
+ * ② 但**脚本里的字面量不改成运行时读 core**。它要能在 core 坏掉的时候照样跑（判据 2），
+ *    而它的用处恰恰是「core 坏了没有」这类问题。所以脚本那份是一份**被钉住的副本**：
+ *    副本可以存在，只要它不能独自漂移——`inject-sayings.test.ts` 逐句比对，对不上就红。
+ *
+ * 八句里有五句只在**拒绝**时出现，一句是结论，两句是用法与找不到文件。qa 10:20 数到六句，
+ * 少的两句嵌在脚本里那段 python 里（用 `sys.exit` 而不是 `echo`）——**一个文件里嵌了第二种语言，
+ * 按第一种语言的形状去数一定少数**。所以那条对齐测试找句子不按语句形状找，按「引号里的中文」找。
+ */
+export const INJECT_USAGE = "用法: bin/inject <文件> <原文> <替换> [-- <vitest 参数…>]";
+export const injectNoFile = (file: string, root: string) => `找不到 ${file}（相对 ${root}）`;
+export const injectNotGit = (root: string) => `${root} 不是 git 仓库，还原没有依据，拒绝注入`;
+export const injectDirty = (file: string) => `${file} 有未提交的改动：还原会把它一起丢掉。先提交或 stash。`;
+export const injectNoSite = (old: string) => `注入点没找到，一处都没有：${old}`;
+export const injectManySites = (n: string, old: string) => `注入点有 ${n} 处，改哪一处不确定——把原文写长一点：${old}`;
+export const INJECT_BUILD_BROKE = "注入之后 build 就没过——这不算「断言会红」，换一个注入点";
+export const INJECT_STILL_GREEN = "注入之后测试仍然全绿：被守的东西不见了，没有一条断言说话。";
+
+/**
  * 一条人可见的话在 core 里的登记。
  *
  * `key` 唯一；`where` 说它出现在哪儿（挖层、卡、命令行……），因为 pd 05:50 那条规则要的是「每个状态指名它的
@@ -73,7 +96,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
 export interface Saying {
   key: string;
   /** 它出现在哪儿。给要改它的人看的，也给检查用：一句没有位置的话不该被渲染成话。 */
-  where: readonly ("board" | "card" | "cli" | "page" | "manual" | "reject")[];
+  where: readonly ("board" | "card" | "cli" | "page" | "manual" | "reject" | "script")[];
   /** 这一句现在的出处：core 里的符号名。搬迁完成后，这里就是它唯一的家。 */
   from: string;
 }
@@ -105,6 +128,14 @@ export const SAYINGS: readonly Saying[] = [
   { key: "who.nobody", where: ["cli"], from: "nobodyElse" },
   { key: "invite.url_label", where: ["page"], from: "INVITE_URL_LABEL" },
   { key: "token.example", where: ["page"], from: "exampleLine" },
+  { key: "inject.usage", where: ["script"], from: "INJECT_USAGE" },
+  { key: "inject.no_file", where: ["script"], from: "injectNoFile" },
+  { key: "inject.not_git", where: ["script"], from: "injectNotGit" },
+  { key: "inject.dirty", where: ["script"], from: "injectDirty" },
+  { key: "inject.no_site", where: ["script"], from: "injectNoSite" },
+  { key: "inject.many_sites", where: ["script"], from: "injectManySites" },
+  { key: "inject.build_broke", where: ["script"], from: "INJECT_BUILD_BROKE" },
+  { key: "inject.still_green", where: ["script"], from: "INJECT_STILL_GREEN" },
 ];
 
 /** t-143 判据 1：一个 key 只登记一次——重复的 key 意味着两句话共用一个名字，改一个会动到另一个。 */

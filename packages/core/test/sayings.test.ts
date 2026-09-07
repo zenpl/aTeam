@@ -5,7 +5,7 @@
  * 两个地方」出过四个缺陷（t-126、t-133、t-142、t-146）。不做一次性搬家：存量冻成一个只减不增的数。
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { SAYINGS, SECOND_HOMES_ROOT, sourceFiles, isSecondHome, SECOND_HOME_FROZEN, SECOND_HOME_AT_FREEZE, humanSentences, duplicateKeys, LITERAL_CHECK_BLIND_SPOTS, PASSTHROUGH_IS_NOT_A_LITERAL } from "../src/index.js";
 
 const read = (p: string) => readFileSync(new URL(`../../../${p}`, import.meta.url), "utf8");
@@ -27,7 +27,13 @@ describe("t-143 · key 表本身", () => {
   });
 
   it("登记的每一句话，在 core 里真的找得到那个出处——不是一份对不上的目录", () => {
-    const core = ["board.ts", "events.ts", "reduce.ts", "allocation.ts"].map((f) => read(`packages/core/src/${f}`)).join("\n");
+    // t-187（frontend 10:26）：这四个文件名原来是手写的，于是登记在 `sayings.ts` 里的出处一律「找不到」——
+    // **这是 t-185 那一族的第五处**：扫描器的范围自己是手写的，名单外的一切它都当作不存在。改成走一遍
+    // core/src，谁把句子放进哪个文件都算数。
+    const core = readdirSync(new URL("../src/", import.meta.url))
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => read(`packages/core/src/${f}`))
+      .join("\n");
     for (const s of SAYINGS) {
       const symbol = s.from.split(".")[0];
       expect(core.includes(`export const ${symbol}`) || core.includes(`export function ${symbol}`) || core.includes(`function ${symbol}`), `${s.key} 指的 ${s.from} 在 core 里找不到`).toBe(true);
