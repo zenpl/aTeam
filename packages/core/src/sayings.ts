@@ -28,7 +28,7 @@ export const SECOND_HOMES = [
  * 今晚 KEY_SYMBOLS 手写漏了将近一半（21→41），而在改成算出来之前没有任何迹象表明它不全。所以这个数每次变小，
  * 都要有人把它改小，**改小是搬迁的记账动作，不是可选项**：它只许变小，变大就是闸失效（判据 10）。
  */
-export const SECOND_HOME_FROZEN = 211;
+export const SECOND_HOME_FROZEN: number = 211;
 /** 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处：i18n.ts 173、format.ts 36、html.ts 2。 */
 export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 173, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 2 } as const;
 

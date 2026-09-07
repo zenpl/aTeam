@@ -113,3 +113,29 @@ describe("t-143 · 那个数的算法，按 frontend 09:06 的两条合同", () 
     expect(Object.values(SECOND_HOME_AT_FREEZE).reduce((a, b) => a + b, 0)).toBe(SECOND_HOME_FROZEN);
   });
 });
+
+/**
+ * t-143 判据 6 (pm 09:19)：**具名出路的退役条件是一个可测的状态，不是某件任务的状态。**
+ *
+ * 我原来交不了这一条：判据写的是「key 表落地后自动退役」，而 t-143 done 的那一刻表里只有一部分（19 句登记、
+ * 211 句在外面），那时退掉出路等于回到文件级且无出路——碰了 html.ts 就只能写 shows，哪怕真的只删了一段死代码。
+ * pm 把条件改成「那个只减不增的数归零时退役」：数归零就说明话都收进 core 了，出路当场失去理由，不需要谁记得
+ * 去删它。
+ */
+describe("t-143 判据 6 · 出路自己退役，不靠谁记得", () => {
+  it("那个数还大于零时，出路在", () => {
+    expect(SECOND_HOME_FROZEN).toBeGreaterThan(0);
+  });
+
+  it("退役条件读的就是那个数，不是任何一件任务的状态", () => {
+    const rules = read("packages/core/src/rules.ts");
+    expect(rules).toContain("SECOND_HOME_FROZEN === 0");
+    // 不许拿任务 id 当开关：那是「谁记得去删它」的另一种写法
+    expect(rules).not.toMatch(/exitRetired[^\n]*t-1\d\d/);
+  });
+
+  it("那个数是被闸盯着的，所以它是真的——比实际大就红，改小是搬迁的记账动作", () => {
+    const actual = SECOND_HOMES.reduce((n, f) => n + humanSentences(read(f)).length, 0);
+    expect(actual).toBe(SECOND_HOME_FROZEN);
+  });
+});
