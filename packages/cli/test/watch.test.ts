@@ -51,9 +51,11 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     expect(text).toContain("note t-007 priority: whoever is free");
     expect(text).toContain("task t-007 created: watch prints the wake event");
     expect(text).toContain("INSTRUCTION → frontend: t-007 is yours: claim it");
-    expect(text).toContain("⇐ FOR YOU, ack it: ateam ack 01C");
+    expect(text).toContain("⇐ FOR YOU");
     expect(text).toContain("INSTRUCTION → dev: not for frontend");
-    expect(text).toContain("1 instruction(s) for you. Ack each with: ateam ack <id>");
+    // t-147: the tail no longer asks for a receipt — it names the two things still owed
+    expect(text).toContain("1 instruction(s) for you. Do them, or say 「不办：<原因>」 in a note.");
+    expect(text).not.toContain("ateam ack");
     expect(out[out.length - 1]).toBe("\ninstruction received");
     expect(out.indexOf("\ninstruction received")).toBeGreaterThan(out.findIndex((l) => l.includes("01C")));
     // quiet rounds print nothing

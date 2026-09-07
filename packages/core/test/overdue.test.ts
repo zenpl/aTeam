@@ -45,14 +45,14 @@ describe("t-139 · 逾期按在场三态分组", () => {
     const g = b.overdue_by_presence;
     expect(g.listening.roles).toEqual(["release"]);
     expect(g.listening.count).toBe(3);
-    expect(g.listening.line).toBe("在听，3 条没确认");
+    expect(g.listening.line).toBe("在听，3 条读到了还没动");   // pd 05:40 retired 「确认」 along with the receipt
     expect(g.listening.away_s).toBeNull();                    // it is here; how long it has been away is not a fact about it
     expect(g.missing.roles).toEqual(["qa"]);
     expect(g.missing.count).toBe(1);
     expect(g.missing.line).toBe("从没读过日志，1 条没送到");   // qa 06:07: qa has never pulled, so there is no duration to report
     expect(g.missing.away_s).toBeNull();
     // the two are never one number
-    expect(g.listening.count + g.missing.count).toBe(b.overdue.length);
+    expect(g.listening.count + g.missing.count).toBe(4);   // t-147: the groups are what is owed, not what is overdue
     expect(g.listening.instructions).not.toEqual(g.missing.instructions);
   });
 

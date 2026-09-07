@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -37,10 +37,13 @@ describe("F1/F2 · instructions have delivery, ack and an overdue state", () => 
     // backend is busy for 25 minutes; PM cannot know
     c.tick(min(25));
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.instructions[0].status).toBe("overdue");
-    // overdue is the team's problem, not a question for the human
-    expect(b.overdue.map((x) => x.instruction)).toEqual([order.id]);
-    expect(b.overdue[0]).toMatchObject({ to: "backend", from: "pm", age_s: min(15) / 1000 });
+    // t-147: this one carries no options, so nothing is owed but the doing — it is not overdue and nobody is chased
+    // for a receipt. What is true is that it has not been read, and that is where it shows.
+    expect(b.instructions[0].status).toBe("pending");
+    expect(b.overdue).toEqual([]);
+    expect(b.overdue_by_presence.missing.instructions).toEqual([order.id]);
+    expect(b.overdue_by_presence.missing.line).toContain("没送到");
+    // still the team's problem, not a question for the human
     expect(b.needs_human).toHaveLength(0);
 
     // backend finally pulls: delivery is a server-side fact, not a guess
@@ -483,7 +486,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     expect(again.message).toMatch(/already decided: public by human/);
   });
 
-  it("without a default nothing changes: the ask stays with the human past ack_by; plain instructions still go overdue", async () => {
+  it("without a default nothing changes: the ask stays with the human past ack_by; a plain instruction is owed nothing but the doing", async () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c, { default: undefined });
@@ -492,7 +495,10 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     const b = await at(store, c);
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
     expect(b.instructions.find((i) => i.id === q.id)!.chosen).toBeUndefined();
-    expect(b.overdue.map((o) => o.instruction)).toEqual([plain.id]);
+    // t-147: 「deploy」 carries no options, so there is no answer to be late with. It is not overdue; what is true of
+    // it is that backend has not read it, and that is where the board carries it.
+    expect(b.overdue).toEqual([]);
+    expect(b.overdue_by_presence.missing.instructions).toContain(plain.id);
   });
 });
 
@@ -1143,7 +1149,12 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     expect(b.needs_human).toHaveLength(1);
     expect(b.needs_human[0]).toMatchObject({ kind: "ask", id: q.id, from: "pm", body: "Board auth?", options: ["private", "public"], default: "private" });
     expect(b.needs_human[0].chosen).toBeUndefined();
-    expect(b.overdue.map((o) => o.to)).toEqual(["backend"]);
+    // t-147: what backend was sent carries no options, so it is owed the doing and not an answer — not overdue,
+    // but plainly not read either, which is the group it belongs in.
+    expect(b.overdue).toEqual([]);
+    // backend has spoken (it claimed A) but never pulled: alive, not reading — t-139's middle state
+    expect(b.overdue_by_presence.deaf.roles).toEqual(["backend"]);
+    expect(b.overdue_by_presence.missing.roles).toEqual([]);
     expect(b.seams.filter((x) => x.open).map((x) => x.id)).toEqual(["seam:A+B"]);
   });
 
@@ -1916,19 +1927,25 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     return { b, i: b.instructions.find((x) => x.id === id)! };
   };
+  // t-147: a fail notice carries no options, so it is never in `overdue`; what the board owes for it is that
+  // its owner has not read it. Read that off overdue_by_presence, which is where an unanswered notice lives now.
+  const owed = (b: Board) => Object.values(b.overdue_by_presence).flatMap((g) => g.instructions);
 
-  it("another role claims it: the notice leaves overdue with the reason and who took it; nobody claims: unchanged; the owner redoing it still clears it", async () => {
+  it("another role claims it: the notice stops being owed, with the reason and who took it; nobody claims: unchanged; the owner redoing it still clears it", async () => {
     const { store, c, notice } = await setup();
-    c.tick(min(30)); // past ack_by, unacked
+    c.tick(min(30)); // past ack_by, unread
     let { b, i } = await card(store, c, notice.id);
-    expect(b.overdue.map((o) => o.instruction)).toContain(notice.id); // criterion 3: nobody took over, nothing changed
+    // t-147: a fail notice carries no options, so it is never overdue — what is true is that its owner has not read
+    // it, and the board carries it as owed until somebody deals with it.
+    expect(owed(b)).toContain(notice.id); // criterion 3: nobody took over, nothing changed
+    expect(b.overdue).toEqual([]);
     expect(i.stale).toBeUndefined();
     const claim = await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["x"] });
     ({ b, i } = await card(store, c, notice.id));
-    expect(b.overdue.map((o) => o.instruction)).not.toContain(notice.id);
     expect(b.needs_human.map((x) => x.id)).not.toContain(notice.id);
+    expect(owed(b)).not.toContain(notice.id); // no longer true, so nobody owes it
     expect(i.stale).toEqual({ reason: "taken_over", task: "A", by: "frontend", claim: claim.id });
-    expect(i.status).toBe("overdue"); // the instruction itself is untouched: unacked and past its time, just no longer true
+    expect(i.status).toBe("pending"); // the instruction itself is untouched: unread and past its time, just no longer true
     // history is intact: the notice event and the verify are still there, unedited
     const events = (await store.read()).events;
     expect(events.find((e) => e.id === notice.id)!.body).toContain("验收未过");
@@ -1940,7 +1957,7 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
     await emit(w.store, w.c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "改" });
     await emit(w.store, w.c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678" });
     const after = await card(w.store, w.c, w.notice.id);
-    expect(after.b.overdue.map((o) => o.instruction)).not.toContain(w.notice.id);
+    expect(owed(after.b)).not.toContain(w.notice.id);
     expect(after.i.stale).toEqual({ reason: "redone", task: "A" });
     // the same person reclaiming their own task is not a takeover
     const own = await setup();
@@ -1948,7 +1965,7 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
     await emit(own.store, own.c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x", "y"] });
     const still = await card(own.store, own.c, own.notice.id);
     expect(still.i.stale).toBeUndefined();
-    expect(still.b.overdue.map((o) => o.instruction)).toContain(own.notice.id);
+    expect(owed(still.b)).toContain(own.notice.id);
   });
 });
 

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, missingCard, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -147,7 +147,13 @@ export function createApp(opts: ServerOptions) {
       const b = board(state, human, at);
       for (const role of projectRoles(state)) {
         if (!isMissing(state, role, at)) continue;
-        const overdue = [...state.instructions.values()].filter((st) => st.instruction.to === role && !st.acked_at && st.overdue);
+        // t-147 (pd 05:40): 「到 ack_by 时仍停在①没读到，才升级成『起一个 X』」. Two changes from before: what counts
+        // is owed by the new model (core `owedTo`) rather than `st.overdue`, which after t-147 is only an unanswered
+        // card and would have left a quiet role holding three instructions with no card raised at all; and only what
+        // its own deadline has passed counts, so a role that has been away four minutes is not escalated to a person.
+        const nowIso = at.toISOString();
+        const unread = owedTo(state, role).filter((st) => st.reach === "unread");
+        const overdue = unread.filter((st) => st.instruction.ack_by < nowIso);
         const undelivered = b.undelivered.find((u) => u.to === role);
         if (!overdue.length && !undelivered) continue;
         const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
@@ -161,7 +167,10 @@ export function createApp(opts: ServerOptions) {
         // anything is undelivered — those are different questions, and answering the first with the second is how a
         // node that was plainly still talking got called 缺人. A listening role never reaches here at all.
         const status = b.presence.find((p) => p.actor === role)?.status === "deaf" ? "deaf" : "missing";
-        const body = missingCard(role, status, minutes, undelivered?.count ?? overdue.length);
+        // The deadline decides *whether* to raise the card; the number in it is what the sentence claims — 「N 条没送到」
+        // — so it counts everything unread, not just the part that has expired. They were the same number until the
+        // gate above, and a card that says 1 while two are sitting undelivered is the kind of small lie qa catches.
+        const body = missingCard(role, status, minutes, undelivered?.count ?? unread.length);
         const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
       }
@@ -584,7 +593,11 @@ export function createApp(opts: ServerOptions) {
           });
           result = await pull(store, actor, after, real());
         }
-        return json(res, 200, { shape: BOARD_SHAPE, ...result }); // t-080: sync checks the shape before reading fields
+        // t-147 criterion 6: what this role owes right now, on the way out. It comes off the reduction the server
+        // already keeps moving (t-128), so it costs no full read of the log and no second request; and it is computed
+        // after `pull` recorded the cursor, so everything in this batch already counts as read.
+        const owed = owedNow(await stateFor(projectId, store), actor);
+        return json(res, 200, { shape: BOARD_SHAPE, ...result, owed }); // t-080: sync checks the shape before reading fields
       }
 
       if (req.method === "POST" && path === "/events") {

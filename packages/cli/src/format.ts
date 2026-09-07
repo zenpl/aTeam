@@ -7,7 +7,9 @@ export function event(e: Event, me: string): string {
   const who = e.actor.padEnd(9);
   switch (e.kind) {
     case "instruction": {
-      const mark = e.to === me ? "  ⇐ FOR YOU, ack it: ateam ack " + e.id : "";
+      // t-147: no ack nag. Reading it is already recorded (your cursor moved); what closes it is doing it, or one
+      // line 「不办：<原因>」. Only a card with options still owes an answer.
+      const mark = e.to === me ? (e.options?.length ? "  ⇐ FOR YOU, answer it: ateam decide " + e.id + " <option>" : "  ⇐ FOR YOU") : "";
       const ask = e.options?.length ? `  options: ${e.options.join(" | ")}${e.default ? ` (default ${e.default})` : ""}` : "";
       return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${ask}${mark}`;
     }
@@ -81,9 +83,23 @@ export function board(b: Board, me: string): string {
     for (const u of b.undelivered) out.push(`  ${who(u.to).padEnd(10)} ${u.count} 条没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没在听"}`);
   }
 
+  // t-147: overdue is now one thing only — a card whose options nobody has answered past its time. Not acking is
+  // not a debt any more, so it does not appear here; what is unread or read-and-untouched is the block below.
   if (b.overdue?.length) {
-    out.push("", "OVERDUE");
-    for (const o of b.overdue) out.push(`  ${who(o.to)} has not acked "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+    out.push("", "UNANSWERED (past ack_by, options still open)");
+    for (const o of b.overdue) out.push(`  ${who(o.to)} has not answered "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+  }
+
+  // t-139 + t-147: what nobody has acted on, split by whether the one who owes it is even there. The sentences are
+  // core's (pd's words); printing them is all this does — a second wording here is how the page once promised an
+  // address nobody had delivered to.
+  const owed = b.overdue_by_presence;
+  if (owed && Object.values(owed).some((g) => g.count)) {
+    out.push("", "NOBODY HAS ACTED ON");
+    for (const k of ["missing", "deaf", "listening"] as const) {
+      const g = owed[k];
+      if (g.count) out.push(`  ${g.roles.map(who).join(", ").padEnd(10)} ${g.line}`);
+    }
   }
 
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn");
@@ -93,7 +109,12 @@ export function board(b: Board, me: string): string {
       const you = i.to === me ? "  ⇐ YOU" : "";
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
       const defaulted = i.chosen?.by === "default" ? `  ⇒ ${i.chosen.option} by default at ack_by (human may still decide)` : "";
-      out.push(`  ${i.status.padEnd(9)} ${who(i.from)} → ${who(i.to)}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"})${you}  ${i.id}`);
+      // t-147: the column is how far it got, worked out from the recipient's own pulls and events, not from a
+      // receipt. This board is read by agents, so the state keeps its id (REACH_WORDS holds pd's Chinese for the
+      // page); `acted_by_event` is the event that proves the third, so a reader can go check rather than believe.
+      const proof = i.acted_by_event ? `, acted in ${i.acted_by_event}` : "";
+      // ?? i.status: the CLI talks to whatever server is deployed, and one from before t-147 sends no `reach`.
+      out.push(`  ${(i.reach ?? i.status).padEnd(9)} ${who(i.from)} → ${who(i.to)}: ${i.body}${ask}${defaulted}  (sent ${ago(i.sent)} ago${i.delivered ? `, delivered ${ago(i.delivered)} ago` : ", not yet pulled"}${proof})${you}  ${i.id}`);
     }
   }
 

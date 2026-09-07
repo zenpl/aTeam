@@ -313,6 +313,30 @@ export const STAND_IN_DAY_MS = 24 * 3600_000;
  */
 export const WATCH_INTERVAL = "60s";
 
+/**
+ * t-147 (pd 05:40, superseding its own 05:15): **由行动证明，不由回执证明。** Whether an instruction reached anyone is
+ * something the service can work out — the recipient's cursor says what they have read, and their own events say what
+ * they did with it. An `ack` measured neither: tonight release skipped every one of them while working steadily on
+ * what it was sent, which is what finally showed that `ack` was measuring diligence and not receipt.
+ *
+ * Three states, none of them written as an event:
+ *   未读     their cursor has not passed it yet.
+ *   已读未动  it has, and they have written nothing that refers to it.
+ *   办了     they wrote something that refers to it — its id in `refs` or in the body, or an ack of it.
+ *
+ * What is still owed is only what carries content: a card with options needs an answer, and something you do not
+ * intend to do needs 「不办：<原因>」. Refusing is information; silence is not.
+ *
+ * This constant is the one Chinese statement of it, so the manual quotes rather than paraphrases (t-147 判据 5).
+ */
+export const REACH_STATES = ["unread", "read", "acted"] as const;
+export type Reach = (typeof REACH_STATES)[number];
+export const REACH_WORDS: Record<Reach, string> = { unread: "还没读到", read: "读到了，还没动", acted: "办了" };
+export const REACH_RULE =
+  "发给你的指令，服务从你的拉取和你自己写下的事件里就知道你读没读到、动没动，不必回执。你欠的只有两件：带选项的卡要一个答案；不打算办的写一句「不办：<原因>」。沉默不是答案——发的人会一直以为你还没读到。";
+/** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
+export const DECLINE_PREFIX = "不办：";
+
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
 export interface BatchValue { sha: string; base: string; contains: string[] }

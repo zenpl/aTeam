@@ -27,7 +27,7 @@ describe("t-011 · options on tell human, choice shown in sync and board", () =>
 
     expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 00:00]  options: A | B (default B)");
     let b = board(reduce(await store.read()), HUMAN);
-    expect(fmt.board(b, "pm")).toContain("pending   pm → human: auth: A or B?  [A | B; default B]");
+    expect(fmt.board(b, "pm")).toContain("unread    pm → human: auth: A or B?  [A | B; default B]");
     expect(fmt.board(b, "pm")).not.toContain("DECIDED");
 
     await emit({ kind: "ack", actor: HUMAN, of: ask.id });

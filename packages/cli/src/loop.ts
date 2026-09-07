@@ -1,4 +1,4 @@
-import type { PullResult } from "@ateam/core";
+import { DECLINE_PREFIX, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -58,7 +58,10 @@ export function report(r: PullResult, me: string, after: string | null): string[
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }
-  if (r.for_me.length) lines.push(`\n${r.for_me.length} instruction(s) for you. Ack each with: ateam ack <id>`);
+  // t-147 (pd 05:40): the tail no longer asks for a receipt. Pulling this batch is what records that you read it;
+  // what is still owed is an answer to a card with options, or one line 「不办：<原因>」 for something you will not do.
+  // The 「你欠什么」 summary the server now sends with every pull (`owed`) is t-140's line, not this one.
+  if (r.for_me.length) lines.push(`\n${r.for_me.length} instruction(s) for you. Do them, or say 「${DECLINE_PREFIX}<原因>」 in a note. Cards with options need an answer: ateam decide <id> <option>`);
   return lines;
 }
 

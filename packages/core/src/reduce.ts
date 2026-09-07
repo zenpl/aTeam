@@ -1,6 +1,6 @@
 import {
   type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
-  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm } from "./events.js";
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
@@ -101,7 +101,17 @@ export interface InstructionState {
   acked_by?: string;
   /** Set when the sender took it back (t-064). `seen`: the recipient had already pulled it, so it must be told. */
   withdrawn?: { by: string; at: string; reason: string; seen: boolean };
-  /** now > ack_by and not acked */
+  /**
+   * t-147: how far this instruction got, worked out rather than declared — 未读 / 已读未动 / 办了. `unread` is the
+   * default because a cursor that has not passed it proves nothing was read.
+   */
+  reach: Reach;
+  /** t-147: what the recipient wrote that shows they acted on it — the first such event's id. */
+  acted_by_event?: string;
+  /**
+   * t-147: past ack_by with the answer it is owed still missing. Only a card with options can be overdue now: an
+   * instruction nobody has read is t-139's presence problem, and counting it here as well counted it twice.
+   */
   overdue?: boolean;
   /**
    * For instructions with options: the option picked, by whom, and the decision note that records it.
@@ -171,6 +181,10 @@ export interface State {
   notes: Note[];
   /** actor -> when they last pulled (their cursor moved: they are listening) and when they last spoke (an event). */
   presence: Map<string, Presence>;
+  /** t-147: actor -> the last event id their cursor has passed. What "they have read this" is computed from. */
+  read_upto: Map<string, string>;
+  /** t-147: instruction id -> the first event of its recipient that acted on it. Filled as events arrive. */
+  acted: Map<string, string>;
   focus?: Reading;
 }
 
@@ -268,6 +282,8 @@ export function empty(): State {
     dirTouchers: new Set(),
     pending: new Set(),
     perishable: new Set(),
+    read_upto: new Map(),
+    acted: new Map(),
     notes: [],
     presence: new Map(),
   };
@@ -300,13 +316,14 @@ export function advance(s: State, log: Log): State {
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
     s.presence.set(e.actor, pe);
     if (e.writes?.length) invalidate(s, e);
+    didAct(s, e);   // t-147: acting on an instruction is something its recipient writes down, not a receipt
     switch (e.kind) {
       case "reading":
         applyReading(s, e);
         if (readingKey(e) === `${PROJECT_SURFACE}:${ABSORB_FORM_KEY}`) judgeAll = true;  // it decides how every seam is read
         break;
       case "instruction":
-        s.instructions.set(e.id, { instruction: e });
+        s.instructions.set(e.id, { instruction: e, reach: "unread" });
         s.pending.add(e.id);
         break;
       case "ack": {
@@ -324,6 +341,11 @@ export function advance(s: State, log: Log): State {
       }
       case "note": {
         s.notes.push(e);
+        // t-147: 「不办：<原因>」 is an answer — refusing is information, and it settles the instruction it names.
+        if (e.body.startsWith(DECLINE_PREFIX)) for (const id of e.refs ?? []) {
+          const st = s.instructions.get(id);
+          if (st && st.instruction.to === e.actor && !st.chosen) { st.chosen = { option: DECLINE_PREFIX, by: e.actor, at: e.at, note: e.id }; s.pending.delete(id); st.overdue = false; }
+        }
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
         if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) {
           st.chosen = { option: e.decides!.option, by: e.actor, at: e.at, note: e.id };
@@ -352,12 +374,49 @@ export function advance(s: State, log: Log): State {
     const pc = s.presence.get(c.actor) ?? { last_pull: null, last_event: null };
     if (!pc.last_pull || pc.last_pull < c.at) pc.last_pull = c.at;
     s.presence.set(c.actor, pc);
+    // t-147: how far this actor has read. Ids order the log, so "their cursor passed it" is a comparison.
+    const seen = s.read_upto.get(c.actor);
+    if (c.last_event_id && (!seen || c.last_event_id > seen)) s.read_upto.set(c.actor, c.last_event_id);
   }
+  reach(s);
 
   // t-067: a seam is judged on the tasks as they stand. Only the seams this batch could have moved are re-judged;
   // detectSeams has already judged the ones it built, and re-judging is idempotent, so a seam in both lists is free.
   for (const seam of judgeAll ? s.seams.values() : dirtySeams(s, dirty)) judgeSeam(s, seam);
   return s;
+}
+
+/**
+ * t-147 (pd 05:40): set each instruction's state from what the log already knows.
+ *
+ * Read is a comparison — ids order the log, so a cursor that has passed the instruction's id has read it. Acted is
+ * evidence the recipient left, gathered as their events arrive (see `didAct`), never by scanning afterwards.
+ */
+function reach(s: State): void {
+  for (const st of s.instructions.values()) {
+    const upto = s.read_upto.get(st.instruction.to);
+    const did = s.acted.get(st.instruction.id);
+    st.acted_by_event = did;
+    st.reach = did ? "acted" : upto && upto >= st.instruction.id ? "read" : "unread";
+  }
+}
+
+/** A ULID as it appears in prose: 26 of Crockford's base32. How an instruction gets named in a body. */
+const ULID_IN_TEXT = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
+
+/**
+ * t-147: did this event show its actor acting on an instruction sent to them? Three ways, all decidable: it names it
+ * in `refs`, it acks or takes it back, or it names its id in its own words.
+ *
+ * What is deliberately not counted: a task event that merely happens to come after one. Guessing that a `done` was
+ * "because of" an instruction would make this a judgement, and the point of it is that it is a fact.
+ */
+function didAct(s: State, e: Event): void {
+  const mine = (id: string) => s.instructions.get(id)?.instruction.to === e.actor && !s.acted.has(id);
+  for (const id of e.refs ?? []) if (mine(id)) s.acted.set(id, e.id);
+  if ((e.kind === "ack" || e.kind === "untell") && mine(e.of)) s.acted.set(e.of, e.id);
+  const body = e.kind === "note" || e.kind === "instruction" ? e.body : undefined;
+  if (body) for (const m of body.matchAll(ULID_IN_TEXT)) if (mine(m[0])) s.acted.set(m[0], e.id);
 }
 
 function* dirtySeams(s: State, ids: Set<string>): Generator<SeamState> {
@@ -384,7 +443,10 @@ export function settle(s: State, now: Date): State {
     if (!st.chosen && i.default !== undefined && i.options?.length && i.ack_by < nowIso) {
       st.chosen = { option: i.default, by: DEFAULT_DECIDER, at: i.ack_by };
     }
-    st.overdue = i.ack_by < nowIso && !st.chosen;
+    // t-147 判据 3: overdue is now one thing only — a card that was read, carries options, and still has no answer at
+    // its deadline. An instruction nobody read is t-139's presence problem and was being counted in both places; one
+    // without options is owed nothing but the doing, and chasing a receipt for it is what this retired.
+    st.overdue = i.ack_by < nowIso && !!i.options?.length && !st.chosen && st.reach !== "unread";
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   s.focus = focusId ? s.readings.get(focusId)!.reading : undefined;

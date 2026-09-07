@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -215,6 +215,12 @@ export interface Board {
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
     id: string; from: string; to: string; body: string; status: "pending" | "delivered" | "acked" | "overdue" | "withdrawn";
+    /**
+     * t-147: how far it actually got — `unread` / `read` / `acted`, worked out from the recipient's own pulls and
+     * events, not from a receipt. This is what a renderer shows; `status` is the older delivery bookkeeping.
+     * `acted_by_event` is the event that proves it, so a reader can go look instead of taking the word for it.
+     */
+    reach: Reach; acted_by_event?: string;
     /** t-087: set when a service notice stopped being true, with why and who took over. */
     stale?: NoticeStaleness;
     /** t-064: the sender took it back; `seen` when the recipient had already pulled it. */
@@ -646,6 +652,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: i.id, from: i.actor, to: i.to, body: i.body, status, sent: i.at, delivered: st.delivered_at, acked: st.acked_at,
       kind: toHuman ? instructionKind(i) : undefined, ...(toHuman ? splitTitle(i.body) : {}),
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
+      reach: st.reach, acted_by_event: st.acted_by_event,
       options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
     });
@@ -662,7 +669,13 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }
-    else if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
+    // t-147: overdue is now「读到了、带选项、到期仍没答案」, and options may only be addressed to the human
+    // (rules.ts), so every overdue thing is a card the human is sitting on. It used to be pushed here only for
+    // *non*-human recipients, which after the redefinition would have left this list permanently empty — and the
+    // team would have had nowhere to see that a decision it is waiting on has gone past its time. It is not a second
+    // count of NEEDS HUMAN: that list says 「你要做的」, this one says 「这件晚了」, and t-139's three states never
+    // hold the human, so nothing is counted twice.
+    if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
   }
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
@@ -810,8 +823,62 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));
   }
-  b.overdue_by_presence = overdueByPresence(b);   // t-139: needs the presence rows, so it goes last
+  // The human is not grouped by presence: NEEDS HUMAN is its own list, and 「起一个 human」 is not a thing to say.
+  b.overdue_by_presence = overdueByPresence(b, owedTo(s).filter((st) => st.instruction.to !== human).map((st) => ({ instruction: st.instruction.id, to: st.instruction.to })));
   return b;
+}
+
+/**
+ * t-147: what an agent still owes — everything addressed to it that nobody has acted on. Read off `reach`, not off
+ * `overdue`: since t-147 only a card with options can be overdue, so counting the unanswered pile from `overdue`
+ * would have lost every plain instruction and double-counted the cards. A notice whose reason stopped being true
+ * (t-087: the owner redid it, another role took the task over) is owed by nobody — it is still unread, and chasing
+ * somebody for work already done is worse than silence. The human is not in here: NEEDS HUMAN is its own list.
+ *
+ * One definition, two readers: the board's `overdue_by_presence` and the service's 「起一个」 card. When they were
+ * two filters they drifted, and a role could be quiet with three unread instructions and no card raised for it.
+ */
+export function owedTo(s: State, to?: string): InstructionState[] {
+  return [...s.instructions.values()].filter(
+    (st) =>
+      !st.withdrawn && !st.chosen && st.reach !== "acted" &&
+      (to === undefined || st.instruction.to === to) &&
+      (st.instruction.actor !== SERVICE_ACTOR || !noticeStaleness(s, st.instruction)),
+  );
+}
+
+/**
+ * t-147 criterion 6 (pm 06:37): what one role owes at this instant, in the new model's two kinds.
+ *
+ * `unanswered` — a card with options that has reached them and still has no answer. That is an answer, not a
+ * receipt, and it is the only thing anybody is still required to send back.
+ * `untouched` — read, and no event of theirs has touched it yet. Not a debt the way a card is: the way to close one
+ * is to do it, or to say 「不办：<原因>」 (DECLINE_PREFIX), which is an answer too.
+ *
+ * Nothing here is unread: a pull records its cursor before this is computed, so by the time it is answered, the
+ * puller has read everything the log holds. What is unread belongs to whoever has *not* pulled, and that is the
+ * board's `overdue_by_presence`, not this.
+ *
+ * For a role `unanswered` is empty and will stay empty while options may only be addressed to the human
+ * (rules.ts: 「options are for the human」). It is here because the human is a puller too, and because a role that
+ * one day may be asked to choose should not need a second field invented for it.
+ *
+ * Deliberately data only. The sentence a person reads at `sync` is t-140's, and one wording in two places is how the
+ * page once promised an address nobody had ever delivered to (t-126).
+ */
+export interface OwedNow {
+  unanswered: { instruction: string; from: string; body: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
+  untouched: { instruction: string; from: string; body: string; sent: string }[];
+}
+
+export function owedNow(s: State, to: string): OwedNow {
+  const out: OwedNow = { unanswered: [], untouched: [] };
+  for (const st of owedTo(s, to)) {
+    const i = st.instruction;
+    if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
+  }
+  return out;
 }
 
 /**
@@ -822,11 +889,11 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
  * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
  * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
  */
-export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
+export function overdueByPresence(b: Board, owed: { instruction: string; to: string }[]): Board["overdue_by_presence"] {
   const state = new Map(b.presence.map((p) => [p.actor, p]));
   const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });
   const out = { missing: empty(), deaf: empty(), listening: empty() };
-  for (const o of b.overdue) {
+  for (const o of owed) {
     const p = state.get(o.to);
     const g = out[p?.status ?? "missing"];   // a recipient with no presence row at all has never been here
     g.count++;
@@ -846,7 +913,9 @@ export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
     out.deaf.line = out.deaf.away_s === null
       ? `从没读过日志，${out.deaf.count} 条没送到`
       : `有 ${mins(out.deaf.away_s)} 分钟没读日志了，${out.deaf.count} 条没送到`;
-  if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条没确认`;
+  // pd 05:40 retired 「确认」 with the receipt it named: what is true of a node that is here is that it read them and
+  // has not moved yet, and that is what the line says now.
+  if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条读到了还没动`;
   return out;
 }
 

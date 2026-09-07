@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -486,11 +486,17 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(nameRoles(c.line.replace(/（能力事实[^）]*）/g, "").trim(), who, b.roles ?? []))}</li>`).join("")}</ul></section>`);
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
-  d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(who(i.to), i.body, who(i.from)))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.overdue}</span> ${esc(UI.overdueLine(who(i.to), i.body, who(i.from)))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  // t-139 + t-147: 没人办的那一堆，按欠着的人在不在分三行。句子是 core 算的（pd 的措辞），这里只印。
+  const owed = b.overdue_by_presence;
+  const owedGroups = owed ? (["missing", "deaf", "listening"] as const).filter((k) => owed[k].count) : [];
+  if (owedGroups.length)
+    d.push(`<h4>${UI.owed} <span class="meta">${owedGroups.reduce((n, k) => n + owed![k].count, 0)}</span></h4><ul class="plain">${owedGroups.map((k) => `<li><b>${esc(owed![k].roles.map(who).join("、"))}</b>：${esc(owed![k].line)}</li>`).join("")}</ul>`);
   d.push(`</section>`);
 
   d.push(`<section id="instructions"><h3>${UI.agentInstructions} <span class="meta">${open.length}</span></h3>`);
-  d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(UI.instrStatus[i.status] ?? i.status)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  // t-147: 标签是「到哪一步了」，从收件人自己的拉取和事件算出来，不是回执。REACH_WORDS 是 pd 的措辞。
+  d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
   if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
   d.push(`</section>`);

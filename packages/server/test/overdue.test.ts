@@ -41,7 +41,7 @@ describe("t-139 · 三态到得了读的人手里", () => {
     const g = b.overdue_by_presence;
     expect(g.listening.roles).toEqual(["release"]);
     expect(g.listening.count).toBe(2);
-    expect(g.listening.line).toBe("在听，2 条没确认");
+    expect(g.listening.line).toBe("在听，2 条读到了还没动");   // t-147: it read them; 确认 is not what is missing
     expect(g.missing.roles).toContain("qa");
     expect(g.missing.line).toBe("从没读过日志，1 条没送到");   // qa never pulled: no moment to count from
 
@@ -51,10 +51,12 @@ describe("t-139 · 三态到得了读的人手里", () => {
     expect(JSON.stringify(cards)).not.toContain("起一个 release");
   });
 
-  it("三堆各自可读，且加起来正好是 overdue 全部——但从不作为一个数出现", async () => {
+  it("三堆各自可读，且加起来正好是「还没人办」的全部——但从不作为一个数出现", async () => {
     const b = await board();
     const g = b.overdue_by_presence;
-    expect(g.missing.count + g.deaf.count + g.listening.count).toBe(b.overdue.length);
+    // t-147: 分的是「还没人办」那一堆，不是 overdue。上面发了三条，都没带选项，所以 overdue 是空的，三堆加起来仍是三条。
+    expect(g.missing.count + g.deaf.count + g.listening.count).toBe(3);
+    expect(b.overdue).toEqual([]);
     for (const k of ["missing", "deaf", "listening"] as const) {
       expect(Array.isArray(g[k].instructions)).toBe(true);
       expect(g[k].count).toBe(g[k].instructions.length);
