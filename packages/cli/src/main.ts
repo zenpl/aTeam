@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
@@ -11,6 +11,7 @@ import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, deafNotice } from "./deaf.js";
 import { revise, type Diff } from "./touches.js";
+import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -351,6 +352,46 @@ async function main(argv: string[]) {
  * On stderr so `board --json` stays pipeable while a person still reads it at the end of the output. Best effort:
  * a node with no config, or no readable .ateam/, simply has nothing to say.
  */
+/**
+ * t-116: a refusal is visible for exactly one second — the moment it happens. At 01:11 I read a successful `tell` and
+ * told two people a task was done; its `done` had been refused seconds earlier and I never looked back. So the node
+ * writes down its last refusal and says it again on the next `sync` or `board`, until the same action goes through or
+ * the person crosses it off. Local, like the deaf notice: no event, no log line — a refusal is this node's business.
+ */
+function refusalFile(me: string) { return join(process.cwd(), ".ateam", `refused.${me}`); }
+function meOf(): string | null {
+  try {
+    const file = configFile();
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
+    return process.env.ATEAM_ME || stored.me || null;
+  } catch { return null; }
+}
+/** Called when a write is refused: remember it. Called after any command succeeds: cross off the one it redid. */
+function noteRefusal(argv: string[], refusal: Refusal | null): void {
+  try {
+    const me = meOf();
+    if (!me) return;
+    const path = refusalFile(me);
+    if (refusal) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(path, JSON.stringify(refusal)); return; }
+    // a success crosses off a refusal of the *same* action, and nothing else: redoing `task claim` does not clear a refused `task done`
+    const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
+    if (st.kind === "open" && st.refusal.what !== actionOf(argv)) return;
+    if (existsSync(path)) rmSync(path, { force: true });
+  } catch { /* the record is a convenience; never let it break the command */ }
+}
+/** The reminder itself, on the commands a turn starts with. `--clear-refused` crosses it off by hand. */
+function sayIfRefused(argv: string[]): void {
+  try {
+    if (argv[0] !== "sync" && argv[0] !== "board") return;
+    const me = meOf();
+    if (!me) return;
+    const path = refusalFile(me);
+    if (argv.includes("--clear-refused")) { if (existsSync(path)) rmSync(path, { force: true }); console.error("已划掉上一次被拒的写入。"); return; }
+    const line = refusalNotice(readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null), new Date());
+    if (line) console.error(line);
+  } catch { /* same */ }
+}
+
 function sayIfDeaf(argv: string[]): void {
   try {
     if (argv[0] === "watch") return;
@@ -364,16 +405,24 @@ function sayIfDeaf(argv: string[]): void {
   } catch { /* never let the reminder break the command that carried it */ }
 }
 
-main(process.argv.slice(2)).then(() => sayIfDeaf(process.argv.slice(2))).catch((err) => {
-  // the reminder goes last, after whatever this command had to say — including its failure
-  const bye = (code: number) => { sayIfDeaf(process.argv.slice(2)); process.exit(code); };
+const ARGV = process.argv.slice(2);
+main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
+  // the reminders go last, after whatever this command had to say — including its failure
+  const bye = (code: number, rule?: string) => {
+    // quote what a shell would need quoted, so the line can be pasted back verbatim
+    const shell = (a: string) => (/[\s"'$`\\]/.test(a) ? `"${a.replace(/(["\\$`])/g, "\\$1")}"` : a);
+    if (rule) noteRefusal(ARGV, { at: new Date().toISOString(), rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    sayIfRefused(ARGV);
+    sayIfDeaf(ARGV);
+    process.exit(code);
+  };
   if (err instanceof ClientError) {
     console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
-    return bye(err.status === 409 ? 2 : 1);
+    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
   }
   if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2); }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2, "usage"); }
   console.error(err instanceof Error ? err.message : err);
   return bye(1);
 });
