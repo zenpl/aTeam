@@ -785,6 +785,28 @@ function splitRelease(s: State, b: Board) {
  * t-100 (display only, changes nothing in the log): the ids whose display name a reader could mistake for another row —
  * because it is another row's id, or because two rows carry the same display name. Rows outside this set stay clean.
  */
+/**
+ * A light seam, in one sentence (t-114 · pd 01:01). The page and the CLI say it identically — pm 01:20: a reader
+ * of `ateam board` and a reader of the board should not see two different pictures of the same thing.
+ *
+ * Callers pass whatever their surface makes a name look like (the page passes links, the CLI passes bare ids), so
+ * this holds the words and nothing else.
+ */
+export const SEAM_UNDECIDED = "等人裁决";
+export const SEAM_SAME_FILE = "都动了同一个文件";
+
+export function lightSeamLine(a: string, b: string, files: string): string {
+  return `${a} 与 ${b} 都动了 ${files}，各自的符号不相交，验收不挡。`;
+}
+
+/**
+ * The files a light seam's two sides share. Its overlap is symbol-level (`a.ts#x`, `a.ts#y`) and the two sides
+ * touched *different* symbols, so the sentence names the file — printing the overlap verbatim would say they met.
+ */
+export function seamFiles(overlap: string[] | undefined): string[] {
+  return [...new Set((overlap ?? []).map((o) => o.split("#")[0]))];
+}
+
 export function ambiguousLabels(b: Board): Set<string> {
   const tasks = Object.values(b.tasks).flat();
   const ids = new Set(tasks.map((t) => t.id));

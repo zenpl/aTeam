@@ -1362,6 +1362,16 @@ describe("t-114 · 轻接缝在牌桌上说一句", () => {
       const page3 = await (await fetch(`${v.base}/task/t-3`, { headers: { accept: "text/html" } })).text();
       expect(page3).toContain("接缝 <span class=\"meta\">1</span>");
       expect(page3).not.toContain("都动了同一个文件");
+
+      // pd 01:18: a sentence that tells someone something gets a test that does it literally. This one ends
+      // 「验收不挡」, so verify one side of the light seam and assert it goes through — and that the heavy seam
+      // next to it still blocks, or the sentence would be true of everything and mean nothing.
+      await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "1111111：可用" });
+      const ok = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "跑过了" }) });
+      expect(ok.status).toBe(201);
+      await v.post("dev", { kind: "task", op: "done", task: "t-3", evidence: "3333333：可用" });
+      const blocked = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-3", surface: "repo", pass: true, evidence: "跑过了" }) });
+      expect(blocked.status).toBe(409);
     } finally { await v.stop(); }
   });
 

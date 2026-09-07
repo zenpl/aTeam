@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -546,11 +546,8 @@ type Seam = Board["seams"][number];
 export function lightSeamGroup(seams: Seam[], base: string): string {
   if (!seams.length) return "";
   const link = (id: string) => `<a href="${esc(`${base}/task/${encodeURIComponent(id)}`)}"><code>${esc(id)}</code></a>`;
-  // The overlap of a light seam is symbol-level (`a.ts#x`, `a.ts#y`) — and the two sides touched different symbols.
-  // The sentence names the file they share, which is what is true and what "都动了同一个文件" says.
-  const files = (x: Seam) => [...new Set((x.overlap ?? []).map((o) => o.split("#")[0]))];
   const line = (x: Seam) =>
-    `<li>${UI.seamLight(link(x.tasks[0]), link(x.tasks[1]), files(x).map((f) => `<code>${esc(f)}</code>`).join("、"))}</li>`;
+    `<li>${UI.seamLight(link(x.tasks[0]), link(x.tasks[1]), seamFiles(x.overlap).map((f) => `<code>${esc(f)}</code>`).join("、"))}</li>`;
   return `<h4 class="seam-group">${UI.seamsSameFile}</h4><ul class="plain light-seams">${seams.map(line).join("")}</ul>`;
 }
 
