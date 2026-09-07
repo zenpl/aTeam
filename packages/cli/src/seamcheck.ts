@@ -3,10 +3,30 @@
  * sha really contains the other side's evidence sha. A warning only: the log records what you claim; git knows the truth.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, noRealOverlap, realOverlapIs, type Board, type ClientEvent } from "@ateam/core";
+import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, noRealOverlap, realOverlapIs, noSuchObject, objectNotFound, seamWaived, type Board, type ClientEvent } from "@ateam/core";
 
 /** true/false from git; null when git or either object is unavailable (not a repo, sha not fetched). */
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
+
+/**
+ * t-201：**本地 git 里到底有没有这个对象。**null = 判不了（不是仓库，或没有 git）。
+ *
+ * `gitIsAncestor` 把两件事压成了同一个 `null`：「我看不见那个 sha」与「这儿根本没有 git」。压在一起的后果是
+ * 闸只会说一句「无法验证」，而人只有一条出路——`--no-seam-check`，也就是把**所有**接缝义务一起免掉。
+ * 分开问一次，就能说出是哪一种。
+ */
+export type HasObject = (sha: string) => boolean | null;
+
+export function gitHasObject(cwd = process.cwd()): HasObject {
+  return (sha) => {
+    if (!sha) return null;
+    const probe = spawnSync("git", ["rev-parse", "--git-dir"], { cwd, stdio: "ignore" });
+    if (probe.error || probe.status !== 0) return null;      // 没有 git，或不是仓库：不是「找不到对象」
+    const r = spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd, stdio: "ignore" });
+    if (r.error) return null;
+    return r.status === 0;
+  };
+}
 
 export function gitIsAncestor(cwd = process.cwd()): IsAncestor {
   return (ancestor, descendant) => {
@@ -24,14 +44,14 @@ export function absorbFormOf(b: Board): string | null {
   return typeof v === "string" ? v : null;
 }
 
-export type Absorb = { verdict: "yes" | "no" | "unknown"; basis: string };
+export type Absorb = { verdict: "yes" | "no" | "unknown" | "missing"; basis: string };
 
 /**
  * t-074: the one judgment both checks use. Did `mine` (the later side's evidence) absorb `theirs` (the earlier side's sha)?
  * git-ancestor: git decides; when it cannot (object missing, no git), unknown. named-sha: the evidence names the sha.
  * No form declared: unknown. A verdict of unknown never passes silently — the caller says why it fell back.
  */
-export function judgeAbsorb(b: Board, evidence: string | undefined, theirs: string, isAncestor: IsAncestor): Absorb {
+export function judgeAbsorb(b: Board, evidence: string | undefined, theirs: string, isAncestor: IsAncestor, hasObject: HasObject = () => null): Absorb {
   const form = absorbFormOf(b);
   const mine = evidenceSha(evidence);
   const named = namesSha(evidence ?? "", theirs);
@@ -40,6 +60,10 @@ export function judgeAbsorb(b: Board, evidence: string | undefined, theirs: stri
     const r = isAncestor(theirs, mine);
     if (r === true) return { verdict: "yes", basis: `后者 ${mine.slice(0, 7)} 含前者 ${theirs.slice(0, 7)}（git-ancestor）` };
     if (r === false) return { verdict: "no", basis: `git 说 ${mine.slice(0, 7)} 不含 ${theirs.slice(0, 7)}（merge-base --is-ancestor 为否）` };
+    // t-201 判据 2：**「我找不到那个对象」与「你没合上」不是同一句话。**问一次 git 就分得开，分开之后
+    // 前者才配得上一条窄出路——它说的是我们看不见，不是义务没履行。
+    const missing = [theirs, mine].filter((x) => hasObject(x) === false);
+    if (missing.length) return { verdict: "missing", basis: noSuchObject(missing) };
     return { verdict: "unknown", basis: `本地 git 没有 ${theirs.slice(0, 7)} 或 ${mine.slice(0, 7)}（先 git fetch 对方分支）` };
   }
   if (form === "named-sha") return named ? { verdict: "yes", basis: `后者证据写明含前者 ${theirs.slice(0, 7)}（named-sha）` } : { verdict: "no", basis: `证据没有写明含 ${theirs.slice(0, 7)}（named-sha）` };
@@ -55,8 +79,9 @@ export interface SeamCheck { errors: string[]; unverified: string[]; absorbs: Cl
  *   (the evidence must name the sha) and the fallback is recorded, never silent.
  * - both sides done and the seam still open (t-073): a yes writes the resolution the rule wrote; no or unknown leaves it to a person.
  */
-export function seamCheck(b: Board, id: string, evidence: string | undefined, isAncestor: IsAncestor): SeamCheck {
+export function seamCheck(b: Board, id: string, evidence: string | undefined, isAncestor: IsAncestor, hasObject: HasObject = () => null, waived: string[] = []): SeamCheck {
   const out: SeamCheck = { errors: [], unverified: [], absorbs: [] };
+  const waiveSet = new Set(waived.map((x) => x.trim()).filter(Boolean));
   for (const seam of b.seams) {
     if (seam.resolved || seam.absorbed || !seam.tasks.includes(id)) continue;
     const otherId = seam.tasks.find((t) => t !== id)!;
@@ -64,7 +89,12 @@ export function seamCheck(b: Board, id: string, evidence: string | undefined, is
     if (!other || !["done", "failed", "verified"].includes(other.status)) continue;
     const theirs = other.evidence_sha ?? evidenceSha(other.evidence);
     if (!theirs) continue;
-    const a = judgeAbsorb(b, evidence, theirs, isAncestor);
+    // t-201 判据 1：**这一条被单独免掉，别的照判。**免掉不等于没发生——它进 unverified，与 done 一起落在日志上。
+    if (waiveSet.has(seam.id) || waiveSet.has(otherId)) {
+      out.unverified.push(seamWaived(seam.id, waiveSet.has(seam.id) ? seam.id : otherId, id));
+      continue;
+    }
+    const a = judgeAbsorb(b, evidence, theirs, isAncestor, hasObject);
     if (seam.stacked?.on === id) {
       // t-160 判据 5、7：**git 说「真的含」的时候，把结论落回日志。**
       //
@@ -76,8 +106,13 @@ export function seamCheck(b: Board, id: string, evidence: string | undefined, is
       // 这里落下的是**结论**，不是证据——resolution 里写明依据是 git-ancestor 以及两个 sha。
       if (a.verdict === "yes") out.absorbs.push({ kind: "task", op: "seam", tasks: [seam.tasks[0], seam.tasks[1]], resolution: `${ABSORB_PREFIX}${a.basis}` });
       else if (a.verdict === "no") out.errors.push(`${seam.id}：证据声称含 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），但 ${evidenceSha(evidence)?.slice(0, 7) ?? "你的证据"} 并不包含它：${a.basis}。先真的合并，或 --no-seam-check 并在证据里说明为什么`);
+      // t-201 判据 2：**找不到对象，与「合了但没合上」，是两句不同的话。**
+      // 前者说的是我看不见（占位、写错、还没 fetch），义务成没成立都还没谈到；后者说的是 git 看得清清楚楚、
+      // 就是没合上。上一版把前者混在「无法验证」里，而那条的出路是 --no-seam-check——一把关掉全部接缝义务
+      // 的钥匙。判据 4：今晚第三次「唯一的出路是全关」，所以这次给的是一条窄的：只免掉这一条。
+      else if (a.verdict === "missing") out.errors.push(objectNotFound(seam.id, theirs, otherId));
       else if (a.verdict === "unknown") {
-        if (!namesSha(evidence ?? "", theirs)) out.errors.push(`${seam.id}：${id} 是在 ${otherId} done 之后 claim 的，接缝按规则自动放行，但你要合并它。请在 --evidence 里写明合并了 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），或 --no-seam-check`);
+        if (!namesSha(evidence ?? "", theirs)) out.errors.push(`${seam.id}：${id} 是在 ${otherId} done 之后 claim 的，接缝按规则自动放行，但你要合并它。请在 --evidence 里写明合并了 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），或 --no-seam-check-for ${seam.id}`);
         else out.unverified.push(`${seam.id}：无法验证 ${id} 是否真的含 ${theirs.slice(0, 7)}（${a.basis}），按证据所写放行，由 ${id} 的 owner 保证属实`);
       }
     } else if (seam.open && a.verdict === "yes") {

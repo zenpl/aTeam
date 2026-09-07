@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
@@ -49,7 +49,7 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check] [--no-seam-check-for <接缝 id>]
                                              --internal-only "文件#符号,…" 碰了人可见的文件、但只动了里面的内部符号时，具体说出是哪几个
                                              claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
                                              --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份；
@@ -351,10 +351,13 @@ async function main(argv: string[]) {
           // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
           const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
           for (const line of rev.lines) console.error(line);
-          if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
+          // t-201：--no-seam-check 是把所有接缝义务一起免掉的那把钥匙，留着但不再是唯一的出路；
+          // --no-seam-check-for <接缝 id | 对方任务 id> 只免一条，其余照判，且被免的那条会随 done 落在日志上。
+          const waived = list(a, "no-seam-check-for") ?? [];
+          if (bool(a, "no-seam-check")) console.error(WHOLE_GATE_OFF);
           else {
             const b = await client.board();
-            const check = seamCheck(b, task, evidence, gitIsAncestor());
+            const check = seamCheck(b, task, evidence, gitIsAncestor(), gitHasObject(), waived);
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);

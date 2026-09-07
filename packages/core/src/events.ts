@@ -357,6 +357,7 @@ export const KEY_SYMBOLS = [
   "UNTIL_UNDER_A_MINUTE",
   "VERIFY_ASK",
   "WATCH_LINES",
+  "WHOLE_GATE_OFF",
   "ago",
   "alertContact",
   "allocationSummary",
@@ -392,7 +393,9 @@ export const KEY_SYMBOLS = [
   "missingCard",
   "noOutputSeam",
   "noRealOverlap",
+  "noSuchObject",
   "nobodyElse",
+  "objectNotFound",
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
@@ -402,6 +405,7 @@ export const KEY_SYMBOLS = [
   "runtimeAllocation",
   "saidHops",
   "sayReading",
+  "seamWaived",
   "shapeFor",
   "slimBoard",
   "span",
@@ -735,6 +739,25 @@ export const noRealOverlap = (other: string, reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
 export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-201：接缝闸拿到一个 **git 里不存在的证据 sha** 时说的那几句。
+ *
+ * 住在 core，同 t-191 的两句：新的人可见的话一律进这里（t-143 只减不增那条规矩；我第一版写在 cli 里，
+ * 四条闸当场红，它们是对的）。**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）——判断本身不必等谁，
+ * 但说法要 pd 定，我另发了 note。
+ *
+ * 两句话故意长得不一样，那正是这件事的判据 2：**「我找不到那个对象」谈的是视线，「你没合上」谈的是义务。**
+ * 上一版把前者混进「无法验证」，而那条给的唯一出路是 `--no-seam-check`——一把关掉全部接缝义务的钥匙。
+ */
+export const noSuchObject = (shas: string[]) => `本地 git 里没有 ${shas.map((x) => x.slice(0, 7)).join(" 和 ")} 这个对象`;
+export const objectNotFound = (seamId: string, sha: string, other: string) =>
+  `${seamId}：${sha.slice(0, 7)}（${other} 的证据 sha）这个对象我在本地 git 里找不到——占位、写错、或还没 fetch。这不是说你没合并，是说我看不见，所以判不了。三条出路，从窄到宽：先 git fetch 把它取回来；若那个 sha 本身是错的，请 ${other} 的 owner 用一条更正把它改对；确实取不回来就 --no-seam-check-for ${seamId} 单独免掉这一条（其余接缝照判），并在证据里说明为什么`;
+/** t-201：这一条被单独免掉时落在日志上的那句——免掉不等于没发生。 */
+export const seamWaived = (seamId: string, key: string, owner: string) =>
+  `${seamId}：这一条被 --no-seam-check-for ${key} 单独免掉了，其余接缝照判；免的理由由 ${owner} 的 owner 写在证据里`;
+/** t-201：`--no-seam-check` 仍在，但它现在会说清自己关掉的是什么，以及那条窄的出路。 */
+export const WHOLE_GATE_OFF = "跳过 seam 合并检查（--no-seam-check）：这把钥匙关掉的是全部接缝义务；只想免掉一条时用 --no-seam-check-for <接缝 id>";
 
 /**
  * t-183：`done` 量触点时，符号那一层的两句话。住在 core（新的人可见的话一律进这里）；**措辞是我写的、

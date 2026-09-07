@@ -16,7 +16,7 @@ const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "n
 //   · touches 少一个 = 一次不会被发现的接缝；
 //   · refs 少一个 = 一次「我动过」被算成没动——t-193 之后 refs 正是「办了」的唯一凭据。
 // build.test.ts 里现在有一条与 t-173 同形的闸守着这份名单与 main.ts 里 list() 的用法一致，别手工对。
-const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "refs", "touches", "writes", "depends-on", "enum"]);
+const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "refs", "touches", "writes", "depends-on", "enum", "no-seam-check-for"]);
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };
