@@ -1148,6 +1148,9 @@ export function slimBoard(b: Board): Board {
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
+      // t-164: 在途那几件的触点留在瘦身板里——「这块地上还有谁」只需要它们，而在途的从来只有几件。
+      // 已经 done 的不留：那是接缝在 done 时判的事，不是「还有谁在」。
+      touches: t.status === "working" ? t.touches : undefined,
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));

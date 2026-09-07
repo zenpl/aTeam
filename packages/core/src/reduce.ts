@@ -728,6 +728,32 @@ export function blockingSeamsIfTouches(s: State, t: TaskState, touches: string[]
   return openSeamsFor(shadow, t.id).map((x) => ({ with: x.tasks.find((id) => id !== t.id) ?? "", overlap: x.overlap }));
 }
 
+/**
+ * t-164 (human 点名，pd 07:57)：这块地上还有谁。
+ *
+ * 一进门就看见屋里有人——**不是把门锁上**。空闲的角色去别人的地盘不是错，错的是它到 done 的时候才发现屋里
+ * 一直有人。所以这里只回答一个问题：我要动的这些东西，此刻还有谁正在动。
+ *
+ * 三条边界都在这一个函数里，不在调用方：
+ * ① **只看在途**（`working`）——已经 done 的不是「还有谁在」，那是接缝要判的事，不是这里。
+ * ② **排除自己**：同一个角色手上的别的活不算撞车，它自己排得开。
+ * ③ **不阻塞**：返回一个列表，没有任何判定。要不要因此改主意，是看见的人自己决定。
+ *
+ * `exclude` 是提问者自己那件（claim 之后问，就是刚 claim 的那件）；不传就是还没有那件——`ateam touches` 的用法，
+ * 在决定做不做之前就能问。
+ */
+export function whoElseTouches(s: State, touches: string[], me: string, exclude?: string): { actor: string; task: string; title: string; overlap: string[] }[] {
+  const mine = [...new Set(touches.map((x) => x.trim()).filter(Boolean))];
+  if (!mine.length) return [];
+  const out: { actor: string; task: string; title: string; overlap: string[] }[] = [];
+  for (const t of [...s.tasks.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    if (t.id === exclude || t.status !== "working" || !t.owner || t.owner === me || !t.touches.length) continue;
+    const overlap = overlapOf(mine, t.touches);
+    if (overlap.length) out.push({ actor: t.owner, task: t.id, title: t.title, overlap: overlap.sort() });
+  }
+  return out;
+}
+
 /** Seams that block verifying `task`: unresolved, not stacked (t-067: done before the other side claimed), and not one owner's own sequence (t-045). */
 export function openSeamsFor(s: State, task: string): SeamState[] {
   return [...s.seams.values()].filter((x) => !x.resolution && !x.stacked && !x.same_owner && !x.absorbed && !x.light && x.tasks.includes(task));

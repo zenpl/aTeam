@@ -301,3 +301,18 @@ export function release(b: Board): string {
   out.push("", `  共 ${r.candidates.length} 项，各组内按 done 先后排序。`);
   return out.join("\n");
 }
+
+/**
+ * t-164 (pd 07:57)：一进门就看见屋里有人。
+ *
+ * 一行一个人，说全三件事——谁、哪件、碰在哪——因为下一步是去找那个人谈，而不是去查这一行是什么意思。
+ * 它不是警告：空闲的角色去别人的地盘不是错，所以这里既不叫「警告」也不叫「冲突」。
+ */
+export function alsoHere(who: string, task: string, title: string, overlap: string[]): string {
+  return `这块地上还有人：${who} 正在做 ${task}（${title}），碰在 ${overlap.join("、")}`;
+}
+
+/** t-164：问了但没人在。说出来，因为「没输出」和「没查」在终端上长得一样。 */
+export function nobodyElse(touches: string[]): string {
+  return `没有别人在动 ${touches.join("、")}`;
+}

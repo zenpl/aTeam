@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -62,6 +62,7 @@ tasks
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
   ateam task seam <a> <b> --resolution "..." [--verdict real|false] [--missed]
+  ateam touches <路径…>                       此刻还有谁在动这些东西（不必先 claim；只看在途，不算你自己）
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
 
@@ -275,6 +276,14 @@ async function main(argv: string[]) {
       return emit({ kind: "note", body: `${SAID_PREFIX}${text.trim()}` });
     }
     case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
+    // t-164 判据 4：不必先 claim 就能问「这块地上还有谁」——在决定做不做之前问，正是该问的时候。
+    case "touches": {
+      if (!rest.length) throw new UsageError("ateam touches <路径…>：说出你打算动的东西，我告诉你此刻还有谁在动它");
+      const lines = await whoElse(client, rest, cfg.me);
+      if (lines.length) for (const line of lines) console.log(line);
+      else console.log(fmt.nobodyElse(rest));
+      return;
+    }
     case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
@@ -297,8 +306,12 @@ async function main(argv: string[]) {
         }
         case "claim": {
           const t = need(id, "<id>");
-          await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
+          const declared = list(a, "touches") ?? [];
+          await emit({ kind: "task", op, task: t, touches: declared });
           stampBase(t, "claim");   // t-105: remember where this branch stood, so done can measure what it touched
+          // t-164: 认领成功之后说一句这块地上还有谁。不阻塞——claim 已经写进去了，这只是让你一进门就看见屋里有人。
+          // 查不到（服务端不可达、板子读不到）就什么都不说：这是一句提示，不该因为它自己出问题而挡住任何人。
+          for (const line of await whoElse(client, declared, cfg.me, t).catch(() => [] as string[])) console.error(line);
           return;
         }
         case "done": {
@@ -358,6 +371,29 @@ async function main(argv: string[]) {
     default:
       throw new Error(`unknown command "${cmd}". Try: ateam help`);
   }
+}
+
+/**
+ * t-164: 这块地上还有谁。一句话都不说，是「没有别人」，不是「没查」——查不动时调用方吞掉异常，所以这里
+ * 只管算，不管兜底。板子取的是瘦身板：在途那几件的触点就在里面（t-164 一并留下的），不必拉完整板。
+ */
+async function whoElse(client: { board: (full?: boolean) => Promise<Board> }, touches: string[], me: string, exclude?: string): Promise<string[]> {
+  if (!touches.length) return [];
+  const others = (b: Board) => Object.values(b.tasks ?? {}).flat().filter((t) => t.status === "working" && t.owner && t.owner !== me && t.id !== exclude);
+  let b = await client.board();
+  // A server from before t-164 leaves working tasks' touches out of the slim board, and then every answer here is
+  // 「没有别人」 — the wrong answer, given silently, which is the failure this whole command exists to prevent.
+  // So: if somebody is working and nobody has touches, that is the old shape, not an empty field. Ask for the full one.
+  const some = others(b);
+  if (some.length && !some.some((t) => t.touches)) b = await client.board(true);
+  const working = others(b).filter((t) => t.touches?.length);
+  const who = roleNamer(b);
+  const out: string[] = [];
+  for (const t of working.sort((x, y) => (x.id < y.id ? -1 : 1))) {
+    const overlap = overlapOf(touches, t.touches!);
+    if (overlap.length) out.push(fmt.alsoHere(who(t.owner!), t.id, t.title, overlap));
+  }
+  return out;
 }
 
 /**
