@@ -124,6 +124,11 @@ function unread(b: Board, sources: string[]): Unread[] {
   };
   const all: { path: string; text: string; read: boolean }[] = [];
   const walk = (v: unknown, path: string) => {
+    // t-154 (pd 07:14): 一条事实的 value 不是 core 给人算的话，是某个节点量下来的数据；而且按 t-154，它**本来
+    // 就不该**出现在人可见的那一行——牌桌只说那条事实的一句话（`readings[].said.line`，这道闸照常查它）。所以
+    // value 里出现中文（`method: "git-ancestor（…逐件测）"` 这种）不是「算好了没人印」，把它算进来会让这道闸
+    // 反过来逼人去印值。
+    if (/^readings\[\d+\]\.value(\.|\[|$)/.test(path)) return;
     if (typeof v === "string") {
       if (!CJK.test(v) || [...v].length < SENTENCE_CHARS) return;
       const field = path.split(/[.[]/)[0];

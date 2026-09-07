@@ -166,6 +166,8 @@ export function board(b: Board, me: string): string {
   out.push("", `READINGS (${valid.length} valid, ${stale.length} stale)`);
   for (const r of valid) {
     const when = r.recorded_after_s ? `测于 ${ago(r.measured_at)} 前，记于 ${ago(r.at)} 前${r.late ? "，记录晚了 ⚠" : ""}` : `${ago(r.at)} ago`;
+    // t-154: 结构化的事实先说那一句话（core 声明的，或退化来的），值仍然印给 agent 看——人那一侧只有这一句。
+    if (r.said) out.push(`  ${r.said.line}${r.said.said_elsewhere ? "（牌桌别处已说过）" : ""}`);
     out.push(`  ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  (${who(r.by)}, ${when})${r.assumptions?.length ? `  assumes: ${r.assumptions.join("; ")}` : ""}`);
   }
   for (const r of stale.slice(-5)) out.push(`  ✗ ${r.surface}:${r.key} = ${JSON.stringify(r.value)}  ${r.why}`);
