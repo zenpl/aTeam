@@ -164,3 +164,37 @@ describe("t-141 · 说明书里「你欠什么」那一段只有一处出处", (
     expect(manual("dev")!).toContain("发的人会一直以为你还没读到");
   });
 });
+
+/**
+ * t-173：**每一个 CLI 用 bool() 读的开关，都必须在 args.ts 的 BOOLEAN 名单里。**
+ *
+ * 漏一个，那个开关就是死的，而且是**静默地**死：`--x` 报「needs a value」，`--x true` 存成字符串而 bool() 仍然
+ * 返回 false。今天同时漏了两个，都是我当天加的——`--no-human-impact`（t-151 那道闸唯一的出路）与 `--missed`
+ * （t-149 的补记）。前一个尤其糟：**出路死了，那道闸就从「要求人说真话」变成「逼人说假话」**，因为一件真的不
+ * 改变人看到的东西的活，除了编一句 shows 之外无路可走。frontend 在它上线之前实测发现，不是我。
+ *
+ * 同 t-108 / t-148 的做法：一份名单与它描述的东西分开手工维护，必然漂移，所以让构建去对。
+ */
+describe("t-173 · CLI 的开关名单与它的用法对得上", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+
+  it("bool() 读到的每一个开关都在 BOOLEAN 里", () => {
+    const main = read("../../cli/src/main.ts");
+    const args = read("../../cli/src/args.ts");
+    const declared = new Set([...(args.match(/const BOOLEAN = new Set\(\[([^\]]*)\]\)/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+    // 两种读法都要查：bool(a, "x")，以及绕过解析器直接查 argv 的 argv.includes("--x")——后者是 --clear-refused
+    // 那一种，症状不同（先打一行 needs a value 再照常工作）但根因同一个。
+    const used = [...new Set([
+      ...[...main.matchAll(/bool\(\s*a\s*,\s*"([^"]+)"\s*\)/g)].map((m) => m[1]),
+      ...[...main.matchAll(/argv\.includes\(\s*"--([^"]+)"\s*\)/g)].map((m) => m[1]),
+    ])].sort();
+    expect(used.length).toBeGreaterThan(5);   // 名单本身没被读空
+    const missing = used.filter((x) => !declared.has(x));
+    expect(missing, `这些开关是死的（--x 报 needs a value，--x true 也设不上）：${missing.join("、")}`).toEqual([]);
+  });
+
+  it("今天漏掉的那三个现在真的在里面", () => {
+    const args = read("../../cli/src/args.ts");
+    for (const flag of ["no-human-impact", "missed", "clear-refused"]) expect(args).toContain(`"${flag}"`);
+  });
+});
