@@ -49,9 +49,9 @@ tasks
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
   ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
-                                             claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 算出实际改动的文件，
-                                             --touches 补 diff 看不见的（符号、字段、接口名），--no-touches 沿用声明的值（没有 diff 的介质用这个再手工 --touches）；
-                                             重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
+                                             claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
+                                             --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份，
+                                             --no-touches 原样沿用声明。重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human

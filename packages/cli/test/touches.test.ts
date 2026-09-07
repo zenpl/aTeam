@@ -37,13 +37,18 @@ describe("t-105 · what a task actually touched, measured", () => {
     expect(r.lines.join("\n")).toContain("与 claim 时声明的一致");
   });
 
-  it("没有 diff 的介质退回手工修订：声明的留着，人补的加进去，并说清为什么没算", () => {
-    const r = revise(["docs/第三章.md"], null, ["docs/第四章.md"], "这个项目没有 git");
+  it("量不出来的介质：人写的就是事实，覆盖 claim 时那份（pd 00:23 定的说法）", () => {
+    const r = revise(["docs/第三章.md", "docs/第五章.md"], null, ["docs/第三章.md", "docs/第四章.md"], "这个项目没有 git");
     expect(r.measured).toBe(false);
-    expect(r.touches).toEqual(["docs/第三章.md", "docs/第四章.md"]);
-    expect(r.lines.join("\n")).toContain("触点没法从 diff 算（这个项目没有 git）。按手工修订：补了 docs/第四章.md");
-    // 什么都不补时，沿用声明的，而且说出来
-    expect(revise(["docs/第三章.md"], null, [], "没有 claim 起点").lines.join("\n")).toContain("沿用 claim 时声明的");
+    expect(r.touches).toEqual(["docs/第三章.md", "docs/第四章.md"]);      // 覆盖，不是并集
+    const text = r.lines.join("\n");
+    expect(text).toContain("触点没法量（这个项目没有 git）");
+    expect(text).toContain("按你写的实际碰到的算，覆盖 claim 时那份：docs/第三章.md、docs/第四章.md");
+    expect(text).toContain("claim 时声明了、这次没写：docs/第五章.md");
+    // 什么都不写时，沿用声明的那份，而且说出来——那是一个选择，不是遗漏
+    const kept = revise(["docs/第三章.md"], null, [], "没记下 claim 起点");
+    expect(kept.touches).toEqual(["docs/第三章.md"]);
+    expect(kept.lines.join("\n")).toContain("你没写 --touches，沿用 claim 时声明的那份");
   });
 
   it("空白与重复不进最终值", () => {

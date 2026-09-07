@@ -38,8 +38,14 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
   const clean = (xs: string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))];
   const dec = clean(declared), ext = clean(extra);
   if (changed === null) {
-    const touches = clean([...dec, ...ext]);
-    const lines = [`触点没法从 diff 算（${why}）。按手工修订：${ext.length ? `补了 ${ext.join("、")}` : "沿用 claim 时声明的"}`];
+    // Nothing measured: what the person wrote *is* the fact, and it replaces the declaration (说明书第 7 步：覆盖
+    // claim 时那份). Writing nothing means they are standing by the declaration, which is a choice, not a mistake.
+    const touches = ext.length ? ext : dec;
+    const lines = [`触点没法量（${why}）。${ext.length ? `按你写的实际碰到的算，覆盖 claim 时那份：${ext.join("、")}` : "你没写 --touches，沿用 claim 时声明的那份"}`];
+    if (ext.length) {
+      const gone = dec.filter((x) => !ext.includes(x));
+      if (gone.length) lines.push(`  claim 时声明了、这次没写：${gone.join("、")}`);
+    }
     return { touches, lines, measured: false };
   }
   const measured = clean(changed);
@@ -47,7 +53,7 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
   const touches = clean([...measured, ...kept, ...ext]);
   const added = measured.filter((x) => !dec.includes(x));
   const dropped = dec.filter((x) => isPath(x) && !measured.includes(x));
-  const lines = [`触点按 diff 改成实际改动的 ${measured.length} 个文件（${why}）`];
+  const lines = [`触点按量出来的实际改动改成 ${measured.length} 个文件（${why}）`];
   if (added.length) lines.push(`  claim 时没声明、实际改了：${added.join("、")}`);
   if (dropped.length) lines.push(`  claim 时声明了、实际没改：${dropped.join("、")}`);
   if (kept.length) lines.push(`  diff 看不见、保留声明的：${kept.join("、")}`);
