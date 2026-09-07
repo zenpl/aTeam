@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -470,7 +470,8 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     let b = await at(store, c);
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
     expect(b.instructions[0].chosen).toBeUndefined();
-    expect(b.needs_human[0].says_default).toEqual({ state: "waiting", line: DEFAULT_LINES.waiting(atClock(q.ack_by), "private") });
+    // t-189 · pd 10:39：正文用相对、绝对只进 title（改前这里是 atClock，印一个光秃秃的 `11:52`）。
+    expect(b.needs_human[0].says_default).toEqual({ state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(q.ack_by) - Date.parse(b.now)), "private") });
     c.tick(min(31));
     b = await at(store, c);
     // 到期了，但没人落事件：卡还在人手里，牌桌说的是故障态那一句，不是「已经按 private 了」
@@ -492,7 +493,9 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     const b = await at(store, c);
     expect(b.needs_human).toHaveLength(0);
     expect(b.overdue).toHaveLength(0);
-    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at });
+    // t-189：投影现在把 `note` 一起带出来——**那条事件的 id 就是「这件真的发生过」的凭据**。
+    // 原来投影把它丢了，于是牌桌只能按「时间过了」印「已按默认 X 执行」，替一件没发生的事作证。
+    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at, note: landed[0].id });
     expect(b.instructions[0].says_default).toEqual({ state: "applied", line: DEFAULT_LINES.applied("private") });
     // 幂等：再扫一次不会落第二条（`default_due` 落完就是 false）
     expect(await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now())).toHaveLength(0);
@@ -556,7 +559,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
     const n = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
     const b = await at(store, c);
-    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at });
+    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at, note: n.id });   // t-189：人自己点的那次同样指得出事件
     expect(b.needs_human).toHaveLength(0);
     expect(reduce(await store.read(), c.now()).notes.some((x) => x.id === n.id && x.decides?.option === "public")).toBe(true);
     const again = await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 私有", decision: true, decides: { of: q.id, option: "private" } }));
@@ -2865,7 +2868,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     expect(landed).toHaveLength(1);
     expect((landed[0] as { body: string }).body).toBe(defaultApplied("B"));
     const b = await at(store, c);
-    expect(b.instructions[0].chosen).toEqual({ option: "B", by: "default", at: landed[0].at });
+    expect(b.instructions[0].chosen).toMatchObject({ option: "B", by: "default", at: landed[0].at, note: landed[0].id });
     expect(b.instructions[0].says_default!.state).toBe("applied");
     expect(b.needs_human).toHaveLength(0);
     expect(q.default).toBe("B");
@@ -2985,8 +2988,10 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     expect(card.ack_by).toBe(q.ack_by);                     // 不是 null，不是缺席
     expect(card.ack_by_again).toBeUndefined();              // 没被退回过，就没有第二个期限
     expect(JSON.parse(JSON.stringify(card))).toHaveProperty("ack_by");   // 走一遍 JSON 也还在
-    // 那句话印得出到期时刻，靠的就是它
-    expect(card.says_default!.line).toContain(atClock(q.ack_by));
+    // pd 10:39：正文说的是相对时长，绝对时刻只进 title——所以这里不再断言卡上印出 HH:MM。
+    // 这个字段本身仍然是「说得出到期时刻」的那一份数据：谁要印绝对时刻（title、命令行）都从它取。
+    expect(card.says_default!.line).toContain("到期");
+    expect(atClock(card.ack_by)).toBe(atClock(q.ack_by));
   });
 
   it("判据 5：被 t-190 退回待答的卡，带的是重算后的那个期限", async () => {

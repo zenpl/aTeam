@@ -134,7 +134,6 @@ export const UI = {
   agentInstructions: "session 之间的指令",
   notPulled: "未拉取",
   decided: "已定",
-  decidedByDefault: (option: string) => `已按默认「${option}」执行（你仍可改）`,
   chosen: (who: string, option: string) => `${who} 选择了「${option}」`,
   tasks: "任务",
   taskStatus: {
