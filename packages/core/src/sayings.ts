@@ -206,3 +206,83 @@ export function humanSentences(src: string): string[] {
   }
   return out;
 }
+
+/**
+ * t-179：**说明书里不许有 core 那些句子的第二份。**
+ *
+ * 今晚这已经是第三次逐句去钉了：t-141 钉「你欠什么」那一段、t-145 钉 watch 的秒数、现在是第 6 步那一段。三次
+ * 都是同一条毛病——一句话有两份、分开手工维护，于是改了行为忘了说明书，说明书就在教旧话，而**没有任何东西会红**。
+ * 逐句钉的做法本身就带着这条毛病：下一句被抄进去时，没人记得再钉一次。所以这里把它换成一个通用的量法。
+ *
+ * 量的是**说明书的源文件**，不是填好的说明书：`{{reach_rule}}` / `{{shows_rule}}` 填进去的那份是**唯一出处的正确
+ * 用法**，不是拷贝；源文件里只有占位符，所以正确的做法自动不被算成拷贝，不需要写例外。
+ *
+ * 只比中文散文，不比命令名与开关：`ateam task claim <id> --touches` 在两边一模一样是**应该的**（命令名就是那个
+ * 名字，项目规矩也说命令名照原样）。所以先从 core 的句子里切出纯中文（含中文标点）的段落，再在其中找与说明书
+ * 重合的最长一段——重合到 `MANUAL_COPY_MIN` 个字，就当它是抄的。
+ */
+export const MANUAL_FILES = ["common.md", "invite.md", "welcome.md"] as const;
+/** 重合多少个中文字算抄。8 个字以下多半是「人现在能看到什么」这类共用的参数名，不是一句话。 */
+export const MANUAL_COPY_MIN = 8;
+
+export interface ManualCopy {
+  /** core 里哪个文件的句子 */
+  from: string;
+  /** 说明书里的哪一份（相对 manual/ 的路径） */
+  manual: string;
+  /** 重合的那一段字 */
+  text: string;
+}
+
+/** `s` 里与 `text` 重合的最长一段（按字符数）。两边都很短，直接扫。 */
+function longestShared(s: string, text: string): string {
+  const a = [...s];
+  let best = "";
+  for (let i = 0; i < a.length; i++) {
+    let j = i + best.length;
+    while (j < a.length) {
+      const c = a.slice(i, j + 1).join("");
+      if (!text.includes(c)) break;
+      best = c;
+      j++;
+    }
+  }
+  return best;
+}
+
+/** 一句话里纯中文（含中文标点）的那些段落。命令名、开关、占位符都会把一段切断，所以它们不参与比对。 */
+const PROSE = /[一-龥「」『』，。；：、？！…（）《》]+/g;
+
+/**
+ * core 的这些源码里，有哪些句子被逐字抄进了说明书。`cores` 与 `manuals` 都是「名字 → 源码」，由调用方读进来，
+ * 所以这个函数本身不碰文件系统，测试能拿构造的输入证明它红得对、绿得对。
+ */
+export function manualCopies(cores: Record<string, string>, manuals: Record<string, string>, min = MANUAL_COPY_MIN): ManualCopy[] {
+  const out: ManualCopy[] = [];
+  const seen = new Set<string>();
+  for (const [from, src] of Object.entries(cores)) {
+    for (const s of new Set(humanSentences(src))) {
+      for (const run of s.match(PROSE) ?? []) {
+        for (const [manual, text] of Object.entries(manuals)) {
+          const shared = longestShared(run, text);
+          if ([...shared].length < min) continue;
+          const k = `${from} ${manual} ${shared}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          out.push({ from, manual, text: shared });
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => [...b.text].length - [...a.text].length || a.from.localeCompare(b.from));
+}
+
+/**
+ * 此刻还剩多少份这样的拷贝。**只减不增**，和 `SECOND_HOME_FROZEN` 同一个棘轮：比这个数多就红（有人又抄了一句），
+ * 比这个数少也红（搬走了却没把这个数改小，下一个人会以为还欠这么多）。
+ *
+ * 为什么不是 0：今晚清了第 6 步与第 3.5 步（t-179 判据 1）。其余几处分布在 welcome.md 与角色说明书里，措辞归 pd，
+ * 不该由我顺手改；**但从这一刻起，新抄一句会当场红**，这正是判据 2 要的——不再一句一句地钉。剩下的清单由
+ * `manualCopies()` 现算，不另存一份名单：一份名单与它描述的东西分开维护，正是这件任务的由来。
+ */
+export const MANUAL_COPIES_FROZEN: number = 10;

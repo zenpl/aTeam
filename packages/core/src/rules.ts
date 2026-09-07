@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
@@ -368,7 +368,7 @@ function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_huma
   const what = op === "create" ? "建一件任务要先说清它对人有什么影响" : "交活要说一句这件对人有什么影响";
   if (e.no_human_impact && e.shows?.trim()) throw new Rejected(op, `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
   if (!e.shows?.trim() && !e.no_human_impact)
-    throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+    throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。${EMPTY_IS_NOT_NO_IMPACT}`);
 }
 
 function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
@@ -512,7 +512,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
           const uncovered = seen.filter((f) => !covers(f));
           if (uncovered.length) throw new Rejected("done", `这几处还没说清动了里面的什么：${uncovered.join("、")}——每一处都要有一个「文件#符号」，或者改用 --shows`);
         } else if (seen.length) {
-          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（写不出符号名，就说明还没看清自己改了什么）。判断就来自上面列出的那几处触点，不对就改触点`);
+          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（${NO_SYMBOL_MEANS_UNCLEAR}）。判断就来自上面列出的那几处触点，不对就改触点`);
         }
       }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same

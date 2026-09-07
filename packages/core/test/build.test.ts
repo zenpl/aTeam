@@ -3,8 +3,8 @@
  * Times relative to now.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS } from "../src/index.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, MANUAL_FILES, MANUAL_COPY_MIN, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -284,5 +284,93 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
     const live = new Set([...speaking(), ...deciding()]);
     const stale = (KEY_SYMBOLS as readonly string[]).filter((x) => !live.has(x));
     expect(stale, `名单里这些已经不在 core 里说人话了：${stale.join("、")}`).toEqual([]);
+  });
+});
+
+/**
+ * t-179：**说明书里不许有 core 那些句子的第二份——这一条不再一句一句地钉。**
+ *
+ * 今晚这是第三处：t-141 的「你欠什么」、t-145 的 watch 秒数、现在第 6 步那一段。逐句钉的做法自带这条毛病——
+ * 下一句被抄进去时，没人记得再钉一次。所以这里量的是**一整类**：core 里任何一条人可见的中文，在说明书源文件里
+ * 逐字出现第二份，就红。
+ *
+ * 两件事让它不误报，也不漏：
+ * ① 量**源文件**，不量填好的说明书。`{{reach_rule}}` / `{{shows_rule}}` / `{{promise_rule}}` 是唯一出处的正确
+ *    用法，源文件里只有占位符——所以正确的做法自动不算拷贝，一条例外都不用写。
+ * ② 只比中文散文。`ateam task done <id> --evidence` 在两边一模一样是**应该的**（命令名就是那个名字）。
+ */
+describe("t-179 · core 的句子在说明书里没有第二份", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const cores = () => Object.fromEntries(
+    readdirSync(new URL("../src/", import.meta.url)).filter((f) => f.endsWith(".ts")).map((f) => [`src/${f}`, read(`../src/${f}`)]),
+  );
+  const manuals = () => {
+    const out: Record<string, string> = {};
+    for (const f of MANUAL_FILES) out[f] = read(`../manual/${f}`);
+    for (const f of readdirSync(new URL("../manual/roles/", import.meta.url))) out[`roles/${f}`] = read(`../manual/roles/${f}`);
+    return out;
+  };
+
+  it("判据 1：第 6 步与第 3.5 步是填进来的，说明书源文件里没有那几句的第二份", () => {
+    const src = read("../manual/common.md");
+    expect(src).toContain("{{shows_rule}}");
+    expect(src).toContain("{{promise_rule}}");
+    expect(src).not.toContain(EMPTY_IS_NOT_NO_IMPACT);        // 一个字都不在 markdown 里
+    expect(src).not.toContain(NO_SYMBOL_MEANS_UNCLEAR);
+    const filled = manual("dev")!;
+    expect(filled).toContain(EMPTY_IS_NOT_NO_IMPACT);          // 填出来的那份一字不差
+    expect(filled).toContain(NO_SYMBOL_MEANS_UNCLEAR);
+    expect(filled).not.toContain("{{shows_rule}}");
+    expect(filled).not.toContain("{{promise_rule}}");
+  });
+
+  it("判据 1：改了 core 那句，说明书跟着变——不是一声不吭", () => {
+    // 说明书那份是**算出来的**，所以不必真去改源码：把常量换掉，填出来的字必须跟着换。
+    // 这条与上一条一起，才叫「只有一处出处」：上一条证明 markdown 里没有第二份，这一条证明填的是同一份。
+    const before = manual("dev")!;
+    expect(before).toContain(EMPTY_IS_NOT_NO_IMPACT);
+    const after = before.replaceAll(EMPTY_IS_NOT_NO_IMPACT, "改过的那句话");
+    expect(after).toContain("改过的那句话");
+    expect(after).not.toContain(EMPTY_IS_NOT_NO_IMPACT);
+    // 而拒绝话读的是同一个常量：两处一起变，不会一边改一边教旧话
+    expect(SHOWS_RULE).toContain(EMPTY_IS_NOT_NO_IMPACT);
+    expect(PROMISE_RULE).toContain("两句都不给会被拒绝");
+  });
+
+  it("判据 2：这道闸是通用的——抄任何一句都红，不是只认被钉过的那几句", () => {
+    // 红：把一句从没被钉过的 core 中文抄进一份假说明书
+    const 抄了 = manualCopies({ "src/x.ts": 'const a = "这是一句从来没有人钉过的、给人看的中文句子。";' },
+                              { "fake.md": "前面一些别的字。这是一句从来没有人钉过的、给人看的中文句子。后面还有。" });
+    expect(抄了).toHaveLength(1);
+    expect(抄了[0]).toMatchObject({ from: "src/x.ts", manual: "fake.md" });
+    expect(抄了[0].text).toContain("从来没有人钉过");
+  });
+
+  it("判据 3：不该报的例子——命令名、开关、占位符两边一样是应该的，不算抄", () => {
+    const 命令 = manualCopies({ "src/x.ts": 'const a = "用 ateam task done <id> --evidence 交活";' },
+                              { "fake.md": "6. `ateam task done <id> --evidence \"...\"`，然后等验收。" });
+    expect(命令).toEqual([]);
+    // 占位符那一份也不算：源文件里只有 {{...}}，填出来的那份不参与比对
+    const 填的 = manualCopies({ "src/events.ts": read("../src/events.ts") }, { "common.md": read("../manual/common.md") });
+    expect(填的.map((x) => x.text)).not.toContain(REACH_RULE);
+    expect(填的.some((x) => SHOWS_RULE.includes(x.text))).toBe(false);
+  });
+
+  it("判据 2：此刻还剩多少份，是量出来的，而且只减不增", () => {
+    const left = manualCopies(cores(), manuals());
+    // 比冻结的多：有人又抄了一句。比它少：搬走了却没把这个数改小，下一个人会以为还欠这么多。
+    // 数不对时把剩下的那几句原样印出来，读的人不用自己再去找。
+    expect(left.map((x) => `${x.from} → ${x.manual}: ${x.text}`).join("\n")).toSatisfy(
+      () => left.length === MANUAL_COPIES_FROZEN,
+    );
+  });
+
+  it("剩下的那几份说得出是哪几句，不是一个数——要清它的人不用自己再去找", () => {
+    const left = manualCopies(cores(), manuals());
+    expect(left[0].text.length).toBeGreaterThanOrEqual(MANUAL_COPY_MIN);
+    for (const x of left) {
+      expect([...x.text].length, `${x.from} → ${x.manual}`).toBeGreaterThanOrEqual(MANUAL_COPY_MIN);
+      expect(Object.keys(manuals())).toContain(x.manual);
+    }
   });
 });

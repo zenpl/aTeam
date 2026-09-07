@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, reduce, board, Rejected, NO_HUMAN_IMPACT, touchesHumanVisible, KEY_SYMBOLS, SERVICE_ACTOR, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, manual, Rejected, NO_HUMAN_IMPACT, touchesHumanVisible, KEY_SYMBOLS, SERVICE_ACTOR, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -110,10 +110,13 @@ describe("t-151 · 判据 4：存量只减不增，而且没有任何界面催�
 describe("t-151 · pd 07:49 的三条", () => {
   it("措辞是 pd 定的那一句，core 一处，拒绝话与说明书都引它、不各写一份", () => {
     expect(NO_HUMAN_IMPACT).toBe("不改变人看到的东西");
-    const manual = readFileSync(new URL("../manual/common.md", import.meta.url), "utf8");
+    const md = readFileSync(new URL("../manual/common.md", import.meta.url), "utf8");
     const rules = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
-    expect(manual).not.toContain(NO_HUMAN_IMPACT);          // 说明书不抄那句话，它教的是那个开关
-    expect(manual).toContain("--no-human-impact");
+    expect(md).not.toContain(NO_HUMAN_IMPACT);              // 说明书不抄那句话，它教的是那个开关
+    // t-179：第 6 步与第 3.5 步现在是 {{shows_rule}} / {{promise_rule}} 填进来的，所以「教那个开关」这件事
+    // 要在**填好的**说明书上看，不在 markdown 源文件上看——源文件里那两步只剩占位符，这正是这条改动的目的。
+    expect(md).toContain("{{shows_rule}}");
+    expect(manual("dev")!).toContain("--no-human-impact");
     expect(rules).not.toContain(`"${NO_HUMAN_IMPACT}"`);     // 规则里也不抄，引的是常量
     expect(rules).toContain("NO_HUMAN_IMPACT");
   });
@@ -292,8 +295,13 @@ describe("t-171 · 建任务时也要说清它对人有什么影响", () => {
 
   it("判据 2：同一句拒绝话——两头只写一遍，改一处两头一起变", () => {
     const rules = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
-    // 这句话只有一个出处（humanImpactPromised），两头都调它；rules.ts 里搜不到第二份「空着不算」
-    expect([...rules.matchAll(/空着不算/g)]).toHaveLength(1);
+    // 这句话只有一个出处，两头都调它。t-179 之后那个出处从 humanImpactPromised 的模板串搬到了
+    // events.ts 的 EMPTY_IS_NOT_NO_IMPACT——说明书也要引它，一句话不能同时住在 rules.ts 和 markdown 里。
+    // 所以现在 rules.ts 里一个「空着不算」都搜不到，它引的是常量；那句字本身在 events.ts 里恰好一份。
+    expect([...rules.matchAll(/空着不算/g)]).toHaveLength(0);
+    expect([...rules.matchAll(/EMPTY_IS_NOT_NO_IMPACT/g)].length).toBeGreaterThanOrEqual(1);
+    const events = readFileSync(new URL("../src/events.ts", import.meta.url), "utf8");
+    expect([...events.matchAll(/空着不算/g)]).toHaveLength(1);
     expect([...rules.matchAll(/humanImpactPromised\(/g)].length).toBe(3);   // 一处定义 + create 与 done 各调一次
   });
 

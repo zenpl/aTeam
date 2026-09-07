@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { WATCH_INTERVAL, REACH_RULE, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
+import { WATCH_INTERVAL, REACH_RULE, SHOWS_RULE, PROMISE_RULE, RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -31,7 +31,11 @@ function common(): string {
   // 说明书，就是 pd 06:27 说的「一边停一边教」。
   return readFileSync(join(DIR, "common.md"), "utf8").trimEnd()
     .replaceAll("{{watch_interval}}", WATCH_INTERVAL)
-    .replaceAll("{{reach_rule}}", REACH_RULE);
+    .replaceAll("{{reach_rule}}", REACH_RULE)
+    // t-179: 第 6 步那一段同样只有一处出处。它与拒绝话共用 EMPTY_IS_NOT_NO_IMPACT / NO_SYMBOL_MEANS_UNCLEAR，
+    // 所以改了行为，说明书与被拒的人看到的是同一句话——不会再出现「说明书还在教旧话」。
+    .replaceAll("{{shows_rule}}", SHOWS_RULE)
+    .replaceAll("{{promise_rule}}", PROMISE_RULE);
 }
 
 /** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */
