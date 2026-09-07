@@ -279,16 +279,18 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
  */
 export const KEY_SYMBOLS = [
   "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE",
-  "FORWARD_LINK", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH",
-  "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PROMISE_RULE", "REACH_RULE", "REACH_WORDS",
-  "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND",
-  "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago", "alertContact",
-  "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine", "blockedWhy",
-  "board", "capabilityKey", "coverage", "deployHistory", "exampleLine", "followUps",
-  "gateHonesty", "honestyLine", "inFlightGroups", "judgeSeam", "lightSeamLine", "manualFor",
-  "missingCard", "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix",
-  "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard", "span",
-  "splitRelease", "standIns", "staticAllocation", "taskHeading", "whoElseTouches",
+  "FORWARD_LINK", "INJECT_BUILD_BROKE", "INJECT_STILL_GREEN", "INJECT_USAGE", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS",
+  "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL",
+  "PROMISE_RULE", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING",
+  "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE",
+  "VERIFY_ASK", "ago", "alertContact", "allocationSummary", "alsoHere", "applyReading",
+  "batches", "batchesEmptyLine", "blockedWhy", "board", "capabilityKey", "coverage",
+  "deployHistory", "exampleLine", "followUps", "gateHonesty", "honestyLine", "inFlightGroups",
+  "injectDirty", "injectManySites", "injectNoFile", "injectNoSite", "injectNotGit", "judgeSeam",
+  "lightSeamLine", "manualFor", "missingCard", "nobodyElse", "overdueByPresence", "owedSentences",
+  "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops", "sayReading", "shapeFor",
+  "slimBoard", "span", "splitRelease", "standIns", "staticAllocation", "taskHeading",
+  "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
