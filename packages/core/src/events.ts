@@ -108,7 +108,13 @@ export type TaskOp =
    * t-105: `touches` here is the **final value** — claim's was a declaration, done's is the fact. The platform only
    * knows that: how the caller arrived at it (a git diff, a person retyping it) is the project's business, not the log's.
    */
-  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string; touches?: string[] }
+  | {
+      op: "done"; task: string; evidence?: string;
+      /** one sentence for the owner: what a person can now see (t-056) */ shows?: string;
+      touches?: string[];
+      /** t-151: 明写这件对人没有影响。与 `shows` 二选一——两个都不给会被拒绝，两个都给也会。 */
+      no_human_impact?: boolean;
+    }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
@@ -226,6 +232,40 @@ export const NODE_SURFACE = "node";
 export const capabilityKey = (role: string) => `${role}:能力`;
 /** `shows` on done/verify: one sentence for the owner, at most this long. */
 export const SHOWS_MAX_CHARS = 120;
+/**
+ * t-151: 交活的时候，说一句这件对人有什么影响——或者明写它没有。二选一，没有第三种。
+ *
+ * 今晚量到的形状是：83 件在生产上没被走过的活里，只有 5 件说得出人能看到什么，78 件一句都没有。那 78 件不是
+ * 「没影响」，是**没人问过这个问题**；两者在记录上长得一模一样，于是谁也分不出哪些该走查、哪些本来就不必。
+ * 一个不必回答的问题，答案永远是空的。
+ *
+ * 「没有影响」是一个要签字的判断，不是省一个字段：写下它的人是在说「我看过了，人这边什么都不会变」。
+ */
+export const NO_HUMAN_IMPACT = "不改变人看到的东西";
+
+/**
+ * t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——闸当场拦下，并把碰到的逐个列出来。
+ *
+ * 这不是不信任写下它的人，是因为**这句话最可能出错的方式不是撒谎，是没注意**：改 i18n 里一个词、改说明书一行、
+ * 改卡上的一句，都是「顺手」，而顺手正是人不会重新想一遍「这对人意味着什么」的时刻。
+ *
+ * 名单是声明的，会漏；漏了就是一次没被拦下的顺手改。所以它按**出处**列，不按猜测：页面与它的词、说明书、
+ * 以及 core 里那几处专门产生给人看的话的符号（t-154 之后它们集中在 READING_SAYINGS/sayReading 一带）。
+ * 测试文件不在名单里——改一个用例不改变任何人看到的东西。
+ */
+export const HUMAN_VISIBLE_TOUCHES = [
+  "packages/server/src/html.ts",
+  "packages/server/src/i18n.ts",
+  "packages/core/manual/",
+  "packages/cli/src/format.ts",
+] as const;
+
+/** t-151: 这个触点是不是「人看得到的东西」。`路径#符号` 按路径判；测试文件一律不算。 */
+export function touchesHumanVisible(touch: string): boolean {
+  const path = touch.split("#")[0].trim();
+  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return false;
+  return HUMAN_VISIBLE_TOUCHES.some((x) => path === x || path.startsWith(x));
+}
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];
 /** t-104: the responsibility a role must hold to record a **pass**. A fail is open to everyone: only a release needs independence. */

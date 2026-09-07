@@ -16,7 +16,7 @@ async function fixture() {
     criteria: ["GET /health returns {ok, sha}", "missing sha shows as 'unknown'", "qa records production:deployed.sha"] });
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-002", title: "HTML board", criteria: ["GET / is html"] });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-001", touches: ["packages/server/src/app.ts", "GET /health"] });
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-001", evidence: "fd76455: /health returns sha locally" });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-001", evidence: "fd76455: /health returns sha locally" , no_human_impact: true});
   return { store, emit };
 }
 
@@ -49,7 +49,7 @@ describe("t-003 · ateam task show", () => {
 
     await emit({ kind: "task", op: "seam", actor: "pm", tasks: ["t-001", "t-002"], resolution: "frontend adds routes below /health only" });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-001", surface: "repo", pass: true, evidence: "ran dist locally" });
-    await emit({ kind: "task", op: "done", actor: "frontend", task: "t-002" });
+    await emit({ kind: "task", op: "done", actor: "frontend", task: "t-002" , no_human_impact: true});
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-002", surface: "production", pass: false, evidence: "GET / is still json" });
     b = board(reduce(await store.read()), HUMAN);
     const text = fmt.task(boardTask(b, "t-001")!, b.seams, b.omitted);

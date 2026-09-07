@@ -63,7 +63,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
     await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -7);
-    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" }, -6);
+    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -6);
     expect(gateHonesty(await st(w.s), "seam")!.fix).toMatchObject({ status: "done", in_production: false });
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-fix", surface: "production", pass: true, evidence: "生产上核过" }, -5);
     expect(gateHonesty(await st(w.s), "seam")).toBeNull();
@@ -79,7 +79,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
     await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -11);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -10);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -9);
-    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" }, -8);
+    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -8);
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-fix", surface: "repo", pass: true, evidence: "仓库上核过" }, -7);
 
     const h = gateHonesty(await st(w.s), "seam")!;

@@ -28,7 +28,7 @@ async function bigDay() {
     if (i % 3 === 0) {
       await b.task.verify("qa", id, "repo", false, { evidence: "判据 2 未满足：".repeat(30) });
       await b.task.reopen(owner, id, "修");
-      await b.task.done(owner, id, { evidence: `${(2000000 + i).toString(16).padStart(7, "0")}abcd 改了：${"证据正文".repeat(60)}` });
+      await b.task.done(owner, id, { no_human_impact: true, evidence: `${(2000000 + i).toString(16).padStart(7, "0")}abcd 改了：${"证据正文".repeat(60)}` });
     }
   }
   for (let i = 0; i < 200; i++) {

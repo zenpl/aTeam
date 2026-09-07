@@ -75,7 +75,7 @@ describe("t-112 · each gate, driven for real: the pass is refused with pd's sen
     await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa", "frontend"] }, 0);
     await put({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "一件", criteria: ["能用", "能看"] }, 1);
     await put({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["packages/x/a.ts"] }, 2);
-    await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" }, 3);
+    await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" , no_human_impact: true}, 3);
     return { s, put };
   };
   const refusal = async (s: MemoryStore, ne: NewEvent, mins: number) =>
@@ -135,7 +135,7 @@ describe("t-112 · each gate, driven for real: the pass is refused with pd's sen
     await put({ kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["能用"] }, 2);
     await put({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["packages/x/a.ts"] }, 3);
     await put({ kind: "task", op: "claim", actor: "frontend", task: "t-2", touches: ["packages/x/a.ts"] }, 4);
-    await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" }, 5);
+    await put({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "abc1234: 做完了" , no_human_impact: true}, 5);
     const r = await refusal(s, pass("qa"), 6);
     expect(r.message).toContain("unresolved seam");
     expect(r.message).toContain(PASS_ONLY_GATE);

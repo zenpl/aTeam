@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
@@ -160,8 +160,9 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  "task:done": { evidence: "string", shows: "string", touches: "strings" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean" },
   "task:verify": { evidence: "string", shows: "string" },
+  "task:seam": { verdict: "string", missed: "boolean" },
   "task:create": { label: "string" },
   "task:obsolete": { reason: "string" },
 };
@@ -447,6 +448,23 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("done", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.owner !== e.actor) throw new Rejected("done", `${t.id} is owned by ${t.owner ?? "nobody"}`);
       if (t.status !== "working") throw new Rejected("done", `${t.id} is ${t.status}`);
+      // t-151: 说一句这件对人有什么影响，或者明写它没有——二选一，没有第三种。今晚量到的是 83 件里只有 5 件
+      // 说得出人能看到什么，78 件一句都没有；那 78 件不是「没影响」，是没人问过这个问题，而两者在记录上长得
+      // 一模一样。这道闸只对新的 done 生效，日志里已有的事件一律不动（判据 2）。
+      //
+      // 它排在「是不是你的」「能不能交」之后：先告诉一个连交都交不了的人去补一句话，是把出路指错。
+      if (e.no_human_impact && e.shows?.trim()) throw new Rejected("done", `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
+      if (!e.shows?.trim() && !e.no_human_impact)
+        throw new Rejected("done", `交活要说一句这件对人有什么影响：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+      // t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——拦下，并把碰到的逐个列出来。
+      // 出错的方式通常不是撒谎，是顺手：改 i18n 一个词、改说明书一行，正是不会重新想一遍这句话的时刻。
+      if (e.no_human_impact) {
+        // t-105 的口径照旧：done 带了 touches 就是事实、取代 claim 时的声明；没带才用声明。用声明去判一件已经
+        // 量过的事，会拿一个当事人自己更正过的名单去拦他。
+        const seen = [...new Set((e.touches ?? t.touches).filter(touchesHumanVisible))].sort();
+        if (seen.length)
+          throw new Rejected("done", `这件碰了人看得到的东西：${seen.join("、")}——所以不能说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只改了内部（注释、类型），也用 --shows 说清那一句`);
+      }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
       // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it
       // blocks the done. Seams that were already open stay the caller's business, as before: done never judged them.

@@ -19,7 +19,7 @@ async function log(gap: number) {
   await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" }, (t += 1000));
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] }, (t += 1000));
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/1.ts"] }, (t += 1000));
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" }, (t += 1000));
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" , no_human_impact: true}, (t += 1000));
   const passed = (t += 1000);
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "production", pass: true, evidence: "线上看到" }, passed);
   await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" }, passed + gap);
@@ -44,7 +44,7 @@ describe("t-120 · 线上 splits by log order, not by the clock", () => {
     await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" }, (t += 1000));
     await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录修复", criteria: ["可用"] }, (t += 1000));
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/1.ts"] }, (t += 1000));
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" }, (t += 1000));
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "提交 1234567" , no_human_impact: true}, (t += 1000));
     const together = (t += 1000);
     await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" }, together);
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "production", pass: true, evidence: "线上看到" }, together);

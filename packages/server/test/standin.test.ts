@@ -26,7 +26,7 @@ beforeAll(async () => {
   for (const [id, title] of [["t-113", "接缝按符号判"], ["t-9", "还没验的一件"]] as const) {
     await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] });
     await post("dev", { kind: "task", op: "claim", task: id, touches: [`packages/${id}.ts`] });
-    await post("dev", { kind: "task", op: "done", task: id, evidence: `abc1234: ${id}` });
+    await post("dev", { kind: "task", op: "done", task: id, evidence: `abc1234: ${id}` , no_human_impact: true});
   }
   await post("qa", { kind: "task", op: "verify", task: "t-113", surface: "repo", pass: true });
 });

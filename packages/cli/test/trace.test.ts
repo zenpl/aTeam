@@ -18,15 +18,15 @@ async function story() {
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-40", touches: ["auth/login.ts", "auth.redirect"] });
   const d1 = await emit({ kind: "note", actor: "pm", body: "决策：回跳只认站内地址", decision: true, refs: [req.id] });
   await emit({ kind: "note", actor: "dev", body: "concern: 开放回跳有钓鱼风险", task: "t-40" });
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "abc1234def：login.ts 校验 next 参数为站内路径" });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "abc1234def：login.ts 校验 next 参数为站内路径" , no_human_impact: true});
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "repo", pass: false, evidence: "缺 //evil 用例" });
   await emit({ kind: "task", op: "reopen", actor: "dev", task: "t-40", reason: "补 //evil 用例" });
-  await emit({ kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "9876543abc：补用例" });
+  await emit({ kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "9876543abc：补用例" , no_human_impact: true});
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "repo", pass: true, evidence: "tests green" });
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "production", pass: true, evidence: "curl 回跳正确" });
   await emit({ kind: "note", actor: "pm", body: "决策：回跳也认白名单外链", decision: true, supersedes: d1.id });
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-41", touches: ["auth/login.ts"] });
-  await emit({ kind: "task", op: "done", actor: "frontend", task: "t-41", evidence: "abc1234def 同一个提交里顺手改的" });
+  await emit({ kind: "task", op: "done", actor: "frontend", task: "t-41", evidence: "abc1234def 同一个提交里顺手改的" , no_human_impact: true});
   return (await store.read()).events as Event[];
 }
 

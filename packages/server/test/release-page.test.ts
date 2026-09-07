@@ -30,7 +30,7 @@ function server() {
 async function task(v: ReturnType<typeof server>, id: string, title: string, sha: string, status: "done" | "verified") {
   await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] });
   await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
-  await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}：做完了` });
+  await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}：做完了` , no_human_impact: true});
   if (status === "verified") await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "跑过了" });
 }
 
