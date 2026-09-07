@@ -10,7 +10,13 @@ export interface Args {
 // 工作——不致命，但那行错误信息今晚出现在每一次 sync --clear-refused 上。
 // build.test.ts 里有一条闸守着这份名单与 main.ts 里的用法一致（bool() 与 argv.includes 两种读法都查），别手工对。
 const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "touches-only", "once", "force", "full", "no-human-impact", "missed", "clear-refused"]);
-const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only"]);
+// t-197：同一根因的第二份名单，而这一份**一直没有闸**（frontend 11:36 实测：九个里五个不在——refs、touches、
+// writes、depends-on、enum）。漏一个的症状比 BOOLEAN 那次更安静：`--refs a --refs b` 不报错、不重复，**后一个
+// 静默盖掉前一个**，命令照常成功。后果不是小事：
+//   · touches 少一个 = 一次不会被发现的接缝；
+//   · refs 少一个 = 一次「我动过」被算成没动——t-193 之后 refs 正是「办了」的唯一凭据。
+// build.test.ts 里现在有一条与 t-173 同形的闸守着这份名单与 main.ts 里 list() 的用法一致，别手工对。
+const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "refs", "touches", "writes", "depends-on", "enum"]);
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };
@@ -36,10 +42,16 @@ export function str(a: Args, name: string): string | undefined {
   const v = a.flags[name];
   return typeof v === "string" ? v : undefined;
 }
+const commas = (xs: string[]) => xs.flatMap((x) => x.split(",")).map((s) => s.trim()).filter(Boolean);
+/**
+ * t-197 之后的一个回归，我自己刚踩到：把 `touches` 加进 REPEATABLE 之后，`--touches "a,b,c"` 走的是数组那一支，
+ * **逗号不再拆**——于是那一整串被当成一个触点存进日志（我 12:15 那次 claim 就是这么记下的），而说明书与 --help
+ * 教的正是 `--touches a,b`。两种写法都要成立：给几次就是几段，每段里的逗号照拆。
+ */
 export function list(a: Args, name: string): string[] | undefined {
   const v = a.flags[name];
-  if (Array.isArray(v)) return v;
-  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return commas(v);
+  if (typeof v === "string") return commas([v]);
   return undefined;
 }
 export function bool(a: Args, name: string): boolean {

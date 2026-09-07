@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1072,14 +1072,36 @@ describe("t-047 · listening and speaking are two different things", () => {
     expect(p.since).toBe(c.iso(-min(9)));
   });
 
-  it("the service card about a missing role is judged by listening: a node that keeps emitting without pulling still gets one", async () => {
+  /**
+   * t-202 **推翻了这一条原来的后半句**，写在这里而不是悄悄改掉断言。
+   *
+   * 原来它断言的是：「一个只写不拉的节点照样拿到那张卡」——理由是 t-047 的「写不等于听」。前半句仍然对
+   * （写确实不等于听，`isMissing` 照旧为真），**被推翻的是由它推出的那一步**：既然没在听，就该问人「起一个
+   * 新的吗」。t-137 说过不许把两者合并成一个布尔，而这正是那次合并的下游：`deaf` 是它还活着、还在写，只是
+   * 没来读日志，**起第二个解决不了它**。
+   *
+   * 真实代价（t-202 的样本）：12:46:06 那份牌桌上 dev 6.8 分钟没拉、2.6 分钟前刚交过活，人的首屏却挂着
+   * 「dev 没在听了 13 分钟，起一个 dev？」——人被叫去起一个正在交活的节点。
+   *
+   * 所以这条用例现在钉的是两半：**真失联的照出，deaf 的不出**。它没有变松——`missing` 那一半的断言与原来
+   * 一字不差，只是多了一个原来没有的反例。
+   */
+  it("the card only survives where starting a new one is the remedy: a truly missing role keeps it, a node that is merely deaf does not (t-202)", async () => {
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
     await emit(store, c, { kind: "note", actor: "dev", body: "我在，但没在听" });
     const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 没在听了 5 分钟，1 条指令没送到。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    // 刚写过东西：deaf，不是失联——卡不该在人的首屏上
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening; the 没在听 wording is recognised too
+    expect(b.presence.find((x) => x.actor === "dev")!.status).toBe("deaf");
+    expect(b.needs_human, "还在写只是没读的节点，人被叫去起第二个").toEqual([]);
+    // 再过一会儿它连写都不写了：这才是「起一个新的」解决得了的那一态，卡照出
+    c.tick(min(11));
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.presence.find((x) => x.actor === "dev")!.status).toBe("missing");
+    expect(b.needs_human.map((n) => n.id), "真失联的那一半与原来一字不差").toEqual([card.id]);
+    // 它回来读日志了：卡撤掉，这一半也没变
     await pull(store, "dev", null, c.now());
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toEqual([]);
@@ -2852,6 +2874,19 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
  * 都在说「已按默认 X 执行」——最久的一张这样说了 6 小时 41 分。**那三张不能补落**：默认之所以正当，前提是它
  * 真的发生、落成事件、人能翻案；这三件一件都没发生，所以那不是人的选择，是我们的机制没执行。追认等于替他拍板。
  */
+/**
+ * t-192（qa 11:01 实测）：**这几条用例的时钟推进量，原来是由 `DEFAULT_LATE_MS` 自己算出来的**
+ * （`min(60) + DEFAULT_LATE_MS + min(1)`）。于是把那个常量调到 10 年，355 条用例全绿——它们守的是自洽，
+ * 不是行为。而「调大」正是 pd 不许的那个方向：把「过期了，默认还没生效」调成永不出现，我们就再也看不见
+ * 那个故障态了。
+ *
+ * 所以推进量是一个**写死的数**，与那个常量无关：过 ack_by 三十分钟。任何合理的阈值都在它之内，10 年不在。
+ *
+ * 今晚同族的第六种形态（前五种：正则配不上、析取项永远为真、循环在空集合上空转、门槛拿串跟自己比、
+ * 闸按顶层字段找）。通则写在下面那条断言里：**任何守着一个阈值的用例，它的输入不许由那个阈值算出来。**
+ */
+const LATE_ENOUGH = min(30);
+
 describe("t-190 · 默认只有真落成事件才算数", () => {
   const ask = (store: MemoryStore, c: ReturnType<typeof clock>) =>
     emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
@@ -2882,7 +2917,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));         // 机制当时没在跑
+    c.tick(min(60) + LATE_ENOUGH);         // 机制当时没在跑
     const out = await sweep(store, c);
     expect(out).toHaveLength(1);
     expect((out[0] as { body: string }).body).toBe(defaultMissed("B"));
@@ -2897,7 +2932,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     c.tick(min(600));                                   // 十小时过去，人一直没来
     let b = await at(store, c);
@@ -2918,7 +2953,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());            // 人看到了，期限从这一刻算
     c.tick(min(61));
@@ -2933,7 +2968,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());
     c.tick(min(5));
@@ -2949,7 +2984,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     expect(await sweep(store, c)).toHaveLength(1);
     c.tick(min(600));
     expect(await sweep(store, c)).toHaveLength(0);      // 人还没露面，没有新的期限，也就没有新的到期
@@ -3002,7 +3037,7 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c, 60);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
     await pull(store, HUMAN, null, c.now());                // 人再看到那一刻
     const card = (await at(store, c)).needs_human[0];
@@ -3034,5 +3069,201 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     expect(s.instructions.get(q.id)!.instruction.ack_by).toBe(q.ack_by);
     expect(s.instructions.get(q.id)!.default_due).toBe(true);     // 它照样知道自己到期了
     expect(s.instructions.get(q.id)!.overdue).toBe(true);
+  });
+});
+
+/**
+ * t-196（pd 11:16）：**署名更正。**
+ *
+ * 一条事件的 actor 写错了——不是笔误，是那件事不是他做的。今晚 qa 03:41 那次就是本人自报。读数早就有失效与
+ * 取代，决策有 supersedes，**署名一直缺同一条**：于是「那不是我做的」只能写在正文里，而写在正文里的更正，
+ * 规则看不见它。今晚第二次同一形状（第一次是默认到期没落成事件，t-181）。
+ */
+describe("t-196 · 署名被证伪：历史不改，但那一条不再计入状态", () => {
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 1、5 正例：本人自报——原事件原样留着，但它不再计入状态", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);
+    const d = await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "这条不是我发的，我那时不在" });
+    const s = reduce(await store.read(), c.now());
+    // 历史不改：两条事件都还在日志里
+    expect((await store.read()).events.map((e) => e.id)).toEqual(expect.arrayContaining([n.id, d.id]));
+    // 但它不再计入状态
+    expect(s.notes.map((x) => x.id), "被更正的那条还算在状态里").not.toContain(n.id);
+    expect(s.disowned.get(n.id)).toMatchObject({ by: "qa", actor: "qa", reason: "这条不是我发的，我那时不在" });
+  });
+
+  it("判据 3 反例：第三方发的被拒，并说出规则名与出路", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    const r = await rejected(emit(store, c, { kind: "disown", actor: "dev", of: n.id, reason: "我觉得这不是 qa 发的" }));
+    expect(r.rule).toBe("disown");
+    expect(r.message).toContain("只能由本人自报");
+    expect(r.message).toContain("请 qa 自己发");      // 出路一：本人自报
+    expect(r.message).toContain(HUMAN);               // 出路二：交给人
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);   // 状态没被动
+  });
+
+  it("判据 3：human 可以发——他是策略权威", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "disown", actor: HUMAN, of: n.id, reason: "qa 那时不在，这条是别人替它发的" });
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).not.toContain(n.id);
+  });
+
+  it("判据 4：更正必须是一条事件——写在正文里的，规则看不见", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "note", actor: "qa", body: `更正：${n.id} 不是我发的` });
+    // 正文里写了，状态一动不动——这正是这件任务的由来
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);
+    expect(reduce(await store.read(), c.now()).disowned.size).toBe(0);
+  });
+
+  it("判据 2：牌桌把两条并排给出来（数据；措辞等 pd，11:17 起人可见的字冻结）", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "我那时不在" });
+    const b = await at(store, c);
+    expect(b.disowned).toEqual([{ of: n.id, actor: "qa", by: "qa", at: expect.any(String), reason: "我那时不在" }]);
+  });
+
+  it("拒绝话把三种说不清的情况分开：不在日志里、没有理由、更正两次", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "一句话" });
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: "01NOTANEVENT0000000000000", reason: "x" }))).message).toContain("不在日志里");
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "  " }))).message).toContain("--reason");
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "不是我" });
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "再来一次" }))).message).toContain("已经更正过了");
+  });
+
+  it("增量折叠与全量重算给出同一个状态：一条更正指着早就折进去的事件，也不会漏", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "早就折进去的一条" });
+    const r = new Reduction(store);
+    expect((await r.at(c.now())).notes.map((x) => x.id)).toContain(n.id);   // 先折一次，它已经算进状态了
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "不是我发的" });
+    const inc = await r.at(c.now());
+    const full = reduce(await store.read(), c.now());
+    expect(inc.notes.map((x) => x.id), "增量那一头把它收回来了吗").not.toContain(n.id);
+    expect(inc.notes.map((x) => x.id)).toEqual(full.notes.map((x) => x.id));
+    expect([...inc.disowned.keys()]).toEqual([...full.disowned.keys()]);
+  });
+});
+
+describe("t-192 · 守着阈值的用例，输入不许由那个阈值算出来", () => {
+  it("判据 1、2：DEFAULT_LATE_MS 调大到那几条用例失效的地步，这条当场红并指名", () => {
+    // 上界由**用例自己的推进量**定，而那个推进量是写死的：阈值一旦超过它，「到期很久没落」那几条就会变成
+    // 「刚好晚了一点」，于是它们测的东西被悄悄换掉——qa 11:01 把它调到 10 年，355 条全绿，就是这么来的。
+    expect(DEFAULT_LATE_MS, `DEFAULT_LATE_MS 比用例推进的 ${LATE_ENOUGH / 60_000} 分钟还大：那几条「到期很久没落」的用例此刻测的是「刚好晚了一点」，它们守的东西没了`)
+      .toBeLessThan(LATE_ENOUGH);
+    // 下界：扫描每分钟一次，阈值小到这个量级就会把一次正常的迟到当成故障，把人的默认无故拖回待答
+    expect(DEFAULT_LATE_MS, "DEFAULT_LATE_MS 小到一次正常的迟到都会被当成故障").toBeGreaterThanOrEqual(5 * 60_000);
+  });
+
+  it("判据 3（通则）：那几条用例的推进量里不出现这个常量的名字", () => {
+    // 注释先抹掉：不抹的话，**这段闸自己的说明**里那句 `c.tick(min(60) + DEFAULT_LATE_MS + min(1))` 会被它
+    // 自己抓成违例——闸报出的第一个违例是解释它的那句话。扫源码的东西不跳注释，今晚已经栽过一次（t-143）。
+    const src = readFileSync(new URL("./replay.test.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    // qa 12:08 抓到的：`[^)]*` 在**第一个**右括号处就停了，而这个文件里每一个真实的推进量都长成 `min(...)`，
+    // 天生带一层嵌套括号——`c.tick(min(60) + DEFAULT_LATE_MS + min(1))` 只被读成 `min(60`，那个常量看都看不到。
+    // 「闸抓不住它要抓的东西」是今晚同族的第七种，前六种里正好有一种就是「正则配不上」。所以这里数括号，
+    // 一直读到与它配对的那一个右括号为止。
+    const ticks: string[] = [];
+    for (let i = src.indexOf("c.tick("); i >= 0; i = src.indexOf("c.tick(", i + 1)) {
+      let depth = 0, j = i + "c.tick".length;
+      for (; j < src.length; j++) {
+        if (src[j] === "(") depth++;
+        else if (src[j] === ")" && --depth === 0) break;
+      }
+      ticks.push(src.slice(i + "c.tick(".length, j));
+    }
+    expect(ticks.length, "一个 c.tick( 都没扫到——这条断言此刻什么也没守").toBeGreaterThan(10);
+    const derived = ticks.filter((t) => t.includes("DEFAULT_LATE_MS"));
+    expect(derived, `这些推进量由阈值自己算出来：${derived.join("、")}——调大阈值它们跟着走，守的就是自洽不是行为`).toEqual([]);
+  });
+});
+
+/**
+ * t-157：**一件多轮任务对外的触点是各轮的并集，不是最后一轮。**
+ *
+ * dev 07:22 实测：t-147 两轮碰了 17 个文件，done 之后记录上只剩 3 个——而它真正与 t-152 相撞的
+ * html.ts / i18n.ts / app.ts / format.ts / loop.ts 全在第一轮里。那次没漏挡是因为那条接缝当时已经解决过，
+ * **不是因为规则挡住了它**（判据 5 要求把这一点写清楚，所以这里有一条专门跑「没有现成解决时会不会漏」）。
+ *
+ * 判据 2 的那条界线也在这里守着：每一轮自己那一份仍然只算本轮（t-135 是对的），并集攒的是**已经交出去的
+ * 那些轮**。所以本轮的声明仍然改得窄——t-105 的「done 按事实取代声明」与 t-113 的「收细成符号让接缝变轻」
+ * 都靠它，把本轮也并进去，那两条当场坏掉。
+ */
+describe("t-157 · 多轮任务的触点，对外给并集", () => {
+  const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"], no_human_impact: true });
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 1：两轮各碰一批，对外的答案是两批之和", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts", "i18n.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts", "i18n.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb", touches: ["board.ts"] });
+    const t = boardTask(await at(store, c), "A")!;
+    expect([...t.touches!].sort(), "第一轮那两个不见了").toEqual(["board.ts", "html.ts", "i18n.ts"]);
+  });
+
+  it("判据 4、5：第一轮碰 A、第二轮碰 B，另一件碰 A——接缝必须报出来，且这次没有现成的解决兜着", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A"); await create(store, c, "B");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    // 另一件碰的是第一轮那个文件，而且是在 A 第二轮 claim 之后才认领的——所以时序那条（t-160）不放行它
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["html.ts"] });
+    const b = await at(store, c);
+    const seam = b.seams.find((x) => x.tasks.includes("A") && x.tasks.includes("B"));
+    expect(seam, "第一轮碰过的东西，第二轮没碰，接缝就看不见了").toBeDefined();
+    expect(seam!.overlap).toContain("html.ts");
+    expect(seam!.resolved, "这次没有现成的解决兜着——判据 5 要的就是这一条").toBeUndefined();
+  });
+
+  it("判据 2：本轮的声明仍然改得窄——并集攒的是已经交出去的那几轮", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts", "board.ts"] });
+    // 还没 done：这一轮的声明改窄（done 按事实取代声明），并集里此刻什么都没有
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    const t = boardTask(await at(store, c), "A")!;
+    expect([...t.touches!].sort(), "本轮改窄的那一个又被并回来了").toEqual(["html.ts"]);
+  });
+
+  it("并集攒的是**事实**：一轮明说「什么都没碰」，那一轮的声明就不进并集", async () => {
+    const store = new MemoryStore();
+    const c = clock(Date.now() - min(60));
+    await create(store, c, "A");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa", touches: ["html.ts"] });
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "第二轮" });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["board.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb", touches: [] });
+    const t = boardTask(await at(store, c), "A")!;
+    // 第二轮 claim 时声明了 board.ts，done 时明说「这一轮什么都没碰」——那是一条事实，它更正了自己的声明
+    // （t-105/qa 00:29：`[]` 说的是「它什么都没碰」，和别的事实一样）。所以并集里只有第一轮那条事实。
+    // **并集只增不减说的是「已经交出去的那些轮」不会消失**，不是「说过的每一句声明都作数」。
+    expect([...t.touches!].sort()).toEqual(["html.ts"]);
   });
 });

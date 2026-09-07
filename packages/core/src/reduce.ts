@@ -30,6 +30,18 @@ export interface TaskState {
   claimed_at?: string;
   claimed_id?: string;
   touches: string[];
+  /**
+   * t-157：**这件任务一共碰过什么**——各轮的并集。
+   *
+   * `touches` 按 t-135 的定义只算**本轮**（那条是对的，不要推翻它：一轮的账从这一轮的起点算起，否则一件
+   * reopen 过的活会被记上它 owner 在两轮之间做的一切）。但「这件任务碰了什么」这个**对外**的答案不是最后一轮，
+   * 是全部——dev 07:22 实测：t-147 两轮碰了 17 个文件，done 之后记录上只剩 3 个，而它真正与 t-152 相撞的
+   * html.ts / i18n.ts / app.ts / format.ts / loop.ts 全在第一轮里。那次没漏挡是因为接缝当时已经解决过，
+   * 不是因为规则挡住了它。
+   *
+   * 所以接缝检测与触点索引都读这一份；每一轮自己那一份仍然只算本轮。
+   */
+  touched_all: string[];
   status: TaskStatus;
   blocked_on?: string;
   /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
@@ -174,6 +186,16 @@ export interface SeamState {
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /**
+   * t-196: 每条事件署的是谁。署名更正要判「是不是本人自报」，就得知道那条事件本来署谁——而 State 只留 id，
+   * 不留事件本身。一个 id -> actor 的映射，`disown` 那条规则读它。
+   */
+  actorOf: Map<string, string>;
+  /**
+   * t-196: 被署名更正过的那些事件：`of` -> 谁更正的、什么时候、为什么、原来署的是谁。**原事件原样留在日志里**，
+   * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
+   */
+  disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
   /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
   from: Map<string, Event>;
   readings: Map<string, ReadingState>;
@@ -291,6 +313,8 @@ function readingKey(r: Reading): string {
 export function empty(): State {
   return {
     ids: new Set(),
+    actorOf: new Map(),
+    disowned: new Map(),
     from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
@@ -333,9 +357,24 @@ export function advance(s: State, log: Log): State {
     st.overdue = false;
   };
 
+  // t-196：**先扫一遍署名更正，再折叠。**更正一定排在被更正的那条之后（id 是时间序），所以边折边看是看不到的：
+  // 走到那条事件时，说它不算数的那条还在后面。先把它们收齐，折到那一条时才跳得掉。
+  // 增量那一头由 `Reduction` 负责：一批里带着 disown 就整个重建（store.ts），因为一条更正可能指向早就折进去的
+  // 事件，而已经算进状态的东西是收不回来的。
+  for (const e of log.events) if (!s.ids.has(e.id)) s.actorOf.set(e.id, e.actor);
+  for (const e of log.events) {
+    if (e.kind === "disown" && !s.ids.has(e.id) && !s.disowned.has(e.of)) {
+      s.disowned.set(e.of, { by: e.actor, at: e.at, reason: e.reason, actor: s.actorOf.get(e.of) ?? "" });
+    }
+  }
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
     s.ids.add(e.id);
+    s.actorOf.set(e.id, e.actor);
+    // t-196: 一条被署名更正过的事件不再计入状态——历史不改，但它不再算数。放在折叠的最前面，是因为
+    // 「不计入」要对每一种事件都成立，而不是对某几种。更正本身只记账，不参与后面的分支。
+    if (e.kind === "disown") continue;
+    if (s.disowned.has(e.id)) continue;
     if (e.from && !s.from.has(e.from)) s.from.set(e.from, e);
     const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
@@ -353,7 +392,14 @@ export function advance(s: State, log: Log): State {
         break;
       case "ack": {
         const st = s.instructions.get(e.of);
-        if (st && !st.acked_at) { st.acked_at = e.at; st.acked_by = e.actor; resolved(st); }
+        // t-193 判据 6 (pd 11:16)：**结掉一张给人的卡，理由只能是人的答复，不能是任何人的一次 ack。**
+        // 回执照旧记下（t-064 要它，也确实是一条「看见了」的记录），但一张带选项的卡不因此了结——
+        // 那是替他答。不带选项的指令没有「答案」这回事，ack 仍然把它了结。
+        if (st && !st.acked_at) {
+          st.acked_at = e.at;
+          st.acked_by = e.actor;
+          if (!st.instruction.options?.length) resolved(st);
+        }
         break;
       }
       case "untell": {
@@ -451,7 +497,11 @@ const ULID_IN_TEXT = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
 function didAct(s: State, e: Event): void {
   const mine = (id: string) => s.instructions.get(id)?.instruction.to === e.actor && !s.acted.has(id);
   for (const id of e.refs ?? []) if (mine(id)) s.acted.set(id, e.id);
-  if ((e.kind === "ack" || e.kind === "untell") && mine(e.of)) s.acted.set(e.of, e.id);
+  // t-193 (pd 11:15/11:16)：**一条光秃秃的 ack 不算「办了」。**按 CLAUDE.md，ack 是「看见」，不是「同意」，
+  // 更不是「做了」。这里原来把它算成办了，还在用例里给自己讲了一个理由（「它确实动了…只是那事件叫 ack」）——
+  // 那句话正是把「看见」读成「做了」的那一步。算「办了」的证据仍是引用（refs／正文写下它的 id）与真实动作。
+  // `untell` 留着：撤回是发的人说「这条不用做了」，它确实把这条了结了，不是收件人替自己签收。
+  if (e.kind === "untell" && mine(e.of)) s.acted.set(e.of, e.id);
   const body = e.kind === "note" || e.kind === "instruction" ? e.body : undefined;
   if (body) for (const m of body.matchAll(ULID_IN_TEXT)) if (mine(m[0])) s.acted.set(m[0], e.id);
 }
@@ -558,7 +608,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
-        created_at: e.at, updated_at: e.at, touches: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
         // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
@@ -586,6 +636,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      // t-157：**claim 不并进去。**并集攒的是「已经交出去的那些轮」，而本轮的声明随时可能被改窄——
+      // t-105 与 t-113 靠的正是改窄（done 时按事实取代声明、把粗粒度的声明收细成符号）。把本轮也并进去，
+      // 那两条当场坏掉：一条接缝再也细不下去，一次更正再也收不回来。本轮那一份在下面用的时候现并。
       indexTouches(s, t);   // t-121: the index follows the declaration, always
       t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
@@ -596,7 +649,13 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
       // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
-      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; indexTouches(s, t); detectSeams(s, t); }
+      if (e.touches !== undefined) {
+        t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))];
+        // t-157：**一轮结束时才并进去。**done 那一份是本轮的事实，它取代本轮的声明；并进并集之后只增不减——
+        // 上一轮碰过的东西，不会因为这一轮没再碰它就变成「这件任务没碰过」。
+        t.touched_all = [...new Set([...t.touched_all, ...t.touches])];
+        indexTouches(s, t); detectSeams(s, t);
+      }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
@@ -641,9 +700,14 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
  */
 function detectSeams(s: State, t: TaskState) {
-  for (const other of seamCandidates(s, t.id, t.touches)) {
-    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
-    const overlap = overlapOf(t.touches, other.touches);
+  // t-157 判据 4：接缝读的是**并集**，不是最后一轮。第一轮碰 A、第二轮碰 B，另一件碰 A——这条接缝必须报出来。
+  // 已经交出去的那几轮（`touched_all`）加上本轮此刻的声明（`touches`）。本轮的不写进 `touched_all`，
+  // 所以改窄本轮的声明仍然生效（t-105、t-113）；而前几轮的不会因为本轮没碰而消失（t-157）。
+  const mineAll = [...new Set([...t.touched_all, ...t.touches])];
+  for (const other of seamCandidates(s, t.id, mineAll)) {
+    if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !(other.touched_all.length + other.touches.length)) continue;
+    const theirsAll = [...new Set([...other.touched_all, ...other.touches])];
+    const overlap = overlapOf(mineAll, theirsAll);
     if (!overlap.length) {
       // t-105: recomputing is not only "find more". A revision that narrows the touches can leave a seam describing an
       // overlap that no longer exists, and a seam nobody actually has is one more thing blocking a verify for nothing.
@@ -652,7 +716,7 @@ function detectSeams(s: State, t: TaskState) {
     }
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
-    const light = overlapIsLight(t.touches, other.touches) || undefined;
+    const light = overlapIsLight(mineAll, theirsAll) || undefined;
     const existing = s.seams.get(id);
     if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
     s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
@@ -701,7 +765,7 @@ function indexTouches(s: State, t: TaskState) {
   }
   const mine = new Set<string>();
   s.dirTouchers.delete(t.id);
-  for (const touch of t.touches) {
+  for (const touch of new Set([...t.touched_all, ...t.touches])) {
     const path = touchPath(touch);
     mine.add(path);
     let ids = s.byTouch.get(path);

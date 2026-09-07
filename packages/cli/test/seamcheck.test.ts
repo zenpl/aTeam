@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * t-037: before `task done`, check in local git that a resolved seam's "later merges earlier" really happened.
  */
@@ -6,8 +10,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryStore, append, reduce, board, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor } from "../src/seamcheck.js";
+import { MemoryStore, append, reduce, board, NO_OUTPUT_PREFIX, type NewEvent } from "@ateam/core";
+import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, gitCommitsSince, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -212,5 +216,194 @@ describe("t-160 判据 7 · 自动吸收只认 git 说的，不认证据里写�
     const r = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", unknown);
     expect(r.absorbs).toEqual([]);                        // 不知道就不吸收：文本写了也不算
     expect(r.unverified).toEqual([expect.stringContaining("无法验证")]);
+  });
+});
+
+/**
+ * t-191：**对方 claim 了却还没写代码时，那条接缝无从判定重叠——不该挡住前者的验收。**
+ *
+ * 今夜四次同形状（t-143+t-180、t-180+t-179、t-144+t-185、t-160+t-189），每次都是 qa 一次自查、pm 一次裁定、
+ * 两条 tell。判据 2 的界线：t-160 按**时序**（在它 done 之后才 claim 的不挡），这一条按**有没有产出**
+ * （claim 了但没写代码的不挡）。两条各自独立，不互相取代——一件在前者 done 之前就 claim、而且真的在写代码的，
+ * 两条都不放行，那正是该挡的那一种。
+ */
+describe("t-191 · 对方还没写代码时，接缝无从判定", () => {
+  const world = async (otherStatus: "working" | "done") => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"], no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["packages/core/src/board.ts"] });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["packages/core/src/board.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa 完成", no_human_impact: true });
+    if (otherStatus === "done") await emit({ kind: "task", op: "done", actor: "frontend", task: "t-b", evidence: "bbbbbbb 完成", no_human_impact: true });
+    return board(reduce(await store.read()), "human");
+  };
+  const none: CommitsSince = () => false, some: CommitsSince = () => true, blind: CommitsSince = () => null;
+
+  it("判据 1 正例：对方自 claim 以来没有提交——写一条结论把接缝解掉，前者的验收放行", async () => {
+    const b = await world("working");
+    expect(b.seams[0].open, "先确认它此刻确实挡着").toBe(true);
+    const r = unjudgeableSeams(b, "t-a", none);
+    expect(r.notes).toEqual([]);
+    expect(r.events).toHaveLength(1);
+    const ev = r.events[0] as { resolution: string; tasks: string[] };
+    expect(ev.resolution).toContain(NO_OUTPUT_PREFIX);
+    expect(ev.resolution).toContain("t-b");
+    expect(ev.resolution, "合并义务照旧留给后落地方").toContain("合并义务照旧");
+    expect(ev.tasks).toEqual(expect.arrayContaining(["t-a", "t-b"]));
+  });
+
+  it("判据 3 反例：对方一有提交，立刻回到正常判定——没有「曾经无提交」这种永久豁免", async () => {
+    const b = await world("working");
+    expect(unjudgeableSeams(b, "t-a", some).events, "它写代码了，这条接缝就是真的").toEqual([]);
+    // 同一块板、同一条接缝，只是 git 的回答变了：判定跟着变，因为每次都现问，不记状态
+    expect(unjudgeableSeams(b, "t-a", none).events).toHaveLength(1);
+    expect(unjudgeableSeams(b, "t-a", some).events).toEqual([]);
+  });
+
+  it("对方已经交过活的不走这一条：那时有产出可判，回到正常的接缝判定（含 t-160 那条时序）", async () => {
+    const b = await world("done");
+    expect(unjudgeableSeams(b, "t-a", none).events, "对方 done 了还说它没产出，那是拿一个假前提放行").toEqual([]);
+  });
+
+  it("看不见就当有：判不了的时候不放行，但把原因说出来", async () => {
+    const b = await world("working");
+    const r = unjudgeableSeams(b, "t-a", blind);
+    expect(r.events, "猜错的方向是放行一次真碰车").toEqual([]);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain("判不了");
+    expect(r.notes[0]).toContain("照旧挡着");
+  });
+
+  it("只声明了符号、没声明路径时也问不了 git——同样按「看不见就当有」处理", () => {
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["inFlightGroups"], none, "aaaaaaa")).toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", [], none, "aaaaaaa")).toBe("unknown");
+    expect(outputSinceClaim(undefined, ["a/b.ts"], none, "aaaaaaa"), "没有认领时刻就没有「自那以后」").toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts#sym"], none, "aaaaaaa"), "「文件#符号」取得出文件名").toBe("none");
+  });
+
+  it("被验那一侧的证据里没有 sha：判不了，接缝照旧挡着", () => {
+    // 排掉的那一侧必须来自日志（被验任务的证据 sha）。日志里没有它，就没有「哪一侧是我」这个答案——
+    // 这时候拿谁的 checkout 去补都是猜，而猜错的方向是放行一次真碰车。
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts"], none), "没有 sha 却答得出「对方没写代码」").toBe("unknown");
+  });
+});
+
+/**
+ * t-182：**闸拦对了，但报出来的文件不是两侧真正都改过的那些。**
+ *
+ * 今晚的实例：t-139+t-140 报 `packages/cli/src/deaf.ts`——两侧都没碰它，它是祖先里改的；而真正撞的
+ * `server/test/release-page.test.ts` 一个字没说。被拦下来的人照那份名单去查，查的是一个两边都没碰过的文件。
+ *
+ * 根在于接缝的 overlap 是两份**触点清单**的交集，清单里没有「自共同祖先以来」这回事。我拿那两条真证据 sha
+ * 核过：`git merge-base c838dec 9867803` 就是 `c838dec` 自己——两边根本没有分叉，真交集是空的。
+ */
+describe("t-182 · 报的是三方比较的交集，不是两份清单的交集", () => {
+  // 判据 3 一正一反，都在构造的 changed 上跑，不依赖本仓库的历史
+  const changed = (map: Record<string, string[]>): ChangedSince => (from, to) => map[`${from}->${to}`] ?? null;
+
+  it("判据 3 正例：真撞的逐个文件报准", () => {
+    const c = changed({ "b->a": ["x.ts", "y.ts"], "a->b": ["y.ts", "z.ts"] });
+    expect(realOverlap("a", "b", c)).toEqual(["y.ts"]);
+  });
+
+  it("判据 3 反例：祖先里改的、两侧都没碰的，不出现在名单里", () => {
+    // deaf.ts 在两边的 merge-base..to 里都不出现——它是祖先里改的
+    const c = changed({ "b->a": ["board.ts"], "a->b": ["html.ts"] });
+    expect(realOverlap("a", "b", c), "两边改的东西不相交，就没有真撞").toEqual([]);
+  });
+
+  it("判据 1、2：一侧是另一侧的祖先时真交集为空——今晚那三条的形状", () => {
+    const c = changed({ "b->a": [], "a->b": ["board.ts", "deaf.ts"] });   // a 是 b 的祖先：a 那一边没有独有改动
+    expect(realOverlap("a", "b", c)).toEqual([]);
+  });
+
+  it("判不了就答 null，接缝照旧挡着——不拿猜的当判定", () => {
+    expect(realOverlap("a", "b", changed({ "b->a": ["x.ts"] })), "只答得出一半也是判不了").toBeNull();
+    expect(realOverlap("a", "b", changed({}))).toBeNull();
+  });
+
+  it("落回日志：真交集为空的解掉；不空但名单报错的把对的说出来；判不了的什么都不写", () => {
+    const empty = seamTruthEvents([{ seam: "seam:t-1+t-2", other: "t-2", reported: ["deaf.ts"], real: [] }], "t-1");
+    expect(empty.events).toHaveLength(1);
+    expect((empty.events[0] as { resolution: string }).resolution).toContain("没有一个文件是两边都改过的");
+    expect((empty.events[0] as { resolution: string }).resolution, "把先前报错的那个也说出来，读的人才知道换了什么").toContain("deaf.ts");
+
+    const wrong = seamTruthEvents([{ seam: "s", other: "t-2", reported: ["deaf.ts"], real: ["release-page.test.ts"] }], "t-1");
+    expect(wrong.events).toEqual([]);                       // 真撞：接缝该挡就挡
+    expect(wrong.notes[0]).toContain("release-page.test.ts");
+    expect(wrong.notes[0], "也说出先前报的是什么，否则人不知道该改看哪儿").toContain("deaf.ts");
+
+    expect(seamTruthEvents([{ seam: "s", other: "t-2", reported: ["x"], real: null }], "t-1")).toEqual({ events: [], notes: [] });
+  });
+
+  it("名单本来就报得准时，不多说一句", () => {
+    const same = seamTruthEvents([{ seam: "s", other: "t-2", reported: ["a.ts", "b.ts"], real: ["a.ts", "b.ts"] }], "t-1");
+    expect(same).toEqual({ events: [], notes: [] });
+  });
+});
+
+/**
+ * t-191 判据 1，第二、三轮：**问的必须是「对方有没有提交」，而「我是哪一侧」不能来自谁的 checkout。**
+ *
+ * 第二轮（qa 12:01 判 fail）：上一版是 `git log --all -- <paths>`——没有作者、没有分支、没有排除我自己，
+ * 于是它答的是「自那一刻起任何人有没有碰过那些路径」。而一条接缝之所以存在，恰恰是因为两边声明了**同一批
+ * 路径**——所以「我自己在那些路径上的提交」不是边角情形，**它就是这个场景的常态**：我一提交它就答「对方写
+ * 代码了」，这条判定几乎永远放行不了。分得出来的不是作者（这个仓库里每个 agent 都以同一个 git author 提交），
+ * 是**可达性**。
+ *
+ * 第三轮（qa 12:27 判 fail，也是在真仓库上跑出来的）：可达性对，可排掉的那一侧写成了 `HEAD`。这段判定跑在
+ * `task verify --pass` 里，而**落 pass 的只有 qa**——qa 的 HEAD 是 qa 自己的分支，不是被验那件任务的分支。
+ * 于是 `--not HEAD` 排掉的是 qa 那条线，被验任务的提交照样不可达、照样被算成「对方写了代码」。
+ * 排的必须是**被验那一侧记在日志里的证据 sha**：它不来自谁的 checkout，谁跑都一样。
+ *
+ * 这几条在一个真 git 仓库上跑，而且**站在 qa 的 checkout 上跑**——要证的正是「HEAD 是谁的」这件事。
+ */
+describe("t-191 · 排掉的是被验任务的证据 sha，不是谁的 HEAD", () => {
+  const repo = mkdtempSync(join(tmpdir(), "t191-"));
+  const run = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  const EPOCH = "1970-01-01T00:00:00Z";
+  let mine = "";
+  beforeAll(() => {
+    run("init", "-q", ".");
+    run("config", "user.email", "t@t"); run("config", "user.name", "t");
+    writeFileSync(join(repo, "shared.ts"), "base\n");
+    run("add", "."); run("commit", "-qm", "base");
+    run("checkout", "-qb", "theirs");
+    writeFileSync(join(repo, "shared.ts"), "theirs\n");
+    run("commit", "-qam", "theirs");                       // 对方分支上的提交
+    run("checkout", "-q", "master");
+    run("checkout", "-qb", "dev-branch");
+    writeFileSync(join(repo, "shared.ts"), "mine\n");
+    run("commit", "-qam", "mine");                         // 被验那件任务自己的提交，在同一批路径上
+    mine = run("rev-parse", "HEAD").stdout.trim();
+    // **判定跑在 qa 的 checkout 上**：HEAD 既不是 dev 那条分支，也不是对方那条。
+    run("checkout", "-q", "master");
+    run("checkout", "-qb", "qa-branch");
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("被验任务自己的提交不算「对方写代码了」——哪怕跑这条命令的是 qa", () => {
+    // 先确认对方那条分支上确实有提交，该答 true
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], mine), "对方分支上确实有提交").toBe(true);
+    // 把对方那条分支删掉：shared.ts 上只剩**被验那件任务自己**的那条提交
+    run("branch", "-qD", "theirs");
+    // qa 12:27 判 fail 的那一条：排 HEAD 排掉的是 qa 自己那条线，dev 的提交照样被算成对方的
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], "HEAD"), "这正是上一版：qa 的 HEAD 上没有 dev 的提交，于是它被算成了对方的").toBe(true);
+    // 排被验任务的证据 sha：不来自谁的 checkout，谁跑都一样，答 false
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], mine), "只剩被验任务自己的提交，却答成「对方写代码了」").toBe(false);
+  });
+
+  it("路径不在任何提交里：答 false（对方确实没碰过它）", () => {
+    expect(gitCommitsSince(repo)(EPOCH, ["nobody-touched.ts"], mine)).toBe(false);
+  });
+
+  it("没有可排的那一侧（证据里没有 sha）：答 null，接缝照旧挡着", () => {
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], "")).toBeNull();
+  });
+
+  it("不是 git 仓库：答 null，接缝照旧挡着", () => {
+    expect(gitCommitsSince(mkdtempSync(join(tmpdir(), "notgit-")))(EPOCH, ["x.ts"], "HEAD")).toBeNull();
   });
 });

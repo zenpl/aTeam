@@ -37,14 +37,14 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
 // t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
-export const SECOND_HOME_FROZEN: number = 361;
+export const SECOND_HOME_FROZEN: number = 351;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
-  "packages/server/src/i18n.ts": 167,
-  "packages/cli/src/format.ts": 36,
+  "packages/server/src/i18n.ts": 165,
+  "packages/cli/src/format.ts": 33,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 23,
@@ -52,7 +52,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,
   "packages/server/src/alerts.ts": 11,
-  "packages/cli/src/deaf.ts": 5,
+  "packages/cli/src/deaf.ts": 0,
   "packages/cli/src/config.ts": 2,
   "packages/cli/src/rejected.ts": 2,
   "packages/server/src/html.ts": 0,
@@ -86,6 +86,49 @@ export const injectNoSite = (old: string) => `注入点没找到，一处都没�
 export const injectManySites = (n: string, old: string) => `注入点有 ${n} 处，改哪一处不确定——把原文写长一点：${old}`;
 export const INJECT_BUILD_BROKE = "注入之后 build 就没过——这不算「断言会红」，换一个注入点";
 export const INJECT_STILL_GREEN = "注入之后测试仍然全绿：被守的东西不见了，没有一条断言说话。";
+
+/**
+ * t-162 · 「没在听」的四句，整句在这里算出来（pd 05:50 的位置规则 + pm 的「数据进、句子出」）。
+ *
+ * 它们原来住在 `packages/cli/src/deaf.ts`，是**与变量拼成一句**的那一类：CLI 拿到毫秒数、自己拼中文。
+ * 搬的是拼句子的地方，不是句子本身——**人看到的字一个没改**（t-162 判据 3），下面每一句都能与改前逐字对上。
+ *
+ * 这四句只有命令行会说（页面没有「心跳」这个概念），所以搬进来不需要在两种拼法之间做选择——
+ * 那种需要选的（`waitingDeploy` 与 `format.ts:69` 的分号／句号之差）我留着等 pd，写在 t-162 的 note 上。
+ */
+export const WATCH_LINES = {
+  /** 心跳停了，且知道停了多久。`when` 是 core 的 ago(ms)。 */
+  stopped: (when: string, cmd: string) => `⚠ 你的监听 ${when}停了，期间可能漏了指令，重挂：${cmd}`,
+  /** 心跳文件在，但读不出来——说不出停了多久，就不说。 */
+  unreadable: (cmd: string) => `⚠ 你的监听停了（心跳文件读不出来，说不出多久），期间可能漏了指令，重挂：${cmd}`,
+  /** 服务端从没见过这个节点拉取。 */
+  neverPulled: "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync",
+  /** 心跳还在跳，但服务端很久没见它拉取了。`how` 是 core 的 span(ms)：这一句说的是时长不是时刻。 */
+  behind: (how: string) => `⚠ 服务端说你 ${how}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`,
+} as const;
+
+/**
+ * t-162 · 线上这一版是谁弄上去的（pd 22:47 定的两种：`推的` 有「的」，`核对` 没有）。
+ *
+ * 这一句原来**页面与命令行各存一份**：`i18n.ts` 的 `pushedBy`/`checkedBy` 与 `format.ts:58` 的
+ * `` ` (${by} ${when}推的)` ``。两份的**句子本身一字不差**，差的只是命令行外面那对括号——所以它属于
+ * 「同一句话住在两个地方」而不是「两种说法」，搬进来不需要在措辞之间做选择（那种我留给 pd，见 t-162 的 note）。
+ * 括号留在命令行：那是版式，不是话。
+ */
+export const DEPLOY_SOURCE = {
+  pushed: (who: string, when: string) => `${who} ${when}推的`,
+  checked: (who: string, when: string) => `${who} ${when}核对`,
+} as const;
+
+/**
+ * t-162 · 一次验收后来被推翻，牌桌上那一行怎么说。
+ *
+ * 只有命令行说这一句（页面没有对应的话），所以搬进来不需要在两种说法之间做选择。
+ * **另一处相近的没搬**：`format.ts` 任务详情里那句带上了「谁验过的」与时刻
+ * （`overturned X 验过（Y），后被 Z 推翻 12:34`）。它与这一句是不是同一句话的详略两版、
+ * 还是两句，我判不了——那是产品判断，记在 t-162 的 note 上等 pd。
+ */
+export const overturnedLine = (surface: string, by: string) => `${surface} 验过，后被 ${by} 推翻`;
 
 /**
  * 一条人可见的话在 core 里的登记。

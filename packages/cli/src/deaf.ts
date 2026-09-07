@@ -5,7 +5,7 @@
  * in its own output. It is a word to this node only: no event, no log line, nothing the team sees — who is
  * not listening is already on the board (t-047/t-048).
  */
-import { LISTEN_WINDOW_MS, WATCH_INTERVAL, ago, span } from "@ateam/core";
+import { LISTEN_WINDOW_MS, WATCH_INTERVAL, ago, span, WATCH_LINES } from "@ateam/core";
 import type { Lock } from "./lock.js";
 
 /**
@@ -45,9 +45,9 @@ export function watchState(raw: string | null, now: Date, windowMs = LISTEN_WIND
 /** The one line, or null when there is nothing to say. Never mentions a heartbeat that is still beating. */
 export function deafNotice(st: WatchState): string | null {
   if (st.kind === "never" || st.kind === "listening") return null;
-  // pd 09:17 的句框规矩：时间短语在句首，四档都得通顺——「你的监听 刚刚停了」「你的监听 1 小时前停了」。
-  const when = st.kind === "stopped" ? ` ${ago(st.sinceMs)}停了` : "停了（心跳文件读不出来，说不出多久）";
-  return `⚠ 你的监听${when}，期间可能漏了指令，重挂：${st.cmd}`;
+  // t-162：句子搬到 core 的 WATCH_LINES 一处，这里只把数据递进去。
+  // pd 09:17 的句框规矩仍然成立（时间短语在句首，四档都得通顺），那条规矩现在写在 core 那一处。
+  return st.kind === "stopped" ? WATCH_LINES.stopped(ago(st.sinceMs), st.cmd) : WATCH_LINES.unreadable(st.cmd);
 }
 
 /**
@@ -70,10 +70,10 @@ export function pullIdle(header: string | null | undefined): PullIdle {
  */
 export function behindNotice(idle: PullIdle, windowMs = LISTEN_WINDOW_MS): string | null {
   if (!idle) return null;
-  if (idle.kind === "never") return "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync";
+  if (idle.kind === "never") return WATCH_LINES.neverPulled;
   if (idle.s * 1000 <= windowMs) return null;
   // 这一句说的是时长不是时刻（「你 12 分钟没拉过了」），所以用 span，不是 ago——同一道梯子，另一个句框。
-  return `⚠ 服务端说你 ${span(idle.s * 1000)}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`;
+  return WATCH_LINES.behind(span(idle.s * 1000));
 }
 
 /**

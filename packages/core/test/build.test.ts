@@ -460,9 +460,40 @@ describe("t-184 · 按钮上的字也算人可见", () => {
     const oldRuler = [...new Set([...speakingOf(src, 6), ...decidingOf(src)])];   // 旧门槛，同一棵树
     const newRuler = measureKeySymbols(src);                                       // 此刻的口径
     expect(newRuler.length).toBe([...KEY_SYMBOLS].length);
-    expect(newRuler.length - oldRuler.length, "变大的正是被门槛漏掉的那一层，不是别的").toBe(19);
+    // 差额是算出来的，不是一个写死的数——写死那种，下一次有人加一个短的人可见词就得来改它，而那正是这条
+    // 断言要防的那类漂移。它守的是「新尺子多出来的每一个，都是旧门槛漏掉的」，不是「恰好多 19 个」。
+    const extra = newRuler.filter((x) => !oldRuler.includes(x));
+    expect(extra.length, "一个都没多出来，那这次口径变更就无从谈起").toBeGreaterThan(10);
+    for (const x of extra) expect(speakingOf(src, 6), `${x} 不是被门槛漏掉的那一层`).not.toContain(x);
     // 这两个数是这条断言自己算的，不是抄来的——所以「换尺子藏住真增长」这件事在这里做不到：
     // 旧尺子下的数一旦真的涨了，这条差额就对不上。
     expect(oldRuler.every((x) => newRuler.includes(x)), "新尺子应当只多不少").toBe(true);
+  });
+});
+
+/**
+ * t-197：**REPEATABLE 也是一份手写名单，而它一直没有闸。**
+ *
+ * 与 t-173 同一根因，症状更安静：漏一个开关时 `--refs a --refs b` 不报错、不重复，**后一个静默盖掉前一个**，
+ * 命令照常成功。frontend 11:36 实测：九个里五个不在名单里（refs、touches、writes、depends-on、enum）。
+ *
+ * 后果不是小事：**touches 少一个就是一次不会被发现的接缝；refs 少一个就是一次「我动过」被算成没动**——
+ * t-193 之后 refs 正是「办了」的唯一凭据。
+ */
+describe("t-197 · CLI 的可重复参数名单与它的用法对得上", () => {
+  const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const declared = () => new Set([...(read("../../cli/src/args.ts").match(/const REPEATABLE = new Set\(\[([^\]]*)\]\)/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+
+  it("判据 1：list() 读到的每一个参数都在 REPEATABLE 里", () => {
+    const used = [...new Set([...read("../../cli/src/main.ts").matchAll(/list\(\s*a\s*,\s*"([^"]+)"\s*\)/g)].map((m) => m[1]))].sort();
+    expect(used.length, "名单本身没被读空").toBeGreaterThan(5);
+    const missing = used.filter((x) => !declared().has(x));
+    expect(missing, `这些参数给两次会静默丢掉前一个：${missing.join("、")}——touches 丢一个是一次不会被发现的接缝，refs 丢一个是一次「我动过」被算成没动`).toEqual([]);
+  });
+
+  it("判据 2：frontend 11:36 点名的那五个现在真的在里面", () => {
+    for (const flag of ["refs", "touches", "writes", "depends-on", "enum"]) {
+      expect(declared(), `${flag} 还不在名单里`).toContain(flag);
+    }
   });
 });

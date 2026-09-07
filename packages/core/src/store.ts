@@ -57,6 +57,10 @@ export class Reduction {
   async at(now: Date): Promise<State> {
     if (!this.store.readSince) return reduce(await this.store.read(), now);
     let got = await this.store.readSince(this.mark);
+    // t-196：一批里带着署名更正就整个重建。一条更正可以指向早就折进去的事件，而**已经算进状态的东西是收不
+    // 回来的**——增量折叠只会往前加。更正很少见，重建一次的代价换的是「增量与全量给出同一个答案」这条不变式。
+    const disowning = got.log.events.some((e) => e.kind === "disown");
+    if (disowning) { this.s = empty(); got = await this.store.readSince(null); }
     advance(this.s, got.log);
     if (got.events !== this.s.ids.size) {
       // Something is in the store that we never folded. Rebuild rather than serve a state that disagrees with the log.

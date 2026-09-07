@@ -3,7 +3,7 @@
  * 从分支相对 claim 起点的 diff 算；没有 diff 的介质退回手工修订，那条退化路径是一等公民，不是「以后再说」。
  */
 import { describe, it, expect } from "vitest";
-import { revise, baseAt, changedFiles, type Git } from "../src/touches.js";
+import { revise, baseAt, changedFiles, changedSymbols, type Git } from "../src/touches.js";
 
 const DECLARED = ["packages/cli/src/watch.ts", "packages/cli/src/heartbeat.ts", "packages/cli/src/index.ts", "packages/cli/src/format.ts"];
 const ACTUAL = ["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts", "packages/cli/test/deaf.test.ts"];
@@ -212,5 +212,109 @@ describe("t-138 · 合进来的不是我改的", () => {
     expect(files.sort()).toEqual([...mine136].sort());
     for (const f of theirs136) expect(files).not.toContain(f);
     expect(files).toHaveLength(7);
+  });
+});
+
+/**
+ * t-183：**done 量出来的触点带到符号一级。**
+ *
+ * 判定早就是符号级的（t-170 的闸读「文件#符号」，t-113 的轻接缝也读它），可 done 量出来的只有路径——于是
+ * 只声明路径的人照样过得去，符号级那一半形同虚设。这是我 09:42 自己指出来、当时留在明处的那个缺口。
+ *
+ * 这几条用真实的 git 输出格式跑（`-U0` 的 hunk 头加正文），因为这一段的两个 bug 都是格式带来的：
+ * ① `-U0` 之下 git 仍会把紧邻的上下文并进同一个 hunk，只读 @@ 头会把上一个函数的尾巴算成改过；
+ * ② 追加新代码时前面那个空行落在上一个函数的范围里，于是它被报成改过，而一个字都没动。
+ */
+describe("t-183 · 触点带到符号一级", () => {
+  const FILE = "packages/core/src/x.ts";
+  const SRC = [
+    'import { a } from "./a.js";',      // 1
+    "",                                 // 2
+    "/** first 的说明 */",                   // 3
+    "export const first = 1;",              // 4
+    "",                                 // 5
+    "/** second 的说明 */",                   // 6
+    "export function second() {",            // 7
+    "  return 2;",                      // 8
+    "}",                                // 9
+  ].join("\n");
+  const git = (diffs: Record<string, string | null>): Git => (args) => {
+    if (args[0] === "diff" && args.includes("HEAD") && !args.some((x) => x.includes(".."))) return diffs.worktree ?? "";
+    if (args[0] === "diff") return diffs.committed ?? "";
+    if (args[0] === "show" || args[0] === "cat-file") return SRC;
+    return null;
+  };
+  // 这段扫法读工作区的文件；测试里没有那个文件，所以走 `git show HEAD:<file>` 那条
+  const hunk = (start: number, lines: string[]) => `@@ -${start},0 +${start},${lines.length} @@\n${lines.map((l) => "+" + l).join("\n")}\n`;
+
+  it("判据 3 正例：只改了某个内部符号的改动被认出来", () => {
+    const syms = changedSymbols(git({ committed: hunk(8, ["  return 22;"]) }), "base", FILE);
+    expect(syms?.symbols).toEqual([`${FILE}#second`]);
+    expect(syms?.partial, "全归到了符号上，没有落在外面的").toBe(false);
+  });
+
+  it("判据 3 反例：改了人可见句子的，不因为只声明了路径而蒙混过去——它被点到那个符号上", () => {
+    expect(changedSymbols(git({ committed: hunk(4, ["export const first = 2;"]) }), "base", FILE)?.symbols).toEqual([`${FILE}#first`]);
+  });
+
+  it("`-U0` 把上下文并进 hunk 时，不把上一个函数的尾巴算成改过", () => {
+    // 真实形状：`@@ -8,2 +8,3 @@` 里前两行是上下文（空格开头），只有第三行是新加的
+    const diff = "@@ -8,2 +8,3 @@\n   return 2;\n }\n+export const 丙 = 3;\n";
+    const syms = changedSymbols(git({ committed: diff }), "base", FILE);
+    expect(syms?.symbols ?? [], "second 一个字都没动，却被报成改过").not.toContain(`${FILE}#second`);
+  });
+
+  it("只多了空行的符号不算改过", () => {
+    const syms = changedSymbols(git({ committed: "@@ -9,0 +10,1 @@\n+\n" }), "base", FILE);
+    expect(syms).toBeNull();
+  });
+
+  it("判据 2：算不出符号的退回文件级——不是 .ts、改在所有声明之外、文件没了，都不编一个符号名", () => {
+    expect(changedSymbols(git({}), "base", "packages/core/manual/common.md"), "不是 .ts").toBeNull();
+    expect(changedSymbols(git({ committed: hunk(1, ['import { b } from "./b.js";']) }), "base", FILE), "改在所有顶层声明之外").toBeNull();
+    const noFile: Git = (args) => (args[0] === "diff" ? "" : null);
+    expect(changedSymbols(noFile, "base", FILE), "文件没了").toBeNull();
+  });
+
+  it("工作区里还没提交的改动也算进来", () => {
+    expect(changedSymbols(git({ committed: "", worktree: hunk(8, ["  return 3;"]) }), "base", FILE)?.symbols).toEqual([`${FILE}#second`]);
+  });
+});
+
+/**
+ * t-183：**归属归不全时要说出来。**
+ *
+ * 这一条是这段量法自己量出来的：我把它写完，用它量本轮自己的改动，`touches.test.ts` 顶层最后一个声明是个
+ * `const`，后面全是 `describe(...)` 调用——不是声明。按「一段声明管到下一段声明之前」算，那个 const 一路吃到
+ * 文件末尾，于是我追加的整个 describe 被算成「改了 ACTUAL」。**它成了自己的第一个误报，被它自己抓到。**
+ *
+ * 改法是按括号配平找结尾。但配平会算不准（正则里的括号、字符串里的括号），而算不准的两个方向不一样：
+ * 吃多了会把没动过的符号说成改过（错报），吃少了会漏掉一部分改动（少报）。所以配平之前先把字符串、正则、
+ * 注释里的括号抹掉；而**归不全的仍然照实说**——归到的符号给出来，同时把这个文件标成没归全，那部分改动
+ * 就不会悄悄消失在符号那一层。少报比错报好，但不说比两者都糟。
+ */
+describe("t-183 · 归属归不全时照实说", () => {
+  const FILE2 = "packages/core/src/y.ts";
+  const SRC2 = [
+    "export const LIST = [",   // 1
+    '  "a",',                  // 2
+    "];",                      // 3
+    "",                        // 4
+    'describe("x", () => {',   // 5
+    '  it("y", () => {});',    // 6
+    "});",                     // 7
+  ].join("\n");
+  const git2 = (diff: string): Git => (args) =>
+    args[0] === "diff" && args.includes("HEAD") && !args.some((x) => x.includes("..")) ? "" : args[0] === "diff" ? diff : SRC2;
+
+  it("改在顶层声明之外（describe 里）：不记到上一个 const 头上", () => {
+    const syms = changedSymbols(git2('@@ -6,0 +6,1 @@\n+  it("z", () => {});\n'), "base", FILE2);
+    expect(syms, "一个符号都归不出来就该退回文件级").toBeNull();
+  });
+
+  it("一部分归得出、一部分落在外面：符号给出来，同时标成没归全", () => {
+    const syms = changedSymbols(git2('@@ -2,0 +2,1 @@\n+  "b",\n@@ -6,0 +7,1 @@\n+  it("z", () => {});\n'), "base", FILE2);
+    expect(syms?.symbols).toEqual([`${FILE2}#LIST`]);
+    expect(syms?.partial, "那部分落在外面的改动会悄悄消失在符号那一层").toBe(true);
   });
 });

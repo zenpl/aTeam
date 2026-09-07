@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -20,6 +20,11 @@ export interface BoardTask {
   created_at?: string;
   owner?: string;
   touches?: string[];
+  /**
+   * t-191: 它是什么时候认领的。`seamCheck` 那一头要它去问 git「自那以后有没有提交碰过这些路径」——一件认领了
+   * 却还没写代码的活，与另一件已经交出去的活之间没有重叠可判，那条接缝不该挡住前者的验收。
+   */
+  claimed_at?: string;
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
@@ -331,6 +336,14 @@ export interface Board {
   gate_honesty: GateHonesty[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
+  /**
+   * t-196 判据 2：被署名更正过的那些事件，两条并排——`of` 那一条原来署的是 `actor`，`by` 说它不是他做的、
+   * 什么时候说的、为什么。人不必读日志正文就知道那一条不是他做的。
+   *
+   * **这里只有数据，没有句子。**pd 11:17 起人可见的字冻结，所以那句并排怎么说、印在哪一段，我没有自拟——
+   * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
+   */
+  disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -600,6 +613,11 @@ export function contactAskAnswered(s: State, i: Instruction): boolean {
  * a node that is alive but no longer pulling has to be listening again, and starting a second one is the crude way.
  */
 export function missingCard(role: string, status: "missing" | "deaf", awayMin: number | null, count: number): string {
+  // t-202：**`deaf` 那一支此刻走不到了，而我没有删它——删掉一句人看得见的话是 pd 的决定，不是我的。**
+  // 这张卡从此只在 `missing` 那一态起（起一个新的确实是出路的那一态）；deaf 的节点人仍然看得到，在
+  // 分组那一层（overdue_by_presence.deaf），只是不再以「起一个 X？」的形状进首屏。
+  // **停在这一步等 pd**（判据 3）：deaf 那一态到底要不要单独对人说一句、说什么，是措辞，冻结之下不自拟。
+  // 若 pd 说不必说，那时这一支连同它这句话一起退役；若 pd 要另说一句，它落在这儿。
   // The card asks the human for the one thing a human can do. What separates the two states is what is *true*, not a
   // second instruction: this node is still writing, and saying so is what stops the reader concluding it has died.
   // pd 06:04 retired 「没在听」 for the verb we can actually observe — whether it has come and read the log.
@@ -626,6 +644,27 @@ export function missingRoleOf(body: string): string | undefined {
 export function isMissing(s: State, role: string, now: Date, listenWindowMs = LISTEN_WINDOW_MS): boolean {
   const last = s.presence.get(role)?.last_pull;
   return !last || now.getTime() - Date.parse(last) > listenWindowMs;
+}
+
+/**
+ * t-202：**「没在听」的三态，一处算出来。**
+ *
+ * t-137 早就说过不许把两者合并成一个布尔：`missing` 是没人在跑这个角色，出路是起一个新的；`deaf` 是**它还
+ * 活着、还在写，只是没来读日志**，出路是让它去读，起第二个解决不了。分组那一层（t-139 的 `overdue_by_presence`）
+ * 照这三态分了，可**用它的那一层还是一个布尔**：那张「起一个 X？」的卡活在 `isMissing` 上，而 `isMissing` 只
+ * 读 `last_pull`——「从没拉过」与「还在写但不拉」对它是同一个 true。
+ *
+ * 后果是人的首屏上出现过一句假话：12:46:06 那份牌桌上 dev 6.8 分钟没拉、2.6 分钟前刚写过东西（`deaf`），卡却
+ * 说「dev 没在听了 13 分钟，起一个 dev？」——而它 12:42、12:46 各交了一件活。人被叫去起一个正在交活的节点。
+ *
+ * 所以判定只此一处：`row()` 里那三行原地展开的算法搬到这里，卡与分组读同一份。`isMissing` 留着不动——它问的
+ * 是「此刻听不听得见」（覆盖率、未送达都该用它），那个问题的答案确实是个布尔。
+ */
+export function presenceStatus(s: State, role: string, now: Date, listenWindowMs = LISTEN_WINDOW_MS): "listening" | "deaf" | "missing" {
+  const p = s.presence.get(role);
+  const within = (iso: string | null | undefined, ms: number) => !!iso && now.getTime() - Date.parse(iso) <= ms;
+  if (within(p?.last_pull, listenWindowMs)) return "listening";
+  return within(p?.last_event, PRESENCE_WINDOW_MS) ? "deaf" : "missing";
 }
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
@@ -752,6 +791,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     batches: [],
     said: [],
+    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],
     roles: projectRoles(s),
@@ -782,9 +822,15 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at, note: st.chosen.note } : undefined,
       says_default: sayDefault(st, now),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
-    if (status === "acked" || status === "withdrawn") continue;
+    // t-193 判据 6：一张带选项的卡被 ack 过，**并不算答过**——它要留在「需要你」里，直到人真的选。
+    // 这一行原来把它一并拿掉，于是一次签收就替他把问题从桌上收走了。
+    if ((status === "acked" && !i.options?.length) || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
-    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
+    // t-202：这张卡问的是「要不要起一个新的」，所以它只在起一个新的**真能解决问题**的那一态活着。
+    // 回来了（listening）当然撤；**还在写只是没读（deaf）也撤**——起第二个解决不了它，而人照着卡去起，
+    // 结果是起一个正在交活的节点。deaf 那一态人仍然看得到，在分组那一层（NOBODY HAS ACTED ON），
+    // 只是不再以「起一个 X？」的形状进首屏。
+    if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && presenceStatus(s, missingRoleOf(i.body)!, now, listenWindow) !== "missing") continue;
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
     if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
@@ -864,7 +910,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     (b.tasks[t.status] ??= []).push({
       era, summary,
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
+      // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
+      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -937,9 +985,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const idleOf = (iso: string | null) => (iso ? Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 1000)) : null);
     const last_pull = p?.last_pull ?? null, last_event = p?.last_event ?? null, last = lastSeen(p);
     const idle_pull_s = idleOf(last_pull), idle_event_s = idleOf(last_event);
-    const listening = idle_pull_s !== null && idle_pull_s * 1000 <= listenWindow;
-    const spoke = idle_event_s !== null && idle_event_s * 1000 <= PRESENCE_WINDOW_MS;
-    const status = listening ? "listening" : spoke ? "deaf" : "missing";
+    // t-202：三态从 presenceStatus 来，卡那一层读的是同一份——这里原本自己算一遍，于是两层各算各的
+    const status = presenceStatus(s, actor, now, listenWindow);
+    const listening = status === "listening";
     return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
@@ -1191,6 +1239,19 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
 export interface OwedNow {
   unanswered: { instruction: string; from: string; body: string; sent: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
   untouched: { instruction: string; from: string; body: string; sent: string }[];
+  /**
+   * t-193 判据 7：**t-147 上线之前的那一批，进这个具名的旁桶，不进任何人的活欠账。**
+   *
+   * 桶名（`legacy_before_acted_rule`）说的就是它是什么：那时还没有「引用才算办了」这条规矩，签收就是当时的
+   * 正确做法。所以把它算进今天的欠账，等于用今天的规矩去数昨天的人——量出来是 1690 条，每个人的第一句会
+   * 一次变成三位数，而那不是谁突然不干活了。
+   *
+   * **它不归零**：它是历史，只作为一个不再增长的数存在（写完这句我核过：起算点由日志算出来，所以新的指令
+   * 不可能落进这个桶）。活欠账只从 t-147 上线那一刻起算。
+   *
+   * 这里只有数据。**这个桶在牌桌上怎么说、说不说，我没自拟**——pm 11:17 起人可见的字冻结，等 pd。
+   */
+  legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[];
 }
 
 /**
@@ -1209,9 +1270,18 @@ export interface OwedNow {
 export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
   if (!owed) return [];
   const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
-  type Item = { body: string; sent: string };
+  type Item = { body: string; sent: string; instruction: string };
   const oldest = (xs: Item[]) => xs.reduce((a, b) => (a.sent < b.sent ? a : b));
-  const first = (x: Item) => splitTitle(x.body).title || x.body.trim().slice(0, 30);
+  /**
+   * t-194：**这句话里要带得出那条指令的 id。**
+   *
+   * ack 退役的时候，「怎么引用它」和「催你 ack」是一起被删掉的——于是新口径（t-193：引用才算办了）要求的东西，
+   * 界面不再提供。pm 11:05 攒下 15 条「读过还没动」，每一条都真的动过，两次想用 `--refs` 回话都因为手边没有 id
+   * 而失败，编出来的 id 被服务当场拒。**这句话正是他此刻唯一看得到的那一行**，id 只能在这里给。
+   *
+   * 只给他自己的：这份 owed 本来就是 `owedNow(s, me)` 算出来的，别人的账不摊给他看（判据 3）。
+   */
+  const first = (x: Item) => `${splitTitle(x.body).title || x.body.trim().slice(0, 30)}（${x.instruction}）`;
   const out: string[] = [];
   if (owed.unanswered.length) {
     const o = oldest(owed.unanswered);
@@ -1225,13 +1295,39 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
 }
 
 export function owedNow(s: State, to: string): OwedNow {
-  const out: OwedNow = { unanswered: [], untouched: [] };
+  const out: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
+  // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
+  // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
+  const since = ruleLiveAt(s, ACTED_RULE_TASK);
   for (const st of owedTo(s, to)) {
     const i = st.instruction;
     if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    else if (since && i.at < since) out.legacy_before_acted_rule.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;
+}
+
+/**
+ * t-193 判据 7：**一条规矩是什么时候开始管事的，由日志算出来。**
+ *
+ * 那条规矩随某一件任务上线，而一件任务什么时候到生产，日志里已经有了：`batch.*` 那些事实各带一个 `contains`，
+ * 记着这一批包含哪些任务，写下它的那一刻就是这一批到生产的那一刻。所以这里找的是**第一批含它的**，取那条
+ * 事实的时间。
+ *
+ * 找不到就返回 undefined，而不是猜一个时刻——调用方据此决定怎么办。写死一个时间戳是同一条毛病的又一次：
+ * 一个数与它描述的东西分开维护，改了部署顺序没人记得改它。
+ */
+export function ruleLiveAt(s: State, task: string): string | undefined {
+  const times: string[] = [];
+  for (const rs of s.readings.values()) {
+    const r = rs.reading;
+    if (!r.key.startsWith(BATCH_PREFIX)) continue;
+    const v = r.value as BatchValue | undefined;
+    if (v && Array.isArray(v.contains) && v.contains.includes(task)) times.push(r.at);
+  }
+  return times.sort()[0];
 }
 
 /**
@@ -1357,7 +1453,8 @@ export function slimBoard(b: Board): Board {
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, owner: t.owner, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete,
       // t-164: 在途那几件的触点留在瘦身板里——「这块地上还有谁」只需要它们，而在途的从来只有几件。
       // 已经 done 的不留：那是接缝在 done 时判的事，不是「还有谁在」。
-      touches: t.status === "working" ? t.touches : undefined,
+      touches: t.status === "working" ? t.touches : undefined,   // t-164 只看在途那一份：那是「这块地上还有谁」，不是「这件碰过什么」
+      claimed_at: t.status === "working" ? t.claimed_at : undefined,   // t-191: 与 touches 同去同留，它们是同一个问题的两半
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
