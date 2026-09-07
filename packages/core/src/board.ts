@@ -980,6 +980,21 @@ export function sayReading(r: { surface: string; key: string; value: unknown; by
 }
 
 /**
+ * t-164 (pd 07:57)：一进门就看见屋里有人。
+ *
+ * 一行一个人，说全三件事——谁、哪件、碰在哪——因为下一步是去找那个人谈，而不是去查这一行是什么意思。
+ * 它不是警告：空闲的角色去别人的地盘不是错，所以这里既不叫「警告」也不叫「冲突」。
+ */
+export function alsoHere(who: string, task: string, title: string, overlap: string[]): string {
+  return `这块地上还有人：${who} 正在做 ${task}（${title}），碰在 ${overlap.join("、")}`;
+}
+
+/** t-164：问了但没人在。说出来，因为「没输出」和「没查」在终端上长得一样。 */
+export function nobodyElse(touches: string[]): string {
+  return `没有别人在动 ${touches.join("、")}`;
+}
+
+/**
  * t-149: 一道闸知道自己不可信时，它的每条结论都要带上实话。
  *
  * 「不可信」不是一个手写的开关，也不是谁的印象：它由日志算出来——这道闸报过的结论里，有多少条被人核对之后

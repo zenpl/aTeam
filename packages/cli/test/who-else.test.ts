@@ -5,7 +5,7 @@
  * 有人时三件事说全（谁、哪件、碰在哪），没人时不含糊其辞，claim 本身一次都不因此失败。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, slimBoard, whoElseTouches, type Board, type NewEvent } from "@ateam/core";
+import { MemoryStore, append, reduce, board, slimBoard, whoElseTouches, alsoHere, nobodyElse, type Board, type NewEvent } from "@ateam/core";
 import * as fmt from "../src/format.js";
 
 const HUMAN = "human";
@@ -30,7 +30,7 @@ describe("t-164 · claim 之后那一行", () => {
   it("三件事说全：谁、哪件、碰在哪——照着它能直接去找人", async () => {
     const { b } = await fixture();
     const [hit] = whoElseTouches(reduce(await (await fixture()).store.read(), new Date()), ["packages/server/src/html.ts"], "dev");
-    const line = fmt.alsoHere(hit.actor, hit.task, hit.title, hit.overlap);
+    const line = alsoHere(hit.actor, hit.task, hit.title, hit.overlap);
     expect(line).toContain("frontend");
     expect(line).toContain("t-a");
     expect(line).toContain("牌桌那一行");
@@ -42,7 +42,7 @@ describe("t-164 · claim 之后那一行", () => {
   });
 
   it("没人时说出来——「没输出」和「没查」在终端上长得一样", () => {
-    const line = fmt.nobodyElse(["packages/server/src/app.ts"]);
+    const line = nobodyElse(["packages/server/src/app.ts"]);
     expect(line).toContain("packages/server/src/app.ts");
     expect(line).toMatch(/没有别人/);
   });

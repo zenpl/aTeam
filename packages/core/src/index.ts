@@ -1,4 +1,5 @@
 export * from "./events.js";
+export * from "./sayings.js";
 export * from "./ulid.js";
 export * from "./reduce.js";
 export * from "./rules.js";

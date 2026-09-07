@@ -221,7 +221,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
    */
   const speaking = (): string[] => {
     const out = new Set<string>();
-    for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts", "manual.ts", "verifyflow.ts"]) {
+    for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts", "manual.ts", "verifyflow.ts", "sayings.ts"]) {
       let src: string;
       try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
       src = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");

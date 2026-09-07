@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -282,7 +282,7 @@ async function main(argv: string[]) {
       if (!rest.length) throw new UsageError("ateam touches <路径…>：说出你打算动的东西，我告诉你此刻还有谁在动它");
       const lines = await whoElse(client, rest, cfg.me);
       if (lines.length) for (const line of lines) console.log(line);
-      else console.log(fmt.nobodyElse(rest));
+      else console.log(nobodyElse(rest));
       return;
     }
     case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
@@ -396,7 +396,7 @@ async function whoElse(client: { board: (full?: boolean) => Promise<Board> }, to
   const out: string[] = [];
   for (const t of working.sort((x, y) => (x.id < y.id ? -1 : 1))) {
     const overlap = overlapOf(touches, t.touches!);
-    if (overlap.length) out.push(fmt.alsoHere(who(t.owner!), t.id, t.title, overlap));
+    if (overlap.length) out.push(alsoHere(who(t.owner!), t.id, t.title, overlap));
   }
   return out;
 }
