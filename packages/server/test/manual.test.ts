@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, manualRoles } from "@ateam/core";
+import { MemoryStore, manualRoles, RESPONSIBILITY_DOING } from "@ateam/core";
 import { readFileSync } from "node:fs";
 import { createApp } from "../src/app.js";
 
@@ -86,7 +86,7 @@ describe("t-059 · the manual ends with what this project says the role holds", 
     text = await (await fetch(`${base}/manual/pm`)).text();
     expect(text).toContain("- **R1 定方向**：");
     expect(text).toContain("- **R4 拆分派活**：");
-    expect(text.trimEnd().endsWith("在指定表面上对照判据判 pass/fail 并带证据；不验自己写判据的任务；FAIL 要说清缺什么。")).toBe(true);
+    expect(text.trimEnd().endsWith(RESPONSIBILITY_DOING.R6)).toBe(true); // t-104 改了 R6 的说法；这里跟着源走，不再抄一份
     text = await (await fetch(`${base}/manual/qa`)).text();
     expect(text).toContain("这个项目没有为 qa 声明任何职责");
     // the page lists what nobody holds, in the dig layer, and nothing goes to 需要你

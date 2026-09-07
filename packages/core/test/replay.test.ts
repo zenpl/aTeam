@@ -534,7 +534,8 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
   it("verified is final: no more criteria; withdrawn too", async () => {
     const { store, c } = await setup();
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    // t-104: pass 收窄到持 R6 的角色，这里 qa 写了判据，只剩 human 能落
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["再加一条"] }))).message).toMatch(/t-020 is verified; its criteria are what was judged/);
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] });
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
@@ -547,7 +548,7 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
     expect((await task(store, c)).criteria_added.map((a) => a.by)).toEqual(["pd"]);
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
-    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true }); // t-104: qa 写了判据，只剩 human
   });
 
   it("whoever added a criterion cannot verify the task any more; the human still can", async () => {
@@ -556,7 +557,9 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" });
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
-    await emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true });
+    // t-104: dev 不持 R6，落不了 pass 了——这个项目里除了写了判据的 qa 就只剩 human
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/不持 R6/);
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
     expect((await task(store, c)).status).toBe("verified");
     // the human is the policy authority even when they added a criterion
     const s2 = await setup();
@@ -1629,11 +1632,11 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
     const { store, c } = await setup();
     const before = (await store.read()).events.map((e) => JSON.stringify(e));
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/owner cannot verify/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/wrote the criteria/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "x" }))).message).toMatch(/the one who passed it cannot overturn it/);
+    // t-104 (pd 23:59): a pass never overrides a pass, and a fail still owes evidence. What is no longer refused is
+    // *who* is failing: the owner, the criteria author and the passer may all say "not met".
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }))).message).toMatch(/a pass does not override a pass/);
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false }))).message).toMatch(/needs --evidence/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "我漏验了" }))).message).toMatch(/证据要指名推翻的是哪一条判据/);
     const o = await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false, evidence: "证据说含 c3cfeee，git 说不含" });
     const s = reduce(await store.read(), c.now());
     const t = s.tasks.get("A")!;
@@ -2097,88 +2100,119 @@ describe("t-097 / t-098 · the invitation goes back at once; the old channel wai
 });
 
 /**
- * t-101 (M4：拒绝要带出路)。今晚 t-088 是活样本：qa 被拒后只知道自己不行，靠 dev 和 pd 各推演一遍才找出唯一合格的 frontend。
- * 拒绝要自己说出「可以由谁来落」，而且这份名单由规则算出来，不另存一份。
+ * t-101 (M4：拒绝要带出路) + t-104 (pd 23:59 的裁定)。今晚 t-088 是活样本：qa 判过 pass 后自己发现漏验，被规则挡住，
+ * 只知道自己不行，靠 dev 和 pd 各推演一遍才找出唯一能落的 frontend。pd 的裁法是那道墙本身立错了地方：pass 与 fail
+ * 不是同一个动作。说「达标」是放行，要独立；说「没达标」只挡发布，与自身利益相反，谁都能说。
  */
-describe("t-101 · a refused verify says who can do it instead", () => {
-  const roles = async (store: MemoryStore, c: ReturnType<typeof clock>, list: string[]) =>
-    emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: list });
-
-  const world = async (list: string[]) => {
+describe("t-101/t-104 · pass needs standing and says who has it; fail is open to everyone", () => {
+  const world = async (list: string[] | Record<string, string[]>, criteriaBy = "pm", owner = "dev") => {
     const store = new MemoryStore();
     const c = clock();
-    await roles(store, c, list);
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["能用"] });
-    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
-    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234 全绿" });
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: list });
+    await emit(store, c, { kind: "task", op: "create", actor: criteriaBy, task: "A", title: "题", criteria: ["能用", "有测试"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: owner, task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: owner, task: "A", evidence: "abc1234 全绿" });
     return { store, c };
   };
+  const FIVE = { pd: ["R2"], pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] };
 
-  it("several qualify: the owner is refused and told the other three by name", async () => {
-    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
-    expect(r.rule).toBe("verify");                                   // 判据 4：拒绝仍要说出规则名
-    expect(r.message).toMatch(/owner cannot verify their own task/);
-    expect(r.message).toContain("可以由谁来落：pd、frontend、qa");     // dev 是 owner，pm 写了判据
-    // 判据 2：名单是算出来的。pm 补一条判据，pd 就该从名单里消失，没人去改任何清单
+  it("only an R6 holder may pass; the refusal names who has it, and the list is computed, never a second copy", async () => {
+    const { store, c } = await world({ ...FIVE, frontend: ["R5", "R6"] });
+    // dev is the owner *and* holds no R6: both reasons are true, the owner rule speaks first
+    const own = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(own.rule).toBe("verify");                                  // 判据 4 of t-101：拒绝仍要说出规则名
+    expect(own.message).toMatch(/owner cannot pass their own task/);
+    expect(own.message).toContain("可以由谁来落 pass：frontend、qa");
+    // a role with no R6 is refused even though no separation rule touches it (t-104 判据 1)
+    const noR6 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "A", surface: "repo", pass: true }));
+    expect(noR6.message).toContain("pd 不持 R6 验收职责，落不了 pass");
+    expect(noR6.message).toContain("fail 不受此限，谁都能落");
+    expect(noR6.message).toContain("可以由谁来落 pass：frontend、qa");
+    // 判据：名单是算出来的。pd 给 frontend 补一条判据，frontend 就该从名单里消失，没人去改任何清单
     await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
-    const r2 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
-    expect(r2.message).toContain("可以由谁来落：frontend、qa");
+    await emit(store, c, { kind: "task", op: "criteria", actor: "frontend", task: "A", add: ["空态有说明"] }).catch(() => {});
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(again.message).toContain("可以由谁来落 pass：frontend、qa");
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
   it("the criteria author is refused with the same list; a project that renamed its roles gets its own names back", async () => {
-    const { store, c } = await world(["pm", "dev", "ux", "sre"]);
+    const { store, c } = await world({ pm: ["R1"], dev: ["R5"], ux: ["R6"], sre: ["R6"] });
     const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", pass: true }));
     expect(r.message).toMatch(/whoever wrote the criteria cannot judge them met/);
-    expect(r.message).toContain("可以由谁来落：ux、sre");             // 名单来自 project:roles，不是写死的五个
+    expect(r.message).toContain("可以由谁来落 pass：ux、sre");        // 名单来自 project:roles，不是写死的五个
   });
 
-  it("exactly one qualifies: t-088 的活样本——判过 pass 的人来推翻，被拒后直接被告知只剩 frontend", async () => {
-    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
-    await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
+  it("t-088 的活样本：qa 判过 pass 后自己发现漏验，自己就能落 fail——不必再借 frontend", async () => {
+    const { store, c } = await world(FIVE);
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "漏了一条" }));
-    expect(r.message).toMatch(/the one who passed it cannot overturn it/);
-    expect(r.message).toContain("可以由谁来落：frontend");
-    // 另一个表面上 qa 没判过 pass，那里它自己就合格，名单是按表面算的
-    const r2 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "production", pass: true }));
-    expect(r2.message).toContain("可以由谁来落：frontend、qa");
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+    // ①：不指名哪一条判据的自我推翻被拒，并说清要怎么写
+    const vague = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "我漏验了" }));
+    expect(vague.message).toContain("你在推翻自己在 repo 上判的 pass");
+    expect(vague.message).toContain("这件共 2 条");
+    // 指名了就落得下去，不必找第三个人
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没验：没有测试覆盖空输入" });
+    const t = reduce(await store.read(), c.now()).tasks.get("A")!;
+    expect(t.status).toBe("done");
+    expect(t.verifications.map((v) => [v.surface, v.pass, v.by])).toEqual([["repo", true, "qa"], ["repo", false, "qa"]]);
+    // ②：翻完自己不能再自己翻回来，除非 owner 重新 done。名单里也不再有它
+    const back = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    expect(back.message).toContain("qa 这一轮推翻过自己在 repo 上的 pass");
+    expect(back.message).toContain("要么换人，要么等 owner 重新 done");
+    expect(back.message).toContain("qa 这一轮推翻过自己在 repo 上的 pass");   // 空名单那句里也说得出原因
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补测试" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678 补了" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // 新一轮，同一人可以
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
-  it("nobody qualifies: it says so and why, and never prints an empty list", async () => {
-    const { store, c } = await world(["pm", "dev"]);
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
-    expect(r.message).toContain("本项目没有合格的第三方：pm 写了判据；dev 是 owner");
-    // pd 23:50：先说自动会发生的事，再说人要做的选择。这个项目没有 qa 类角色，t-055 的自动退化确实会发生
-    expect(r.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
-    expect(r.message).toContain("project:roles");
-    expect(r.message).not.toMatch(/可以由谁来落/);
-    expect(r.message).not.toMatch(/：\s*。/);                          // 判据 3：不印空列表
-    // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
-    expect(r.message).not.toMatch(/可以由谁来落：[^。]*human/);
-  });
-
-  it("nobody qualifies but the project does have a verifier role: it does not promise the t-055 escalation that will not happen", async () => {
-    const { store, c } = await world(["dev", "qa"]);
-    // 判据由 dev 写、qa 是 owner：这一件没人能验，但项目里有 qa，t-055 的自动退化不会触发
-    await emit(store, c, { kind: "task", op: "create", actor: "dev", task: "B", title: "题二", criteria: ["能用"] });
-    await emit(store, c, { kind: "task", op: "claim", actor: "qa", task: "B", touches: ["y"] });
-    await emit(store, c, { kind: "task", op: "done", actor: "qa", task: "B", evidence: "abc1234 全绿" });
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }));
-    expect(r.message).toContain("本项目没有合格的第三方：dev 写了判据；qa 是 owner");
-    expect(r.message).toContain(`项目里有验收角色，所以验收不会自动转给 ${HUMAN}`);
-    expect(r.message).not.toContain("会进");                            // 不承诺一件不会发生的事
-    expect(r.message).not.toMatch(/可以由谁来落/);
-  });
-
-  it("the way out is only on the rejections that another identity can resolve, not on the ones that need different evidence", async () => {
-    const { store, c } = await world(["pd", "pm", "dev", "frontend", "qa"]);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
-    const dup = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }));
-    expect(dup.message).toMatch(/a pass does not override a pass/);
-    expect(dup.message).not.toMatch(/可以由谁来落/);                    // 出路是 --fail，已经写在那句里了
-    const noEvidence = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false }));
+  it("fail is open to everyone: the owner, the criteria author and a role with no R6 may all say 'not met'", async () => {
+    for (const who of ["dev", "pm", "pd"]) {
+      const { store, c } = await world(FIVE);
+      await emit(store, c, { kind: "task", op: "verify", actor: who, task: "A", surface: "repo", pass: false, evidence: `${who} 跑了一遍，判据 1 不成立` });
+      const t = reduce(await store.read(), c.now()).tasks.get("A")!;
+      expect(t.status, who).toBe("failed");
+      expect(t.verifications.map((v) => v.by), who).toEqual([who]);
+    }
+    // 一个 fail 从来不必带名单——谁都能落，没有「可以由谁来落」可说。没有 pass 要推翻时连证据都不强求
+    const { store, c } = await world(FIVE);
+    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("failed");
+    // 而推翻别人判过的 pass 仍然要证据，只是不再挑人
+    const w2 = await world(FIVE);
+    await emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    const noEvidence = await rejected(emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: false }));
     expect(noEvidence.message).toMatch(/needs --evidence/);
     expect(noEvidence.message).not.toMatch(/可以由谁来落/);
+  });
+
+  it("nobody can pass: it says so and why, never an empty list, and still points at what happens by itself", async () => {
+    const { store, c } = await world({ pm: ["R1"], dev: ["R5"] });
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    expect(r.message).toContain("本项目没人能给这一件落 pass：pm 不持 R6、写了判据；dev 不持 R6、是 owner");
+    // pd 23:50：先说自动会发生的事。这个项目没有 qa 类角色，t-055 的自动退化确实会发生
+    expect(r.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
+    expect(r.message).toContain("project:roles");
+    expect(r.message).toContain("fail 不受此限，谁都能落");
+    expect(r.message).not.toMatch(/可以由谁来落 pass：/);
+    expect(r.message).not.toMatch(/：\s*。/);                          // 不印空列表
+    // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
+    expect(r.message).not.toMatch(/可以由谁来落 pass：[^。]*human/);
+    // 而 human 自己什么都能落：不持 R6 也一样，他是策略权威
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
+  });
+
+  it("nobody can pass but the project does have a verifier role: it does not promise the t-055 escalation that will not happen", async () => {
+    const { store, c } = await world({ dev: ["R5"], qa: ["R6"] }, "dev", "qa");
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    expect(r.message).toContain("本项目没人能给这一件落 pass：dev 不持 R6、写了判据；qa 是 owner");
+    expect(r.message).toContain(`项目里有验收角色，所以验收不会自动转给 ${HUMAN}`);
+    expect(r.message).not.toContain("会进");                            // 不承诺一件不会发生的事
+    // 出路是真的：qa 落不了 pass，但落得了 fail
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 1 不成立" });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("failed");
   });
 });

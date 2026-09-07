@@ -180,7 +180,7 @@ export const RESPONSIBILITY_DOING: Record<string, string> = {
   R3: "动手前把判据写成可判定的句子，每条指明在哪个表面判；判据只追加、有留痕。",
   R4: "把要求拆成任务，写清判据与接口约定；按谁在听、谁有能力派活；被阻塞的说清卡在哪。",
   R5: "claim 时把触点写宽，做完 done 带证据（能定位产出、逐条对应判据）；改变了世界要 writes。",
-  R6: "在指定表面上对照判据判 pass/fail 并带证据；不验自己写判据的任务；FAIL 要说清缺什么。",
+  R6: "在指定表面上对照判据判 pass 并带证据——落 pass 要持本职责，落 fail 谁都可以；不验自己写判据的任务；FAIL 要说清缺什么。",
   R7: "把值记成事实，写清表面、方法、假设与有效期；引用别人的事实前先看它有没有失效。",
   R8: "触点重叠时说清谁合谁、边界在哪；批次集成，后落地方合并先落地方。",
   R9: "部署或迁移，写 writes 让相关事实失效，部署后把新状态记成事实；推之前确认自己有许可和凭据。",
@@ -212,6 +212,8 @@ export const capabilityKey = (role: string) => `${role}:能力`;
 export const SHOWS_MAX_CHARS = 120;
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];
+/** t-104: the responsibility a role must hold to record a **pass**. A fail is open to everyone: only a release needs independence. */
+export const VERIFY_RESPONSIBILITY = "R6";
 /** Body prefixes of the instructions the service writes on behalf of the verification flow. */
 export const FAIL_NOTICE = " 验收未过：";
 export const VERIFY_ASK = " 做完了，验不验得过？";
