@@ -78,6 +78,29 @@ export interface Instruction extends Base {
    * 标出来就够了，**不删卡**：过期与不成立是两回事，删掉一张人还没答的卡是 t-190 已经定过的错。
    */
   depends_on?: string[];
+  /**
+   * t-215 判据 7：**过了这个时刻，这张卡说的事就不成立了。** 与 `depends_on` **并列**，不是二选一——
+   * qa 16:52 量出来的：pd 那张 Q25 的默认支写「明早开工时」，它过期是因为那个早上过去了，**没有任何
+   * `surface:key` 变过**。钟点那一类（「明早」「今天之内」「这一批上线前」）是过期的主要形状。
+   *
+   * 与 `ack_by` 不是一回事：`ack_by` 是「什么时候该答」，这个是「什么时候它说的话不再真」。
+   */
+  valid_until?: string;
+}
+
+/**
+ * t-215 判据 7 的第二半：**给一张已经发出去的卡补声明条件。**
+ *
+ * qa 16:52 的账：会按默认结掉的卡此刻 3 条，带 `depends_on` 的 0 条——它们全比这个字段老。**只认卡自己
+ * 声明过的条件，等于对所有比字段老的卡沉默，而那批正是挂得最久、最可能过期的。** 卡是不可变事件，所以补
+ * 声明只能是一条**后发的事件指着它**（与 `disown`、`untell` 同一路子：历史不改，后来的事件改变它此刻算什么）。
+ */
+export interface Premise extends Base {
+  kind: "premise";
+  /** 哪张卡。 */
+  of: string;
+  depends_on?: string[];
+  valid_until?: string;
 }
 
 export interface Ack extends Base {
@@ -202,7 +225,7 @@ export type TaskOp =
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
-export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent;
+export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent | Premise;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;

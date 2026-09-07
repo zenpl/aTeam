@@ -83,3 +83,99 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
     expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);
   });
 });
+
+/**
+ * 判据 7（pm 16:53 加，收 qa 16:52 的两条建议）：
+ * ① **钟点那一路**——Q25 是被「明早」过期的，没有任何 surface:key 变过；
+ * ② **后发事件可以给已发的卡补声明**——会按默认结掉的卡此刻 3 条，带 depends_on 的 0 条（qa 16:55 量的），
+ *    它们全比这个字段老。**只认卡自己声明过的条件，等于对所有比字段老的卡沉默**，而那批正是挂得最久的。
+ */
+describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的事就不成立了", () => {
+  it("valid_until 过了：卡被标出来，且到期不落那条「已执行」", async () => {
+    const w = await world();
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目",
+      ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", valid_until: at(-30).toISOString() }, -280);
+    const s = await st(w.s);
+    const one = [...s.instructions.values()][0];
+    expect(one.stale_since).toBeTruthy();
+    expect(dueDefaults(s, at(0))).toEqual([]);       // 不许无声按默认结掉
+  });
+
+  it("还没到那个时刻：一切照旧，默认照常结掉", async () => {
+    const w = await world();
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(),
+      options: ["A", "B"], default: "A", valid_until: at(600).toISOString() }, -280);
+    const s = await st(w.s);
+    expect([...s.instructions.values()][0].stale_since).toBeUndefined();
+    expect(dueDefaults(s, at(0))).toHaveLength(1);
+  });
+
+  it("**钟点与事实并列，不是二选一**：只声明钟点的卡，没有任何 surface:key 变过也会被标", async () => {
+    const w = await world();
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早", ack_by: at(600).toISOString(), valid_until: at(-30).toISOString() }, -280);
+    // 全程没有任何带 writes 的事件
+    expect([...(await st(w.s)).instructions.values()][0].stale_since).toBeTruthy();
+  });
+});
+
+describe("t-215 判据 7② · 给一张已经发出去的卡补声明条件", () => {
+  it("卡比字段老、一个条件都没声明过：后发一条 premise 补上钟点 ⇒ 被标出来，默认不再结掉", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时…", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A" }, -280);
+    expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);      // 补声明之前：照落
+    const p = await w.put({ kind: "premise", actor: "pd", of: old.id, valid_until: at(-30).toISOString() }, -20);
+    const s = await st(w.s);
+    expect(s.instructions.get(old.id)?.stale_since).toBeTruthy();
+    expect(s.instructions.get(old.id)?.premise_by).toBe(p.id);      // 是哪条事件补的，说得出
+    expect(dueDefaults(s, at(0))).toEqual([]);                      // 补声明之后：扣住
+  });
+
+  it("补声明也能补事实依赖，且**历史不改**——卡的正文一字未动", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "37 件已验的没上线，谁来推？", ack_by: at(600).toISOString() }, -280);
+    await w.put({ kind: "premise", actor: "release", of: old.id, depends_on: ["production:deployed.sha"] }, -200);
+    await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
+    const s = await st(w.s);
+    expect(s.instructions.get(old.id)?.stale_since).toBeTruthy();
+    expect(s.instructions.get(old.id)?.instruction.body).toBe("37 件已验的没上线，谁来推？");   // 正文没被改
+    expect(s.instructions.get(old.id)?.instruction.depends_on).toBeUndefined();                 // 原事件也没被改
+  });
+
+  it("补声明只加不减：先补事实、再补钟点，两样都在", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString() }, -280);
+    await w.put({ kind: "premise", actor: "release", of: old.id, depends_on: ["production:deployed.sha"] }, -200);
+    await w.put({ kind: "premise", actor: "release", of: old.id, valid_until: at(600).toISOString() }, -190);
+    const one = (await st(w.s)).instructions.get(old.id)!;
+    expect(one.depends_on).toEqual(["production:deployed.sha"]);
+    expect(one.valid_until).toBeTruthy();
+  });
+
+  it("第三方补不了：只有发卡的人、pm 或 human", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString() }, -280);
+    const err = await w.put({ kind: "premise", actor: "qa", of: old.id, valid_until: at(-30).toISOString() }, -200).catch((e) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { rule?: string }).rule).toBe("premise");
+  });
+
+  it("什么条件都不带的补声明：形状闸挡下，两个名字都点出来", async () => {
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString() }, -280);
+    const err = await w.put({ kind: "premise", actor: "release", of: old.id } as NewEvent, -200).catch((e) => e as Error);
+    expect((err as { rule?: string }).rule).toBe("shape");
+    expect(err.message).toContain("depends_on");
+    expect(err.message).toContain("valid_until");
+  });
+
+  it("**仍然不删卡**（判据 4，两路都适用）：补声明之后卡还在牌桌上、还能答", async () => {
+    const { board } = await import("../src/index.js");
+    const w = await world();
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString(), options: ["A", "B"], default: "B" }, -280);
+    await w.put({ kind: "premise", actor: "release", of: old.id, valid_until: at(-30).toISOString() }, -200);
+    const row = board(await st(w.s), HUMAN, at(0)).needs_human.find((x) => x.id === old.id)!;
+    expect(row).toBeTruthy();
+    expect(row.stale_since).toBeTruthy();
+    expect(row.options).toEqual(["A", "B"]);
+  });
+});

@@ -65,7 +65,7 @@ export class Reduction {
    * 项目的人恰好就叫 human，于是**没接线也看不出来**：qa 把它改成 "boss" 一试，本人自报那条路当场降成一票。
    * 默认值把一根没接的线藏住了，所以这里不给默认——调用方必须说。
    */
-  constructor(private store: EventStore, private human = "human") {}
+  constructor(private store: EventStore, private human: string) {}
 
   async at(now: Date): Promise<State> {
     if (!this.store.readSince) return reduce(await this.store.read(), now, this.human);
@@ -87,10 +87,17 @@ export class Reduction {
 }
 
 /** t-128: the write path's reduction for each store, kept alive exactly as long as the store is. */
-const writing = new WeakMap<EventStore, Reduction>();
+const writing = new WeakMap<EventStore, Map<string, Reduction>>();
+/**
+ * t-216（qa 16:58 的第二处）：缓存按 **store ＋ human** 两样一起认。原来只按 store 认，`human` 在第一次创建时
+ * 定死——同一个 store 换个 human 再来，拿到的还是旧的那个。此刻服务只有一个 human，所以是潜在的、不是活的；
+ * 但这一族今天的教训正是「看起来有、其实没有」，钉死比记着强。
+ */
 function reductionFor(store: EventStore, human: string): Reduction {
-  let r = writing.get(store);
-  if (!r) writing.set(store, (r = new Reduction(store, human)));
+  let per = writing.get(store);
+  if (!per) writing.set(store, (per = new Map()));
+  let r = per.get(human);
+  if (!r) per.set(human, (r = new Reduction(store, human)));
   return r;
 }
 

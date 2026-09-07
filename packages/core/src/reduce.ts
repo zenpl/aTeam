@@ -134,6 +134,11 @@ export interface InstructionState {
    */
   stale_since?: string;
   stale_by?: string;
+  /** t-215 判据 7：这张卡此刻生效的条件——发卡时声明的，加上后来补声明的（后者覆盖同名的那一项）。 */
+  depends_on?: string[];
+  valid_until?: string;
+  /** 补声明是哪条事件加的（没有补过就没有）。 */
+  premise_by?: string;
   /** t-147: what the recipient wrote that shows they acted on it — the first such event's id. */
   acted_by_event?: string;
   /**
@@ -444,9 +449,20 @@ export function advance(s: State, log: Log, human = "human"): State {
         if (readingKey(e) === `${PROJECT_SURFACE}:${ABSORB_FORM_KEY}`) judgeAll = true;  // it decides how every seam is read
         break;
       case "instruction":
-        s.instructions.set(e.id, { instruction: e, reach: "unread" });
+        s.instructions.set(e.id, { instruction: e, reach: "unread", depends_on: e.depends_on, valid_until: e.valid_until });
         s.pending.add(e.id);
         break;
+      // t-215 判据 7：后发的一条指着已发的卡，给它补上条件。**历史不改**——卡的正文一字未动，改的是它此刻
+      // 按什么算过期。补声明只加不减：同名那一项被覆盖，另一项留着。
+      case "premise": {
+        const st = s.instructions.get(e.of);
+        if (st) {
+          if (e.depends_on) st.depends_on = e.depends_on;
+          if (e.valid_until) st.valid_until = e.valid_until;
+          st.premise_by = e.id;
+        }
+        break;
+      }
       case "ack": {
         const st = s.instructions.get(e.of);
         // t-193 判据 6 (pd 11:16)：**结掉一张给人的卡，理由只能是人的答复，不能是任何人的一次 ack。**
@@ -589,6 +605,13 @@ export function settle(s: State, now: Date): State {
     const rs = s.readings.get(id);
     if (rs) rs.expired = rs.reading.valid_until! < nowIso || undefined;
   }
+  // t-215 判据 7：钟点那一路。**过了这个时刻，这张卡说的事就不成立了**——它与「某条事实变了」并列，
+  // 而不是二选一：Q25 那种（「明早开工时」）根本没有哪条 surface:key 会变。放在 settle 里是因为它随时间变，
+  // 与读数的 valid_until 同一处（上面那一段）。
+  for (const st of s.instructions.values()) {
+    if (st.stale_since || !st.valid_until) continue;
+    if (st.valid_until < nowIso) { st.stale_since = st.valid_until; st.stale_by = st.premise_by ?? st.instruction.id; }
+  }
   for (const id of s.pending) {
     const st = s.instructions.get(id)!;
     const i = st.instruction;
@@ -640,7 +663,7 @@ function invalidate(s: State, e: Event) {
   // 卡还在，人还能答。删掉一张人没答的卡是 t-190 定过的错。
   for (const st of s.instructions.values()) {
     if (st.stale_since || st.instruction.id === e.id) continue;
-    if (st.instruction.depends_on?.some((d) => hit.has(d))) {
+    if (st.depends_on?.some((d) => hit.has(d))) {
       st.stale_since = e.at;
       st.stale_by = e.id;
     }

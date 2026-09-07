@@ -151,7 +151,8 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   instruction: { to: "string", body: "string" },
   ack: { of: "string" },
   untell: { of: "string", reason: "string" },
-  disown: { of: "string", reason: "string" },   // t-196: 署名更正——指着哪一条，以及为什么它不是你做的
+  disown: { of: "string", reason: "string" },
+  premise: { of: "string" },   // t-215：depends_on / valid_until 至少给一个，见 EITHER   // t-196: 署名更正——指着哪一条，以及为什么它不是你做的
   note: { body: "string" },
   "task:create": { task: "string", title: "string", criteria: "strings" },
   "task:label": { task: "string", label: "string" },
@@ -170,6 +171,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string", depends_on: "strings" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
+  premise: { depends_on: "strings", valid_until: "string" },
   "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count", base_sha: "string" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
@@ -186,6 +188,7 @@ const OPTIONAL: Record<string, Record<string, FieldKind>> = {
  */
 const EITHER: Record<string, string[]> = {
   "task:criteria": ["add", "moved"],
+  premise: ["depends_on", "valid_until"],   // t-215：一条什么条件都不带的补声明，什么也没说
 };
 
 const holds = (v: unknown, k: FieldKind): boolean =>
@@ -199,7 +202,7 @@ const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", b
 /** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
 export function checkShape(e: NewEvent): void {
   if (e.refs !== undefined && !holds(e.refs, "strings")) throw new Rejected("shape", `refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}`);
-  const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task"];
+  const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task", "premise"];
   if (!kinds.includes(e.kind as string)) throw new Rejected("shape", `kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`);
   let slot: string = e.kind;
   if (e.kind === "task") {
@@ -381,6 +384,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       }
       if (who !== e.actor && e.actor !== human)
         throw new Rejected("disown", `${e.of} 署的是 ${who}，不是 ${e.actor}：署名更正只能由本人自报，或由 ${human} 发。替别人说「这不是他做的」要人拍板——请 ${who} 自己发，或把这件交给 ${human}`);
+      return;
+    }
+
+    /**
+     * t-215 判据 7：给一张已经发出去的卡补声明条件。**只有发卡的人、pm 或 human**——这张卡说的是什么、
+     * 什么时候不再真，是发卡人的事；第三方替它声明，等于替它改口。
+     */
+    case "premise": {
+      const st = state.instructions.get(e.of);
+      if (!st) throw new Rejected("premise", `${e.of} 不是这个日志里的一条指令`);
+      if (e.actor !== st.instruction.actor && e.actor !== PM_ACTOR && e.actor !== human)
+        throw new Rejected("premise", `${e.of} 是 ${st.instruction.actor} 发的：补声明它活着的条件，只有发卡的人、${PM_ACTOR} 或 ${human} 能做`);
       return;
     }
 

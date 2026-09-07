@@ -38,6 +38,7 @@ say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info] [--depends-on surface:key,...]   instruction: one recipient, ≤280 chars, must be acked; --kind only for human; --depends-on says what this card is true of, and the board marks it when that fact changes
   ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
+  ateam premise <instruction-id> [--depends-on surface:key,...] [--valid-until <iso> | --valid-for 8h]   say what an already-sent card is true of, or when it stops being true; the board marks it, nothing is deleted
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
                                     [--measured-at <ISO | 10m>]        when the world was measured (10m = ten minutes ago); validity counts from it
@@ -303,7 +304,16 @@ async function main(argv: string[]) {
       // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
-        options: list(a, "option"), default: str(a, "default"), depends_on: list(a, "depends-on") });
+        options: list(a, "option"), default: str(a, "default"), depends_on: list(a, "depends-on"),
+        valid_until: str(a, "valid-for") ? new Date(Date.now() + duration(str(a, "valid-for")!)).toISOString() : str(a, "valid-until") });
+    }
+    // t-215 判据 7：给一张**已经发出去的**卡补声明条件。卡是不可变事件，所以补声明是一条后发的事件指着它
+    // （与 disown、untell 同一路子）。会按默认结掉的那 3 张卡全比 --depends-on 这个字段老，所以这不是补丁，是主路。
+    case "premise": {
+      const [of] = exact(rest, "instruction-id");
+      const validFor = str(a, "valid-for");
+      return emit({ kind: "premise", of, depends_on: list(a, "depends-on"),
+        valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : str(a, "valid-until") });
     }
     case "decide": {
       const [id, option] = exact(rest, "id", "option");
