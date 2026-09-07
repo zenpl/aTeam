@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -252,6 +252,12 @@ export interface Board {
   };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
   allocation: { warnings: AllocationWarning[]; summary: string };
+  /**
+   * t-130: how many times a person did by hand what a finished rule would have done, grouped by that rule. For the
+   * dig layer and the reports — never the 一眼 layer: this is a number about how the team is running, not something
+   * the human has to answer. `since` is the window it counts over (a day).
+   */
+  stand_ins: { total: number; since: string; by_task: { task: string; title: string; count: number; last_at: string; who: string[] }[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
   invite_url?: string;
   /**
@@ -572,6 +578,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     role_names: roleNames(s),
     coverage: [],
     allocation: { warnings: [], summary: "" },
+    stand_ins: { total: 0, since: "", by_task: [], summary: "" },
     alert: { status: "unanswered" },
     omitted: [],
     shape: BOARD_SHAPE,
@@ -747,6 +754,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   b.alert = alertContact(s, now);
   b.allocation.warnings = allocation(s, now, human);
   b.allocation.summary = allocationSummary(b.allocation.warnings);
+  b.stand_ins = standIns(s, now);   // t-130: for the dig layer and the reports, never 一眼
   for (const actor of [...s.presence.keys()].sort()) {
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));
@@ -861,6 +869,31 @@ export const BATCH_LINES = {
  * Batches are read whether or not their reading is still valid — a batch that went stale is exactly the one a person
  * needs to see, and `depends_on: production:deployed.sha` is what makes it go stale without anyone remembering to.
  */
+/**
+ * t-130: the stand-ins declared in the last day, grouped by the task whose rule was stood in for. The service cannot
+ * find these itself (see STOOD_IN_PREFIX) — every one of them is somebody saying so — so this counts declarations,
+ * and says as much rather than implying it saw them happen.
+ */
+export function standIns(s: State, now: Date): Board["stand_ins"] {
+  const since = new Date(now.getTime() - STAND_IN_DAY_MS).toISOString();
+  const by = new Map<string, { task: string; title: string; count: number; last_at: string; who: string[] }>();
+  let total = 0;
+  for (const n of s.notes) {
+    if (!n.body.startsWith(STOOD_IN_PREFIX) || !n.task || n.at < since) continue;
+    total++;
+    const row = by.get(n.task) ?? { task: n.task, title: s.tasks.get(n.task)?.title ?? n.task, count: 0, last_at: n.at, who: [] };
+    row.count++;
+    row.last_at = n.at;
+    if (!row.who.includes(n.actor)) row.who.push(n.actor);
+    by.set(n.task, row);
+  }
+  const rows = [...by.values()].sort((a, b) => b.count - a.count || a.task.localeCompare(b.task));
+  const summary = total
+    ? `人顶了 ${total} 次（${rows.map((r) => `${r.task} ${r.count} 次`).join("、")}）——都是本可以自动、现在由人做的`
+    : "人顶了 0 次";
+  return { total, since, by_task: rows, summary };
+}
+
 export function batches(s: State, deployed: string | null, why: string | null, fact: ReturnType<typeof deployedTasksFact>): BoardBatch[] {
   const out: BoardBatch[] = [];
   for (const [key, id] of s.latestReading) {

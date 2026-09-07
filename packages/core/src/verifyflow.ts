@@ -1,8 +1,8 @@
 import { append, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
-import { projectRoles, importCounts } from "./board.js";
+import { projectRoles, importCounts, standIns } from "./board.js";
 import { Rejected } from "./rules.js";
-import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, type Event, type NewEvent } from "./events.js";
+import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -12,6 +12,7 @@ export const FAIL_NOTICE_ACK_MS = 15 * 60_000;
 /** How long the human has to answer a verify ask. */
 export const VERIFY_ASK_ACK_MS = 24 * 3600_000;
 const FAIL_REASON_CHARS = 60;
+const STAND_IN_TITLE_CHARS = 40;   // t-130: the card names the rule; the whole title would crowd out the ask
 const ASK_EVIDENCE_CHARS = 200;
 
 export function verifySurface(s: State): string {
@@ -46,6 +47,24 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
       const importer = s.notes.find((n) => n.id === (i0.refs?.[0] ?? ""))?.actor;
       if (importer) return [{ kind: "instruction", actor: SERVICE_ACTOR, to: importer, body: e.decides.option === MIGRATION_OK ? MIGRATION_FINISH : MIGRATION_PATCH, ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString(), refs: [i0.id, e.id] }];
     }
+  }
+  /**
+   * t-130 (pd 02:53): a number nobody acts on is not worth collecting. The third time in one day that a person does
+   * what one finished rule would have done, the service stops counting and asks — once a day, about that one rule,
+   * naming it. Not "you have 37 things waiting": pd already judged that the human chose that cost. This is the part
+   * of the cost the human did not choose, which is people doing the machine's work.
+   */
+  if (e.kind === "note" && e.body.startsWith(STOOD_IN_PREFIX) && e.task) {
+    const rows = standIns(s, now).by_task.find((r) => r.task === e.task);
+    if (!rows || rows.count !== STAND_IN_TRIGGER) return [];   // only on the one that crosses it: not again at four
+    const since = new Date(now.getTime() - STAND_IN_DAY_MS).toISOString();
+    const already = [...s.instructions.values()].some((st) =>
+      st.instruction.actor === SERVICE_ACTOR && st.instruction.body.startsWith(STAND_IN_ASK_TITLE) && st.instruction.at >= since);
+    if (already) return [];   // at most one a day, whichever rule it was about: two cards is the noise this replaces
+    const t = s.tasks.get(e.task);
+    const body = `${STAND_IN_ASK_TITLE}：${e.task}（${head(t?.title ?? e.task, STAND_IN_TITLE_CHARS)}）已经验过了，但还没上生产，所以 ${rows.who.join("、")} 今天手工做了 ${rows.count} 次它本该做的事。要现在把它上线吗？`;
+    return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: [...STAND_IN_OPTIONS], default: STAND_IN_OPTIONS[1],
+      body, ack_by: new Date(now.getTime() + STAND_IN_DAY_MS).toISOString(), refs: [e.id] }];
   }
   if (e.kind === "task" && e.op === "verify" && !e.pass) {
     const t = s.tasks.get(e.task);

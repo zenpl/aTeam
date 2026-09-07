@@ -1,6 +1,6 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -70,6 +70,29 @@ export function whoCanVerify(s: State, t: TaskState, surface: string | undefined
  * t-104 ①：自我推翻的证据要指名推翻的是哪一条判据。一个不指名的「我漏验了」既没法复核，也没法说清改完算不算好了。
  * 认「判据 3」「第 3 条」「criterion 3」「#3」这些写法，数字必须落在这件任务的判据条数之内。
  */
+/**
+ * t-130: why this task cannot be stood in for, or null when it can. Two facts are checked, the stronger one first:
+ * production's own containment fact if it covers the head production is actually at, and otherwise whether anyone has
+ * passed it on production. The weaker check is not a guess — a task nobody has verified on production is, as far as
+ * this log is concerned, not known to be running — and using it keeps the rule usable on the very ordinary day when
+ * nobody has run `ateam release` yet.
+ */
+function standInBlocker(s: State, t: TaskState): string | null {
+  const fact = deployedTasksFact(s);
+  const head = latestDeployedSha(s);
+  if (fact && head && fact.sha.slice(0, 7) === head.slice(0, 7)) {
+    return fact.contained.includes(t.id) ? `的代码已经在生产上（production:${DEPLOYED_TASKS_KEY} 对 ${head.slice(0, 7)} 测的）` : null;
+  }
+  return t.verifications.some((v) => v.round === t.round && v.surface === "production" && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
+}
+
+/** The sha the latest valid production:deployed.sha reading names. */
+function latestDeployedSha(s: State): string | null {
+  const id = s.latestReading.get("production:deployed.sha");
+  const r = id ? s.readings.get(id) : undefined;
+  return r?.valid && !r.expired && typeof r.reading.value === "string" ? r.reading.value : null;
+}
+
 export function namesCriterion(evidence: string, count: number): boolean {
   if (count <= 0) return false;
   for (const m of evidence.matchAll(/(?:判据|criterion|criteria|条|#)\s*[第]?\s*(\d+)|第\s*(\d+)\s*条/gi)) {
@@ -302,6 +325,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
         throw new Rejected("note", `${e.supersedes} is not a note`);
       if (e.task !== undefined && !state.tasks.has(e.task)) throw new Rejected("note", `${e.task} is not a task in the log`);
+      // t-130 (pd 02:53): a stand-in names the finished rule a person did the work of. The service cannot notice one
+      // by itself — nothing tells it that a hand-resolved seam is t-113's job — so a person declares it and the
+      // service checks the half it can: that the rule really is finished and really is not running yet. Without that
+      // check the number is a hand-kept list, which is what this was asked not to be.
+      if (e.body.startsWith(STOOD_IN_PREFIX)) {
+        if (!e.task) throw new Rejected("stand-in", `${STOOD_IN_PREFIX}… 要指名它替代的是哪一件任务（--task <id>）：这条数是「哪一件做好了的事还在让人替它干活」，没有那件任务就只是一句感想`);
+        const t = state.tasks.get(e.task)!;
+        if (t.status !== "verified")
+          throw new Rejected("stand-in", `${t.id} 是 ${t.status}，不是 verified：还没验过的东西谈不上「本来可以自动」——顶替记的是「做好了却没上线」的代价，不是「还没做好」的代价`);
+        const where = standInBlocker(state, t);
+        if (where) throw new Rejected("stand-in", `${t.id} ${where}：它已经在替你干活了，这一次不是顶替。若你觉得它没生效，那是一件缺陷，请开任务`);
+      }
       // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
       if (e.decides) {
         const st = state.instructions.get(e.decides.of);
