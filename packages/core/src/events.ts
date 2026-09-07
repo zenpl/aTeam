@@ -241,7 +241,31 @@ export const SHOWS_MAX_CHARS = 120;
  *
  * 「没有影响」是一个要签字的判断，不是省一个字段：写下它的人是在说「我看过了，人这边什么都不会变」。
  */
-export const NO_HUMAN_IMPACT = "对人无影响";
+export const NO_HUMAN_IMPACT = "不改变人看到的东西";
+
+/**
+ * t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——闸当场拦下，并把碰到的逐个列出来。
+ *
+ * 这不是不信任写下它的人，是因为**这句话最可能出错的方式不是撒谎，是没注意**：改 i18n 里一个词、改说明书一行、
+ * 改卡上的一句，都是「顺手」，而顺手正是人不会重新想一遍「这对人意味着什么」的时刻。
+ *
+ * 名单是声明的，会漏；漏了就是一次没被拦下的顺手改。所以它按**出处**列，不按猜测：页面与它的词、说明书、
+ * 以及 core 里那几处专门产生给人看的话的符号（t-154 之后它们集中在 READING_SAYINGS/sayReading 一带）。
+ * 测试文件不在名单里——改一个用例不改变任何人看到的东西。
+ */
+export const HUMAN_VISIBLE_TOUCHES = [
+  "packages/server/src/html.ts",
+  "packages/server/src/i18n.ts",
+  "packages/core/manual/",
+  "packages/cli/src/format.ts",
+] as const;
+
+/** t-151: 这个触点是不是「人看得到的东西」。`路径#符号` 按路径判；测试文件一律不算。 */
+export function touchesHumanVisible(touch: string): boolean {
+  const path = touch.split("#")[0].trim();
+  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return false;
+  return HUMAN_VISIBLE_TOUCHES.some((x) => path === x || path.startsWith(x));
+}
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];
 /** t-104: the responsibility a role must hold to record a **pass**. A fail is open to everyone: only a release needs independence. */

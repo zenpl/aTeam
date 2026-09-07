@@ -1351,7 +1351,7 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     const plain = await emit(store, c, { kind: "note", actor: "pd", body: "只是想法" });
     for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
     for (const id of ["A", "B", "C", "E"]) await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["packages/server/src/html.ts"] });
-    for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234" , no_human_impact: true});
+    for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234", shows: "按钮现在永远可点" });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "不对" }); // B: failed
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "D", touches: ["packages/server/src/html.ts"] }); // D stacks on every dev task: a seam each
     return { store, c, decision, plain };

@@ -58,3 +58,35 @@ describe("t-151 · 交活要说一句对人的影响", () => {
     expect(r.body.message).toContain("no_human_impact");
   });
 });
+
+describe("t-151 · pd 07:49：碰了人看得到的东西却说没变，接口上也拦得住", () => {
+  const store = new MemoryStore();
+  let app: ReturnType<typeof createApp>, base = "";
+  const post = async (actor: string, body: unknown) => {
+    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json() as { rule?: string; message?: string } };
+  };
+
+  beforeAll(async () => {
+    app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
+    await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
+    await post("pm", { kind: "task", op: "create", task: "t-9", title: "改一个词", criteria: ["能用"] });
+    await post("dev", { kind: "task", op: "claim", task: "t-9", touches: ["packages/server/src/i18n.ts"] });
+  });
+  afterAll(() => new Promise<void>((r) => app.close(() => r())));
+
+  it("409，列出碰到的那几处，并给出出路", async () => {
+    const r = await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234", no_human_impact: true });
+    expect(r.status).toBe(409);
+    expect(r.body.rule).toBe("done");
+    expect(r.body.message).toContain("packages/server/src/i18n.ts");
+    expect(r.body.message).toContain(NO_HUMAN_IMPACT);
+    expect(r.body.message).toContain("--shows");
+  });
+
+  it("补一句人能看到什么就过", async () => {
+    expect((await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234", shows: "「逾期」这一节现在叫「到期没人选」" })).status).toBe(201);
+  });
+});
