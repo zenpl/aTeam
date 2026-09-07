@@ -66,7 +66,16 @@ export function seamCheck(b: Board, id: string, evidence: string | undefined, is
     if (!theirs) continue;
     const a = judgeAbsorb(b, evidence, theirs, isAncestor);
     if (seam.stacked?.on === id) {
-      if (a.verdict === "no") out.errors.push(`${seam.id}：证据声称含 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），但 ${evidenceSha(evidence)?.slice(0, 7) ?? "你的证据"} 并不包含它：${a.basis}。先真的合并，或 --no-seam-check 并在证据里说明为什么`);
+      // t-160 判据 5、7：**git 说「真的含」的时候，把结论落回日志。**
+      //
+      // 以前这一支只做三件事：判「不含」就拦、判「不知道」就要求证据写明 sha、判「含」就**什么都不做**——
+      // 于是在 git-ancestor 这种形态下，自动吸收那条分支（reduce.ts 里只对 named-sha 生效）永远轮不到，
+      // 接缝一直开着，最后由人一条条手工裁。qa 10:16 量出来的：今晚 pm 裁的每一条都是这一行的账。
+      //
+      // 判仍然在有仓库的这一头做（判据 6）：服务端没有仓库，判不了祖先关系，也不许退回文本匹配（t-074）。
+      // 这里落下的是**结论**，不是证据——resolution 里写明依据是 git-ancestor 以及两个 sha。
+      if (a.verdict === "yes") out.absorbs.push({ kind: "task", op: "seam", tasks: [seam.tasks[0], seam.tasks[1]], resolution: `${ABSORB_PREFIX}${a.basis}` });
+      else if (a.verdict === "no") out.errors.push(`${seam.id}：证据声称含 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），但 ${evidenceSha(evidence)?.slice(0, 7) ?? "你的证据"} 并不包含它：${a.basis}。先真的合并，或 --no-seam-check 并在证据里说明为什么`);
       else if (a.verdict === "unknown") {
         if (!namesSha(evidence ?? "", theirs)) out.errors.push(`${seam.id}：${id} 是在 ${otherId} done 之后 claim 的，接缝按规则自动放行，但你要合并它。请在 --evidence 里写明合并了 ${theirs.slice(0, 7)}（${otherId} 的证据 sha），或 --no-seam-check`);
         else out.unverified.push(`${seam.id}：无法验证 ${id} 是否真的含 ${theirs.slice(0, 7)}（${a.basis}），按证据所写放行，由 ${id} 的 owner 保证属实`);

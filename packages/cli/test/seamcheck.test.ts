@@ -144,7 +144,11 @@ describe("t-074 · one judgment for both checks: really contained, claimed but n
     expect(judgeAbsorb(b, "bbbbbbb2", "aaaaaaa1111111", unknown).verdict).toBe("unknown");
     const refused = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", no);
     expect(refused.errors).toEqual([expect.stringContaining("证据声称含 aaaaaaa（t-a 的证据 sha），但 bbbbbbb 并不包含它")]);
-    expect(seamCheck(b, "t-b", "bbbbbbb2 做完了", yes)).toEqual({ errors: [], unverified: [], absorbs: [] }); // git says yes: no need to name it
+    // t-160 判据 5：git 说「真的含」的时候，结论要落回日志——以前这一支什么都不做，于是 git-ancestor 形态下
+    // 自动吸收永远不发生，接缝一直开着，最后由人一条条手工裁。现在它写一条 resolution，依据写明是 git-ancestor。
+    const absorbed = seamCheck(b, "t-b", "bbbbbbb2 做完了", yes);
+    expect(absorbed).toMatchObject({ errors: [], unverified: [] });
+    expect(absorbed.absorbs).toEqual([{ kind: "task", op: "seam", tasks: ["t-b", "t-a"], resolution: expect.stringContaining("后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）") }]);
     const fell = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", unknown);
     expect(fell).toMatchObject({ errors: [], absorbs: [] });
     expect(fell.unverified).toEqual([expect.stringContaining("无法验证 t-b 是否真的含 aaaaaaa（本地 git 没有")]);
@@ -156,7 +160,57 @@ describe("t-074 · one judgment for both checks: really contained, claimed but n
     expect(r.errors).toEqual([]);
     expect(r.unverified).toEqual([expect.stringContaining("项目没有声明 absorb.form")]);
     b = await world("named-sha");
-    expect(seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", no)).toEqual({ errors: [], unverified: [], absorbs: [] });
+    // named-sha 那一头同理：判「含」就把结论写下来，不再只是默默不拦
+    expect(seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", no)).toMatchObject({
+      errors: [], unverified: [], absorbs: [{ resolution: expect.stringContaining("后者证据写明含前者 aaaaaaa（named-sha）") }],
+    });
     expect(seamCheck(b, "t-b", "bbbbbbb2 做完了", yes).errors).toEqual([expect.stringContaining("证据声称含 aaaaaaa")]);
+  });
+});
+
+/**
+ * t-160 判据 7：一正一反，两条都跑在 git-ancestor 这个形态上（本项目声明的就是它）。
+ *
+ * 正：git 说真的含 → 自动吸收，结论落回日志，没有人需要裁。这条以前不存在——`reduce.ts` 里那条自动吸收只在
+ *     `named-sha` 时执行，而本项目是 `git-ancestor`，**那条分支从来没生效过**（qa 10:16 量的）。
+ * 反：证据里写了那个 sha，git 却说不含 → 必须仍然挡住。那正是 t-074 当初发现的假放行：
+ *     一句「我合并了 aaaaaaa」谁都写得出，写下来不等于合过。
+ */
+describe("t-160 判据 7 · 自动吸收只认 git 说的，不认证据里写了什么", () => {
+  const world = async (form?: string) => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    if (form) await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: form });
+    for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"], no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa1111111 完成", no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts"] }); // stacked: t-b on t-a
+    return board(reduce(await store.read()), "human");
+  };
+  const yes = () => true, no = () => false, unknown = () => null;
+  it("正：git 说含——自动落一条 resolution，依据写明是 git-ancestor 与两个 sha", async () => {
+    const b = await world("git-ancestor");
+    const r = seamCheck(b, "t-b", "bbbbbbb2 做完了", yes);   // 证据里一个字都没提 aaaaaaa
+    expect(r.errors).toEqual([]);
+    expect(r.absorbs).toHaveLength(1);
+    expect((r.absorbs[0] as { resolution: string }).resolution).toContain("git-ancestor");
+    expect((r.absorbs[0] as { resolution: string }).resolution).toContain("aaaaaaa");
+  });
+
+  it("反：证据写了那个 sha，git 说不含——挡住，而且说得出是 git 说的", async () => {
+    const b = await world("git-ancestor");
+    const r = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", no);
+    expect(r.absorbs).toEqual([]);                        // 一个字都没吸收
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toContain("并不包含它");
+    expect(r.errors[0]).toContain("merge-base --is-ancestor 为否");
+  });
+
+  it("判据 6：判在有仓库的这一头做——没有 git 就说不知道，不退回文本匹配", async () => {
+    const b = await world("git-ancestor");
+    const r = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", unknown);
+    expect(r.absorbs).toEqual([]);                        // 不知道就不吸收：文本写了也不算
+    expect(r.unverified).toEqual([expect.stringContaining("无法验证")]);
   });
 });
