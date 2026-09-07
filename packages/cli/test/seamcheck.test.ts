@@ -277,10 +277,16 @@ describe("t-191 · 对方还没写代码时，接缝无从判定", () => {
   });
 
   it("只声明了符号、没声明路径时也问不了 git——同样按「看不见就当有」处理", () => {
-    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["inFlightGroups"], none)).toBe("unknown");
-    expect(outputSinceClaim("2026-09-07T00:00:00Z", [], none)).toBe("unknown");
-    expect(outputSinceClaim(undefined, ["a/b.ts"], none), "没有认领时刻就没有「自那以后」").toBe("unknown");
-    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts#sym"], none), "「文件#符号」取得出文件名").toBe("none");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["inFlightGroups"], none, "aaaaaaa")).toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", [], none, "aaaaaaa")).toBe("unknown");
+    expect(outputSinceClaim(undefined, ["a/b.ts"], none, "aaaaaaa"), "没有认领时刻就没有「自那以后」").toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts#sym"], none, "aaaaaaa"), "「文件#符号」取得出文件名").toBe("none");
+  });
+
+  it("被验那一侧的证据里没有 sha：判不了，接缝照旧挡着", () => {
+    // 排掉的那一侧必须来自日志（被验任务的证据 sha）。日志里没有它，就没有「哪一侧是我」这个答案——
+    // 这时候拿谁的 checkout 去补都是猜，而猜错的方向是放行一次真碰车。
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts"], none), "没有 sha 却答得出「对方没写代码」").toBe("unknown");
   });
 });
 
@@ -339,19 +345,26 @@ describe("t-182 · 报的是三方比较的交集，不是两份清单的交集"
 });
 
 /**
- * t-191 判据 1，第二轮：**问的必须是「对方有没有提交」，不是「那些路径上有没有任何人的提交」。**
+ * t-191 判据 1，第二、三轮：**问的必须是「对方有没有提交」，而「我是哪一侧」不能来自谁的 checkout。**
  *
- * qa 12:01 判 fail 的正是这一处。上一版是 `git log --all -- <paths>`：没有作者、没有分支、没有排除我自己，
+ * 第二轮（qa 12:01 判 fail）：上一版是 `git log --all -- <paths>`——没有作者、没有分支、没有排除我自己，
  * 于是它答的是「自那一刻起任何人有没有碰过那些路径」。而一条接缝之所以存在，恰恰是因为两边声明了**同一批
  * 路径**——所以「我自己在那些路径上的提交」不是边角情形，**它就是这个场景的常态**：我一提交它就答「对方写
- * 代码了」，这条判定几乎永远放行不了。
+ * 代码了」，这条判定几乎永远放行不了。分得出来的不是作者（这个仓库里每个 agent 都以同一个 git author 提交），
+ * 是**可达性**。
  *
- * 分得出来的不是作者（这个仓库里每个 agent 都以同一个 git author 提交），是**可达性**：`--all --not HEAD`
- * 是「任何 ref 上、但不在我这条线上」的提交。这几条在一个真 git 仓库上跑，因为要证的正是那几个 git 参数。
+ * 第三轮（qa 12:27 判 fail，也是在真仓库上跑出来的）：可达性对，可排掉的那一侧写成了 `HEAD`。这段判定跑在
+ * `task verify --pass` 里，而**落 pass 的只有 qa**——qa 的 HEAD 是 qa 自己的分支，不是被验那件任务的分支。
+ * 于是 `--not HEAD` 排掉的是 qa 那条线，被验任务的提交照样不可达、照样被算成「对方写了代码」。
+ * 排的必须是**被验那一侧记在日志里的证据 sha**：它不来自谁的 checkout，谁跑都一样。
+ *
+ * 这几条在一个真 git 仓库上跑，而且**站在 qa 的 checkout 上跑**——要证的正是「HEAD 是谁的」这件事。
  */
-describe("t-191 · 问的是对方有没有提交，不是任何人", () => {
+describe("t-191 · 排掉的是被验任务的证据 sha，不是谁的 HEAD", () => {
   const repo = mkdtempSync(join(tmpdir(), "t191-"));
   const run = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  const EPOCH = "1970-01-01T00:00:00Z";
+  let mine = "";
   beforeAll(() => {
     run("init", "-q", ".");
     run("config", "user.email", "t@t"); run("config", "user.name", "t");
@@ -361,26 +374,36 @@ describe("t-191 · 问的是对方有没有提交，不是任何人", () => {
     writeFileSync(join(repo, "shared.ts"), "theirs\n");
     run("commit", "-qam", "theirs");                       // 对方分支上的提交
     run("checkout", "-q", "master");
-    run("checkout", "-qb", "mine");
+    run("checkout", "-qb", "dev-branch");
     writeFileSync(join(repo, "shared.ts"), "mine\n");
-    run("commit", "-qam", "mine");                         // 我自己的提交，在同一批路径上
+    run("commit", "-qam", "mine");                         // 被验那件任务自己的提交，在同一批路径上
+    mine = run("rev-parse", "HEAD").stdout.trim();
+    // **判定跑在 qa 的 checkout 上**：HEAD 既不是 dev 那条分支，也不是对方那条。
+    run("checkout", "-q", "master");
+    run("checkout", "-qb", "qa-branch");
   });
   afterAll(() => rmSync(repo, { recursive: true, force: true }));
 
-  it("我自己在那些路径上的提交不算「对方写代码了」", () => {
-    // 站在 mine 上问：shared.ts 上有我的提交，也有对方的——但只有对方的算
-    const seen = gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["shared.ts"]);
-    expect(seen, "对方分支上确实有提交，该答 true").toBe(true);
-    // 把对方那条分支删掉：只剩我自己的提交，就该答 false
+  it("被验任务自己的提交不算「对方写代码了」——哪怕跑这条命令的是 qa", () => {
+    // 先确认对方那条分支上确实有提交，该答 true
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], mine), "对方分支上确实有提交").toBe(true);
+    // 把对方那条分支删掉：shared.ts 上只剩**被验那件任务自己**的那条提交
     run("branch", "-qD", "theirs");
-    expect(gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["shared.ts"]), "只剩我自己的提交，却答成「对方写代码了」").toBe(false);
+    // qa 12:27 判 fail 的那一条：排 HEAD 排掉的是 qa 自己那条线，dev 的提交照样被算成对方的
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], "HEAD"), "这正是上一版：qa 的 HEAD 上没有 dev 的提交，于是它被算成了对方的").toBe(true);
+    // 排被验任务的证据 sha：不来自谁的 checkout，谁跑都一样，答 false
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], mine), "只剩被验任务自己的提交，却答成「对方写代码了」").toBe(false);
   });
 
   it("路径不在任何提交里：答 false（对方确实没碰过它）", () => {
-    expect(gitCommitsSince(repo)("1970-01-01T00:00:00Z", ["nobody-touched.ts"])).toBe(false);
+    expect(gitCommitsSince(repo)(EPOCH, ["nobody-touched.ts"], mine)).toBe(false);
+  });
+
+  it("没有可排的那一侧（证据里没有 sha）：答 null，接缝照旧挡着", () => {
+    expect(gitCommitsSince(repo)(EPOCH, ["shared.ts"], "")).toBeNull();
   });
 
   it("不是 git 仓库：答 null，接缝照旧挡着", () => {
-    expect(gitCommitsSince(mkdtempSync(join(tmpdir(), "notgit-")))("1970-01-01T00:00:00Z", ["x.ts"])).toBeNull();
+    expect(gitCommitsSince(mkdtempSync(join(tmpdir(), "notgit-")))(EPOCH, ["x.ts"], "HEAD")).toBeNull();
   });
 });
