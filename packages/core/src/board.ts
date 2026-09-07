@@ -434,7 +434,8 @@ export interface Board {
    * **这里只有数据，没有句子。**pd 11:17 起人可见的字冻结，所以那句并排怎么说、印在哪一段，我没有自拟——
    * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
    */
-  disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
+  /** t-216：`agents` 有值＝这一条是两个在场角色共同声明更正的，human 据此看得见并可事后翻案。 */
+  disowned: { of: string; actor: string; by: string; at: string; reason: string; agents?: string[] }[];
   /**
    * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被别的角色声明「这不是 human 发的」，两个不同角色
    * 各来一次才生效；这里是只来了一个的那些——牌桌据此看得出「这一条在争议中，等第二个人或等 human」。
@@ -934,7 +935,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
     batches: [],
     said: [],
-    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
+    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason, ...(d.agents ? { agents: [...d.agents] } : {}) })).sort(byId((x) => x.of)),
     contested: [...s.contested].map(([of, c]) => ({ of, actor: c.actor, by: [...c.by], at: c.at, reason: c.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],

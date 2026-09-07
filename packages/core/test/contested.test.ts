@@ -136,3 +136,34 @@ describe("t-216 · human 更正别人署名的事件：一个人就够，且这�
     expect(s.contested.has(mine.id)).toBe(false);         // 不是「差一个人」
   });
 });
+
+/**
+ * 判据 5（pm 16:50 改的口径）：两角色共同声明这件事**本身要对 human 可见**——他要能看见「有两个 agent
+ * 更正了一条署你名的事」，否则翻案权是空的。
+ */
+describe("t-216 判据 5 · 两角色共同声明这件事，human 看得见", () => {
+  it("牌桌上那一条分得出「两个 agent 共同声明」与「本人自报／human 自己发的」", async () => {
+    const { board } = await import("../src/index.js");
+    const w = await world();
+    await w.put({ kind: "disown", actor: "qa", of: w.bad.id, reason: "误落的" }, -200);
+    await w.put({ kind: "disown", actor: "release", of: w.bad.id, reason: "被它挡住" }, -190);
+    const row = board(await st(w.s), HUMAN, at(0)).disowned.find((x) => x.of === w.bad.id)!;
+    expect(row.agents).toEqual(["qa", "release"]);   // 谁和谁，说得出名字
+    expect(row.actor).toBe(HUMAN);                    // 被更正的那条原来署谁
+    expect(row.reason).toBeTruthy();                  // 为什么
+  });
+
+  it("本人自报那一路不带 agents——两条路在数据上分得开", async () => {
+    const { board } = await import("../src/index.js");
+    const w = await world();
+    const mine = await w.put({ kind: "note", actor: "dev", body: "dev 写的" }, -240);
+    await w.put({ kind: "disown", actor: "dev", of: mine.id, reason: "手滑" }, -200);
+    expect(board(await st(w.s), HUMAN, at(0)).disowned.find((x) => x.of === mine.id)!.agents).toBeUndefined();
+  });
+
+  it("单个 agent 撤不掉一条署着 human 的事件——不管它是真由 human 发的还是被误署的（机制分不出，也不该分）", async () => {
+    const w = await world();
+    await w.put({ kind: "disown", actor: "qa", of: w.bad.id, reason: "我认为不是 human 发的" }, -200);
+    expect((await st(w.s)).disowned.has(w.bad.id)).toBe(false);
+  });
+});

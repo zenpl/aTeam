@@ -208,7 +208,12 @@ export interface State {
    * t-196: 被署名更正过的那些事件：`of` -> 谁更正的、什么时候、为什么、原来署的是谁。**原事件原样留在日志里**，
    * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
    */
-  disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
+  /**
+   * t-216 判据 5（pm 16:50 改的口径）：`agents` 是**两个在场角色共同声明**那一路——它要对 human 可见，
+   * 否则「事后翻案」是一句空话：他得先看得见「有两个 agent 更正了一条署你名的事」。本人自报与 human 自己
+   * 发的那两路不带它。
+   */
+  disowned: Map<string, { by: string; at: string; reason: string; actor: string; agents?: string[] }>;
   /**
    * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被误写时，本人（human）不在，而按 t-196 只有本人
    * 或 human 能更正——于是全队谁都动不了它。今天它真的卡住了一件事：qa 03:36 试共享 token 时误落一条 ack，
@@ -414,7 +419,7 @@ export function advance(s: State, log: Log, human = "human"): State {
     if (!c.by.includes(e.actor)) c.by.push(e.actor);
     claims.set(e.of, c);
     if (c.by.length >= 2) {
-      s.disowned.set(e.of, { by: c.by.join("+"), at: e.at, reason: c.reason, actor: signer });
+      s.disowned.set(e.of, { by: c.by.join("+"), agents: [...c.by], at: e.at, reason: c.reason, actor: signer });
       claims.delete(e.of);
     }
   }
