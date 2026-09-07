@@ -484,7 +484,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "验过了，等上线", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "逾期", "接缝", "事实", "已定", "human 选择了「报表」", "待送达", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)

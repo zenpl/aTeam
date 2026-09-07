@@ -101,7 +101,11 @@ export const UI = {
     working: "在做",
     blocked: "卡住",
     done: "做完了，等验",
-    verifiedElsewhere: "仓库验过，还没在生产验",
+    /**
+     * t-152 · pd 06:59: after the split this group is divided by whether it has shipped, not by which surface
+     * verified it — so 「仓库」 goes, and it reads as the standing line says it, being the same set of tasks.
+     */
+    verifiedElsewhere: "验过了，等上线",
     open: "没开始",
     failed: "验收未过",
   } as Record<string, string>,
