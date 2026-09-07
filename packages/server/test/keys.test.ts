@@ -149,6 +149,21 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect(said[0].actor).toBe(HUMAN);
   });
 
+  it("qa 01:08 ④：没带钥匙点按钮不是死路，是问一句地址再把这件事做掉", async () => {
+    const p = await fresh("按钮永远可点");
+    const r = await fetch(`${p.base}/say`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams({ text: "cookie 过期了还想说" }), redirect: "manual" });
+    const page = await r.text();
+    expect(page).toContain("<form");
+    expect(page).toContain('name="then" value="/say"');              // 把他按的那件事带着
+    expect(page).toContain('name="text" value="cookie 过期了还想说"'); // 连正文一起带着，不用重打
+    expect(page).not.toContain(p.ownerKey);                          // 页面从不回显钥匙（pd 01:02）
+    // 把地址里那段粘进来，刚才按的那一下就落下去了
+    const done = await fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: p.ownerKey, then: "/say", text: "cookie 过期了还想说" }), redirect: "manual" });
+    expect(done.status).toBe(303);
+    const log = await (await fetch(`${p.base}/log`, { headers: { authorization: `Bearer ${p.adminKey}`, "x-actor": "pm" } })).json() as { events: { kind: string; actor: string; body?: string }[] };
+    expect(log.events.filter((e) => e.kind === "note" && e.body?.includes("cookie 过期了还想说"))).toMatchObject([{ actor: HUMAN }]);
+  });
+
   it("the token page takes the owner's key too, and stops taking the shared one once they have arrived", async () => {
     const p = await fresh("小页面项目");
     await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });

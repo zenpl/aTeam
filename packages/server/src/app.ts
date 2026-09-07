@@ -431,11 +431,18 @@ export function createApp(opts: ServerOptions) {
        */
       const mayActAsHuman = async () => isOwner || (isAdmin && !(await ownerArrived()));
       if (req.method === "POST" && ACTIONS.has(path)) {
+        const body = await readText(req);
         if (!(await mayActAsHuman())) {
-          if (!isAdmin && !isOwner) return html(res, 401, unauthorizedPage());
+          // qa 01:08 ④: a button is always pressable (docs/board.md). Nobody signed in — a cookie that ran out, a page
+          // left open — is not a dead end: it is the moment to ask for the address, then do the thing they pressed.
+          if (!isAdmin && !isOwner) {
+            const fields: Record<string, string> = { then: path };
+            for (const [k, v] of new URLSearchParams(body)) if (k !== "token") fields[k] = v;
+            return html(res, 401, tokenPage(fields, false, base));
+          }
           return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         }
-        const r = await act(path, new URLSearchParams(await readText(req)));
+        const r = await act(path, new URLSearchParams(body));
         if (r.status < 300 && wantsHtml) return back();
         return json(res, r.status, r.body);
       }
