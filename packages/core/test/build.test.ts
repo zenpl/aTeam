@@ -99,9 +99,22 @@ describe("t-145 · watch 的间隔只有一处", () => {
 
   it("说明书与帮助文本里都不再写死一个间隔数字", () => {
     const hard = /--interval\s+\d+\s*(?:s|ms|m)\b/g;
-    for (const [what, text] of [["说明书", read("../manual/common.md")], ["CLI 帮助", read("../../cli/src/main.ts")], ["提醒", read("../../cli/src/deaf.ts")]] as const) {
+    // t-156: CLAUDE.md 也在里面。今晚它是唯一漏网的那一处——t-145 把四份合成一份时没查它，于是默认值已经是 60
+    // 秒了，而每个 agent 每天读的那份文件还在教 25 秒。被教的那个数看起来就像默认值。
+    for (const [what, text] of [["说明书", read("../manual/common.md")], ["CLI 帮助", read("../../cli/src/main.ts")], ["提醒", read("../../cli/src/deaf.ts")], ["CLAUDE.md", read("../../../CLAUDE.md")]] as const) {
       const found = [...text.matchAll(hard)].map((m) => m[0]);
       expect(found, `${what} 里写死了间隔：${found.join("、")}——它该从 WATCH_INTERVAL 取`).toEqual([]);
+    }
+  });
+
+  it("t-156：一个新节点什么都不配，拿到的就是这个数", () => {
+    // 「默认值就是协议」：不给 --interval 时走的就是 WATCH_INTERVAL，CLI 里没有第二个默认值
+    const src = read("../../cli/src/main.ts");
+    expect(src).toMatch(/str\(a,\s*"interval"\)\s*\?\?\s*WATCH_INTERVAL/);
+    expect(WATCH_INTERVAL).toBe("60s");
+    // 全仓库只有这一处写着这个数（t-145 的不变式）：源码里搜不到第二个裸的 60s / 60_000 当间隔用
+    for (const p of ["../../cli/src/main.ts", "../../cli/src/loop.ts", "../../cli/src/deaf.ts", "../manual/common.md", "../../../CLAUDE.md"]) {
+      expect(read(p), `${p} 里写死了间隔`).not.toMatch(/--interval\s+\d+\s*(?:s|ms|m)\b/);
     }
   });
 
