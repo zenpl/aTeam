@@ -358,6 +358,7 @@ export const KEY_SYMBOLS = [
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
   "BATCH_LINES",
+  "CLI_SHA_METHOD",
   "CONTACT_ASK",
   "CONTACT_ASK_WAS",
   "CONTACT_FILL",
@@ -429,6 +430,7 @@ export const KEY_SYMBOLS = [
   "capabilityKey",
   "checkShape",
   "classifyFollowUp",
+  "cliBehindLine",
   "coverage",
   "defaultMissed",
   "denominatorIs",
@@ -839,6 +841,35 @@ export const unknownSpanReason = (tasks: string[]) =>
  * **只读判据不读 note 的人会去做一件已经不属于这件任务的活**。今晚这样的搬迁至少三次。
  */
 export const MOVED_MARK = "→";
+
+/**
+ * t-211：**命令行是各人各自 build 的，发车只换服务端。** 于是「上线了」与「我手上这份跑的是上线的那一版」
+ * 是两件事，而今晚没有任何一处告诉人他在哪一种里——qa 14:50 用早上的构建落了一条带两个 `--refs` 的 note，
+ * 服务只收到一个；**「我动过」被算成了没动，而且事后从日志里查不出来**。
+ *
+ * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
+ */
+export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/** t-211 判据 2：这条节点事实是怎么量出来的。住在 core，命令行那侧不留人可见的字。 */
+export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
+
+/**
+ * 落后几次上线：上线过的 sha 里，本地这棵树**没有**的那几次。
+ *
+ * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
+ * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
+ */
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null): number | null {
+  if (!mine || !deploys?.length) return null;
+  let n = 0;
+  for (const d of deploys) {
+    const got = has(d);
+    if (got === null) return null;   // git 答不上来：整句不说，不猜
+    if (!got) n++;
+  }
+  return n;
+}
 /**
  * 回溯里那一行的整句。它住在 core 而不是 trace.ts，是因为「人可见的话一律进 core」（t-143）：
  * 一个记号加一个任务 id 也是话。用的两个字（`判据`）在 core 里早就有（R3～R6 那几条），不是新造的字。

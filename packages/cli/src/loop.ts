@@ -1,4 +1,4 @@
-import { owedSentences, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -76,7 +76,7 @@ export function report(r: PullResult, me: string, after: string | null): string[
  * One protocol step: pull since the cursor, advance the cursor exactly once, print what came in.
  * `print` null keeps it quiet (the cursor still moves; that is the heartbeat).
  */
-export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null): Promise<PullResult> {
+export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind): Promise<PullResult> {
   const after = cursor.read();
   const r = await client.pull(after, waitMs);
   advance(cursor, r.cursor);
@@ -86,7 +86,22 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
   // whole of qa 06:32's failure against the first version of this line.
   if (print) for (const line of owedSentences(r.owed, new Date())) print(line);
+  // t-211：**印在每回合都会跑的这条命令上，不靠谁记得。** 命令行各人各自 build，发车只换服务端，所以这一句
+  // 是唯一会主动告诉人「你手上这份不是上线那一版」的地方。说不出就一个字都不说（behindDeploys 返回 null）：
+  // 「不知道」不等于「你是最新的」，报平安比不说话更坏。
+  if (print && behind) {
+    const n = behindDeploys(behind.head(), r.deploys, behind.has);
+    if (n !== null && n > 0) print(cliBehindLine(n));
+  }
   return r;
+}
+
+/** t-211：本地这棵树是哪一版、含不含某次上线。两样都由调用方给，`loop` 自己不碰 git（core 之外仍然可测）。 */
+export interface Behind {
+  /** 本地 HEAD 的 sha，答不出来给 null（不是 git 检出、git 不在）。 */
+  head(): string | null;
+  /** 本地这棵树含不含这个 sha。null 是「git 答不上来」，与 false 分开。 */
+  has(sha: string): boolean | null;
 }
 
 /**

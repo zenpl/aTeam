@@ -18,24 +18,28 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 let mod;
 try { mod = await import(join(repo, "packages/core/dist/index.js")); }
 catch { console.error("先 pnpm build：这条命令读的是 core 的产物（dist），不是源码。"); process.exit(2); }
-const { sourceFiles, isProductSource, measureWording, WORDING_AT_FREEZE, SECOND_HOMES_ROOT } = mod;
+const { sourceFiles, isProductSource, measureWording, WORDING_AT_FREEZE, WORDING_ADDED_DURING_FREEZE, SECOND_HOMES_ROOT } = mod;
 
 const files = sourceFiles(join(repo, SECOND_HOMES_ROOT), SECOND_HOMES_ROOT).filter(isProductSource);
 const sources = Object.fromEntries(files.map((f) => [f, readFileSync(join(repo, f), "utf8")]));
 const now = measureWording(sources);
-const known = new Set(WORDING_AT_FREEZE);
+const known = new Set([...WORDING_AT_FREEZE, ...WORDING_ADDED_DURING_FREEZE]);
 const added = now.filter((w) => !known.has(w.hash));
 const gone = [...known].filter((h) => !now.some((w) => w.hash === h));
 
 const path = join(repo, "packages/core/src/wording.ts");
 if (process.argv.includes("--write")) {
+  // **只加，不重写。** 第一版把整份名单按当下这棵树重生成——那会把 WORDING_ADDED_DURING_FREEZE 那 46 条
+  // 一起吸进基线里，**pd 要裁的那份账当场消失**。是我自己用这条命令时发现的：一条「让闸变绿」的捷径，
+  // 顺手就把记账那一半抹了。所以这里只往基线里追加新的几条，旧的一条不动，消失的也不删（一个多余的
+  // 指纹只是「认得」，不会放过任何东西）。
   const src = readFileSync(path, "utf8");
-  const body = now.map((w) => `  "${w.hash}",`).join("\n");
+  const body = [...WORDING_AT_FREEZE, ...added.map((w) => w.hash)].map((h) => `  "${h}",`).join("\n");
   const next = src.replace(/export const WORDING_AT_FREEZE: readonly string\[\] = \[[\s\S]*?\];/,
     `export const WORDING_AT_FREEZE: readonly string[] = [\n${body}\n];`);
   if (next === src) { console.error("没找到 WORDING_AT_FREEZE 那段，没有写回。"); process.exit(2); }
   writeFileSync(path, next);
-  console.log(`写回 ${now.length} 条指纹（新增 ${added.length}、消失 ${gone.length}）`);
+  console.log(`基线 ${WORDING_AT_FREEZE.length} → ${WORDING_AT_FREEZE.length + added.length} 条（追加 ${added.length}；消失的 ${gone.length} 条留着不删）`);
   for (const w of added) console.log(`  + ${w.file}  ${w.text}`);
 } else {
   console.log(`此刻 ${now.length} 条，快照 ${known.size} 条：新增 ${added.length}、消失 ${gone.length}`);

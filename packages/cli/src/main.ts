@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -12,7 +12,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
-import { deploy, realGit, containment, containmentFact } from "./release.js";
+import { deploy, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
@@ -87,6 +87,26 @@ function fileCursor(me: string): CursorStore {
     read() { const f = cursorFile(me); return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null; },
     write(c) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(cursorFile(me), c ?? ""); },
   };
+}
+
+/**
+ * t-211 判据 2：**本机构建的 sha 落成节点事实**（`node:<role>` 表面上的 `cli.sha`），牌桌上因此看得出谁在跑
+ * 旧的，一条判决的证据也说得出它是用哪一版命令行量出来的。
+ *
+ * 只在**变了**的时候落一条：同一个值每回合重发一遍是噪音，而读数本来就是「同键更新」。上一次落的什么记在
+ * `.ateam/` 里，与 cursor 同一处——这是本节点自己的事，不进日志也不该进日志。
+ * 落不下去（服务拒、网络断）不挡 sync：这一句是顺带说的，不是 sync 的活。
+ */
+async function recordCliSha(client: { emit(e: ClientEvent): Promise<unknown> }, me: string, head: string | null): Promise<void> {
+  if (!head) return;                                  // 说不出就不说
+  const file = join(process.cwd(), ".ateam", `cli.sha.${me}`);
+  if (existsSync(file) && readFileSync(file, "utf8").trim() === head) return;
+  try {
+    await client.emit({ kind: "reading", actor: me, surface: NODE_SURFACE, key: `${me}:cli.sha`, value: head,
+      method: CLI_SHA_METHOD } as ClientEvent);
+    mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
+    writeFileSync(file, head);
+  } catch { /* 顺带说的一句，落不下去不挡 sync */ }
 }
 
 function parseValue(s: string): unknown {
@@ -205,7 +225,11 @@ async function main(argv: string[]) {
   switch (cmd) {
     case "sync": {
       exact(rest);
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log);
+      // t-211：把「本地这棵树是哪一版」交给 sync 判。git 不在、不是检出、答不上来时 realBehind 全给 null，
+      // 那一句就一个字都不说——「不知道」不等于「你是最新的」。
+      const behind = realBehind();
+      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log, behind);
+      await recordCliSha(client, cfg.me, behind.head());
       return;
     }
     case "watch": {

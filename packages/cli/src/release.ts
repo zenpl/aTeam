@@ -276,3 +276,15 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
   return "pushed";
 }
+
+/**
+ * t-211：本地这棵树的版本，给 `sync` 那一句用。**每一步答不上来都给 null**：不是 git 检出、git 不在、
+ * 或者那个 sha 本地没有——三种都只说明「说不出」，而 `behindDeploys` 见 null 就整句不说。
+ */
+export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null } {
+  const git = realGit(cwd, undefined);
+  return {
+    head: () => git.resolve("HEAD"),
+    has: (sha) => (git.resolve(sha) === null ? null : git.isAncestor(sha, "HEAD")),
+  };
+}
