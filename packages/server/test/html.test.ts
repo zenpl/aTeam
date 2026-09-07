@@ -531,12 +531,25 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     } finally { await v.stop(); }
   });
 
-  it("an instruction decided by timeout reads 已按默认「X」执行（你仍可改）; tokenPage escapes its fields", async () => {
+  /**
+   * t-189（pd 09:18 三态）：**判定读的是「有没有那条事件」，不是「时间过了没有」。**
+   * 下面两个 case 只差一个 `note`——那条落成事件的 id。缺它就是「该发生而没发生」，
+   * 而牌桌过去在这一格印的是「已按默认「B」执行（你仍可改）」，替一件没发生的事作证。
+   */
+  it("默认到期：落了事件说「已按默认执行」，没落就照实说「还没生效」; tokenPage escapes its fields", async () => {
     const state = reduce(await new MemoryStore().read());
     const b: Board = board(state, HUMAN);
-    b.instructions.push({ id: "01ASK", from: "pm", to: HUMAN, body: "部署方式 A 还是 B？", status: "acked", sent: b.now, acked: b.now, options: ["A", "B"], default: "B", chosen: { option: "B", by: "default", at: b.now } });
+    const ask = { id: "01ASK", from: "pm", to: HUMAN, body: "部署方式 A 还是 B？", status: "acked" as const, sent: b.now, acked: b.now, options: ["A", "B"], default: "B" };
+    // ① 到期了、事件还没落：这是我们的故障，照实说
+    b.instructions.push({ ...ask, chosen: { option: "B", by: "default", at: b.now } });
+    const stuck = renderBoard(b, state, { human: HUMAN });
+    expect(stuck).toContain("<b>过期了，默认还没生效。</b>");
+    expect(stuck, "没有那条事件时，一个字都不许说成已经执行").not.toContain("已按默认 B 执行");
+    // ② 事件真落下了：指得出那条记录，才说它执行了
+    b.instructions[b.instructions.length - 1] = { ...ask, chosen: { option: "B", by: "default", at: b.now, note: "01EVT" } };
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain("<b>已按默认「B」执行（你仍可改）</b>");
+    expect(html).toContain("<b>你没点，已按默认 B 执行。</b>");
+    expect(html).not.toContain("过期了，默认还没生效。");
     expect(html).not.toContain("你刚定了");
     expect(tokenPage({ then: "/decide", id: "x", option: '<"&>' })).toContain('<input type="hidden" name="option" value="&lt;&quot;&amp;&gt;">');
     /**

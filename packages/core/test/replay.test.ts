@@ -492,7 +492,9 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     const b = await at(store, c);
     expect(b.needs_human).toHaveLength(0);
     expect(b.overdue).toHaveLength(0);
-    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at });
+    // t-189：投影现在把 `note` 一起带出来——**那条事件的 id 就是「这件真的发生过」的凭据**。
+    // 原来投影把它丢了，于是牌桌只能按「时间过了」印「已按默认 X 执行」，替一件没发生的事作证。
+    expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at, note: landed[0].id });
     expect(b.instructions[0].says_default).toEqual({ state: "applied", line: DEFAULT_LINES.applied("private") });
     // 幂等：再扫一次不会落第二条（`default_due` 落完就是 false）
     expect(await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now())).toHaveLength(0);
@@ -556,7 +558,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     await emit(store, c, { kind: "ack", actor: HUMAN, of: q.id });
     const n = await emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 公开", decision: true, decides: { of: q.id, option: "public" } });
     const b = await at(store, c);
-    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at });
+    expect(b.instructions[0].chosen).toEqual({ option: "public", by: HUMAN, at: n.at, note: n.id });   // t-189：人自己点的那次同样指得出事件
     expect(b.needs_human).toHaveLength(0);
     expect(reduce(await store.read(), c.now()).notes.some((x) => x.id === n.id && x.decides?.option === "public")).toBe(true);
     const again = await rejected(emit(store, c, { kind: "note", actor: HUMAN, body: "decision: 私有", decision: true, decides: { of: q.id, option: "private" } }));

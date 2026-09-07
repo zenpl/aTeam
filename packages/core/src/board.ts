@@ -219,7 +219,7 @@ export interface Board {
   needs_human: {
     /** ask: answer it; do: do it and say "done"; info: read it. */
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
-    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string; /** t-189：落成这个决定的那条事件。缺席就是「还没真发生」——牌桌靠它分辨「该发生」与「发生了」，不靠时间过没过。 */ note?: string };
     /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话（core 一处，页面与命令行都印它）。 */
     says_default?: DefaultSay;
   }[];
@@ -319,7 +319,7 @@ export interface Board {
     /** The human acked with "not now" and said why. */
     deferred?: { note: string; body: string; at: string };
     /** present when the instruction asks the human to choose */
-    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string };
+    options?: string[]; default?: string; chosen?: { option: string; by: string; at: string; /** t-189：落成这个决定的那条事件。缺席就是「还没真发生」——牌桌靠它分辨「该发生」与「发生了」，不靠时间过没过。 */ note?: string };
     /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话。 */
     says_default?: DefaultSay;
   }[];
@@ -745,7 +745,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       deferred: deferNote ? { note: deferNote.id, body: deferNote.body.slice(DEFER_PREFIX.length).trim(), at: deferNote.at } : undefined,
       reach: st.reach, acted_by_event: st.acted_by_event,
       options: i.options, default: i.default, withdrawn: st.withdrawn, stale: i.actor === SERVICE_ACTOR ? noticeStaleness(s, i) ?? undefined : undefined,
-      chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at } : undefined,
+      // t-189：`note` 必须带过来。投影原来把它丢在这里，于是页面无从分辨「默认真落成了」与「默认该落成而没落成」，
+      // 只好按「时间过了」印「已按默认 X 执行」——一句在替没发生的事作证的话。
+      chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at, note: st.chosen.note } : undefined,
       says_default: sayDefault(st),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
     if (status === "acked" || status === "withdrawn") continue;

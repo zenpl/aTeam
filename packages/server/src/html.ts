@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -486,7 +486,15 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   // t-147: 标签是「到哪一步了」，从收件人自己的拉取和事件算出来，不是回执。REACH_WORDS 是 pd 的措辞。
   d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
-  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? UI.decidedByDefault(i.chosen!.option) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
+  /**
+   * t-189：这一行原来只看 `chosen.by === "default"` 就印「已按默认「X」执行（你仍可改）」——**时间过了就当它发生了**。
+   * 而默认到期时并没有真落成事件（t-181），于是牌桌替一件没发生的事作了证：10:29 到期那张卡在页面上这样挂了三分钟，
+   * qa 10:39 量到最老的一张已经这样说了 6 小时 41 分，其中一张是「37 件已验的没上线谁来推」——**一个关于授权的问题
+   * 被显示悄悄结掉，而没有人在推**。
+   * 现在按 pd 09:18 的三态说话，判定读的是**有没有那条事件**（`chosen.note`），不是时间过没过：
+   * 落了就说「你没点，已按默认 X 执行。」，没落就照实说「过期了，默认还没生效。」——那是我们的故障，不许写成已执行。
+   */
+  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? (i.chosen!.note ? DEFAULT_LINES.applied(i.chosen!.option) : DEFAULT_LINES.stuck()) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
   d.push(`</section>`);
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);
