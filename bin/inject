@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# 「删掉被守的东西，断言必须红」——今晚定成模板的那条（pm 08:31、08:43）的一处共用执行方式。
+#
+# 为什么是一处共用的：17 分钟里两个人在同一个做法上各踩一个坑（pm 08:49 据此建了 t-177）——
+#   · 我用 cp 备份再还原，一次失败的注入把**已经损坏的树**备份了进去，后面每轮都从坏树开始，
+#     最后把 core/src/board.ts 留在损坏状态，是 git status 告诉我的、不是脚本。
+#   · qa 发现我那个脚本写死了仓库路径：在 worktree 里跑不是跑不起来，是**静默地去改、build、测另一棵树**——
+#     一份「可重跑的证据」把结果取自被测对象之外。
+# 这两条的代价已经付过了，别再各写一份把它们重踩一遍。
+#
+# 用法：
+#   bin/inject <文件> <原文> <替换> [-- <vitest 参数…>]
+#   bin/inject packages/core/src/board.ts 'a && b' 'a' -- packages/core/test/x.test.ts
+# 它做四件事：改这一处、重新 build、跑测试、还原。退出码是**注入之后测试的退出码**——
+# 注入之后仍然 0（全绿），说明那条断言在它要守的东西不见了的时候什么都没说，这正是要发现的。
+set -e
+
+usage() { echo "用法: bin/inject <文件> <原文> <替换> [-- <vitest 参数…>]" >&2; exit 2; }
+[ $# -ge 3 ] || usage
+file="$1"; from="$2"; to="$3"; shift 3
+[ "${1-}" = "--" ] && shift
+
+# 在哪棵树里被调用就改哪棵树。不写死路径：写死之后 worktree 里跑的是别人那一棵。
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root"
+
+[ -f "$file" ] || { echo "找不到 $file（相对 $root）" >&2; exit 2; }
+# 还原用 git，不用快照：快照记的是「此刻的样子」，可能已经是坏的；git 记的是「本该的样子」。
+git rev-parse --git-dir >/dev/null 2>&1 || { echo "$root 不是 git 仓库，还原没有依据，拒绝注入" >&2; exit 2; }
+git diff --quiet -- "$file" || { echo "$file 有未提交的改动：还原会把它一起丢掉。先提交或 stash。" >&2; exit 2; }
+
+restore() { git checkout -- "$file"; }
+trap restore EXIT INT TERM        # 注入中途出任何事都还原，包括 set -e 打断
+
+python3 - "$file" "$from" "$to" <<'PY'
+import sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+src = open(path, encoding="utf-8").read()
+n = src.count(old)
+if n == 0:
+    sys.exit(f"注入点没找到，一处都没有：{old!r}")
+if n > 1:
+    sys.exit(f"注入点有 {n} 处，改哪一处不确定——把原文写长一点：{old!r}")
+open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
+PY
+
+pnpm -r build >/dev/null 2>&1 || { echo "注入之后 build 就没过——这不算「断言会红」，换一个注入点" >&2; exit 3; }
+set +e
+npx vitest run "$@"
+code=$?
+set -e
+if [ $code -eq 0 ]; then
+  echo ""
+  echo "注入之后测试仍然全绿：被守的东西不见了，没有一条断言说话。"
+fi
+exit $code
