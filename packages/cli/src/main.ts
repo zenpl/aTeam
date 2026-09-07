@@ -186,7 +186,7 @@ async function main(argv: string[]) {
     if (push !== undefined) {
       if (!(PUSH_LEVELS as readonly string[]).includes(push)) throw new UsageError(`--push 只能是 ${PUSH_LEVELS.join(" | ")}`);
       const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
-      console.log(fmt.event(e, eff.me));
+      console.log(`${e.id}  ${fmt.event(e, eff.me)}`);   // t-206：第五处，与其余四处一致——印事件就带上它的 id
     }
     await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
