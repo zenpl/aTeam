@@ -4,6 +4,7 @@
  */
 import { Builder, type BuilderOptions } from "./build.js";
 import type { Log } from "./events.js";
+import { READING_SAYINGS } from "./board.js";
 
 export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder> {
   const b = new Builder({ stepMs: 60_000, ...opts });
@@ -24,6 +25,14 @@ export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder>
   await b.ack(b.human, q.id);
   await b.note(b.human, `decision: ${q.id} -> A`, { decision: true, decides: { of: q.id, option: "A" }, refs: [q.id] });
   await b.note("dev", "friction: 想造一份样本日志时没有入口，只能手写 JSON", { task: "t-1" });
+  // t-154 判据 5：每一条被声明过说法的结构化事实，样本里都真的有一条——形状与值取自真实日志，写在声明旁边
+  // （READING_SAYINGS[].sample）。声明与样本是同一处，所以加一条声明就自动多一条样本，不会有「描述某物的清单
+  // 与该物分开手工维护」那种漂移。今天的洞正是它：夹具里没有生产上真实存在的形状，于是一段 83 个 id 的 JSON
+  // 印在人眼前，没有任何用例发现。
+  for (const x of READING_SAYINGS.filter((x) => !x.saying.service_writes)) {
+    const key = x.prefix ? `${x.key}${x.key.endsWith(".") ? "" : "sample."}11` : x.key;
+    await b.reading("release", key, x.saying.sample, { surface: x.surface });
+  }
   await b.pull("pm");
   return b;
 }

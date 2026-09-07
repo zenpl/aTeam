@@ -369,7 +369,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       (s) => s.tasks.includes(e.tasks[0]) && s.tasks.includes(e.tasks[1]),
     );
     if (!seam) throw new Rejected("seam", `no seam between ${e.tasks[0]} and ${e.tasks[1]}`);
-    if (seam.resolution) throw new Rejected("seam", `already resolved by ${seam.resolution.by}`);
+    // t-149: a resolved seam takes one more event, and only one kind — the verdict on the *gate*. Tonight's eight
+    // judgements were made and written as prose before the field existed; without this they could never be recorded,
+    // and 「已知缺陷由日志算出」 would quietly mean 「算不出来」. It adds, it never edits: the original resolution's
+    // text, author and time stay exactly as they were, and a seam already judged is not judged twice.
+    if (seam.resolution && !(e.verdict || e.missed)) throw new Rejected("seam", `already resolved by ${seam.resolution.by}; only a --verdict on the gate can still be added`);
+    if (seam.resolution?.verdict) throw new Rejected("seam", `the gate was already judged ${seam.resolution.verdict} by ${seam.resolution.judged_by}; a judgement is not made twice`);
     if (!e.resolution?.trim()) throw new Rejected("seam", "resolution is required");
     // t-149: the verdict on the gate itself is a declared value, never a word fished out of the prose.
     if (e.verdict !== undefined && !SEAM_VERDICTS.includes(e.verdict)) throw new Rejected("seam", `verdict must be one of ${SEAM_VERDICTS.join(" | ")}, not "${e.verdict}"`);

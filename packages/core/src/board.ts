@@ -244,6 +244,11 @@ export interface Board {
     measured_at: string; recorded_after_s: number;
     /** The record came more than half the validity period after the measurement: treat with care. */
     late: boolean;
+    /**
+     * t-154 (pd 07:14): 结构化的值在牌桌上只说这一句话，不印 value。标量没有这个字段——它们照旧。
+     * `said_elsewhere` 是给渲染方的信号：牌桌别处已经说过这条，重复不重复由它定，但由 core 告诉它。
+     */
+    said?: ReadingSaid;
     valid_until?: string;
   }[];
   tasks: Record<string, BoardTask[]>;
@@ -696,6 +701,8 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       measured_at: measured, recorded_after_s: recordedAfter, late: validFor !== undefined && recordedAfter * 1000 > validFor / 2, valid_until: r.valid_until,
       why: valid ? undefined : rs.imported_why ?? (rs.superseded_by ? `superseded by ${rs.superseded_by}` : rs.invalidated_by ? `invalidated by ${rs.invalidated_by}` : "expired"),
       assumptions: r.assumptions,
+      // t-154: 结构化的值在牌桌上只说一句话。渲染方印这一句，不印 value——value 留在字段里给要挖的人。
+      said: sayReading({ surface: r.surface, key: r.key, value: r.value, by: r.actor, at: r.at }, now) ?? undefined,
     });
   }
   // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
@@ -852,6 +859,106 @@ export function owedTo(s: State, to?: string): InstructionState[] {
       (to === undefined || st.instruction.to === to) &&
       (st.instruction.actor !== SERVICE_ACTOR || !noticeStaleness(s, st.instruction)),
   );
+}
+
+/**
+ * t-154 (pd 07:14): 牌桌只说一条事实的**一句话**，不印它的值。
+ *
+ * 今天的洞是这样露出来的：读数那一节把 `surface:key = <值>` 直接印出来，于是 `production:deployed.tasks` 在人
+ * 眼前是一大段 JSON——83 个任务 id。人从那一段里得不到任何东西，而它占掉的正是他本该用来读别的话的注意力。
+ *
+ * 所以：**结构化的值必须在这里声明「这条事实的一句话怎么说」**。没有声明的一律退化成「<名字> 由 X 在 N 分钟前
+ * 记下」——名字没声明就退回它的 `surface:key`，那是一个标识符，不是一个值。标量不受这条影响（判据 2）：一个数、
+ * 一个 sha、一句话，印出来本身就是那句话。
+ *
+ * `said_elsewhere` 是给渲染方的信号，不是给它的判断（判据 4）：牌桌别处已经说过这条事实的，这里标出来，渲染方
+ * 据此决定要不要重复，而不是自己去猜哪些键在别处出现过。
+ */
+export interface ReadingSaying {
+  /** 这条事实的中文名。 */
+  name: string;
+  /** 这一句话怎么说。值的形状不对时返回 null，退化成没有声明的那种说法——猜一个数比不说更坏。 */
+  say?: (value: unknown) => string | null;
+  /** 牌桌别处已经说过它（判据 4 的信号）。 */
+  said_elsewhere?: boolean;
+  /**
+   * 判据 5：一个**从真实日志取来的**值，样本日志据此造这条读数。
+   *
+   * 它在这里而不在夹具里，是为了让「声明了一个说法」与「夹具里有这个形状」成为同一件事：加一条声明就自动多一条
+   * 样本，t-136 那道闸随即看得到这句话有没有人印。今天这个洞正是反过来的——夹具里没有生产上真实存在的形状，于是
+   * 一段 83 个 id 的 JSON 印在人眼前，没有任何用例发现。值取自 2026-09-07 的生产日志，形状照抄，长度截短。
+   */
+  sample: unknown;
+  /**
+   * 这条事实由服务自己写（`project:allocation` 就是），样本日志不造它——造了会被服务写的那条取代，
+   * 于是「用构造器造的日志」与「服务真跑出来的日志」不再逐字段相等，t-062 那道闸会当场红。
+   */
+  service_writes?: boolean;
+}
+
+/**
+ * 声明表。键是 `surface:key`，或 `surface:prefix*`（`repo:batch.*` 这种一族一个说法的）。
+ *
+ * 表里只有牌桌真的要说的那几条。今晚生产上还有十几条一次性的测量读数（`production:wait.cli`、`board.cost`、
+ * `s0.walk`…），它们**故意**不在这里：给每一次测量都编一句话，等于逼人去维护一张与测量本身分开的清单，那正是
+ * 今晚反复出问题的形状。它们退化，退化后的那句话是真的。
+ */
+export const READING_SAYINGS: { surface: string; key: string; prefix?: boolean; saying: ReadingSaying }[] = [
+  {
+    surface: "production", key: DEPLOYED_TASKS_KEY,
+    saying: {
+      name: "这一版带上的活",
+      // 判据 4：这一句就是 pm 07:1x 定的那句。数从值里数出来，不从别处抄。
+      say: (v) => (isTaskList(v) ? `这一版带上了 ${(v as { contained: string[] }).contained.length} 件` : null),
+      said_elsewhere: true,   // 「线上」那一行已经说过这一版是什么
+      sample: { sha: "b3e3c53fbe19fac3c20dd0248751b517f1be93b5", contained: ["t-005", "t-004", "t-007"], not_contained: ["t-130", "t-131"], method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" },
+    },
+  },
+  {
+    surface: BATCH_SURFACE, key: BATCH_PREFIX, prefix: true,
+    saying: {
+      name: "装好的一批",
+      say: (v) => (isBatch(v) ? `这一批装了 ${(v as BatchValue).contains.length} 件` : null),
+      said_elsewhere: true,   // 「上线清单」那一节逐批说过
+      sample: { sha: "b23b3258e6940b1af1c90e2d97629a270b535bca", base: "b3e3c53fbe19fac3c20dd0248751b517f1be93b5", contains: ["t-130", "t-131", "t-133"] },
+    },
+  },
+  { surface: PROJECT_SURFACE, key: ROLES_KEY, saying: { name: "角色与职责", said_elsewhere: true, sample: { pd: ["R1", "R2", "R3"], pm: ["R4", "R8:接缝裁决"], dev: ["R5:后端"], qa: ["R6", "R12"] } } },
+  { surface: PROJECT_SURFACE, key: "allocation", saying: { name: "分配预警", said_elsewhere: true, service_writes: true, sample: { count: 1, warnings: [{ pattern: "低效", evidence: ["release 的 ack 延迟 p90 140 分钟，其他角色中位数 3 分钟"], hint: "release 的 ack 延迟 p90 140 分钟" }] } } },
+  { surface: PROJECT_SURFACE, key: "deploy.enabled", saying: { name: "谁能推上线", said_elsewhere: true, sample: { branch: "production", by: ["release"] } } },
+  { surface: NODE_SURFACE, key: "", prefix: true, saying: { name: "节点能力", said_elsewhere: true, sample: { push: "production" } } },
+];
+
+function isTaskList(v: unknown): boolean {
+  return !!v && typeof v === "object" && Array.isArray((v as { contained?: unknown }).contained);
+}
+function isBatch(v: unknown): boolean {
+  return !!v && typeof v === "object" && Array.isArray((v as { contains?: unknown }).contains);
+}
+
+/** t-154: 这条读数在牌桌上的那一句话。标量返回 null——它们照旧，值就是那句话（判据 2）。 */
+export interface ReadingSaid {
+  line: string;
+  /** 这一句是声明出来的（true），还是退化来的（false）。 */
+  declared: boolean;
+  /** 牌桌别处已经说过它：渲染方据此决定要不要重复（判据 4）。 */
+  said_elsewhere: boolean;
+}
+
+export function sayingFor(surface: string, key: string): ReadingSaying | undefined {
+  return READING_SAYINGS.find((x) => x.surface === surface && (x.prefix ? key.startsWith(x.key) : key === x.key))?.saying;
+}
+
+export function sayReading(r: { surface: string; key: string; value: unknown; by: string; at: string }, now: Date): ReadingSaid | null {
+  if (!r.value || typeof r.value !== "object") return null;   // 判据 2：标量照旧
+  const saying = sayingFor(r.surface, r.key);
+  const said = saying?.say?.(r.value) ?? null;
+  const mins = Math.max(1, Math.round((now.getTime() - Date.parse(r.at)) / 60_000));
+  return {
+    line: said ?? `${saying?.name ?? `${r.surface}:${r.key}`} 由 ${r.by} 在 ${mins} 分钟前记下`,
+    declared: said !== null,
+    said_elsewhere: !!saying?.said_elsewhere,
+  };
 }
 
 /**
