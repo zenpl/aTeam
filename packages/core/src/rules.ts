@@ -523,7 +523,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 「这一条不再归这件，去那件看」——被判过的那句话原样留着，判决也原样留着。两件事挤在同一行里的结果是：
       // **这套机制对已验任务全用不了，而已验正是它要标的那一批**（生产上 60 条 criteria 事件带 moved 的 0 条，
       // 不是没人用，是用不了）。
-      if (t.status === "verified" && !e.moved) throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
+      //
+      // **条件挂在被挡的那件事上，不挂在「有没有另一件事同时发生」上**（qa 17:36 判 fail 的那一格）：
+      // 第一版写的是 `!e.moved`，而形状闸只要求 add/moved 至少给一个、不禁止同时给——于是一次搬迁可以顺路
+      // 捎一条新判据进来，**拒绝话一个字都不出现，日志上看起来只是一次搬迁**，比原来更隐蔽。两种写法在只给
+      // 一个字段时等价，同时给两个时不等价，差别就在这一格。
+      if (t.status === "verified" && e.add !== undefined) throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
