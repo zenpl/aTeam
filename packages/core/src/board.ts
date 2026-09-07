@@ -556,6 +556,12 @@ export interface BoardPresence {
   idle_s: number | null;
   /** Missing or deaf since its last pull (null if it never pulled); listening since its last pull. */
   since: string | null;
+  /**
+   * t-211 判据 2：这个节点自报的本机构建版本（事实 `node:<role>:cli.sha`），没自报过就是 null。
+   * **这里只出数据，不出话**：谁在跑旧的、那句话怎么说，是人可见的字，冻结开着，归 pd。
+   * 有了它，一条判决的证据也说得出它是用哪一版命令行量出来的。
+   */
+  cli_sha: string | null;
 }
 
 export interface BoardOptions { /** How long since the last pull a node still counts as listening; default 5 minutes. */ listenWindowMs?: number }
@@ -626,6 +632,14 @@ export function pushLevelOf(s: State, role: string): PushLevel {
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   const push = v && typeof v === "object" && !Array.isArray(v) ? (v as { push?: unknown }).push : undefined;
   return typeof push === "string" && (PUSH_LEVELS as readonly string[]).includes(push) ? (push as PushLevel) : "none";
+}
+
+/** t-211：这个节点自报的本机构建 sha（事实 `node:<role>:cli.sha`），没自报过、或那条已失效就是 null。 */
+export function cliShaOf(s: State, role: string): string | null {
+  const id = s.latestReading.get(`${NODE_SURFACE}:${role}:cli.sha`);
+  const r = id ? s.readings.get(id) : undefined;
+  const v = r?.valid && !r.expired ? r.reading.value : undefined;
+  return typeof v === "string" && v ? v : null;
 }
 
 /** t-069: the state of "how to reach the human": the fact, or the card's answer, or neither. */
@@ -1103,7 +1117,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // t-202：三态从 presenceStatus 来，卡那一层读的是同一份——这里原本自己算一遍，于是两层各算各的
     const status = presenceStatus(s, actor, now, listenWindow);
     const listening = status === "listening";
-    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
+    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), cli_sha: cliShaOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   b.coverage = coverage(s, now, listenWindow);

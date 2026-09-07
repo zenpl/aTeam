@@ -115,3 +115,17 @@ describe("t-214 · 旁桶只减不增", () => {
     expect(wordingHash("一句话")).not.toBe(wordingHash("一句话。"));
   });
 });
+
+describe("t-211 判据 2 · 节点自报的构建版本进牌桌，但只出数据不出话", () => {
+  it("没自报过就是 null，自报过就是那个 sha——两者分得开", async () => {
+    const { MemoryStore, append, reduce, board, NODE_SURFACE } = await import("../src/index.js");
+    const s = new MemoryStore();
+    const at = (m: number) => new Date(Date.now() + m * 60_000);
+    await append(s, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev"] }, { human: "human", now: at(-100) });
+    await append(s, { kind: "reading", actor: "dev", surface: NODE_SURFACE, key: "dev:cli.sha", value: "abc1234" }, { human: "human", now: at(-10) });
+    const b = board(reduce(await s.read(), at(0)), "human", at(0));
+    const row = (r: string) => b.presence.find((x) => x.actor === r);
+    expect(row("dev")?.cli_sha).toBe("abc1234");
+    expect(row("pm")?.cli_sha ?? null).toBeNull();     // 没自报过：null，不是空字符串也不是「最新」
+  });
+});
