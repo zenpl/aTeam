@@ -29,13 +29,14 @@ export const SECOND_HOMES = [
  * 都要有人把它改小，**改小是搬迁的记账动作，不是可选项**：它只许变小，变大就是闸失效（判据 10）。
  */
 // t-180 搬走 4 句：页面那份 ago 梯子的四档（「刚刚」「N 分钟前」「N 小时前」「N 天前」）现在在 core 一处。
-// t-144 再搬走 1 句：html.ts 那个 `aria-label="邀请链接"` ⇒ core 的 INVITE_URL_LABEL。
-export const SECOND_HOME_FROZEN: number = 206;
+// t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
+// html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
+export const SECOND_HOME_FROZEN: number = 205;
 /**
  * 各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。冻结时是 i18n.ts 173、format.ts 36、html.ts 2；
  * t-180 把页面那份 ago 梯子的四档搬进 core，i18n.ts 173 → 169。这几个数用 `humanSentences` 量出来再填，不手写。
  */
-export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 169, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 1 } as const;
+export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 169, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 0 } as const;
 
 /**
  * 一条人可见的话在 core 里的登记。
@@ -77,6 +78,7 @@ export const SAYINGS: readonly Saying[] = [
   { key: "who.also_here", where: ["cli"], from: "alsoHere" },
   { key: "who.nobody", where: ["cli"], from: "nobodyElse" },
   { key: "invite.url_label", where: ["page"], from: "INVITE_URL_LABEL" },
+  { key: "token.example", where: ["page"], from: "exampleLine" },
 ];
 
 /** t-143 判据 1：一个 key 只登记一次——重复的 key 意味着两句话共用一个名字，改一个会动到另一个。 */

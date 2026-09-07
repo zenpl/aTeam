@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -816,7 +816,7 @@ export function tokenPage(fields: Record<string, string>, wrong = false, base = 
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${UI.tokenTitle} · ${UI.title}</title>
 <style>${CSS}</style></head>
 <body><main class="token-page"><header><h1>${UI.header}</h1></header>
-<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${esc(shape ?? UI.tokenWrong)}</p><p class="why">例如 <code>${esc(UI.tokenExample)}</code></p>` : ""}
+<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${esc(shape ?? UI.tokenWrong)}</p><p class="why">${exampleLine(`<code>${esc(UI.tokenExample)}</code>`)}</p>` : ""}
 <form method="post" action="${esc(base)}/token" class="line">${hidden}<input type="password" name="token" aria-label="${UI.tokenLabel}" autofocus autocomplete="off" required><button class="btn primary" type="submit">${UI.tokenSubmit}</button></form>
 </section></main></body></html>
 `;

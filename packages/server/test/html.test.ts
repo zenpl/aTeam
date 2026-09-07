@@ -539,6 +539,14 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     expect(html).toContain("<b>已按默认「B」执行（你仍可改）</b>");
     expect(html).not.toContain("你刚定了");
     expect(tokenPage({ then: "/decide", id: "x", option: '<"&>' })).toContain('<input type="hidden" name="option" value="&lt;&quot;&amp;&gt;">');
+    /**
+     * t-144：那一句「例如 <值>」搬进了 core（`exampleLine`），版式留在页面。这一条钉的是**搬完之后人看到的字节
+     * 一个不差**——这一段过去没有任何断言，所以「一句不改」原本是无从证明的。占位符只替换值：句子在 core，
+     * `<code>` 由页面包好再递进去（pd 09:50）。
+     */
+    expect(tokenPage({}, true, "", "这个 key 看起来不像")).toContain(
+      '<p class="why">这个 key 看起来不像</p><p class="why">例如 <code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code></p>',
+    );
   });
 });
 
