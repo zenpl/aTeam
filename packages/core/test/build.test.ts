@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE, speaking as speakingOf, deciding as decidingOf, measureKeySymbols, renderKeySymbols, withKeySymbols } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE, speaking as speakingOf, deciding as decidingOf, measureKeySymbols, SPEAKING_MIN_CHARS, renderKeySymbols, withKeySymbols } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -410,5 +410,59 @@ describe("t-186 · 名单跑得出来，两个人各加一行也不再撞", () =
     expect(withKeySymbols("没有那一块的文件", ["a"])).toBeNull();
     // 写回一份与此刻相同的名单，文件一个字节都不变——所以「跑一次」是幂等的
     expect(withKeySymbols(events, [...KEY_SYMBOLS])).toBe(events);
+  });
+});
+
+/**
+ * t-184：**门槛上那半条「至少 6 个字符」去掉了，不是调小。**
+ *
+ * qa 09:52 实测：门槛底下是「人在牌桌上唯一能动手的那一层」——点「对」、点「记下」、点「先不做」、点「上线它」。
+ * 把「对」改成「确认」，人点的东西变了，而闸说没变：它拦得住改一句长解释，拦不住改一个按钮。
+ *
+ * 去掉的理由不是「6 太大」：长度当初防的是把「、」「：」当成话，而判定里那个 `[一-龥]` 根本不含中文标点
+ * （它们在 U+3000 段与全角段）——**挡标点的一直是 CJK 那一条**。调数字还是在猜；去掉是把当初那条理由交还给
+ * 真正在守它的那个判定。
+ */
+describe("t-184 · 按钮上的字也算人可见", () => {
+  const short = (name: string, text: string) => ({ "probe.ts": `export const ${name} = ${JSON.stringify(text)};` });
+
+  it("判据 1、4 正例：按钮上那几个字进得来", () => {
+    for (const [name, text] of [["OK", "对"], ["FILL", "记下"], ["SKIP", "先不做"], ["JUST_NOW", "刚刚"]] as const) {
+      expect(speakingOf(short(name, text)), `${text} 还在门槛底下`).toEqual([name]);
+    }
+  });
+
+  it("判据 4 反例：不是人可见的短标识符进不来——放宽门槛没有换成噪音", () => {
+    for (const [name, text] of [["KEY", "task.id"], ["SEP", "-"], ["EMPTY", ""], ["PATH", "packages/core/src"]] as const) {
+      expect(speakingOf(short(name, text)), `${JSON.stringify(text)} 不该被当成人话`).toEqual([]);
+    }
+    // 当初那条理由仍然成立、而且由 CJK 那一条在守：纯中文标点不是话
+    for (const t of ["、", "：", "，", "「」"]) expect(speakingOf(short("P", t)), `${t} 是标点不是话`).toEqual([]);
+  });
+
+  it("判据 2：因为门槛被漏掉的是哪些，由算法列出来，不手写", () => {
+    const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+    const files = sourceFiles(new URL("../src", import.meta.url).pathname, "").map((f) => f.replace(/^\//, ""));
+    const src = Object.fromEntries(files.map((f) => [f, read(`../src/${f}`)]));
+    // 同一棵树、同一段代码，只换尺子：差集就是「被门槛漏掉的那些」，一个名字都不用手写
+    const missed = speakingOf(src).filter((x) => !speakingOf(src, 6).includes(x));
+    expect(missed.length, "门槛底下一个都没有，那这件任务就无从谈起").toBeGreaterThan(10);
+    expect(missed, "qa 09:52 点名的那几个").toEqual(expect.arrayContaining(["MIGRATION_OK", "CONTACT_FILL", "AGO_JUST_NOW", "SEAM_VERDICT_WORDS"]));
+    for (const x of missed) expect(KEY_SYMBOLS as readonly string[], `${x} 被算进来了却不在名单里`).toContain(x);
+  });
+
+  it("判据 3、8：这次变大是口径变更——两个数由同一棵树算出来，并排放着", () => {
+    // 新尺子（此刻的口径）就是名单本身；旧尺子把同一棵树重量一遍，两个数一起看，才知道变大的是尺子不是实况
+    const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+    const files = sourceFiles(new URL("../src", import.meta.url).pathname, "").map((f) => f.replace(/^\//, ""));
+    const src = Object.fromEntries(files.map((f) => [f, read(`../src/${f}`)]));
+    expect(SPEAKING_MIN_CHARS).toBe(1);
+    const oldRuler = [...new Set([...speakingOf(src, 6), ...decidingOf(src)])];   // 旧门槛，同一棵树
+    const newRuler = measureKeySymbols(src);                                       // 此刻的口径
+    expect(newRuler.length).toBe([...KEY_SYMBOLS].length);
+    expect(newRuler.length - oldRuler.length, "变大的正是被门槛漏掉的那一层，不是别的").toBe(19);
+    // 这两个数是这条断言自己算的，不是抄来的——所以「换尺子藏住真增长」这件事在这里做不到：
+    // 旧尺子下的数一旦真的涨了，这条差额就对不上。
+    expect(oldRuler.every((x) => newRuler.includes(x)), "新尺子应当只多不少").toBe(true);
   });
 });
