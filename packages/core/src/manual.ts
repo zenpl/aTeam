@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { RESPONSIBILITIES, RESPONSIBILITY_DOING } from "./events.js";
+import { RESPONSIBILITIES, RESPONSIBILITY_DOING, ROLE_ID_RE } from "./events.js";
 
 const DIR = fileURLToPath(new URL("../manual/", import.meta.url));
 
@@ -42,7 +42,10 @@ export function manualFor(role: string, ids: string[] | undefined): string | nul
 
 /** The manual for an agent that has not joined yet: what this is, how to start a project, how to join. `base` fills the address. */
 export function welcome(base: string): string {
-  return readFileSync(join(DIR, "welcome.md"), "utf8").replaceAll("{{base}}", base.replace(/\/$/, ""));
+  // t-108: the id form comes from the rule itself, never retyped into the prose — a copy drifts from what it describes
+  return readFileSync(join(DIR, "welcome.md"), "utf8")
+    .replaceAll("{{base}}", base.replace(/\/$/, ""))
+    .replaceAll("{{role_id_form}}", ROLE_ID_RE.source);
 }
 
 /** The invite page: what an agent with the link does to join. Placeholders: base, code, project, name, expires. */
