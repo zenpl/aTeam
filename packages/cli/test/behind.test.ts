@@ -6,7 +6,7 @@
  * 查不出来。所以这句提醒要印在每回合都会跑的那条命令上（判据 1），不靠谁记得。
  */
 import { describe, it, expect } from "vitest";
-import { behindDeploys, cliBehindLine, type PullResult } from "@ateam/core";
+import { behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from "@ateam/core";
 import { sync, type Behind } from "../src/loop.js";
 
 const DEPLOYS = ["d1", "d2", "d3"];
@@ -66,5 +66,38 @@ describe("t-211 · 数的是上线次数，不是提交数", () => {
   it("一次上线都没有过：说不出（不是 0）", () => {
     expect(behindDeploys("mine", [], () => true)).toBeNull();
     expect(behindDeploys("mine", undefined, () => true)).toBeNull();
+  });
+});
+
+describe("t-211 · qa 16:02 找到的两个反过来的结果", () => {
+  it("**从不 fetch 的那棵树**：本地根本没有上线那个 sha ⇒ 算「我没有」，照样印出来", async () => {
+    // 第一版把「本地没有这个对象」当成说不出，于是最该看到提醒的节点一个字都收不到
+    const neverFetched: Behind = { head: () => "mine", has: () => false };
+    const out = await run(DEPLOYS, neverFetched);
+    expect(out.some((l) => l === cliBehindLine(3))).toBe(true);
+  });
+
+  it("**只 git pull 不重编**：HEAD 追上了、dist 还是旧的 ⇒ 另一句话说出来", async () => {
+    const pulled: Behind = { head: () => "mine", has: () => true, built: () => false };
+    const out = await run(DEPLOYS, pulled);
+    expect(out.join("\n")).not.toContain("比生产旧");     // 按 HEAD 算确实不落后了
+    expect(out).toContain(cliStaleBuildLine);            // 但跑着的不是这棵树的代码
+  });
+
+  it("两样都旧：两句都说，各说各的", async () => {
+    const both: Behind = { head: () => "mine", has: (s) => s === "d1", built: () => false };
+    const out = await run(DEPLOYS, both);
+    expect(out).toContain(cliBehindLine(2));
+    expect(out).toContain(cliStaleBuildLine);
+  });
+
+  it("dist 说不出（没有产物）：不说——「不知道」不等于「你是新的」", async () => {
+    const unknown: Behind = { head: () => "mine", has: () => true, built: () => null };
+    expect((await run(DEPLOYS, unknown)).join("\n")).not.toContain("dist");
+  });
+
+  it("老调用方没有 built：照旧只判上线那一半，不崩", async () => {
+    const out = await run(DEPLOYS, { head: () => "mine", has: () => true });
+    expect(out.join("\n")).not.toContain("dist");
   });
 });

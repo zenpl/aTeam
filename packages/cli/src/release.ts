@@ -4,6 +4,7 @@
  * in the environment, and records the fact production:deployed.sha. Pure planning + injected git, so it is testable.
  */
 import { spawnSync } from "node:child_process";
+import { readdirSync, statSync } from "node:fs";
 import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
@@ -281,10 +282,47 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
  * t-211：本地这棵树的版本，给 `sync` 那一句用。**每一步答不上来都给 null**：不是 git 检出、git 不在、
  * 或者那个 sha 本地没有——三种都只说明「说不出」，而 `behindDeploys` 见 null 就整句不说。
  */
-export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null } {
+export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null; built(): boolean | null } {
   const git = realGit(cwd, undefined);
   return {
     head: () => git.resolve("HEAD"),
-    has: (sha) => (git.resolve(sha) === null ? null : git.isAncestor(sha, "HEAD")),
+    // **本地根本没有这个对象 ⇒ 我没有它，不是「说不出」。** 第一版把它当说不出，于是
+    // qa 16:02 量出一个反过来的结果：**最该看到这句提醒的节点（只跑 ateam、从不 fetch）
+    // 恰恰一个字都收不到**，而 fetch 过的那棵树印「旧 6 次」。同一个 HEAD、两种答案。
+    // 真正的「说不出」只剩两种：不是 git 检出、git 自己出错（isAncestor 给 null）。
+    has: (sha) => (git.resolve("HEAD") === null ? null : git.resolve(sha) === null ? false : git.isAncestor(sha, "HEAD")),
+    built: () => buildIsCurrent(cwd, ["core", "cli", "server"]),
   };
+}
+
+/**
+ * t-211（qa 16:02）：`dist` 跟得上 `src` 吗。**HEAD 不是跑着的那一版，dist 才是**——只 `git pull` 不重编，
+ * 按 HEAD 算出来的「旧 N 次」当场变成 0，而跑着的还是旧代码。
+ * 说不出就给 null：没有 dist、读不到时间戳。取的是每个包里最新的源码与最旧的产物比。
+ */
+export function buildIsCurrent(root: string, packages: string[]): boolean | null {
+  let newestSrc = -1, oldestDist = Infinity;
+  for (const p of packages) {
+    const src = `${root}/packages/${p}/src`, dist = `${root}/packages/${p}/dist`;
+    const srcT = newestMtime(src), distT = newestMtime(dist);
+    if (srcT === null || distT === null) return null;       // 没有 dist、或读不到：说不出
+    newestSrc = Math.max(newestSrc, srcT);
+    oldestDist = Math.min(oldestDist, distT);
+  }
+  if (newestSrc < 0 || !Number.isFinite(oldestDist)) return null;
+  return oldestDist >= newestSrc;
+}
+
+function newestMtime(dir: string): number | null {
+  let out: number | null = null;
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return null; }
+  for (const e of entries) {
+    const p = `${dir}/${e}`;
+    let st;
+    try { st = statSync(p); } catch { continue; }
+    const t = st.isDirectory() ? newestMtime(p) : st.mtimeMs;
+    if (t !== null) out = out === null ? t : Math.max(out, t);
+  }
+  return out;
 }

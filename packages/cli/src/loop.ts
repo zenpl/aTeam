@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -92,6 +92,9 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   if (print && behind) {
     const n = behindDeploys(behind.head(), r.deploys, behind.has);
     if (n !== null && n > 0) print(cliBehindLine(n));
+    // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
+    // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
+    if (behind.built?.() === false) print(cliStaleBuildLine);
   }
   return r;
 }
@@ -102,6 +105,8 @@ export interface Behind {
   head(): string | null;
   /** 本地这棵树含不含这个 sha。null 是「git 答不上来」，与 false 分开。 */
   has(sha: string): boolean | null;
+  /** t-211：dist 跟得上源码吗。null 是说不出（没有 dist、读不到时间）。 */
+  built?(): boolean | null;
 }
 
 /**

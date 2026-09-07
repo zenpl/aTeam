@@ -496,6 +496,7 @@ export const KEY_SYMBOLS = [
   "checkShape",
   "classifyFollowUp",
   "cliBehindLine",
+  "cliStaleBuildLine",
   "coverage",
   "defaultMissed",
   "denominatorIs",
@@ -915,6 +916,12 @@ export const MOVED_MARK = "→";
  * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
  */
 export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/**
+ * t-211 第二种旧法，qa 16:02 量出来的：**只 git pull 不重编，那句「旧 N 次上线」当场消失，而跑着的还是旧的。**
+ * HEAD 不是「跑着的那一版」，dist 才是；两者不一致时，按 HEAD 算出来的那个数偏乐观。
+ */
+export const cliStaleBuildLine = "你手上的 dist 比源码旧，跑着的不是这棵树的代码，跑 pnpm build";
 
 /** t-211 判据 2：这条节点事实是怎么量出来的。住在 core，命令行那侧不留人可见的字。 */
 export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
