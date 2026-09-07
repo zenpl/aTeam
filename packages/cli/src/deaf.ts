@@ -5,15 +5,15 @@
  * in its own output. It is a word to this node only: no event, no log line, nothing the team sees — who is
  * not listening is already on the board (t-047/t-048).
  */
-import { LISTEN_WINDOW_MS } from "@ateam/core";
+import { LISTEN_WINDOW_MS, WATCH_INTERVAL } from "@ateam/core";
 import type { Lock } from "./lock.js";
 
 /**
- * t-139 (frontend, pm 05:47): the default interval *is* the protocol — nobody chose 25 seconds, they just never
- * changed it, and this line was teaching every node to poll at a rate we had just decided was too fast. 60 is pm's
- * judgement, not a measurement; it is to be revisited when the machine limits or a slower run give real numbers.
+ * t-139, then t-145: the interval this suggests is the CLI's own default, taken from the one constant that decides it
+ * (core's WATCH_INTERVAL). It used to be typed here, and typed again in the manual, and again in the help text — four
+ * places holding three different numbers, and a reminder teaching a rate the CLI did not use.
  */
-export const DEFAULT_WATCH_CMD = "ateam watch --interval 60s";
+export const DEFAULT_WATCH_CMD = `ateam watch --interval ${WATCH_INTERVAL}`;
 
 export type WatchState =
   /** No lock file: this node never started a watch in this checkout, or stopped one on purpose. Say nothing. */

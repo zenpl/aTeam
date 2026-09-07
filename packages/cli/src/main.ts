@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -67,7 +67,7 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
 
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
   ateam log [--after <id>]       raw events
-  ateam watch [--interval 20s] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
+  ateam watch [--interval ${WATCH_INTERVAL}] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
 `;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
@@ -184,7 +184,7 @@ async function main(argv: string[]) {
     }
     case "watch": {
       exact(rest);
-      const interval = duration(str(a, "interval") ?? "20s");
+      const interval = duration(str(a, "interval") ?? WATCH_INTERVAL);   // t-145: one number, from core
       const lockPath = join(process.cwd(), ".ateam", `watch.${cfg.me}.lock`);
       const other = blockingLock(lockPath, new Date(), 3 * interval);
       if (other && !bool(a, "force")) throw new UsageError(`another watch is already listening as ${cfg.me} in this checkout (pid ${other.pid}, heartbeat ${other.at}). Two watches replay old instructions to each other. Stop it first: kill ${other.pid}; or run with --force if it is really gone.`);
