@@ -6,8 +6,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryStore, append, reduce, board, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor } from "../src/seamcheck.js";
+import { MemoryStore, append, reduce, board, NO_OUTPUT_PREFIX, type NewEvent } from "@ateam/core";
+import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, outputSinceClaim, type CommitsSince } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -212,5 +212,70 @@ describe("t-160 判据 7 · 自动吸收只认 git 说的，不认证据里写�
     const r = seamCheck(b, "t-b", "bbbbbbb2 合并了 aaaaaaa1", unknown);
     expect(r.absorbs).toEqual([]);                        // 不知道就不吸收：文本写了也不算
     expect(r.unverified).toEqual([expect.stringContaining("无法验证")]);
+  });
+});
+
+/**
+ * t-191：**对方 claim 了却还没写代码时，那条接缝无从判定重叠——不该挡住前者的验收。**
+ *
+ * 今夜四次同形状（t-143+t-180、t-180+t-179、t-144+t-185、t-160+t-189），每次都是 qa 一次自查、pm 一次裁定、
+ * 两条 tell。判据 2 的界线：t-160 按**时序**（在它 done 之后才 claim 的不挡），这一条按**有没有产出**
+ * （claim 了但没写代码的不挡）。两条各自独立，不互相取代——一件在前者 done 之前就 claim、而且真的在写代码的，
+ * 两条都不放行，那正是该挡的那一种。
+ */
+describe("t-191 · 对方还没写代码时，接缝无从判定", () => {
+  const world = async (otherStatus: "working" | "done") => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    for (const id of ["t-a", "t-b"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"], no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["packages/core/src/board.ts"] });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["packages/core/src/board.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "aaaaaaa 完成", no_human_impact: true });
+    if (otherStatus === "done") await emit({ kind: "task", op: "done", actor: "frontend", task: "t-b", evidence: "bbbbbbb 完成", no_human_impact: true });
+    return board(reduce(await store.read()), "human");
+  };
+  const none: CommitsSince = () => false, some: CommitsSince = () => true, blind: CommitsSince = () => null;
+
+  it("判据 1 正例：对方自 claim 以来没有提交——写一条结论把接缝解掉，前者的验收放行", async () => {
+    const b = await world("working");
+    expect(b.seams[0].open, "先确认它此刻确实挡着").toBe(true);
+    const r = unjudgeableSeams(b, "t-a", none);
+    expect(r.notes).toEqual([]);
+    expect(r.events).toHaveLength(1);
+    const ev = r.events[0] as { resolution: string; tasks: string[] };
+    expect(ev.resolution).toContain(NO_OUTPUT_PREFIX);
+    expect(ev.resolution).toContain("t-b");
+    expect(ev.resolution, "合并义务照旧留给后落地方").toContain("合并义务照旧");
+    expect(ev.tasks).toEqual(expect.arrayContaining(["t-a", "t-b"]));
+  });
+
+  it("判据 3 反例：对方一有提交，立刻回到正常判定——没有「曾经无提交」这种永久豁免", async () => {
+    const b = await world("working");
+    expect(unjudgeableSeams(b, "t-a", some).events, "它写代码了，这条接缝就是真的").toEqual([]);
+    // 同一块板、同一条接缝，只是 git 的回答变了：判定跟着变，因为每次都现问，不记状态
+    expect(unjudgeableSeams(b, "t-a", none).events).toHaveLength(1);
+    expect(unjudgeableSeams(b, "t-a", some).events).toEqual([]);
+  });
+
+  it("对方已经交过活的不走这一条：那时有产出可判，回到正常的接缝判定（含 t-160 那条时序）", async () => {
+    const b = await world("done");
+    expect(unjudgeableSeams(b, "t-a", none).events, "对方 done 了还说它没产出，那是拿一个假前提放行").toEqual([]);
+  });
+
+  it("看不见就当有：判不了的时候不放行，但把原因说出来", async () => {
+    const b = await world("working");
+    const r = unjudgeableSeams(b, "t-a", blind);
+    expect(r.events, "猜错的方向是放行一次真碰车").toEqual([]);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain("判不了");
+    expect(r.notes[0]).toContain("照旧挡着");
+  });
+
+  it("只声明了符号、没声明路径时也问不了 git——同样按「看不见就当有」处理", () => {
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["inFlightGroups"], none)).toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", [], none)).toBe("unknown");
+    expect(outputSinceClaim(undefined, ["a/b.ts"], none), "没有认领时刻就没有「自那以后」").toBe("unknown");
+    expect(outputSinceClaim("2026-09-07T00:00:00Z", ["a/b.ts#sym"], none), "「文件#符号」取得出文件名").toBe("none");
   });
 });

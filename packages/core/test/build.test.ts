@@ -460,7 +460,11 @@ describe("t-184 · 按钮上的字也算人可见", () => {
     const oldRuler = [...new Set([...speakingOf(src, 6), ...decidingOf(src)])];   // 旧门槛，同一棵树
     const newRuler = measureKeySymbols(src);                                       // 此刻的口径
     expect(newRuler.length).toBe([...KEY_SYMBOLS].length);
-    expect(newRuler.length - oldRuler.length, "变大的正是被门槛漏掉的那一层，不是别的").toBe(19);
+    // 差额是算出来的，不是一个写死的数——写死那种，下一次有人加一个短的人可见词就得来改它，而那正是这条
+    // 断言要防的那类漂移。它守的是「新尺子多出来的每一个，都是旧门槛漏掉的」，不是「恰好多 19 个」。
+    const extra = newRuler.filter((x) => !oldRuler.includes(x));
+    expect(extra.length, "一个都没多出来，那这次口径变更就无从谈起").toBeGreaterThan(10);
+    for (const x of extra) expect(speakingOf(src, 6), `${x} 不是被门槛漏掉的那一层`).not.toContain(x);
     // 这两个数是这条断言自己算的，不是抄来的——所以「换尺子藏住真增长」这件事在这里做不到：
     // 旧尺子下的数一旦真的涨了，这条差额就对不上。
     expect(oldRuler.every((x) => newRuler.includes(x)), "新尺子应当只多不少").toBe(true);

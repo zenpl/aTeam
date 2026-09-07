@@ -7,7 +7,7 @@ import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
@@ -346,7 +346,17 @@ async function main(argv: string[]) {
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
-          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
+          const task = need(id, "<id>");
+          // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
+          // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
+          // fail 不走这一段：一条接缝从来只挡 pass，不挡「它坏了」这条消息（t-112）。
+          if (bool(a, "pass") && !bool(a, "no-seam-check")) {
+            const b = await client.board();
+            const un = unjudgeableSeams(b, task, gitCommitsSince());
+            for (const n of un.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
+            for (const e of un.events) await emit(e);
+          }
+          return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });

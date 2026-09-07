@@ -330,6 +330,7 @@ export const KEY_SYMBOLS = [
   "MIGRATION_OK",
   "MIGRATION_PATCH",
   "NO_HUMAN_IMPACT",
+  "NO_OUTPUT_PREFIX",
   "NO_SYMBOL_MEANS_UNCLEAR",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
@@ -362,6 +363,7 @@ export const KEY_SYMBOLS = [
   "batchesEmptyLine",
   "blockedWhy",
   "board",
+  "cannotSeeOutput",
   "capabilityKey",
   "checkShape",
   "classifyFollowUp",
@@ -385,6 +387,7 @@ export const KEY_SYMBOLS = [
   "manual",
   "manualFor",
   "missingCard",
+  "noOutputSeam",
   "nobodyElse",
   "overdueByPresence",
   "owedSentences",
@@ -698,6 +701,22 @@ export const SHOWS_GATE_BLIND = (fix: string) =>
  * 就是又一次「一个数与它描述的东西分开维护」。
  */
 export const ACTED_RULE_TASK = "t-147";
+
+/**
+ * t-191：一条接缝因为「对方 claim 了却还没写代码」而**无从判定**时，写回日志的那句结论。
+ *
+ * 它住在 core，不住在 `cli/seamcheck.ts`：那边是「第二个家」，新的人可见的话一律进 core（t-143 那条只减不增
+ * 的规矩，我第一版写在 cli 里，四条闸当场红——它们是对的）。
+ *
+ * **措辞是我写的，pd 没过目**（人可见的字 11:17 起冻结）。判断本身不需要等谁：一条接缝无从判定，说出来比闷着
+ * 强。但这两句话的说法要 pd 定，我已另发 note——改的时候只改这里，页面与命令行都引它。
+ */
+export const NO_OUTPUT_PREFIX = "无从判定：";
+export const noOutputSeam = (other: string, claimedAt: string, mine: string) =>
+  `${NO_OUTPUT_PREFIX}${other} 自 ${claimedAt} 认领以来，仓库里没有任何提交碰过它声明的那些路径——两边没有重叠可判。${mine} 的验收放行；${other} 落地时的合并义务照旧。`;
+/** t-191：判不了「对方有没有提交」时说的那句。**看不见就当有**，所以这条接缝照旧挡着，只是把原因说出来。 */
+export const cannotSeeOutput = (other: string, claimedAt: string) =>
+  `警告：判不了 ${other} 自 ${claimedAt} 认领以来有没有提交（没有 git，或它只声明了符号没声明路径）——按「有」处理，这条接缝照旧挡着`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";

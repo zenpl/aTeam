@@ -3,7 +3,7 @@
  * sha really contains the other side's evidence sha. A warning only: the log records what you claim; git knows the truth.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, type Board, type ClientEvent } from "@ateam/core";
+import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, type Board, type ClientEvent } from "@ateam/core";
 
 /** true/false from git; null when git or either object is unavailable (not a repo, sha not fetched). */
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
@@ -113,6 +113,79 @@ export function seamWarnings(b: Board, id: string, evidence: string | undefined,
     if (!theirs || theirs === mine) continue;
     const contained = isAncestor(theirs, mine);
     if (contained === false) out.push(`${seam.id} 的解决方案要求你先合并 ${theirs}（${otherId} 的证据），当前证据 ${mine} 不含它`);
+  }
+  return out;
+}
+
+/**
+ * t-191：**对方 claim 了却还没写代码时，那条接缝无从判定重叠——不该挡住前者的验收。**
+ *
+ * 今夜四次同形状（t-143+t-180、t-180+t-179、t-144+t-185、t-160+t-189），每次都是 qa 一次自查、pm 一次裁定、
+ * 两条 tell。t-160 修的是**时序**那一半（在它 done 之后才 claim 的不挡）；剩下的这一半是**产出**：对方在它
+ * done 之前就 claim 了，但自那以后一个提交都没有——两个声明之间没有重叠可判，因为其中一边还只是声明。
+ *
+ * 判在有仓库的那一头（同 t-160 判据 6）：服务端没有仓库，看不见提交，而**不许拿「它还没 done」当代理**——
+ * 一个人可以写了一整天代码还没交活，那是最该挡住的那一种，不是这一条要放行的那一种。
+ *
+ * 怎么看「有没有提交」：在对方 claim 的那一刻之后，仓库里（所有 ref）有没有任何提交碰过它声明的那些路径。
+ * 不限分支：对方推到自己的分支上，本地不一定知道那是哪一支，但 `--all` 覆盖得到已 fetch 的每一支。
+ * **看不见就当有**（`unknown`）：git 不在、路径给不出、没 fetch 过对方的分支——这几种情况下说「它没写代码」
+ * 是在猜，而猜错的方向是放行一次真碰车。
+ */
+export type Output = "some" | "none" | "unknown";
+
+/** 从某一刻起，仓库里有没有任何提交碰过这些路径。null = 判不了（没有 git，或路径为空）。 */
+export type CommitsSince = (sinceIso: string, paths: string[]) => boolean | null;
+
+export function gitCommitsSince(cwd = process.cwd()): CommitsSince {
+  return (sinceIso, paths) => {
+    if (!paths.length) return null;
+    const r = spawnSync("git", ["log", "--all", "--oneline", `--since=${sinceIso}`, "--", ...paths], { cwd, encoding: "utf8" });
+    if (r.error || r.status !== 0) return null;
+    return r.stdout.trim().length > 0;
+  };
+}
+
+/** 对方自 claim 以来有没有产出。声明里没有路径（只写了符号、章节）时判不了，返回 unknown。 */
+export function outputSinceClaim(claimedAt: string | undefined, touches: string[], commitsSince: CommitsSince): Output {
+  if (!claimedAt) return "unknown";
+  // 只拿看得见的那部分去问 git：「文件#符号」取文件名，纯符号（不含 / 也不含 .）问不了 git
+  const paths = [...new Set(touches.map((t) => t.split("#")[0].trim()).filter((t) => t && (t.includes("/") || t.includes("."))))];
+  // 一条路径都问不出来（只声明了符号、章节，或什么都没声明）：**这里就答 unknown**，不把它交给 git 去答。
+  // 交下去要靠调用方也把空数组当「判不了」，那是一条只写在别处的约定——测试替身第一次就把它踩塌了。
+  if (!paths.length) return "unknown";
+  const r = commitsSince(claimedAt, paths);
+  if (r === null) return "unknown";
+  return r ? "some" : "none";
+}
+
+/**
+ * t-191：验收之前跑一遍——**哪些开着的接缝，是因为对方 claim 了却还没写代码而无从判定的。**
+ *
+ * 返回要写回日志的 seam 事件。判定在这一头做，因为服务端没有仓库（同 t-160 判据 6）。三条边界：
+ * ① 只看**还开着**的接缝：已解决、已吸收、已 stacked 的本来就不挡。
+ * ② 只看对方**还在途**（working）的：对方已经交过活，那就有产出可判，回到正常的接缝判定。
+ * ③ **看不见就当有**（`unknown` 不放行）：没 fetch 过对方的分支、声明里没有路径、git 不在——这几种情况下说
+ *    「它没写代码」是在猜，而猜错的方向是放行一次真碰车。
+ *
+ * 判据 3 的另一半自动成立：这里不记「曾经无提交」，每次都现问 git。对方一有提交，下一次问就是 `some`，
+ * 接缝回到正常判定——**没有永久豁免这回事**。
+ */
+export function unjudgeableSeams(b: Board, id: string, commitsSince: CommitsSince): { events: ClientEvent[]; notes: string[] } {
+  const out: { events: ClientEvent[]; notes: string[] } = { events: [], notes: [] };
+  for (const seam of b.seams) {
+    if (!seam.open || !seam.tasks.includes(id)) continue;
+    const otherId = seam.tasks.find((t) => t !== id)!;
+    const other = boardTask(b, otherId);
+    if (!other || other.status !== "working") continue;          // ② 对方交过活：有产出可判
+    const verdict = outputSinceClaim(other.claimed_at, other.touches ?? [], commitsSince);
+    if (verdict === "some") continue;
+    if (verdict === "unknown") {                                  // ③ 看不见就当有，但说出来
+      out.notes.push(`${seam.id}：${cannotSeeOutput(otherId, other.claimed_at ?? "")}`);
+      continue;
+    }
+    out.events.push({ kind: "task", op: "seam", tasks: [seam.tasks[0], seam.tasks[1]],
+      resolution: noOutputSeam(otherId, other.claimed_at ?? "", id) });
   }
   return out;
 }

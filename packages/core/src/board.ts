@@ -20,6 +20,11 @@ export interface BoardTask {
   created_at?: string;
   owner?: string;
   touches?: string[];
+  /**
+   * t-191: 它是什么时候认领的。`seamCheck` 那一头要它去问 git「自那以后有没有提交碰过这些路径」——一件认领了
+   * 却还没写代码的活，与另一件已经交出去的活之间没有重叠可判，那条接缝不该挡住前者的验收。
+   */
+  claimed_at?: string;
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
@@ -875,7 +880,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     (b.tasks[t.status] ??= []).push({
       era, summary,
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: t.touches, claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1408,6 +1413,7 @@ export function slimBoard(b: Board): Board {
       // t-164: 在途那几件的触点留在瘦身板里——「这块地上还有谁」只需要它们，而在途的从来只有几件。
       // 已经 done 的不留：那是接缝在 done 时判的事，不是「还有谁在」。
       touches: t.status === "working" ? t.touches : undefined,
+      claimed_at: t.status === "working" ? t.claimed_at : undefined,   // t-191: 与 touches 同去同留，它们是同一个问题的两半
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
