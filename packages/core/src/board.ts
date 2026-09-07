@@ -111,24 +111,43 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
  * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
  */
 export function ago(ms: number): string | null {
-  if (otherSideOfNow(ms)) return null;
-  return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
+  const b = band(ms);
+  if (b === null) return null;          // t-200：另一侧，见 band
+  return b.unit === "second" ? AGO_JUST_NOW : `${span(ms)}前`;
 }
 export const AGO_JUST_NOW = "刚刚";
 
 /**
- * t-200：**三把梯子唯一判负的地方。**
+ * 分档与取整本身，从三把梯子里拿出来单独放着（t-199）。
  *
- * 三把梯子（`ago`／`span`／`until`）都只定义了非负的那一半，而另一半没人定义——**它不报错，它回答**：
- * 任何负数都掉进最小的那一档，于是 `until(-4小时)` 说「还有不到 1 分钟」、`span(负)` 说「不到 1 分钟」、
- * `ago(负)` 说「刚刚」。qa 12:31 那张卡是真样本：08:12 就到期了，页面说它「还有不到 1 分钟到期」——过期四小时。
+ * 到这一件之前，「把毫秒算成第几档、那一档是几」这段逻辑在 `span`、`until`、`ago` 里各写了一遍——**三处写法一致，
+ * 靠的是三次都写对，不是靠结构**。而第四处（`cli/format.ts` 那个紧凑记法）就没写对：它四舍五入、带小数、
+ * 没有「天」档，于是 3599 秒被说成 `60m`——一个还没到的整点被说成已经到了，正是 pd 09:09 第一条硬规矩要挡的。
+ *
+ * pm 在 t-199 判据 3 里的裁定：**可以两种写法，不许两套算法**。所以这里分开的是「算」与「写」：这个函数只回答
+ * 「第几档、那一档是几」，一个字都不说；说法留给调用方——中文由下面三把梯子说，紧凑记法（`30s`/`59m`，给 agent 看的）
+ * 由 `cli/format.ts` 说。想让两种记法在某个时刻各说各话，得先把这个函数改坏。
+ *
+ * 取整只在这里做一次，一律向下。**`second` 那一档带着秒数**：中文用不上它（时长没有「30 秒」这一说，
+ * pd 定的是「不到 1 分钟」），紧凑记法要用——它给 agent 判断新旧，一秒和五十秒是两回事。
+ *
+ * ---
+ *
+ * **t-200：负数在这里判，而且只在这里判。**
+ *
+ * t-199 把这一行留给了 t-200，原话是「分档搬到一处之后，它只剩这一个地方要改」——就是这里。
+ *
+ * 三把梯子原本都只定义了非负的那一半，而另一半没人定义——**它不报错，它回答**：任何负数都掉进最小的那一档，
+ * 于是 `until(-4小时)` 说「还有不到 1 分钟」、`span(负)` 说「不到 1 分钟」、`ago(负)` 说「刚刚」。
+ * qa 12:31 那张卡是真样本：08:12 就到期了，页面说它「还有不到 1 分钟到期」——过期四小时。
  *
  * pd 09:17 那条规矩说的正是这件事：一个句框如果只有某几档填得进去，那不是那一档特殊，是句框错了。
  * frontend 12:33 把它用在「刚刚」上时说全了另一半：**梯子只定义了非负的那一半，另一半没人定义。**
  *
- * **这里只判「在现在的哪一侧」，不说那一侧该说什么话。** 负数在三把梯子里的含义不一样——对 `until` 是「已经
- * 过去了」，对 `ago`／`span` 是「一个未来的时刻被当成过去问」——所以那句话该由**调用方**说，它才知道自己在
- * 问什么。梯子答不了就答 `null`，绝不猜一档。这也是判据 4 要的：判负只此一处，改它一处就改了三把。
+ * **这里只判「在现在的哪一侧」，不说那一侧该说什么话。** 负数在各个调用方那里的含义不一样——对 `until` 是
+ * 「已经过去了」，对 `ago`／`span` 是「一个未来的时刻被当成过去问」，对紧凑记法又是另一回事——所以那句话该由
+ * **调用方**说，它才知道自己在问什么。这里答 `null`，绝不猜一档。判负因此与分档同处一地：改它一处，四个调用方
+ * 一起改。
  *
  * **「已经过去」那句新话归 pd**（判据 2，人可见的字 11:17 起冻结），所以此刻没有任何一个调用方在新写一句：
  * 它们要么用现成的、pd 早已定过的那一句，要么就不印这一句。各自的理由写在各自的调用点上。
@@ -136,6 +155,17 @@ export const AGO_JUST_NOW = "刚刚";
  * 判据 3 也在这里说一次：**不许用「正常流程拿不到负数」结案。** 这次显形是因为一次误 ack 把卡弄成了异常态，
  * 而异常态恰恰是梯子该说实话的时候——一个只在顺境里正确的说法，等于把「不会发生」当成了保证。
  */
+export type Band = { unit: "second" | "minute" | "hour" | "day"; n: number };
+export function band(ms: number): Band | null {
+  if (otherSideOfNow(ms)) return null;
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return { unit: "second", n: sec };
+  if (sec < 3600) return { unit: "minute", n: Math.floor(sec / 60) };
+  if (sec < 86400) return { unit: "hour", n: Math.floor(sec / 3600) };
+  return { unit: "day", n: Math.floor(sec / 86400) };
+}
+
+/** t-200：`band` 判负时问的就是这一句。单独拿出来是为了它能被直接指着看、被直接测。 */
 export function otherSideOfNow(ms: number): boolean {
   return ms < 0;
 }
@@ -151,12 +181,13 @@ export function otherSideOfNow(ms: number): boolean {
  * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
  */
 export function span(ms: number): string | null {
-  if (otherSideOfNow(ms)) return null;   // t-200：另一侧不是最小的一档，见 otherSideOfNow
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return SPAN_UNDER_A_MINUTE;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天`;
+  const b = band(ms);
+  if (b === null) return null;          // t-200：另一侧不是最小的一档，见 band
+  const { unit, n } = b;
+  if (unit === "second") return SPAN_UNDER_A_MINUTE;
+  if (unit === "minute") return `${n} 分钟`;
+  if (unit === "hour") return `${n} 小时`;
+  return `${n} 天`;
 }
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 
@@ -171,12 +202,13 @@ export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
  * 不到一分钟那一档 pd 没定，我按前两把的形状写成「还有不到 1 分钟」，已单独发它过目。
  */
 export function until(ms: number): string | null {
-  if (otherSideOfNow(ms)) return null;   // t-200：已经过去了，这把梯子答不了，见 otherSideOfNow
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return UNTIL_UNDER_A_MINUTE;
-  if (sec < 3600) return `还有 ${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `还有 ${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天后`;
+  const b = band(ms);
+  if (b === null) return null;          // t-200：已经过去了，这把梯子答不了，见 band
+  const { unit, n } = b;
+  if (unit === "second") return UNTIL_UNDER_A_MINUTE;
+  if (unit === "minute") return `还有 ${n} 分钟`;
+  if (unit === "hour") return `还有 ${n} 小时`;
+  return `${n} 天后`;
 }
 export const UNTIL_UNDER_A_MINUTE = "还有不到 1 分钟";
 const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));

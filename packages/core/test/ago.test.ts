@@ -9,7 +9,7 @@
  * 梯子分档、向下取整（不许把还没到的时刻说成到了）、永不出现小数、以及 sayReading 那句跟着走。
  */
 import { describe, it, expect } from "vitest";
-import { ago, span, until, sayReading, otherSideOfNow, sayDefault } from "../src/board.js";
+import { ago, span, until, sayReading, otherSideOfNow, sayDefault, band } from "../src/board.js";
 
 const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H;
 
@@ -120,6 +120,9 @@ describe("t-200 · 负数不是最小的那一档，是另一侧", () => {
   it("判据 4：判负只此一处——三把梯子问的是同一个函数", () => {
     expect(otherSideOfNow(-1)).toBe(true);
     expect(otherSideOfNow(0)).toBe(false);
+    // t-199 把分档搬进了 band，并把这一行留给 t-200：判负与分档同处一地，四个调用方一起改
+    expect(band(-1)).toBeNull();
+    expect(band(0)).toEqual({ unit: "second", n: 0 });
     // 三把梯子在同一批数上给出同一个「答不答得了」，一个都不许自己判
     for (let ms = -3 * D; ms < 3 * D; ms += 7 * H + 13 * M) {
       const answerable = [until(ms), span(ms), ago(ms)].map((x) => x !== null);
