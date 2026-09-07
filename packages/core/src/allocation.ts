@@ -79,8 +79,11 @@ export function staticAllocation(s: State): AllocationWarning[] {
     const pick = ids.filter((id) => roles.filter((r) => packing[r].includes(id)).length >= 2 && !roles.some((r) => bounds.get(`${r}:${id}`)))
       .map((id) => ({ id, holders: roles.filter((r) => packing[r].includes(id)) }))
       .reduce((a, b) => (b.holders.length > a.holders.length ? b : a));
-    out.push({ pattern: "重叠", evidence: [`${pick.id} 由 ${pick.holders.join("、")} 同时持有，没有分界${overlaps.length > 1 ? `（另有 ${overlaps.length - 1} 项同样如此）` : ""}`],
-      hint: `${pick.id} 由 ${pick.holders.join(" 和 ")} 同时持有，没有分界。建议：一个持有，另一个只提 concern。` });
+    // The hint is the finding plus what to do about it — one wording, not two. Writing the same fact twice with a
+    // different joiner (「pm、reviewer」 against 「pm 和 reviewer」) is the drift t-118 is about, and t-136 caught it
+    // here: the evidence line was reaching nobody while the hint said the same thing in slightly different words.
+    const found = `${pick.id} 由 ${pick.holders.join("、")} 同时持有，没有分界${overlaps.length > 1 ? `（另有 ${overlaps.length - 1} 项同样如此）` : ""}`;
+    out.push({ pattern: "重叠", evidence: [found], hint: `${found}。建议：一个持有，另一个只提 concern。` });
   }
   // 打破独立审核: R3+R6 or R5+R6 in one role, and no owner degradation said on its R6
   const broken: string[] = [];
@@ -96,8 +99,9 @@ export function staticAllocation(s: State): AllocationWarning[] {
     const r = roles.find((x) => packing[x].includes("R6") && ["R3", "R5"].some((id) => packing[x].includes(id)) && !/owner|human/i.test(bounds.get(`${x}:R6`) ?? ""))!;
     const with_ = ["R3", "R5"].filter((id) => packing[r].includes(id));
     // t-123 判据 2: one line, the worst — here, the role holding the most alongside its R6
-    out.push({ pattern: "打破独立审核", evidence: [`${broken[0]}${broken.length > 1 ? `（另有 ${broken.length - 1} 个角色同样如此）` : ""}`],
-      hint: `${r} 同时持有 ${with_[0]} 与 R6。它${with_[0] === "R3" ? "定标准" : "做"}的东西只能由 owner 验；建议把 ${with_[0]} 交给 owner 或再起一个角色。` });
+    const said = `${broken[0]}${broken.length > 1 ? `（另有 ${broken.length - 1} 个角色同样如此）` : ""}`;
+    out.push({ pattern: "打破独立审核", evidence: [said],
+      hint: `${said}。它${with_[0] === "R3" ? "定标准" : "做"}的东西只能由 owner 验；建议把 ${with_[0]} 交给 owner 或再起一个角色。` });
   }
   // 负载陷阱: one role holds far more than the others (not a two-node team: that is one person many hats by design)
   if (roles.length > 2) {
@@ -106,7 +110,8 @@ export function staticAllocation(s: State): AllocationWarning[] {
     const rest = counts.slice(1).map((x) => x[1]);
     const median = rest.sort((a, b) => a - b)[Math.floor(rest.length / 2)];
     if (n >= 4 && n >= 2 * Math.max(median, 1)) {
-      out.push({ pattern: "负载陷阱", evidence: [`${top} 持有 ${n} 项职责，其他角色中位数 ${median} 项`], hint: `${top} 持有 ${n} 项职责（${packing[top].join(" ")}），其他角色中位数 ${median}。建议：把能改成规则或服务的职责先拿走。` });
+      const carried = `${top} 持有 ${n} 项职责（${packing[top].join(" ")}），其他角色中位数 ${median} 项`;
+      out.push({ pattern: "负载陷阱", evidence: [carried], hint: `${carried}。建议：把能改成规则或服务的职责先拿走。` });
     }
   }
   return out;

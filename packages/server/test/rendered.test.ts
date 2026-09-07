@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, reduce, board, sampleLog, type Board, type NewEvent } from "@ateam/core";
+import { MemoryStore, append, reduce, board, sampleLog, similarity, SERVICE_ACTOR, type Board, type NewEvent } from "@ateam/core";
 import { createApp as _createApp } from "../src/app.js";
 
 const HUMAN = "human";
@@ -31,7 +31,71 @@ export interface Unread { path: string; field: string; text: string }
  * word search: 「line」 also appears in CSS as `line-height` and `var(--line)`, and counting those was how the first
  * version of this check passed the very night it was written to catch (qa 05:23).
  */
-const readsLeaf = (src: string, leaf: string) => new RegExp(`[A-Za-z0-9_$)\\]]\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`).test(src);
+/**
+ * The names a renderer could be holding this field under: the field itself, anything bound from an expression that
+ * mentions it, and so on transitively — `const batches = b.batches ?? []` then `for (const x of batches)` then
+ * `x.line`.
+ *
+ * It follows the binding rather than accepting any two facts from anywhere in the file, because qa 05:34 showed with
+ * the real file what the loose version does: in babae6d's html.ts `alert` is satisfied by the CSS variable
+ * `--alert:#B42318` and `line` by an unrelated `c.line` in the coverage code, so the check said `alert.line` had a
+ * reader on the very file where it had none.
+ */
+/** t-136: how far a binding chain is followed. Measured, not guessed — see `aliases`. */
+const ALIAS_STEPS = 2;
+
+/**
+ * Source with the *text* blanked out and the code kept: `"alert.ask"` and the CSS `--alert:#B42318` are text, not
+ * references, while `${w.hint}` inside a template literal is code and the renderer's only way of saying it reads it.
+ * Blanking whole template literals hid exactly that and made this check accuse `format.ts` of ignoring the allocation
+ * hints it prints on line 165.
+ */
+const code = (src: string) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
+     .replace(/`(?:[^`\\]|\\.)*`/g, (lit) => lit.replace(/\$\{[^}]*\}|[\s\S]/g, (x) => (x.startsWith("${") ? x : " ")))
+     .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+
+/**
+ * The names a renderer could be holding this field under: the field itself, plus whatever is bound directly from it —
+ * `const batches = b.batches ?? []`, then `for (const x of batches)`, then `x.line`.
+ *
+ * Two things keep it honest, both of them qa's. Strings and comments are blanked first, because the loose version
+ * counted `"alert.ask"` and the CSS variable `--alert:#B42318` as references and so declared `alert.line` read on the
+ * one file that never read it (qa 05:34, on the whole real babae6d html.ts, not an excerpt). And the chain is one
+ * step, not transitive: one step answers every real reading in this repo — following further only grows the alias set
+ * (2 names at one step, 108 unbounded) and with it the chance of matching a `.line` that belongs to somebody else.
+ *
+ * How far the chain is followed is measured, not assumed: one step misses how this repo reads `coverage`
+ * (`const gaps = coverageOf(b)` then `gaps.map(c => c.line)`), and following it without limit finds nothing more than
+ * two steps do while growing the alias set from 21 names to 108 — every extra name another chance to match a `.line`
+ * that belongs to somebody else. Two steps is the smallest that is right on every sentence-bearing field of a real
+ * board.
+ *
+ * When it is wrong it is wrong toward the alarm: a longer chain than one step reads as "nobody reads this", which
+ * turns the build red and gets looked at. The failure that matters — saying a sentence has a reader when it has none —
+ * is the one this shape avoids.
+ */
+function aliases(raw: string, field: string): string[] {
+  const src = code(raw);
+  if (!new RegExp(`(?<![\\w$])${field}(?![\\w$])`).test(src)) return [];
+  const names = new Set([field]);
+  let frontier = [field];
+  for (let step = 0; step < ALIAS_STEPS && frontier.length; step++) {
+    const next: string[] = [];
+    for (const n of frontier) for (const re of [
+      new RegExp(`(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[^;\\n]*(?<![\\w$])${n}(?![\\w$])`, "g"),
+      new RegExp(`for\\s*\\(\\s*(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s+of\\s+[^)]*(?<![\\w$])${n}(?![\\w$])`, "g"),
+      new RegExp(`(?<![\\w$])${n}(?![\\w$])[^;\\n]*\\.(?:map|forEach|filter|flatMap|find|some|every)\\(\\s*\\(?\\s*([A-Za-z_$][\\w$]*)`, "g"),
+    ]) for (const m of src.matchAll(re)) if (!names.has(m[1])) { names.add(m[1]); next.push(m[1]); }
+    frontier = next;
+  }
+  return [...names];
+}
+
+/** Does this source read `leaf` off the field, or off something it bound from the field? */
+const readsIn = (src: string, raw: string, field: string, leaf: string) =>
+  aliases(raw, field).some((n) => new RegExp(`(?<![\\w$])${n}\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`).test(src));
+const readsLeaf = (raw: string, field: string, leaf: string) => readsIn(code(raw), raw, field, leaf);
 
 /**
  * Every human sentence on `b` that no renderer reads.
@@ -48,6 +112,16 @@ const readsLeaf = (src: string, leaf: string) => new RegExp(`[A-Za-z0-9_$)\\]]\\
  * wrong: reading a property is not judging what is done with it.
  */
 function unread(b: Board, sources: string[]): Unread[] {
+  // `code()` and the alias walk are the expensive part and the answer only depends on (source, field), so each pair is
+  // computed once: without this the check spends twenty seconds re-reading the same two files for every sentence.
+  const stripped = sources.map(code);
+  const known = new Map<string, string[]>();          // (source, field) -> the names it could be holding it under
+  const reads = (i: number, field: string, leaf: string) => {
+    const key = `${i}\u0000${field}`;
+    let names = known.get(key);
+    if (names === undefined) known.set(key, (names = aliases(sources[i], field)));
+    return names.some((n) => new RegExp(`(?<![\\w$])${n}\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`).test(stripped[i]));
+  };
   const all: { path: string; text: string; read: boolean }[] = [];
   const walk = (v: unknown, path: string) => {
     if (typeof v === "string") {
@@ -55,8 +129,7 @@ function unread(b: Board, sources: string[]): Unread[] {
       const field = path.split(/[.[]/)[0];
       const leaf = path.split(".").pop()!.replace(/\[\d+\]$/, "");   // criteria[0] is read as `.criteria`, not `.criteria[0]`
       // read = someone names this exact path, or holds the field and reads the property off it (`for (const x of b.batches) x.line`)
-      const direct = new RegExp(`${field}\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`);
-      all.push({ path, text: v, read: sources.some((s) => direct.test(s) || (s.includes(field) && readsLeaf(s, leaf))) });
+      all.push({ path, text: v, read: sources.some((_s, i) => reads(i, field, leaf)) });
       return;
     }
     if (Array.isArray(v)) return v.forEach((x, i) => walk(x, `${path}[${i}]`));
@@ -92,6 +165,35 @@ async function loudBoard(): Promise<Board> {
   return board(reduce(await s.read(), now), HUMAN, now);
 }
 
+/** Every Chinese string a renderer writes for itself: quoted or backticked, with `${…}` holes removed. */
+function ownSentences(src: string): string[] {
+  const out: string[] = [];
+  for (const m of src.matchAll(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g)) {
+    const text = m[0].slice(1, -1).replace(/\$\{[^}]*\}/g, "").trim();
+    if (CJK.test(text) && [...text].length >= SENTENCE_CHARS) out.push(text);
+  }
+  return out;
+}
+
+/**
+ * t-142 (pm 05:31): core computes a sentence for a person, and a renderer writes its own beside it. t-126 was that:
+ * i18n held `contactTo: (v) => \`你不在时发到 \${v}\`` and the page printed it instead of the four states core had
+ * computed — so an address nobody had ever delivered to was promised as one that works.
+ *
+ * The rule here is pm's: not "who must show which sentence" (that is placement, and pd's), only **no second copy**.
+ */
+function duplicated(sentences: string[], sources: { name: string; src: string }[], bar: number): { where: string; text: string; like: string; score: number }[] {
+  const out: { where: string; text: string; like: string; score: number }[] = [];
+  for (const { name, src } of sources) {
+    for (const own of ownSentences(src)) {
+      let best = { s: 0, like: "" };
+      for (const c of sentences) { const s = similarity(own, c); if (s > best.s) best = { s, like: c }; }
+      if (best.s >= bar) out.push({ where: name, text: own, like: best.like, score: best.s });
+    }
+  }
+  return out;
+}
+
 describe("t-136 · 算好了没人印，构建当场红", () => {
   it("每一句给人看的话，都有渲染方读得到它落在的那个字段", async () => {
     const sources = Object.values(RENDERERS).map((u) => readFileSync(u, "utf8"));
@@ -117,7 +219,10 @@ describe("t-136 · 算好了没人印，构建当场红", () => {
     // 判据 3: reading it is the whole question. What a renderer then does with it — prints it somewhere else, wraps
     // it, counts its length — is pd's and the page's business and never this check's.
     expect(unread(withOrphan, ["const n = b.孤儿?.line.length; log(n);"]).some((x) => x.field === "孤儿")).toBe(false);
+    expect(unread(withOrphan, ["const it = b.孤儿; out.push(it.line);"]).some((x) => x.field === "孤儿")).toBe(false);
     expect(unread(withOrphan, ["for (const x of [b.孤儿]) out.push(x.line)"]).some((x) => x.field === "孤儿")).toBe(false);
+    // holding it and never reading the sentence is not reading it — that is t-119's shape, and it must still be red
+    expect(unread(withOrphan, ["if (b.孤儿) out.push(UI.somethingElse)"]).some((x) => x.field === "孤儿")).toBe(true);
   });
 
   /**
@@ -179,5 +284,101 @@ describe("t-136 · 算好了没人印，构建当场红", () => {
   it("标签、id、英文短语不算一句话：只有中文整句才要求有人读", async () => {
     const noise = { a: "t-129", b: "repo", c: "deployed.sha", d: "GET /health", e: "abc1234: fix", f: "ok" } as unknown as Board;
     expect(unread(noise, ["nothing"])).toEqual([]);
+  });
+});
+
+/**
+ * t-142: core has a sentence, and a renderer writes its own beside it. Nobody catches that today, and it is not
+ * hypothetical — t-126 was exactly it, and what the person read was a promise about an address that had never been
+ * delivered to.
+ *
+ * The bar is calibrated on the real strings rather than picked: at babae6d, `i18n.contactEmail` was a byte-identical
+ * copy of core's misconfigured line (1.000), while every legitimate neighbour scored at most 0.115 (contactTitle) —
+ * contactNone 0.103, contactSet 0.085, contactBody 0.018. 0.6 sits in the middle of a gap that wide.
+ */
+const DUP_BAR = 0.6;
+
+describe("t-142 · core 已经有一句了，渲染方不许再拼一句", () => {
+  const renderers = () => [
+    { name: "server/src/html.ts", src: readFileSync(new URL("../src/html.ts", import.meta.url), "utf8") },
+    { name: "server/src/i18n.ts", src: readFileSync(new URL("../src/i18n.ts", import.meta.url), "utf8") },
+    { name: "cli/src/format.ts", src: readFileSync(new URL("../../cli/src/format.ts", import.meta.url), "utf8") },
+  ];
+  const coreSentences = async () => {
+    const b = await loudBoard();
+    const out: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === "string") { if (CJK.test(v) && [...v].length >= SENTENCE_CHARS) out.push(v); return; }
+      if (Array.isArray(v)) return v.forEach(walk);
+      if (v && typeof v === "object") return Object.values(v).forEach(walk);
+    };
+    walk(b);
+    return out;
+  };
+
+  it("今天没有一处重复", async () => {
+    const found = duplicated(await coreSentences(), renderers(), DUP_BAR);
+    const said = found.map((f) => `  ${f.where}：「${f.text}」\n    与 core 的「${f.like}」相似度 ${f.score.toFixed(2)}`).join("\n");
+    expect(found, found.length ? `渲染方自己拼了 core 已经算好的话：\n${said}` : "").toEqual([]);
+  });
+
+  /** core's four call-out sentences, from core itself — the corpus t-126 duplicated one of. */
+  const alertLines = async (): Promise<string[]> => {
+    const out: string[] = [];
+    for (const build of [
+      // an address recorded before the shape was declared: the state qa had to make with appendRaw, and t-126's twin
+      async (s: MemoryStore) => s.appendRaw({ id: "01OLD", at: new Date().toISOString(), kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "someone@example.com" } as never),
+      async (s: MemoryStore) => { await append(s, { kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" }, { human: HUMAN }); },
+      // proved reachable: the state whose sentence t-126's own wording was a synonym of
+      async (s: MemoryStore) => {
+        await append(s, { kind: "reading", actor: "pm", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" }, { human: HUMAN });
+        await append(s, { kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: "alert.reached", value: "https://hooks.example/team", method: "外呼真的送到了（HTTP 200）" }, { human: HUMAN });
+      },
+    ]) {
+      const s = new MemoryStore();
+      await build(s);
+      const line = board(reduce(await s.read(), new Date()), HUMAN, new Date()).alert?.line;
+      if (line) out.push(line);
+    }
+    return out;
+  };
+
+  it("造一处重复：红，并指出它和 core 的哪一句撞了；去掉就绿", async () => {
+    const sentences = [...(await coreSentences()), ...(await alertLines())];
+    const one = sentences.find((x) => x.includes("这个外呼地址"))!;
+    const copied = [{ name: "i18n.ts", src: `export const UI = { contactEmail: "${one}" };` }];
+    const [hit] = duplicated(sentences, copied, DUP_BAR);
+    expect(hit).toBeTruthy();
+    expect(hit.text).toBe(one);
+    expect(hit.like).toBe(one);
+    expect(hit.score).toBe(1);
+    // that copy really was in i18n.ts at babae6d; without it, nothing
+    expect(duplicated(sentences, [{ name: "i18n.ts", src: `export const UI = { contactSave: "记下" };` }], DUP_BAR)).toEqual([]);
+  });
+
+  it("一句稍作改写的也抓得住，只要还够像", async () => {
+    const sentences = [...(await coreSentences()), ...(await alertLines())];
+    const one = sentences.find((x) => x.includes("这个外呼地址"))!;
+    const reworded = one.replace("我们发不出去", "我们发不出").replace("。", "");
+    expect(similarity(reworded, one)).toBeGreaterThan(DUP_BAR);
+    expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${reworded}";` }], DUP_BAR)).toHaveLength(1);
+  });
+
+  /**
+   * 判据 3, in numbers rather than in a hedge. This check cannot catch t-126, the case it was created for, and no
+   * threshold could: the literal the page printed — 「你不在时发到 ${v}」 — is *less* like core's sentence (0.085)
+   * than two legitimate neighbours are, 「你不在时，我们找不到你。」 at 0.103 and 「你不在时怎么找你？」 at 0.115.
+   * Anything low enough to catch it flags those first. Reported to pm rather than tuned until it looks caught.
+   */
+  it("它看不见的：改写到不像的同义句——包括 t-126 自己", async () => {
+    const sentences = [...(await coreSentences()), ...(await alertLines())];
+    const t126 = "你不在时发到 https://hooks.example/team";
+    const legit = ["你不在时，我们找不到你。", "你不在时怎么找你？"];
+    const score = (x: string) => Math.max(...sentences.map((c) => similarity(x, c)));
+    expect(score(t126)).toBeLessThan(DUP_BAR);
+    for (const l of legit) expect(score(l)).toBeGreaterThan(score(t126));   // the synonym is less alike than the innocents
+    expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${t126}";` }], DUP_BAR)).toEqual([]);
+    // and a sentence core never computed at all is nobody's duplicate
+    expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "今天天气不错，适合发布。";` }], DUP_BAR)).toEqual([]);
   });
 });

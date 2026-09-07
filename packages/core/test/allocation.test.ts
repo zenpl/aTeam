@@ -27,7 +27,8 @@ describe("static checks on the declared packing", () => {
     expect(ws.map((x) => x.pattern)).toEqual(["重叠"]);
     // t-123 判据 2: one line per pattern, the worst of them, with the rest counted rather than listed
     expect(ws[0].evidence).toEqual(["R5 由 dev、frontend 同时持有，没有分界（另有 1 项同样如此）"]);
-    expect(ws[0].hint).toBe("R5 由 dev 和 frontend 同时持有，没有分界。建议：一个持有，另一个只提 concern。");
+    // t-136 caught the two wordings of one fact that used to live here: the hint is the evidence plus what to do
+    expect(ws[0].hint).toBe(`${ws[0].evidence[0]}。建议：一个持有，另一个只提 concern。`);
     await pack(w, { pm: ["R1", "R3", "R4"], dev: ["R5:数据侧", "R9"], frontend: ["R5:页面侧", "R9:只推自己的分支"], qa: ["R6"] });
     ws = staticAllocation(await w.state());
     expect(ws).toEqual([]);
@@ -38,19 +39,21 @@ describe("static checks on the declared packing", () => {
     const w = world();
     await pack(w, { writer: ["R5"], reviewer: ["R1", "R3", "R6"] });
     let ws = staticAllocation(await w.state());
-    expect(ws).toEqual([{ pattern: "打破独立审核", evidence: ["reviewer 同时持有 R3 与 R6，没有 owner 退化声明"], hint: "reviewer 同时持有 R3 与 R6。它定标准的东西只能由 owner 验；建议把 R3 交给 owner 或再起一个角色。" }]);
+    expect(ws).toEqual([{ pattern: "打破独立审核", evidence: ["reviewer 同时持有 R3 与 R6，没有 owner 退化声明"],
+      hint: "reviewer 同时持有 R3 与 R6，没有 owner 退化声明。它定标准的东西只能由 owner 验；建议把 R3 交给 owner 或再起一个角色。" }]);
     await pack(w, { writer: ["R5"], reviewer: ["R1", "R3", "R6:自定标准的退化给 owner"] });
     ws = staticAllocation(await w.state());
     expect(ws).toEqual([]);
     await pack(w, { writer: ["R5", "R6"], reviewer: ["R1", "R3"] });
-    expect(staticAllocation(await w.state())[0].hint).toContain("writer 同时持有 R5 与 R6。它做的东西只能由 owner 验");
+    expect(staticAllocation(await w.state())[0].hint).toContain("writer 同时持有 R5 与 R6，没有 owner 退化声明。它做的东西只能由 owner 验");
   });
 
   it("负载陷阱: one role holds far more than the others; a two-node team is exempt", async () => {
     const w = world();
     await pack(w, { pm: ["R1", "R3", "R4", "R8", "R11", "R13"], dev: ["R5"], qa: ["R6"] });
     let ws = staticAllocation(await w.state());
-    expect(ws).toEqual([{ pattern: "负载陷阱", evidence: ["pm 持有 6 项职责，其他角色中位数 1 项"], hint: "pm 持有 6 项职责（R1 R3 R4 R8 R11 R13），其他角色中位数 1。建议：把能改成规则或服务的职责先拿走。" }]);
+    expect(ws).toEqual([{ pattern: "负载陷阱", evidence: ["pm 持有 6 项职责（R1 R3 R4 R8 R11 R13），其他角色中位数 1 项"],
+      hint: "pm 持有 6 项职责（R1 R3 R4 R8 R11 R13），其他角色中位数 1 项。建议：把能改成规则或服务的职责先拿走。" }]);
     await pack(w, { pm: ["R1", "R3", "R4", "R8", "R11", "R13"], dev: ["R5", "R9", "R7"] });
     expect(staticAllocation(await w.state())).toEqual([]); // 最小团队
     await pack(w, { pm: ["R1", "R3", "R4"], dev: ["R5", "R9"], qa: ["R6", "R7"] });
