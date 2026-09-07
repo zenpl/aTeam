@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * t-105 (T4): touches declared at claim are a guess; touches at done are a fact. This is the *project* layer — this
  * project keeps its work in git, so the fact comes from the branch's own diff. The platform knows none of that: it
@@ -132,4 +133,76 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
   if (ext.length) lines.push(`  你补的：${ext.join("、")}`);
   if (!added.length && !dropped.length) lines.push("  与 claim 时声明的一致");
   return { touches, lines, measured: true };
+}
+
+/**
+ * t-183：**done 量出来的触点带到符号一级。**
+ *
+ * 判定早就是符号级的（t-170 的 `touchesHumanVisible` 读 `文件#符号`，t-113 的轻接缝也读它），可 `done` 量出来的
+ * 只有路径——于是只声明路径的人照样过得去，符号级那一半形同虚设（我 09:42 自己指出来的那个缺口）。
+ *
+ * 怎么量：`git diff -U0` 给出改动落在新文件的哪几行，再把每一行归给包着它的**顶层声明**（行首、不缩进的
+ * `const/function/class/interface/type`）。归属口径与 `keysyms.ts` 里那两段一致——导出与否都算，只认顶层：
+ * 函数体里的局部 `const` 不是谁碰得到的符号。
+ *
+ * **算不出来时退回文件级、只提醒不拒绝**（判据 2，pd 08:22 的退路）。算不出的三种，说在明处：
+ * ① 不是 `.ts`/`.tsx`：这段扫法只认得 TypeScript 的顶层声明；
+ * ② 改动落在任何声明之外（import、顶层语句、文件头注释）——那时「哪个符号」这个问题本身没有答案；
+ * ③ 文件被删掉，或 git 答不上来。
+ * 三种都只补路径，不编一个符号名——**编出来的符号名比没有更糟**，t-170 判据 8 就是为它加的。
+ */
+export function changedSymbols(git: Git, base: string, file: string): string[] | null {
+  if (!/\.tsx?$/.test(file)) return null;
+  const now = git(["show", `HEAD:${file}`]) ?? git(["cat-file", "-p", `HEAD:${file}`]);
+  const worktree = git(["diff", "-U0", "HEAD", "--", file]);
+  const committed = git(["diff", "-U0", `${base}..HEAD`, "--", file]);
+  if (committed === null && worktree === null) return null;
+  const text = readOrNull(file) ?? now;
+  if (text === null) return null;                      // 文件没了：谈不上「改了哪个符号」
+  const decls = [...text.matchAll(/^(?:export\s+)?(?:const|function|class|interface|type|async function)\s+(\w+)/gm)];
+  if (!decls.length) return null;
+  const lineOf = (idx: number) => text.slice(0, idx).split("\n").length;
+  // 一段声明管到哪儿：到**下一段声明自己那段注释开始之前**，不是到下一行声明。
+  // 这一条是跑出来才发现的：我把这个函数追加在 revise 后面，它自己那段文档注释被算进了 revise 的范围，
+  // 于是「我改了 revise」——而我一个字都没动它。与 frontend 09:27 在 speaking() 里抓到的是同一种错配。
+  const lines = text.split("\n");
+  const commentStart = (declLine: number) => {
+    let i = declLine - 1;                                  // 1-based -> 0-based，从声明的上一行往回走
+    while (i > 0 && /^\s*(\*|\/\*|\/\/)/.test(lines[i - 1])) i--;
+    return i + 1;
+  };
+  const spans = decls.map((m, i) => ({
+    name: m[1], from: lineOf(m.index!),
+    to: i + 1 < decls.length ? commentStart(lineOf(decls[i + 1].index!)) - 1 : lines.length,
+  }));
+  const out = new Set<string>();
+  let outside = false;
+  // **走 diff 的正文，只数真正带 `+` 的那些行。**光读 @@ 头是不够的：`-U0` 之下 git 仍会把紧邻的上下文并进
+  // 同一个 hunk（`@@ -133,3 +134,66 @@`），于是前面那个函数的尾巴被算成改过——我把这个函数追加在 revise
+  // 后面时就中了这一发，`revise` 被报成改过，而我一个字都没动它。
+  for (const diff of [committed, worktree]) {
+    let line = 0;
+    for (const raw of (diff ?? "").split("\n")) {
+      const at = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+      if (at) { line = Number(at[1]); continue; }
+      if (!line) continue;                              // 还没进到任何一个 hunk：文件头那几行
+      if (raw.startsWith("-")) continue;                // 纯删除：新文件里没有对应的行
+      if (raw.startsWith("+")) {
+        // 空行不改变任何符号。追加一段新代码时，前面那个空行会落在**上一个**函数的范围里——`revise` 就是这么
+        // 被报成改过的，而我一个字都没动它。一个只多了空行的符号，说它「改了」是假的。
+        if (!raw.slice(1).trim()) { line++; continue; }
+        const span = spans.find((x) => line >= x.from && line <= x.to);
+        if (span) out.add(`${file}#${span.name}`);
+        else outside = true;                            // 改在所有声明之外：import、顶层语句、文件头
+      }
+      line++;                                           // `+` 与上下文行都占新文件的一行
+    }
+  }
+  if (!out.size) return null;
+  return outside ? [...out].sort() : [...out].sort();
+}
+
+/** 读工作区里的文件；读不到返回 null（被删掉了，或不在这个 checkout 里）。 */
+function readOrNull(file: string): string | null {
+  try { return readFileSync(file, "utf8"); } catch { return null; }
 }

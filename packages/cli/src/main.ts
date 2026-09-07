@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -10,7 +10,7 @@ import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
-import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
+import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -117,6 +117,10 @@ function stampBase(task: string, op: "claim" | "reopen") {
   mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
   writeFileSync(baseFile(task), next + "\n");
 }
+/** t-183: 与 gitDiff 用同一个跑法，只是把 stdout 直接给出来——changedSymbols 要自己发几条 git 问句。 */
+function realGitCmd() {
+  return (args: string[]) => { const r = spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" }); return r.status === 0 ? r.stdout : null; };
+}
 function gitDiff(): Diff {
   const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
   return {
@@ -136,7 +140,26 @@ function touchesAtDone(task: string, declared: string[], extra: string[], keep: 
   const base = d.base(task);
   if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
   const changed = d.changed(base);
-  return revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
+  const r = revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
+  // t-183：量出来的路径再往下问一层——每个文件里改到的是哪几个顶层符号。判定早就是符号级的（t-170 的闸、
+  // t-113 的轻接缝都读「文件#符号」），而 done 量出来的只有路径，于是符号级那一半形同虚设。
+  // 算不出符号的按 pd 08:22 的退路走：**只补路径、不编符号名，并说出算不出的是哪几个**——编出来的符号名比
+  // 没有更糟（t-170 判据 8 就是为它加的）。
+  if (!changed || !r.touches) return r;
+  const git = realGitCmd();
+  const symbols: string[] = [];
+  const unnamed: string[] = [];
+  for (const f of changed) {
+    const syms = changedSymbols(git, base, f);
+    if (syms?.length) symbols.push(...syms);
+    else unnamed.push(f);
+  }
+  if (!symbols.length && !unnamed.length) return r;
+  const touches = [...new Set([...r.touches, ...symbols])];
+  const lines = [...r.lines];
+  if (symbols.length) lines.push(symbolsMeasured(symbols));   // 整句来自 core：这里不新造人可见的话
+  if (unnamed.length) lines.push(symbolsUnnamed(unnamed));
+  return { ...r, touches, lines };
 }
 
 async function main(argv: string[]) {

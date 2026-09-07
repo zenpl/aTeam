@@ -406,6 +406,8 @@ export const KEY_SYMBOLS = [
   "standInBlocker",
   "standIns",
   "staticAllocation",
+  "symbolsMeasured",
+  "symbolsUnnamed",
   "taskHeading",
   "until",
   "validate",
@@ -730,6 +732,14 @@ export const noRealOverlap = (other: string, reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
 export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-183：`done` 量触点时，符号那一层的两句话。住在 core（新的人可见的话一律进这里）；**措辞是我写的、
+ * pd 没过目**（11:17 起冻结），与 t-191、t-182 那四句同样处理，已发 note。
+ */
+export const symbolsMeasured = (symbols: string[]) => `  符号一级：${symbols.join("、")}`;
+export const symbolsUnnamed = (files: string[]) =>
+  `  这几个算不出符号，只按文件算（不是 .ts，或改在所有顶层声明之外）：${files.join("、")}`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";
