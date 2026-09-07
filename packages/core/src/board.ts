@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -20,6 +20,11 @@ export interface BoardTask {
   created_at?: string;
   owner?: string;
   touches?: string[];
+  /**
+   * t-191: 它是什么时候认领的。`seamCheck` 那一头要它去问 git「自那以后有没有提交碰过这些路径」——一件认领了
+   * 却还没写代码的活，与另一件已经交出去的活之间没有重叠可判，那条接缝不该挡住前者的验收。
+   */
+  claimed_at?: string;
   blocked_on?: string;
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
@@ -331,6 +336,14 @@ export interface Board {
   gate_honesty: GateHonesty[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
+  /**
+   * t-196 判据 2：被署名更正过的那些事件，两条并排——`of` 那一条原来署的是 `actor`，`by` 说它不是他做的、
+   * 什么时候说的、为什么。人不必读日志正文就知道那一条不是他做的。
+   *
+   * **这里只有数据，没有句子。**pd 11:17 起人可见的字冻结，所以那句并排怎么说、印在哪一段，我没有自拟——
+   * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
+   */
+  disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -752,6 +765,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
     batches: [],
     said: [],
+    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],
     roles: projectRoles(s),
@@ -782,7 +796,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at, note: st.chosen.note } : undefined,
       says_default: sayDefault(st, now),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
-    if (status === "acked" || status === "withdrawn") continue;
+    // t-193 判据 6：一张带选项的卡被 ack 过，**并不算答过**——它要留在「需要你」里，直到人真的选。
+    // 这一行原来把它一并拿掉，于是一次签收就替他把问题从桌上收走了。
+    if ((status === "acked" && !i.options?.length) || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
@@ -864,7 +880,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     (b.tasks[t.status] ??= []).push({
       era, summary,
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
-      owner: t.owner, touches: t.touches, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: t.touches, claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1191,6 +1207,19 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
 export interface OwedNow {
   unanswered: { instruction: string; from: string; body: string; sent: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
   untouched: { instruction: string; from: string; body: string; sent: string }[];
+  /**
+   * t-193 判据 7：**t-147 上线之前的那一批，进这个具名的旁桶，不进任何人的活欠账。**
+   *
+   * 桶名（`legacy_before_acted_rule`）说的就是它是什么：那时还没有「引用才算办了」这条规矩，签收就是当时的
+   * 正确做法。所以把它算进今天的欠账，等于用今天的规矩去数昨天的人——量出来是 1690 条，每个人的第一句会
+   * 一次变成三位数，而那不是谁突然不干活了。
+   *
+   * **它不归零**：它是历史，只作为一个不再增长的数存在（写完这句我核过：起算点由日志算出来，所以新的指令
+   * 不可能落进这个桶）。活欠账只从 t-147 上线那一刻起算。
+   *
+   * 这里只有数据。**这个桶在牌桌上怎么说、说不说，我没自拟**——pm 11:17 起人可见的字冻结，等 pd。
+   */
+  legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[];
 }
 
 /**
@@ -1209,9 +1238,18 @@ export interface OwedNow {
 export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
   if (!owed) return [];
   const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
-  type Item = { body: string; sent: string };
+  type Item = { body: string; sent: string; instruction: string };
   const oldest = (xs: Item[]) => xs.reduce((a, b) => (a.sent < b.sent ? a : b));
-  const first = (x: Item) => splitTitle(x.body).title || x.body.trim().slice(0, 30);
+  /**
+   * t-194：**这句话里要带得出那条指令的 id。**
+   *
+   * ack 退役的时候，「怎么引用它」和「催你 ack」是一起被删掉的——于是新口径（t-193：引用才算办了）要求的东西，
+   * 界面不再提供。pm 11:05 攒下 15 条「读过还没动」，每一条都真的动过，两次想用 `--refs` 回话都因为手边没有 id
+   * 而失败，编出来的 id 被服务当场拒。**这句话正是他此刻唯一看得到的那一行**，id 只能在这里给。
+   *
+   * 只给他自己的：这份 owed 本来就是 `owedNow(s, me)` 算出来的，别人的账不摊给他看（判据 3）。
+   */
+  const first = (x: Item) => `${splitTitle(x.body).title || x.body.trim().slice(0, 30)}（${x.instruction}）`;
   const out: string[] = [];
   if (owed.unanswered.length) {
     const o = oldest(owed.unanswered);
@@ -1225,13 +1263,39 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
 }
 
 export function owedNow(s: State, to: string): OwedNow {
-  const out: OwedNow = { unanswered: [], untouched: [] };
+  const out: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
+  // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
+  // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
+  const since = ruleLiveAt(s, ACTED_RULE_TASK);
   for (const st of owedTo(s, to)) {
     const i = st.instruction;
     if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    else if (since && i.at < since) out.legacy_before_acted_rule.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;
+}
+
+/**
+ * t-193 判据 7：**一条规矩是什么时候开始管事的，由日志算出来。**
+ *
+ * 那条规矩随某一件任务上线，而一件任务什么时候到生产，日志里已经有了：`batch.*` 那些事实各带一个 `contains`，
+ * 记着这一批包含哪些任务，写下它的那一刻就是这一批到生产的那一刻。所以这里找的是**第一批含它的**，取那条
+ * 事实的时间。
+ *
+ * 找不到就返回 undefined，而不是猜一个时刻——调用方据此决定怎么办。写死一个时间戳是同一条毛病的又一次：
+ * 一个数与它描述的东西分开维护，改了部署顺序没人记得改它。
+ */
+export function ruleLiveAt(s: State, task: string): string | undefined {
+  const times: string[] = [];
+  for (const rs of s.readings.values()) {
+    const r = rs.reading;
+    if (!r.key.startsWith(BATCH_PREFIX)) continue;
+    const v = r.value as BatchValue | undefined;
+    if (v && Array.isArray(v.contains) && v.contains.includes(task)) times.push(r.at);
+  }
+  return times.sort()[0];
 }
 
 /**
@@ -1358,6 +1422,7 @@ export function slimBoard(b: Board): Board {
       // t-164: 在途那几件的触点留在瘦身板里——「这块地上还有谁」只需要它们，而在途的从来只有几件。
       // 已经 done 的不留：那是接缝在 done 时判的事，不是「还有谁在」。
       touches: t.status === "working" ? t.touches : undefined,
+      claimed_at: t.status === "working" ? t.claimed_at : undefined,   // t-191: 与 touches 同去同留，它们是同一个问题的两半
       evidence_sha: t.evidence_sha ?? evidenceSha(t.evidence) ?? undefined, shows: t.shows,
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));

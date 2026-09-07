@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+/**
+ * t-186：**KEY_SYMBOLS 从「手改到闸变绿」变成「跑一次」。**
+ *
+ * 在此之前那份名单的生成器只存在于一条断言里（`speaking()` / `deciding()` 写在 build.test.ts 内部），仓库里
+ * 没有任何东西能产出名单、只能检查它。于是每个人的做法必然相同：照着错误信息一个个手加，加完还要重排整块——
+ * 名单是每行六个的，任何一次增删都会重排，两个人各加一个名字撞的不是逻辑，是排版。qa 10:11 量的：两小时撞了
+ * 两次；到合完 t-189 那一轮，dev 自己解到第五次。
+ *
+ * 用法（在仓库根目录）：
+ *   bin/keysyms            印出此刻应有的名单，并说它与仓库里那份差在哪
+ *   bin/keysyms --write    直接写回 packages/core/src/events.ts
+ *
+ * 两个人各跑一次，跑出来的东西一模一样——它是从源码算的，不是各人手抄的。
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+const core = join(repo, "packages/core");
+let mod;
+try {
+  mod = await import(join(core, "dist/index.js"));
+} catch {
+  console.error("先 pnpm build：这条命令读的是 core 的产物（dist），不是源码。");
+  process.exit(2);
+}
+const { sourceFiles, measureKeySymbols, withKeySymbols, CORE_SRC } = mod;
+
+const files = sourceFiles(join(repo, CORE_SRC), CORE_SRC);
+const sources = Object.fromEntries(files.map((f) => [f, readFileSync(join(repo, f), "utf8")]));
+const names = measureKeySymbols(sources);
+
+const eventsPath = join(core, "src/events.ts");
+const src = readFileSync(eventsPath, "utf8");
+const current = [...(/export const KEY_SYMBOLS = \[\n([\s\S]*?)\n\] as const;/.exec(src)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+const added = names.filter((n) => !current.includes(n));
+const gone = current.filter((n) => !names.includes(n));
+
+if (process.argv.includes("--write")) {
+  const out = withKeySymbols(src, names);
+  if (out === null) { console.error("在 events.ts 里找不到 KEY_SYMBOLS 那一块，什么都没写。"); process.exit(2); }
+  writeFileSync(eventsPath, out);
+  console.log(`写回 ${names.length} 个${added.length ? `，新增：${added.join("、")}` : ""}${gone.length ? `，移除：${gone.join("、")}` : ""}${added.length || gone.length ? "" : "（与仓库里那份一致，文件只是重排了一遍）"}`);
+} else {
+  console.log(names.map((n) => `  ${JSON.stringify(n)},`).join("\n"));
+  console.error(`\n量出 ${names.length} 个；仓库里 ${current.length} 个。${added.length ? `\n少了：${added.join("、")}` : ""}${gone.length ? `\n多了：${gone.join("、")}` : ""}${added.length || gone.length ? "\n用 bin/keysyms --write 写回。" : "\n一致。"}`);
+}

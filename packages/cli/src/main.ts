@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
-import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
+import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -117,6 +117,10 @@ function stampBase(task: string, op: "claim" | "reopen") {
   mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
   writeFileSync(baseFile(task), next + "\n");
 }
+/** t-183: 与 gitDiff 用同一个跑法，只是把 stdout 直接给出来——changedSymbols 要自己发几条 git 问句。 */
+function realGitCmd() {
+  return (args: string[]) => { const r = spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" }); return r.status === 0 ? r.stdout : null; };
+}
 function gitDiff(): Diff {
   const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
   return {
@@ -136,7 +140,26 @@ function touchesAtDone(task: string, declared: string[], extra: string[], keep: 
   const base = d.base(task);
   if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
   const changed = d.changed(base);
-  return revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
+  const r = revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
+  // t-183：量出来的路径再往下问一层——每个文件里改到的是哪几个顶层符号。判定早就是符号级的（t-170 的闸、
+  // t-113 的轻接缝都读「文件#符号」），而 done 量出来的只有路径，于是符号级那一半形同虚设。
+  // 算不出符号的按 pd 08:22 的退路走：**只补路径、不编符号名，并说出算不出的是哪几个**——编出来的符号名比
+  // 没有更糟（t-170 判据 8 就是为它加的）。
+  if (!changed || !r.touches) return r;
+  const git = realGitCmd();
+  const symbols: string[] = [];
+  const unnamed: string[] = [];
+  for (const f of changed) {
+    const syms = changedSymbols(git, base, f);
+    if (syms?.symbols.length) symbols.push(...syms.symbols);
+    if (!syms?.symbols.length || syms.partial) unnamed.push(f);   // 归不出来，或只归出一部分：这个文件仍按文件级算
+  }
+  if (!symbols.length && !unnamed.length) return r;
+  const touches = [...new Set([...r.touches, ...symbols])];
+  const lines = [...r.lines];
+  if (symbols.length) lines.push(symbolsMeasured(symbols));   // 整句来自 core：这里不新造人可见的话
+  if (unnamed.length) lines.push(symbolsUnnamed(unnamed));
+  return { ...r, touches, lines };
 }
 
 async function main(argv: string[]) {
@@ -202,6 +225,8 @@ async function main(argv: string[]) {
     }
     case "ack": return emit({ kind: "ack", of: exact(rest, "id")[0] });
     case "untell": return emit({ kind: "untell", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
+    // t-196: 署名更正。只有本人自报或 human 能发（服务端判），历史不改，被更正的那条不再计入状态。
+    case "disown": return emit({ kind: "disown", of: exact(rest, "id")[0], reason: str(a, "reason") ?? "" });
     case "board": {
       exact(rest);
       const b = await client.board(bool(a, "full"));
@@ -344,7 +369,22 @@ async function main(argv: string[]) {
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
-          return emit({ kind: "task", op, task: need(id, "<id>"), surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
+          const task = need(id, "<id>");
+          // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
+          // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
+          // fail 不走这一段：一条接缝从来只挡 pass，不挡「它坏了」这条消息（t-112）。
+          if (bool(a, "pass") && !bool(a, "no-seam-check")) {
+            const b = await client.board();
+            const un = unjudgeableSeams(b, task, gitCommitsSince());
+            for (const n of un.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
+            for (const e of un.events) await emit(e);
+            // t-182：再按三方比较看一遍——真交集为空的接缝解掉，不空但名单报错的把对的说出来。
+            // 两条各管一半：t-191 管「对方还没写代码」，这一条管「两边都交过活，但名单与真交集对不上」。
+            const truth = seamTruthEvents(seamTruths(b, task, gitChangedSince()), task);
+            for (const n of truth.notes) console.error(n);
+            for (const e of truth.events) await emit(e);
+          }
+          return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": return emit({ kind: "task", op, task: need(id, "<id>") });

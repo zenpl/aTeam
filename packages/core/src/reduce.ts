@@ -174,6 +174,16 @@ export interface SeamState {
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /**
+   * t-196: 每条事件署的是谁。署名更正要判「是不是本人自报」，就得知道那条事件本来署谁——而 State 只留 id，
+   * 不留事件本身。一个 id -> actor 的映射，`disown` 那条规则读它。
+   */
+  actorOf: Map<string, string>;
+  /**
+   * t-196: 被署名更正过的那些事件：`of` -> 谁更正的、什么时候、为什么、原来署的是谁。**原事件原样留在日志里**，
+   * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
+   */
+  disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
   /** t-088: the first event carried in under each `from`, so the same import never lands twice. */
   from: Map<string, Event>;
   readings: Map<string, ReadingState>;
@@ -291,6 +301,8 @@ function readingKey(r: Reading): string {
 export function empty(): State {
   return {
     ids: new Set(),
+    actorOf: new Map(),
+    disowned: new Map(),
     from: new Map(),
     readings: new Map(),
     latestReading: new Map(),
@@ -333,9 +345,24 @@ export function advance(s: State, log: Log): State {
     st.overdue = false;
   };
 
+  // t-196：**先扫一遍署名更正，再折叠。**更正一定排在被更正的那条之后（id 是时间序），所以边折边看是看不到的：
+  // 走到那条事件时，说它不算数的那条还在后面。先把它们收齐，折到那一条时才跳得掉。
+  // 增量那一头由 `Reduction` 负责：一批里带着 disown 就整个重建（store.ts），因为一条更正可能指向早就折进去的
+  // 事件，而已经算进状态的东西是收不回来的。
+  for (const e of log.events) if (!s.ids.has(e.id)) s.actorOf.set(e.id, e.actor);
+  for (const e of log.events) {
+    if (e.kind === "disown" && !s.ids.has(e.id) && !s.disowned.has(e.of)) {
+      s.disowned.set(e.of, { by: e.actor, at: e.at, reason: e.reason, actor: s.actorOf.get(e.of) ?? "" });
+    }
+  }
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
     s.ids.add(e.id);
+    s.actorOf.set(e.id, e.actor);
+    // t-196: 一条被署名更正过的事件不再计入状态——历史不改，但它不再算数。放在折叠的最前面，是因为
+    // 「不计入」要对每一种事件都成立，而不是对某几种。更正本身只记账，不参与后面的分支。
+    if (e.kind === "disown") continue;
+    if (s.disowned.has(e.id)) continue;
     if (e.from && !s.from.has(e.from)) s.from.set(e.from, e);
     const pe = s.presence.get(e.actor) ?? { last_pull: null, last_event: null };
     if (!pe.last_event || pe.last_event < e.at) pe.last_event = e.at;
@@ -353,7 +380,14 @@ export function advance(s: State, log: Log): State {
         break;
       case "ack": {
         const st = s.instructions.get(e.of);
-        if (st && !st.acked_at) { st.acked_at = e.at; st.acked_by = e.actor; resolved(st); }
+        // t-193 判据 6 (pd 11:16)：**结掉一张给人的卡，理由只能是人的答复，不能是任何人的一次 ack。**
+        // 回执照旧记下（t-064 要它，也确实是一条「看见了」的记录），但一张带选项的卡不因此了结——
+        // 那是替他答。不带选项的指令没有「答案」这回事，ack 仍然把它了结。
+        if (st && !st.acked_at) {
+          st.acked_at = e.at;
+          st.acked_by = e.actor;
+          if (!st.instruction.options?.length) resolved(st);
+        }
         break;
       }
       case "untell": {
@@ -451,7 +485,11 @@ const ULID_IN_TEXT = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
 function didAct(s: State, e: Event): void {
   const mine = (id: string) => s.instructions.get(id)?.instruction.to === e.actor && !s.acted.has(id);
   for (const id of e.refs ?? []) if (mine(id)) s.acted.set(id, e.id);
-  if ((e.kind === "ack" || e.kind === "untell") && mine(e.of)) s.acted.set(e.of, e.id);
+  // t-193 (pd 11:15/11:16)：**一条光秃秃的 ack 不算「办了」。**按 CLAUDE.md，ack 是「看见」，不是「同意」，
+  // 更不是「做了」。这里原来把它算成办了，还在用例里给自己讲了一个理由（「它确实动了…只是那事件叫 ack」）——
+  // 那句话正是把「看见」读成「做了」的那一步。算「办了」的证据仍是引用（refs／正文写下它的 id）与真实动作。
+  // `untell` 留着：撤回是发的人说「这条不用做了」，它确实把这条了结了，不是收件人替自己签收。
+  if (e.kind === "untell" && mine(e.of)) s.acted.set(e.of, e.id);
   const body = e.kind === "note" || e.kind === "instruction" ? e.body : undefined;
   if (body) for (const m of body.matchAll(ULID_IN_TEXT)) if (mine(m[0])) s.acted.set(m[0], e.id);
 }

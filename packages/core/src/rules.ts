@@ -143,6 +143,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   instruction: { to: "string", body: "string" },
   ack: { of: "string" },
   untell: { of: "string", reason: "string" },
+  disown: { of: "string", reason: "string" },   // t-196: 署名更正——指着哪一条，以及为什么它不是你做的
   note: { body: "string" },
   "task:create": { task: "string", title: "string", criteria: "strings" },
   "task:label": { task: "string", label: "string" },
@@ -178,7 +179,7 @@ const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", b
 /** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
 export function checkShape(e: NewEvent): void {
   if (e.refs !== undefined && !holds(e.refs, "strings")) throw new Rejected("shape", `refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}`);
-  const kinds = ["reading", "instruction", "ack", "untell", "note", "task"];
+  const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task"];
   if (!kinds.includes(e.kind as string)) throw new Rejected("shape", `kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`);
   let slot: string = e.kind;
   if (e.kind === "task") {
@@ -323,6 +324,24 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (st.withdrawn) throw new Rejected("untell", `${e.of} was already taken back by ${st.withdrawn.by}`);
       if (st.acked_at) throw new Rejected("untell", `${e.of} was acked by ${st.acked_by} at ${st.acked_at}; what was seen and confirmed cannot be unsaid. Send a new instruction that cancels it`);
       if (st.chosen) throw new Rejected("untell", `${e.of} was decided (${st.chosen.option} by ${st.chosen.by}); a decision is not taken back. Send a new ask`);
+      return;
+    }
+
+    /**
+     * R1d (t-196, pd 11:16)：**署名更正。**一条事件的 actor 写错了——不是笔误，是那件事不是他做的。
+     * 历史不改（原事件原样留着），但被更正的那一条不再计入状态。
+     *
+     * 判据 3：**只有本人自报，或 human。第三方不许。**替别人说「这不是他做的」是另一回事，那要人拍板，
+     * 不该由一条事件悄悄生效。拒绝话说出规则名与出路：让本人自己发，或请 human 发。
+     */
+    case "disown": {
+      if (!state.ids.has(e.of)) throw new Rejected("disown", `${e.of} 不在日志里：署名更正要指着一条真事件`);
+      if (!e.reason?.trim()) throw new Rejected("disown", "说明为什么它不是你做的（--reason）：一条没有理由的署名更正，读的人无从判断该不该信");
+      const who = state.actorOf.get(e.of);
+      if (!who) throw new Rejected("disown", `找不到 ${e.of} 的署名，没法更正它`);
+      if (who !== e.actor && e.actor !== human)
+        throw new Rejected("disown", `${e.of} 署的是 ${who}，不是 ${e.actor}：署名更正只能由本人自报，或由 ${human} 发。替别人说「这不是他做的」要人拍板——请 ${who} 自己发，或把这件交给 ${human}`);
+      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
       return;
     }
 

@@ -81,6 +81,25 @@ export interface Untell extends Base {
   reason: string;
 }
 
+/**
+ * t-196（pd 11:16）：**署名更正。**
+ *
+ * 一条事件的 actor 写错了——不是笔误，是**那件事不是他做的**。今晚 qa 03:41 那次就是本人自报。历史不改：原事件
+ * 原样留在日志里；但被更正的那一条**不再计入状态**。读数早就有失效与取代（`writes`、同键更新），决策有
+ * `supersedes`，署名一直缺同一条——于是「那不是我做的」只能写在正文里，而**写在正文里的更正，规则看不见它**。
+ * 今晚第二次同一形状：第一次是默认到期没落成事件（t-181）。
+ *
+ * 谁能发：只有那条事件署名的那个人自己（自报），或 human。第三方不行——替别人说「这不是他做的」是另一回事，
+ * 那要人拍板，不该由一条事件悄悄生效。
+ */
+export interface Disown extends Base {
+  kind: "disown";
+  /** 被更正的那条事件的 id。它原样留着，只是不再计入状态。 */
+  of: string;
+  /** 为什么它不是他做的。一条没有理由的署名更正，读的人无从判断该不该信。 */
+  reason: string;
+}
+
 /** Discussion, decisions, concerns. Carries no action. */
 export interface Note extends Base {
   kind: "note";
@@ -143,7 +162,7 @@ export type TaskOp =
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
-export type Event = Reading | Instruction | Ack | Untell | Note | TaskEvent;
+export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
@@ -278,22 +297,127 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
  * t-143 把人可见的每句话收进唯一 key 之后，这份名单该由那张表取代；在那之前，这条闸让它不会悄悄过时。
  */
 export const KEY_SYMBOLS = [
-  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "DEFAULT_APPLIED_PREFIX", "DEFAULT_LINES",
-  "DEFAULT_MISSED_PREFIX", "DEFAULT_RULE", "DEPLOY_SOURCE", "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE", "FORWARD_LINK",
-  "INJECT_BUILD_BROKE", "INJECT_STILL_GREEN", "INJECT_USAGE", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE",
-  "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PASS_ONLY_GATE",
-  "PROMISE_RULE", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING",
-  "SAID_PREFIX", "SEAM_SAME_FILE", "SHAPE_OF", "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE",
-  "STAND_IN_ASK_TITLE", "UNTIL_UNDER_A_MINUTE", "VERIFY_ASK", "WATCH_LINES", "ago", "alertContact",
-  "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine", "blockedWhy",
-  "board", "capabilityKey", "checkShape", "coverage", "defaultMissed", "deployHistory",
-  "dueDefaults", "exampleLine", "followUps", "gateHonesty", "honestyLine", "humanImpactPromised",
-  "inFlightGroups", "injectDirty", "injectManySites", "injectNoFile", "injectNoSite", "injectNotGit",
-  "judgeSeam", "lightSeamLine", "manual", "manualFor", "missingCard", "nobodyElse",
-  "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops",
-  "sayReading", "shapeFor", "slimBoard", "span", "splitRelease", "standInBlocker",
-  "standIns", "staticAllocation", "taskHeading", "until", "validate", "validateTask",
-  "valueForm", "verifierEligibility", "whoCanVerify", "whoElseTouches",
+  "AGO_JUST_NOW",
+  "ALERT_FAILED",
+  "ALERT_NOTE_PREFIX",
+  "ALLOCATION_PATTERNS",
+  "BATCH_LINES",
+  "CONTACT_ASK",
+  "CONTACT_ASK_WAS",
+  "CONTACT_FILL",
+  "CONTACT_FILL_WAS",
+  "CONTACT_SKIP",
+  "CONTACT_SKIP_WAS",
+  "DECLINE_PREFIX",
+  "DEFAULT_APPLIED_PREFIX",
+  "DEFAULT_LINES",
+  "DEFAULT_MISSED_PREFIX",
+  "DEFAULT_RULE",
+  "DEFER_PREFIX",
+  "DEPLOY_SOURCE",
+  "EMPTY_IS_NOT_NO_IMPACT",
+  "FAIL_NOTICE",
+  "FORWARD_LINK",
+  "IMPORT_DONE_PREFIX",
+  "INJECT_BUILD_BROKE",
+  "INJECT_STILL_GREEN",
+  "INJECT_USAGE",
+  "INVITE_SENT_PREFIX",
+  "INVITE_URL_LABEL",
+  "LITERAL_CHECK_BLIND_SPOTS",
+  "MIGRATION_ASK_TITLE",
+  "MIGRATION_FINISH",
+  "MIGRATION_MISSING",
+  "MIGRATION_OK",
+  "MIGRATION_PATCH",
+  "NO_HUMAN_IMPACT",
+  "NO_OUTPUT_PREFIX",
+  "NO_SYMBOL_MEANS_UNCLEAR",
+  "PASSTHROUGH_IS_NOT_A_LITERAL",
+  "PASS_ONLY_GATE",
+  "PROMISE_RULE",
+  "REACH_RULE",
+  "REACH_WORDS",
+  "READING_SAYINGS",
+  "REAL_OVERLAP_PREFIX",
+  "RESPONSIBILITIES",
+  "RESPONSIBILITY_DOING",
+  "SAID_LABEL",
+  "SAID_PREFIX",
+  "SEAM_SAME_FILE",
+  "SEAM_UNDECIDED",
+  "SEAM_VERDICT_WORDS",
+  "SHAPE_OF",
+  "SHOWS_GATE_BLIND",
+  "SHOWS_RULE",
+  "SPAN_UNDER_A_MINUTE",
+  "STAND_IN_ASK_TITLE",
+  "STAND_IN_OPTIONS",
+  "STOOD_IN_PREFIX",
+  "UNTIL_UNDER_A_MINUTE",
+  "VERIFY_ASK",
+  "WATCH_LINES",
+  "ago",
+  "alertContact",
+  "allocationSummary",
+  "alsoHere",
+  "applyReading",
+  "batches",
+  "batchesEmptyLine",
+  "blockedWhy",
+  "board",
+  "cannotSeeOutput",
+  "capabilityKey",
+  "checkShape",
+  "classifyFollowUp",
+  "coverage",
+  "defaultMissed",
+  "deployHistory",
+  "dueDefaults",
+  "exampleLine",
+  "followUps",
+  "gateHonesty",
+  "honestyLine",
+  "humanImpactPromised",
+  "inFlightGroups",
+  "injectDirty",
+  "injectManySites",
+  "injectNoFile",
+  "injectNoSite",
+  "injectNotGit",
+  "judgeSeam",
+  "lightSeamLine",
+  "manual",
+  "manualFor",
+  "missingCard",
+  "noOutputSeam",
+  "noRealOverlap",
+  "nobodyElse",
+  "overdueByPresence",
+  "owedSentences",
+  "realOverlapIs",
+  "releaseUnits",
+  "responsibilityAppendix",
+  "runtimeAllocation",
+  "saidHops",
+  "sayReading",
+  "shapeFor",
+  "slimBoard",
+  "span",
+  "splitRelease",
+  "standInBlocker",
+  "standIns",
+  "staticAllocation",
+  "symbolsMeasured",
+  "symbolsUnnamed",
+  "taskHeading",
+  "until",
+  "validate",
+  "validateTask",
+  "valueForm",
+  "verifierEligibility",
+  "whoCanVerify",
+  "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -576,6 +700,48 @@ export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
  */
 export const SHOWS_GATE_BLIND = (fix: string) =>
   `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」：比如在途那几行改成印「这件干了什么」（shows）还是印任务标题（title），它看不见。这一类改动请作者自己在判据里说出人会看到什么变化。修法在 ${fix}。`;
+
+/**
+ * t-193 判据 7：**「引用才算办了」这条规矩随哪一件任务上线。**
+ *
+ * 它是一个 id，不是一个时刻——时刻由日志算（`ruleLiveAt`）。id 是永远的，而时刻会随部署顺序变；把时刻写死，
+ * 就是又一次「一个数与它描述的东西分开维护」。
+ */
+export const ACTED_RULE_TASK = "t-147";
+
+/**
+ * t-191：一条接缝因为「对方 claim 了却还没写代码」而**无从判定**时，写回日志的那句结论。
+ *
+ * 它住在 core，不住在 `cli/seamcheck.ts`：那边是「第二个家」，新的人可见的话一律进 core（t-143 那条只减不增
+ * 的规矩，我第一版写在 cli 里，四条闸当场红——它们是对的）。
+ *
+ * **措辞是我写的，pd 没过目**（人可见的字 11:17 起冻结）。判断本身不需要等谁：一条接缝无从判定，说出来比闷着
+ * 强。但这两句话的说法要 pd 定，我已另发 note——改的时候只改这里，页面与命令行都引它。
+ */
+export const NO_OUTPUT_PREFIX = "无从判定：";
+export const noOutputSeam = (other: string, claimedAt: string, mine: string) =>
+  `${NO_OUTPUT_PREFIX}${other} 自 ${claimedAt} 认领以来，仓库里没有任何提交碰过它声明的那些路径——两边没有重叠可判。${mine} 的验收放行；${other} 落地时的合并义务照旧。`;
+/** t-191：判不了「对方有没有提交」时说的那句。**看不见就当有**，所以这条接缝照旧挡着，只是把原因说出来。 */
+export const cannotSeeOutput = (other: string, claimedAt: string) =>
+  `警告：判不了 ${other} 自 ${claimedAt} 认领以来有没有提交（没有 git，或它只声明了符号没声明路径）——按「有」处理，这条接缝照旧挡着`;
+
+/**
+ * t-182：三方比较之后，这条接缝真正撞在哪儿。两句都住在 core（新的人可见的话一律进这里），**措辞是我写的、
+ * pd 没过目**（人可见的字 11:17 起冻结）——判断本身不需要等谁，但说法要 pd 定，我另发了 note。
+ */
+export const REAL_OVERLAP_PREFIX = "按三方比较：";
+export const noRealOverlap = (other: string, reported: string[]) =>
+  `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
+export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
+  `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-183：`done` 量触点时，符号那一层的两句话。住在 core（新的人可见的话一律进这里）；**措辞是我写的、
+ * pd 没过目**（11:17 起冻结），与 t-191、t-182 那四句同样处理，已发 note。
+ */
+export const symbolsMeasured = (symbols: string[]) => `  符号一级：${symbols.join("、")}`;
+export const symbolsUnnamed = (files: string[]) =>
+  `  这几个算不出符号，只按文件算（不是 .ts，或改在所有顶层声明之外）：${files.join("、")}`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";

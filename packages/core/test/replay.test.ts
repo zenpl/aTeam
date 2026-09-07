@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -2852,6 +2852,19 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
  * 都在说「已按默认 X 执行」——最久的一张这样说了 6 小时 41 分。**那三张不能补落**：默认之所以正当，前提是它
  * 真的发生、落成事件、人能翻案；这三件一件都没发生，所以那不是人的选择，是我们的机制没执行。追认等于替他拍板。
  */
+/**
+ * t-192（qa 11:01 实测）：**这几条用例的时钟推进量，原来是由 `DEFAULT_LATE_MS` 自己算出来的**
+ * （`min(60) + DEFAULT_LATE_MS + min(1)`）。于是把那个常量调到 10 年，355 条用例全绿——它们守的是自洽，
+ * 不是行为。而「调大」正是 pd 不许的那个方向：把「过期了，默认还没生效」调成永不出现，我们就再也看不见
+ * 那个故障态了。
+ *
+ * 所以推进量是一个**写死的数**，与那个常量无关：过 ack_by 三十分钟。任何合理的阈值都在它之内，10 年不在。
+ *
+ * 今晚同族的第六种形态（前五种：正则配不上、析取项永远为真、循环在空集合上空转、门槛拿串跟自己比、
+ * 闸按顶层字段找）。通则写在下面那条断言里：**任何守着一个阈值的用例，它的输入不许由那个阈值算出来。**
+ */
+const LATE_ENOUGH = min(30);
+
 describe("t-190 · 默认只有真落成事件才算数", () => {
   const ask = (store: MemoryStore, c: ReturnType<typeof clock>) =>
     emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
@@ -2882,7 +2895,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));         // 机制当时没在跑
+    c.tick(min(60) + LATE_ENOUGH);         // 机制当时没在跑
     const out = await sweep(store, c);
     expect(out).toHaveLength(1);
     expect((out[0] as { body: string }).body).toBe(defaultMissed("B"));
@@ -2897,7 +2910,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     c.tick(min(600));                                   // 十小时过去，人一直没来
     let b = await at(store, c);
@@ -2918,7 +2931,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());            // 人看到了，期限从这一刻算
     c.tick(min(61));
@@ -2933,7 +2946,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());
     c.tick(min(5));
@@ -2949,7 +2962,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     expect(await sweep(store, c)).toHaveLength(1);
     c.tick(min(600));
     expect(await sweep(store, c)).toHaveLength(0);      // 人还没露面，没有新的期限，也就没有新的到期
@@ -3002,7 +3015,7 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c, 60);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
     await pull(store, HUMAN, null, c.now());                // 人再看到那一刻
     const card = (await at(store, c)).needs_human[0];
@@ -3034,5 +3047,111 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     expect(s.instructions.get(q.id)!.instruction.ack_by).toBe(q.ack_by);
     expect(s.instructions.get(q.id)!.default_due).toBe(true);     // 它照样知道自己到期了
     expect(s.instructions.get(q.id)!.overdue).toBe(true);
+  });
+});
+
+/**
+ * t-196（pd 11:16）：**署名更正。**
+ *
+ * 一条事件的 actor 写错了——不是笔误，是那件事不是他做的。今晚 qa 03:41 那次就是本人自报。读数早就有失效与
+ * 取代，决策有 supersedes，**署名一直缺同一条**：于是「那不是我做的」只能写在正文里，而写在正文里的更正，
+ * 规则看不见它。今晚第二次同一形状（第一次是默认到期没落成事件，t-181）。
+ */
+describe("t-196 · 署名被证伪：历史不改，但那一条不再计入状态", () => {
+  const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
+
+  it("判据 1、5 正例：本人自报——原事件原样留着，但它不再计入状态", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);
+    const d = await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "这条不是我发的，我那时不在" });
+    const s = reduce(await store.read(), c.now());
+    // 历史不改：两条事件都还在日志里
+    expect((await store.read()).events.map((e) => e.id)).toEqual(expect.arrayContaining([n.id, d.id]));
+    // 但它不再计入状态
+    expect(s.notes.map((x) => x.id), "被更正的那条还算在状态里").not.toContain(n.id);
+    expect(s.disowned.get(n.id)).toMatchObject({ by: "qa", actor: "qa", reason: "这条不是我发的，我那时不在" });
+  });
+
+  it("判据 3 反例：第三方发的被拒，并说出规则名与出路", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    const r = await rejected(emit(store, c, { kind: "disown", actor: "dev", of: n.id, reason: "我觉得这不是 qa 发的" }));
+    expect(r.rule).toBe("disown");
+    expect(r.message).toContain("只能由本人自报");
+    expect(r.message).toContain("请 qa 自己发");      // 出路一：本人自报
+    expect(r.message).toContain(HUMAN);               // 出路二：交给人
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);   // 状态没被动
+  });
+
+  it("判据 3：human 可以发——他是策略权威", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "disown", actor: HUMAN, of: n.id, reason: "qa 那时不在，这条是别人替它发的" });
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).not.toContain(n.id);
+  });
+
+  it("判据 4：更正必须是一条事件——写在正文里的，规则看不见", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "note", actor: "qa", body: `更正：${n.id} 不是我发的` });
+    // 正文里写了，状态一动不动——这正是这件任务的由来
+    expect(reduce(await store.read(), c.now()).notes.map((x) => x.id)).toContain(n.id);
+    expect(reduce(await store.read(), c.now()).disowned.size).toBe(0);
+  });
+
+  it("判据 2：牌桌把两条并排给出来（数据；措辞等 pd，11:17 起人可见的字冻结）", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "我核过生产，全绿" });
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "我那时不在" });
+    const b = await at(store, c);
+    expect(b.disowned).toEqual([{ of: n.id, actor: "qa", by: "qa", at: expect.any(String), reason: "我那时不在" }]);
+  });
+
+  it("拒绝话把三种说不清的情况分开：不在日志里、没有理由、更正两次", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "一句话" });
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: "01NOTANEVENT0000000000000", reason: "x" }))).message).toContain("不在日志里");
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "  " }))).message).toContain("--reason");
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "不是我" });
+    expect((await rejected(emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "再来一次" }))).message).toContain("已经更正过了");
+  });
+
+  it("增量折叠与全量重算给出同一个状态：一条更正指着早就折进去的事件，也不会漏", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const n = await emit(store, c, { kind: "note", actor: "qa", body: "早就折进去的一条" });
+    const r = new Reduction(store);
+    expect((await r.at(c.now())).notes.map((x) => x.id)).toContain(n.id);   // 先折一次，它已经算进状态了
+    await emit(store, c, { kind: "disown", actor: "qa", of: n.id, reason: "不是我发的" });
+    const inc = await r.at(c.now());
+    const full = reduce(await store.read(), c.now());
+    expect(inc.notes.map((x) => x.id), "增量那一头把它收回来了吗").not.toContain(n.id);
+    expect(inc.notes.map((x) => x.id)).toEqual(full.notes.map((x) => x.id));
+    expect([...inc.disowned.keys()]).toEqual([...full.disowned.keys()]);
+  });
+});
+
+describe("t-192 · 守着阈值的用例，输入不许由那个阈值算出来", () => {
+  it("判据 1、2：DEFAULT_LATE_MS 调大到那几条用例失效的地步，这条当场红并指名", () => {
+    // 上界由**用例自己的推进量**定，而那个推进量是写死的：阈值一旦超过它，「到期很久没落」那几条就会变成
+    // 「刚好晚了一点」，于是它们测的东西被悄悄换掉——qa 11:01 把它调到 10 年，355 条全绿，就是这么来的。
+    expect(DEFAULT_LATE_MS, `DEFAULT_LATE_MS 比用例推进的 ${LATE_ENOUGH / 60_000} 分钟还大：那几条「到期很久没落」的用例此刻测的是「刚好晚了一点」，它们守的东西没了`)
+      .toBeLessThan(LATE_ENOUGH);
+    // 下界：扫描每分钟一次，阈值小到这个量级就会把一次正常的迟到当成故障，把人的默认无故拖回待答
+    expect(DEFAULT_LATE_MS, "DEFAULT_LATE_MS 小到一次正常的迟到都会被当成故障").toBeGreaterThanOrEqual(5 * 60_000);
+  });
+
+  it("判据 3（通则）：那几条用例的推进量里不出现这个常量的名字", () => {
+    const src = readFileSync(new URL("./replay.test.ts", import.meta.url), "utf8");
+    const ticks = [...src.matchAll(/c\.tick\(([^)]*)\)/g)].map((m) => m[1]);
+    const derived = ticks.filter((t) => t.includes("DEFAULT_LATE_MS"));
+    expect(derived, `这些推进量由阈值自己算出来：${derived.join("、")}——调大阈值它们跟着走，守的就是自洽不是行为`).toEqual([]);
   });
 });
