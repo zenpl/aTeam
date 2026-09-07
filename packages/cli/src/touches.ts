@@ -23,6 +23,24 @@ export interface Revision {
 }
 
 /**
+ * t-135: where the round being measured started. A first claim records the branch's head; **widening** a claim must
+ * not move it (qa 00:29: re-basing there moves the measuring point to "now" and makes every later diff empty —
+ * silently, on exactly the tasks that need this most). A **reopen** must move it: a new round is new work, and
+ * measuring it from the first claim charges the task with everything its owner did in between.
+ *
+ * That is not hypothetical. t-112 was claimed at 00:52 and reopened at 03:58; in between its owner shipped five other
+ * tasks over eight commits, and `done` attributed all thirty-two of those files to it and refused on two seams that
+ * did not exist. The only way through was editing the recorded sha by hand, which is the shape of a gate people learn
+ * to walk around rather than a gate.
+ *
+ * Returns the sha to record, or null to leave the record alone (no git here: the manual path takes over, as designed).
+ */
+export function baseAt(op: "claim" | "reopen", head: string | null, recorded: string | null): string | null {
+  if (!head) return null;
+  return op === "reopen" ? head : recorded ?? head;
+}
+
+/**
  * Is this entry something a diff could have measured? Only a path is: it has a directory separator, no `#symbol`
  * suffix and no spaces. Everything else — `deployed.sha`, `GET /health`, a bare symbol — the diff never saw, so the
  * revision keeps it rather than silently dropping the seams it carries.

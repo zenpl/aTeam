@@ -280,6 +280,32 @@ export const BOARD_SHAPE = 2;
  */
 export const DEPLOYED_TASKS_KEY = "deployed.tasks";
 /**
+ * t-129 (pd 02:53): a batch is a reading, not a sentence with a sha in it. `repo:batch.<name>`, whose value is
+ * `{ sha, base, contains }` and which declares `depends_on: ["production:deployed.sha"]` — so the moment production
+ * moves, the batch is invalid without anyone remembering to say so. That is the whole point: pm froze be9b232 while
+ * production was eae0b22, production became 7f31808, and nothing in the log went stale, so the same dead sha was
+ * repeated in an instruction and a focus three times.
+ */
+/**
+ * t-130 (pd 02:53): a note saying a person did by hand what a finished rule would have done — 「顶替：t-113，我又手裁了
+ * 一条接缝」. The number it produces is not "how many tasks are waiting to ship", which pd already judged is the cost
+ * of a choice the human made; it is **how many times that choice made a person do the machine's work**.
+ *
+ * The limit is stated rather than papered over (pm, criterion 4): the service cannot notice a stand-in by itself. When
+ * pm resolves a seam by hand, nothing tells the service that t-113 would have done it. So a person declares, and the
+ * service checks the one half it can — that the task named really is verified and really is not running yet.
+ */
+export const STOOD_IN_PREFIX = "顶替：";
+/** t-130: three times in one day for the same task, and the service puts a specific proposal to the human. */
+export const STAND_IN_ASK_TITLE = "有一件做好了的事，今天你们手工顶了三次";
+export const STAND_IN_OPTIONS = ["上线它", "先这样"] as const;
+export const STAND_IN_TRIGGER = 3;
+export const STAND_IN_DAY_MS = 24 * 3600_000;
+
+export const BATCH_PREFIX = "batch.";
+export const BATCH_SURFACE = "repo";
+export interface BatchValue { sha: string; base: string; contains: string[] }
+/**
  * t-092 (S9/M4): the importer says in the log that it is finished — a note whose body starts with this — and the service
  * counts what actually landed and asks the human to check it. The event is the trigger; nothing out of band.
  */

@@ -1,6 +1,6 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -49,6 +49,9 @@ export function verifierEligibility(s: State, t: TaskState, surface: string | un
 /**
  * The way out, appended to every rejection of a **pass**: who could pass instead. A fail needs no such line — since
  * t-104 anyone may fail, so a fail is only ever refused for what its evidence says, never for who is saying it.
+ * t-112 (qa 03:53): it used to end by saying, in its own words, that a fail is still open. That is PASS_ONLY_GATE's
+ * sentence, and two ways of saying one thing is the drift t-118 exists to stop — so the callers append the sentence
+ * and this says only what is its own: who could pass instead.
  * pd 23:50：一个都没有时先说自动会发生什么，再说人要做的选择，否则人以为系统卡住在等他救场。但「验收自动进 human 的
  * 需要你」（t-055）看的是项目里有没有 qa 类角色，不是这一件有没有合格的人——所以那句也现算，不照抄。
  */
@@ -60,13 +63,36 @@ export function whoCanVerify(s: State, t: TaskState, surface: string | undefined
   const next = escalates
     ? `这件的验收会进 ${human} 的「需要你」由他来判；要恢复三方分离，请 ${PM_ACTOR} 把一个新角色加进 ${PROJECT_SURFACE}:${ROLES_KEY}`
     : `项目里有验收角色，所以验收不会自动转给 ${human}：这一件要么请 ${human} 亲自判，要么请 ${PM_ACTOR} 再给一个角色 ${VERIFY_RESPONSIBILITY}`;
-  return `。本项目没人能给这一件落 pass：${why}。${next}。fail 不受此限，谁都能落`;
+  return `。本项目没人能给这一件落 pass：${why}。${next}`;
 }
 
 /**
  * t-104 ①：自我推翻的证据要指名推翻的是哪一条判据。一个不指名的「我漏验了」既没法复核，也没法说清改完算不算好了。
  * 认「判据 3」「第 3 条」「criterion 3」「#3」这些写法，数字必须落在这件任务的判据条数之内。
  */
+/**
+ * t-130: why this task cannot be stood in for, or null when it can. Two facts are checked, the stronger one first:
+ * production's own containment fact if it covers the head production is actually at, and otherwise whether anyone has
+ * passed it on production. The weaker check is not a guess — a task nobody has verified on production is, as far as
+ * this log is concerned, not known to be running — and using it keeps the rule usable on the very ordinary day when
+ * nobody has run `ateam release` yet.
+ */
+function standInBlocker(s: State, t: TaskState): string | null {
+  const fact = deployedTasksFact(s);
+  const head = latestDeployedSha(s);
+  if (fact && head && fact.sha.slice(0, 7) === head.slice(0, 7)) {
+    return fact.contained.includes(t.id) ? `的代码已经在生产上（production:${DEPLOYED_TASKS_KEY} 对 ${head.slice(0, 7)} 测的）` : null;
+  }
+  return t.verifications.some((v) => v.round === t.round && v.surface === "production" && v.pass) ? "这一轮已经有人在 production 上判过 pass" : null;
+}
+
+/** The sha the latest valid production:deployed.sha reading names. */
+function latestDeployedSha(s: State): string | null {
+  const id = s.latestReading.get("production:deployed.sha");
+  const r = id ? s.readings.get(id) : undefined;
+  return r?.valid && !r.expired && typeof r.reading.value === "string" ? r.reading.value : null;
+}
+
 export function namesCriterion(evidence: string, count: number): boolean {
   if (count <= 0) return false;
   for (const m of evidence.matchAll(/(?:判据|criterion|criteria|条|#)\s*[第]?\s*(\d+)|第\s*(\d+)\s*条/gi)) {
@@ -82,6 +108,16 @@ export function namesCriterion(evidence: string, count: number): boolean {
  * 不给 fail 开带理由的旁路：带理由的旁路会被习惯性使用。
  */
 export const PASS_ONLY_GATE = "。这挡住的是通过，不是不通过；要记它坏了，直接落 fail。";
+
+/**
+ * t-112 round 2 (qa 03:53): the first round surveyed the gates by hand, from what pd and pm had named out loud, and
+ * missed the R6 gate added the same night — the exact failure the criterion warned about ("数目以普查为准…今天已经栽过
+ * 一次只修报上来的那一处"), repeated. A count made once is wrong the next time someone adds a branch, so the survey
+ * stops being a count: `case "verify"`'s `if (e.pass)` block is, by construction, every gate that refuses a pass and
+ * nothing else, and a test reads it and requires PASS_ONLY_GATE of every throw inside it. Adding a gate without the
+ * sentence now fails the build rather than waiting to be noticed on production.
+ */
+export const PASS_ONLY_REGION = "if (e.pass) {";
 
 export class Rejected extends Error {
   constructor(public readonly rule: string, message: string) {
@@ -289,6 +325,18 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
         throw new Rejected("note", `${e.supersedes} is not a note`);
       if (e.task !== undefined && !state.tasks.has(e.task)) throw new Rejected("note", `${e.task} is not a task in the log`);
+      // t-130 (pd 02:53): a stand-in names the finished rule a person did the work of. The service cannot notice one
+      // by itself — nothing tells it that a hand-resolved seam is t-113's job — so a person declares it and the
+      // service checks the half it can: that the rule really is finished and really is not running yet. Without that
+      // check the number is a hand-kept list, which is what this was asked not to be.
+      if (e.body.startsWith(STOOD_IN_PREFIX)) {
+        if (!e.task) throw new Rejected("stand-in", `${STOOD_IN_PREFIX}… 要指名它替代的是哪一件任务（--task <id>）：这条数是「哪一件做好了的事还在让人替它干活」，没有那件任务就只是一句感想`);
+        const t = state.tasks.get(e.task)!;
+        if (t.status !== "verified")
+          throw new Rejected("stand-in", `${t.id} 是 ${t.status}，不是 verified：还没验过的东西谈不上「本来可以自动」——顶替记的是「做好了却没上线」的代价，不是「还没做好」的代价`);
+        const where = standInBlocker(state, t);
+        if (where) throw new Rejected("stand-in", `${t.id} ${where}：它已经在替你干活了，这一次不是顶替。若你觉得它没生效，那是一件缺陷，请开任务`);
+      }
       // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
       if (e.decides) {
         const st = state.instructions.get(e.decides.of);
@@ -426,13 +474,13 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
         const failed = mine.find((v) => !v.pass);
         if (failed)
-          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么`);
-        if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么${PASS_ONLY_GATE}`);
+        if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
-          throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         // t-104 ①: 放行要独立，先要是这个项目的验收角色。human 是策略权威，不受此限。
         if (e.actor !== human && !(roleResponsibilities(state)[e.actor] ?? []).includes(VERIFY_RESPONSIBILITY))
-          throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass；fail 不受此限，谁都能落${whoCanVerify(state, t, e.surface, human)}`);
+          throw new Rejected("verify", `${e.actor} 不持 ${VERIFY_RESPONSIBILITY} 验收职责，落不了 pass${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         // t-112: an open seam means nobody has said how these two pieces fit — a reason not to release, never a reason
         // to refuse the news that it is broken. qa 00:51 hit this: a version known to be broken could be recorded
         // neither as broken nor as good, and the only copy of that fact was in one agent's mouth.

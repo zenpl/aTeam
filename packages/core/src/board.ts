@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -71,6 +71,31 @@ export function splitTitle(body: string): { title: string; detail: string } {
 }
 
 export type SaidStatus = "received" | "requirement" | "task" | "live";
+/**
+ * t-129: what a packed batch is worth right now. `current` — it is still packed on where production is. `stale` — it
+ * was packed on an older head but carries everything production carries, so re-packing is all it needs. `rollback` —
+ * production has finished work this batch does not contain, so pushing it would take that work back off production.
+ * `unknown` — the log cannot say, and says why rather than guessing.
+ *
+ * The two kinds of expiry are told apart by *task lists*, not by git ancestry: production's own containment fact
+ * (production:deployed.tasks) names what it carries, and a batch names what it contains. That works inside core,
+ * which has no git — and it answers the question a person actually asks, "what would I lose", by name.
+ */
+export type BatchState = "current" | "stale" | "rollback" | "unknown";
+export interface BoardBatch {
+  name: string;
+  sha: string;
+  /** The production head it was packed on. */
+  base: string;
+  contains: string[];
+  state: BatchState;
+  /** For `rollback`: the tasks production carries and this batch does not. Empty otherwise. */
+  loses: string[];
+  /** The one sentence for a person, from core so the page and the CLI cannot drift apart (t-118). */
+  line: string;
+  at: string;
+}
+
 export interface BoardSaid {
   id: string;
   /** The sentence as typed, without the "human 说：" prefix. */
@@ -168,6 +193,12 @@ export interface Board {
     /** t-078: what the split rests on: the containment fact used, or why there is none. */
     basis: string;
   };
+  /**
+   * t-129: the batches this project has packed, newest first, each judged against where production actually is.
+   * A batch that no longer matches production is not merely marked stale: it says which of the two kinds it is,
+   * because they need opposite things done. On every board — a batch nobody can act on is the thing that goes wrong.
+   */
+  batches: BoardBatch[];
   /** What the human said on the board, newest first, each with where it went so far. */
   said: BoardSaid[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
@@ -221,6 +252,12 @@ export interface Board {
   };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
   allocation: { warnings: AllocationWarning[]; summary: string };
+  /**
+   * t-130: how many times a person did by hand what a finished rule would have done, grouped by that rule. For the
+   * dig layer and the reports — never the 一眼 layer: this is a number about how the team is running, not something
+   * the human has to answer. `since` is the window it counts over (a day).
+   */
+  stand_ins: { total: number; since: string; by_task: { task: string; title: string; count: number; last_at: string; who: string[] }[]; summary: string };
   /** The invite link the human forwards; filled by the server for the admin, absent otherwise. */
   invite_url?: string;
   /**
@@ -533,6 +570,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
+    batches: [],
     said: [],
     seams: [],
     presence: [],
@@ -540,6 +578,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     role_names: roleNames(s),
     coverage: [],
     allocation: { warnings: [], summary: "" },
+    stand_ins: { total: 0, since: "", by_task: [], summary: "" },
     alert: { status: "unanswered" },
     omitted: [],
     shape: BOARD_SHAPE,
@@ -715,6 +754,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   b.alert = alertContact(s, now);
   b.allocation.warnings = allocation(s, now, human);
   b.allocation.summary = allocationSummary(b.allocation.warnings);
+  b.stand_ins = standIns(s, now);   // t-130: for the dig layer and the reports, never 一眼
   for (const actor of [...s.presence.keys()].sort()) {
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));
@@ -812,6 +852,73 @@ export function deployedTasksFact(s: State): { sha: string; contained: string[];
 }
 
 /**
+ * t-129 (judged, then said). pd 02:53 asked for the batch to expire by itself; pm asked that the expiry say which of
+ * two things it is, because they need opposite actions: one is "pack it again", the other is "do not push this".
+ * The wording is pd's; it lives here so the page and the CLI say the same words (t-118).
+ */
+export const BATCH_LINES = {
+  stale: (base: string, head: string) => `这批以 ${base.slice(0, 7)} 为底，生产已是 ${head.slice(0, 7)}，重装一次即可。`,
+  rollback: (base: string, head: string, loses: string[]) =>
+    `这批以 ${base.slice(0, 7)} 为底，生产已是 ${head.slice(0, 7)}，推它会把 ${loses.join("、")} 从生产上退回去；要重装，别推。`,
+  unknown: (why: string) => `这批是不是还能推，现在算不出来：${why}。`,
+};
+
+/**
+ * t-129: every batch this project packed, newest first, each judged against where production is now.
+ *
+ * Batches are read whether or not their reading is still valid — a batch that went stale is exactly the one a person
+ * needs to see, and `depends_on: production:deployed.sha` is what makes it go stale without anyone remembering to.
+ */
+/**
+ * t-130: the stand-ins declared in the last day, grouped by the task whose rule was stood in for. The service cannot
+ * find these itself (see STOOD_IN_PREFIX) — every one of them is somebody saying so — so this counts declarations,
+ * and says as much rather than implying it saw them happen.
+ */
+export function standIns(s: State, now: Date): Board["stand_ins"] {
+  const since = new Date(now.getTime() - STAND_IN_DAY_MS).toISOString();
+  const by = new Map<string, { task: string; title: string; count: number; last_at: string; who: string[] }>();
+  let total = 0;
+  for (const n of s.notes) {
+    if (!n.body.startsWith(STOOD_IN_PREFIX) || !n.task || n.at < since) continue;
+    total++;
+    const row = by.get(n.task) ?? { task: n.task, title: s.tasks.get(n.task)?.title ?? n.task, count: 0, last_at: n.at, who: [] };
+    row.count++;
+    row.last_at = n.at;
+    if (!row.who.includes(n.actor)) row.who.push(n.actor);
+    by.set(n.task, row);
+  }
+  const rows = [...by.values()].sort((a, b) => b.count - a.count || a.task.localeCompare(b.task));
+  const summary = total
+    ? `人顶了 ${total} 次（${rows.map((r) => `${r.task} ${r.count} 次`).join("、")}）——都是本可以自动、现在由人做的`
+    : "人顶了 0 次";
+  return { total, since, by_task: rows, summary };
+}
+
+export function batches(s: State, deployed: string | null, why: string | null, fact: ReturnType<typeof deployedTasksFact>): BoardBatch[] {
+  const out: BoardBatch[] = [];
+  for (const [key, id] of s.latestReading) {
+    if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
+    const r = s.readings.get(id);
+    const v = r?.reading.value as Partial<BatchValue> | undefined;
+    if (!r || !v || typeof v.sha !== "string" || typeof v.base !== "string" || !Array.isArray(v.contains)) continue;
+    const contains = v.contains.map(String);
+    const name = key.slice(`${BATCH_SURFACE}:${BATCH_PREFIX}`.length);
+    let state: BatchState, loses: string[] = [], line = "";
+    if (deployed && sameSha(v.base, deployed)) { state = "current"; }
+    else if (!deployed || why || !fact || !sameSha(fact.sha, deployed)) {
+      state = "unknown";
+      line = BATCH_LINES.unknown(why ?? "生产没有有效的 production:deployed.sha 事实");
+    } else {
+      loses = fact.contained.filter((t) => !contains.includes(t));
+      state = loses.length ? "rollback" : "stale";
+      line = loses.length ? BATCH_LINES.rollback(v.base, deployed, loses) : BATCH_LINES.stale(v.base, deployed);
+    }
+    out.push({ name, sha: v.sha, base: v.base, contains, state, loses, line, at: r.reading.at });
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/**
  * t-078: pending_deploy (code not in production) vs deployed_unverified (code in production, nobody verified it there) vs
  * unknown, each with why. The board has no git: it reads the containment fact a node measured against the deployed sha.
  */
@@ -833,6 +940,7 @@ function splitRelease(s: State, b: Board) {
     else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+  b.batches = batches(s, deployed, why, fact);   // t-129: judged on the same basis, so the two can never disagree
 }
 
 /**
