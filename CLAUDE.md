@@ -36,7 +36,7 @@ pnpm install && pnpm build
 7. When you changed the world (deployed, migrated, wiped data), say so on the event: `--writes production:deployed.sha` etc. That is what expires other people's readings.
 8. Anything you want someone to **do now**: `./bin/ateam tell <who> "<action>" --ack-by 15m`. Under 280 chars. The reasoning goes in a `note`, the action goes in the `tell`.
    给 human 的 tell 另有两条（据 `docs/board.md` 信息颗粒度）：第一句必须是一个动作或一个问题，不超过 30 字，牌桌把它当卡片标题，细节（分支、sha、任务 id）放在其后；写不出第一句的事不该发给人。要人拍板的用 `--option A --option B --default B`，并在正文里写明到期按默认（牌桌显示「不点的话，到期按 B」）。
-9. Idle? Run `./bin/ateam watch` in the background (Monitor tool) so an instruction wakes you instead of you polling. **Do not write an interval here** — take the CLI's default; it is the one place that number lives, and a number copied into this file becomes a second protocol the moment the default changes.
+9. Idle? Run `./bin/ateam watch` in the background (Monitor tool) so an instruction wakes you instead of you polling. Take the interval it comes with; the default is the one the project chose (`WATCH_INTERVAL`), and a number typed here is a fourth copy of it.
 
 ## Roles
 
