@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, type FlightItem } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -664,15 +664,28 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
   }
 
-  // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
+  // t-169 (pd 08:13): 上线清单说的是「接下来要发生什么」，所以已经上过线的那几批离开它——但不是删掉，它们
+  // 搬到「线上这一版」这一段下面，那里本来就在说这一版带来了什么。谁还在等人推，由 core 的 `pending` 说了算，
+  // 页面不自己去筛状态名（两个渲染方各筛一遍，就是 t-142 那一族）。
+  const row = (x: BoardBatch) => {
+    const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
+    // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
+    // t-169: 「拦住了」的样子只给还在等人推、而推不出去的那几批。已经上过线的两句是事实、不带动作（pd 08:13、
+    // 08:18），把它们印成拦住的样子，等于用颜色说了一句 core 没说的话。
+    const tone = x.pending ? "held" : "meta";
+    const why = x.line ? ` <span class="${tone}">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+    return `<li>${named}${why}</li>`;
+  };
+  const shipped = batches.filter((x) => !x.pending);
+  if (shipped.length) out.push(`<h3>${UI.releaseShipped}</h3><ul class="plain batches">${shipped.map(row).join("")}</ul>`);
+
+  // 装好的几批 — 只剩还在等人推的。一个都没有时说一句 core 的话，不留一片空白（pd 08:18：清单空着时的样子
+  // 也是产品问题）。今天这一支就会被走到：五批全上过线，候选数是 0。
+  // 一批都没装过时这一节整个不出现（t-129 以来如此，本件不动它）；装过而没有一批在等人推时，说 core 那句话。
+  const pending = batches.filter((x) => x.pending);
   if (batches.length) {
-    out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
-    for (const x of batches) {
-      const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
-      const why = x.line ? ` <span class="held">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
-      out.push(`<li>${named}${why}</li>`);
-    }
-    out.push(`</ul>`);
+    out.push(`<h3>${UI.releaseBatches}</h3>`);
+    out.push(pending.length ? `<ul class="plain batches">${pending.map(row).join("")}</ul>` : `<p class="quiet">${esc(BATCH_LINES.none())}</p>`);
   }
 
   // 下一次上线 — never a count (the board says that); the units, and what each is waiting on.
