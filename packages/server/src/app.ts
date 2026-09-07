@@ -9,6 +9,24 @@ import { runAlerts } from "./alerts.js";
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
 export const REMIND_COOLDOWN_MS = 15 * 60_000;
 
+/**
+ * t-103 (qa 01:12): the page asks for "the whole board address, or just the part after k=", because what a person has
+ * in hand is an address, not a key — making them cut it themselves was our mistake. So take either: a pasted URL
+ * (k= or token=), or the bare key, with whatever whitespace a copy-paste dragged along.
+ */
+export function keyFromPaste(pasted: string | null): string | null {
+  if (pasted === null) return null;
+  const t = pasted.trim();
+  if (!t) return "";
+  const q = t.indexOf("?") >= 0 ? t.slice(t.indexOf("?") + 1) : t.includes("=") ? t : "";
+  if (q) {
+    const params = new URLSearchParams(q.replace(/#.*$/, ""));
+    const found = params.get("k") ?? params.get("token");
+    if (found?.trim()) return found.trim();
+  }
+  return t;
+}
+
 const COOKIE = "ateam_token";
 /** How long a board cookie lasts. Recorded in the entry-form fact (t-103) so a lost address can be reissued from the log. */
 export const COOKIE_MAX_AGE_S = 2592000;
@@ -453,7 +471,7 @@ export function createApp(opts: ServerOptions) {
         const form = new URLSearchParams(req.method === "POST" ? await readText(req) : url.search);
         const fields: Record<string, string> = {};
         for (const [k, v] of form) if (k !== "token") fields[k] = v;
-        const given = form.get("token");
+        const given = keyFromPaste(form.get("token"));
         if (given === null) return html(res, 200, tokenPage(fields, false, base));
         const r0 = await registry.lookup(given);
         // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.

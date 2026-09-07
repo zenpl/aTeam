@@ -172,6 +172,19 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect((await enter(p.adminKey)).status).toBe(403);       // 共享钥匙不再是「人」的入口
   });
 
+  it("qa 01:12：照 pd 的提示粘整条地址也进得去，不只是粘 k= 后面那一段", async () => {
+    const p = await fresh("粘地址项目");
+    const enter = (pasted: string) => fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: pasted }), redirect: "manual" });
+    for (const pasted of [
+      p.ownerUrl,                        // 整条地址，人手上真正有的那样东西
+      `  ${p.ownerUrl}  `,               // 复制时带上的空白
+      `${p.ownerUrl}#hash`,              // 有的客户端会补一个锚点
+      p.ownerKey,                        // 只粘 k= 后面那一段
+      ` ${p.ownerKey}\n`,
+    ]) expect((await enter(pasted)).status, JSON.stringify(pasted)).toBe(303);
+    expect((await enter("这不是钥匙")).status).toBe(401);              // 乱粘仍然被挡，并且是「token 不对」那一页
+  });
+
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {
     const { key: nodeKey } = await w.registry.nodeKey("ateam", "agent-4", "frontend");
     expect((await fetch(`${base}/owner-url`, { headers: { authorization: `Bearer ${nodeKey}` } })).status).toBe(401);
