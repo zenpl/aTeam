@@ -1680,17 +1680,27 @@ const shortSha = (a: unknown) => String(a).slice(0, 7);
 const sameSha = (a: unknown, b: unknown) => shortSha(a) === shortSha(b);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
-export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; method?: string; at: string } | null {
+/**
+ * t-219：事实里的「说不出」拆成三桶（unmeasured / bad_evidence / no_evidence）。**这里把三者合成一个
+ * `unmeasured` 交给显示那一侧**——`denominatorIs` 是人可见的字、冻结开着，所以牌桌那句话一个字没改；
+ * 数据更细，话不动。分桶的原文在事实里，谁要追得到。
+ */
+export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; bad_evidence: string[]; no_evidence: string[]; method?: string; at: string } | null {
   const id = s.latestReading.get(`production:${DEPLOYED_TASKS_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   if (!r || !r.valid || r.expired) return null;
-  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; method?: unknown };
+  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; bad_evidence?: unknown; no_evidence?: unknown; method?: unknown };
   if (!v || typeof v !== "object" || typeof v.sha !== "string" || !Array.isArray(v.contained) || !Array.isArray(v.not_contained)) return null;
   // t-203：第三桶。**`null` 与 `[]` 是两件事**：`null` 说的是这条事实是三桶那条规矩之前写下的，它没说过量不出的
   // 有哪些（今天生产上那几条就是这样，85 件无声消失）；`[]` 说的是量过了、一件都没有。分母算不算得出来，
   // 全看这个区别——所以这里不把缺席补成空数组。
   return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String),
-    unmeasured: Array.isArray(v.unmeasured) ? v.unmeasured.map(String) : null,
+    // 三桶合成一个交给显示：null 仍然是「这条事实是三桶规矩之前写的，它没说量不出的有哪些」（t-203）
+    unmeasured: Array.isArray(v.unmeasured)
+      ? [...v.unmeasured.map(String), ...(Array.isArray(v.bad_evidence) ? v.bad_evidence.map(String) : []), ...(Array.isArray(v.no_evidence) ? v.no_evidence.map(String) : [])]
+      : null,
+    bad_evidence: Array.isArray(v.bad_evidence) ? v.bad_evidence.map(String) : [],
+    no_evidence: Array.isArray(v.no_evidence) ? v.no_evidence.map(String) : [],
     method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
 }
 

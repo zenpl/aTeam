@@ -145,13 +145,30 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
  * (project:absorb.form); any other form, or no deployed sha, is nothing to measure. Candidates git cannot place
  * (object missing locally, no evidence sha) are neither contained nor not: the board lists them as unknown.
  */
-export function containment(b: Board, isAncestor: IsAncestor): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; method: string } | null {
+export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null } = {}):
+  { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; bad_evidence: string[]; no_evidence: string[]; method: string } | null {
   const sha = b.release?.deployed_sha;
   if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
-  const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[], method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
+  const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[],
+    bad_evidence: [] as string[], no_evidence: [] as string[],
+    method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
+  const shallow = opts.shallow?.() ?? null;
   for (const c of b.release.candidates ?? []) {
-    const r = c.evidence_sha ? isAncestor(c.evidence_sha, sha) : null;
-    (r === true ? out.contained : r === false ? out.not_contained : out.unmeasured).push(c.task);
+    // t-219：**「说不出」原来是一个桶，里面装着三件不同的事**，而它们的出路完全不同：
+    // ① 这件根本没写证据 sha —— 那是这件活的交付有问题（no_evidence）；
+    // ② 那个 sha 在这棵树里根本不存在，而这棵树不是浅克隆 —— qa 16:31 在一棵 fetch 了全部 8 个远端分支的
+    //    完整克隆里量过：t-150/t-183 那两个 sha 在 506 条可达提交里一条都对不上。**那是证据无效**
+    //    （写错、占位），不是「量不出」（bad_evidence）；
+    // ③ 浅克隆、或 git 自己答不上来 —— 那才是真的说不出（unmeasured）。
+    // **不许把 ①② 说成 not_contained**（qa 16:31 更正了它自己的第一版建议）：那会让它们进「已验没上线，
+    // 谁来推」，而它们**推不了**——那个提交不存在。把「还没上线」说大与说小一样坏。
+    if (!c.evidence_sha) { out.no_evidence.push(c.task); continue; }
+    const r = isAncestor(c.evidence_sha, sha);
+    if (r === true) { out.contained.push(c.task); continue; }
+    if (r === false) { out.not_contained.push(c.task); continue; }
+    const has = opts.has?.(c.evidence_sha) ?? null;
+    if (has === false && shallow === false) out.bad_evidence.push(c.task);
+    else out.unmeasured.push(c.task);
   }
   return out;
 }
@@ -168,14 +185,21 @@ export function containmentFact(b: Board, measured: ReturnType<typeof containmen
   // 当「生产上有什么」的全集，而那份名单缺了一桶。
   //
   // 三桶一个不少地写下去，比较也比三桶（少了这一条，unmeasured 变了不会触发新事实，那一桶就永远停在旧值）。
-  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
+  // t-219：**「说不出」那一桶拆成三个，事实里逐个写下去。** 显示那一侧不动（`denominatorIs` 是人可见的字、
+  // 冻结开着），所以牌桌上那句「量不出 N」= unmeasured + bad_evidence + no_evidence 三者之和；**数据更细，
+  // 话一个字没改**。比较也比这三桶，否则其中一桶变了不会触发新事实，它就永远停在旧值（t-203 那笔账）。
+  type Fact = { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[]; bad_evidence?: string[]; no_evidence?: string[] };
+  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as Fact | undefined;
   const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
-  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained) && same(current.unmeasured, measured.unmeasured)) return null;
-  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
+  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained)
+      && same(current.unmeasured, measured.unmeasured) && same(current.bad_evidence, measured.bad_evidence) && same(current.no_evidence, measured.no_evidence)) return null;
+  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, bad_evidence: measured.bad_evidence, no_evidence: measured.no_evidence, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {
   isAncestor: IsAncestor;
+  /** t-219：这棵树是不是浅克隆。浅克隆里「祖先不在本地」是真的说不出；完整克隆里那是另一回事。 */
+  isShallow(): boolean | null;
   /** The remote's current tip of `branch`, or null when it does not exist. */
   remoteTip(branch: string): string | null;
   /** Push `sha` to `branch` on the remote (fast-forward only). Throws with git's message on failure. */
@@ -198,6 +222,7 @@ export function realGit(cwd: string, token: string | undefined): Git {
   };
   return {
     isAncestor: (a, d) => { const r = run(["merge-base", "--is-ancestor", a, d]); return r.status === 0 ? true : r.status === 1 ? false : null; },
+    isShallow: () => { const r = run(["rev-parse", "--is-shallow-repository"]); return r.status === 0 ? r.stdout.trim() === "true" : null; },
     remoteTip: (branch) => { const r = run(["ls-remote", remote(), `refs/heads/${branch}`]); return r.status === 0 && r.stdout.trim() ? r.stdout.trim().split(/\s+/)[0] : null; },
     // t-209：`from..to` 里的提交。答不上来就答 null——「问不出来」与「一条都没有」是两件事。
     revList: (from, to) => { const r = run(["rev-list", `${from}..${to}`]); return r.status === 0 ? r.stdout.split("\n").map((x) => x.trim()).filter(Boolean) : null; },

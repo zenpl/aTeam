@@ -265,7 +265,8 @@ async function main(argv: string[]) {
       const target = str(a, "deploy");
       if (target === undefined) {
         // t-078: measure with git which candidates production already contains, record it when it changed, then show the three groups
-        const measured = containment(b, gitIsAncestor());
+        const g = realGit(process.cwd(), undefined);
+        const measured = containment(b, gitIsAncestor(), { has: (sha) => g.resolve(sha) !== null, shallow: () => g.isShallow() });
         const fact = containmentFact(b, measured);
         if (fact) { await emit(fact); b = await client.board(true); }
         else if (!measured) console.error(`（没有测包含关系：${b.release.deployed_sha ? "项目没有声明 absorb.form=git-ancestor" : "生产没有 deployed.sha 事实"}）`);
