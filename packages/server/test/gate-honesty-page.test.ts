@@ -42,12 +42,14 @@ async function withKnownDefect() {
   await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa", "frontend"] });
   // 两件碰同一处的任务 ⇒ 闸报出一条接缝
   for (const [id, who] of [["t-1", "dev"], ["t-2", "frontend"]] as const) {
-    await post("pm", { kind: "task", op: "create", task: id, title: `第 ${id} 件`, criteria: ["能用"] });
+    // t-151 的闸从 done 扩到 create：建任务也要说清对人有什么影响。夹具里这几件是接缝的两端，
+    // 不是人能看到的改动，所以照实写 no_human_impact，而不是给它编一句 shows。
+    await post("pm", { kind: "task", op: "create", task: id, title: `第 ${id} 件`, criteria: ["能用"], no_human_impact: true });
     await post(who, { kind: "task", op: "claim", task: id, touches: ["src/same.ts"] });
   }
   // 有人判它是误报，而修法那件还没在生产上验过 —— 两个条件齐了，core 才会说话
   await post("pm", { kind: "task", op: "seam", tasks: ["t-1", "t-2"], resolution: "这条是假的：两边改的不是同一段", verdict: "false" });
-  await post("pm", { kind: "task", op: "create", task: "t-9", title: "修这道闸", criteria: ["不再假报"] });
+  await post("pm", { kind: "task", op: "create", task: "t-9", title: "修这道闸", criteria: ["不再假报"], shows: "牌桌挖层里那句实话不再多报一条假接缝" });
   await post("pm", { kind: "reading", surface: "project", key: "gate.seam.fix", value: "t-9", method: "pm 指定" });
   const html = await (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
   const line = gateHonesty(reduce(await store.read()), "seam")?.line;
@@ -79,7 +81,7 @@ describe("t-150 · 那句实话印在挖层里", () => {
     v.setStore(store);
     await v.start();
     try {
-      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "一件普通的", criteria: ["能用"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "一件普通的", criteria: ["能用"], no_human_impact: true });
       const html = await v.page();
       expect(html).not.toContain("gate-honesty");    // 那一段整个不存在
       expect(html).not.toContain("暂无");

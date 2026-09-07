@@ -28,9 +28,13 @@ export const SECOND_HOMES = [
  * 今晚 KEY_SYMBOLS 手写漏了将近一半（21→41），而在改成算出来之前没有任何迹象表明它不全。所以这个数每次变小，
  * 都要有人把它改小，**改小是搬迁的记账动作，不是可选项**：它只许变小，变大就是闸失效（判据 10）。
  */
-export const SECOND_HOME_FROZEN = 211;
-/** 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处：i18n.ts 173、format.ts 36、html.ts 2。 */
-export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 173, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 2 } as const;
+// t-180 搬走 4 句：页面那份 ago 梯子的四档（「刚刚」「N 分钟前」「N 小时前」「N 天前」）现在在 core 一处。
+export const SECOND_HOME_FROZEN = 207;
+/**
+ * 各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。冻结时是 i18n.ts 173、format.ts 36、html.ts 2；
+ * t-180 把页面那份 ago 梯子的四档搬进 core，i18n.ts 173 → 169。这几个数用 `humanSentences` 量出来再填，不手写。
+ */
+export const SECOND_HOME_AT_FREEZE = { "packages/server/src/i18n.ts": 169, "packages/cli/src/format.ts": 36, "packages/server/src/html.ts": 2 } as const;
 
 /**
  * 一条人可见的话在 core 里的登记。

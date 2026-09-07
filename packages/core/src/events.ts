@@ -280,9 +280,9 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
 export const KEY_SYMBOLS = [
   "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
   "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
-  "PASSTHROUGH_IS_NOT_A_LITERAL", "REACH_RULE", "REACH_STALE_MS", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES",
+  "PASSTHROUGH_IS_NOT_A_LITERAL", "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "STAND_IN_ASK_TITLE", "VERIFY_ASK",
-  "alertContact", "allocationSummary", "alsoHere", "batches", "board", "capabilityKey",
+  "ago", "alertContact", "allocationSummary", "alsoHere", "batches", "board", "capabilityKey",
   "coverage", "deployHistory", "followUps", "lightSeamLine", "manualFor", "missingCard",
   "nobodyElse", "overdueByPresence", "owedSentences", "responsibilityAppendix", "runtimeAllocation", "saidHops",
   "sayReading", "shapeFor", "standIns", "staticAllocation",

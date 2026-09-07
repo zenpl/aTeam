@@ -53,6 +53,27 @@ export interface BoardTask {
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
 
 /** How an instruction to the human reads: asked, or derived (options → ask, otherwise do). */
+/**
+ * 「多久以前」，全项目一句话一个说法（t-180，pd 09:09 定的梯子）。牌桌、命令行、core 自己拼的句子都走这里。
+ *
+ * 梯子：不到 1 分钟「刚刚」／不到 1 小时「N 分钟前」／不到 1 天「N 小时前」／其余「N 天前」。
+ * 三条硬规矩，都是 pd 定的，不是风格：① 一律向下取整，不四舍五入——四舍五入会让「59 分钟」说成「1 小时前」，
+ * 把一个还没到的时刻说成已经到了；② 永远不出现小数，人读相对时间是为了一眼知道新旧，「1.2 小时前」逼他去算；
+ * ③ 绝对时刻只放在 title 里，不进这句话。
+ *
+ * 合并之前这段逻辑在仓库里有四份（core 这里、页面的 UI.ago、命令行的 howLong、下面 sayReading 里那句只会说分钟的），
+ * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
+ */
+export function ago(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return AGO_JUST_NOW;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
+  return `${Math.floor(sec / 86400)} 天前`;
+}
+export const AGO_JUST_NOW = "刚刚";
+const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
+
 export function instructionKind(i: Pick<Instruction, "intent" | "options">): InstructionIntent {
   return i.intent ?? (i.options?.length ? "ask" : "do");
 }
@@ -446,27 +467,6 @@ function failedTwice(s: State, at: string): boolean {
   const last2 = calls.slice(-2);
   return last2.length === 2 && last2.every((n) => n.body.includes(ALERT_FAILED));
 }
-/**
- * 「多久以前」，全项目一句话一个说法（t-180，pd 09:09 定的梯子）。牌桌、命令行、core 自己拼的句子都走这里。
- *
- * 梯子：不到 1 分钟「刚刚」／不到 1 小时「N 分钟前」／不到 1 天「N 小时前」／其余「N 天前」。
- * 三条硬规矩，都是 pd 定的，不是风格：① 一律向下取整，不四舍五入——四舍五入会让「59 分钟」说成「1 小时前」，
- * 把一个还没到的时刻说成已经到了；② 永远不出现小数，人读相对时间是为了一眼知道新旧，「1.2 小时前」逼他去算；
- * ③ 绝对时刻只放在 title 里，不进这句话。
- *
- * 合并之前这段逻辑在仓库里有四份（core 这里、页面的 UI.ago、命令行的 howLong、下面 sayReading 里那句只会说分钟的），
- * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
- */
-export function ago(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return AGO_JUST_NOW;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时前`;
-  return `${Math.floor(sec / 86400)} 天前`;
-}
-export const AGO_JUST_NOW = "刚刚";
-const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
-
 /** t-119: the last time a call actually got through, and to which address. Nothing else counts as proof. */
 export function reachedProof(s: State): { value: string; at: string } | null {
   // t-134: the proof is only worth anything if the one who wrote it could not have been wrong or lying about it.
