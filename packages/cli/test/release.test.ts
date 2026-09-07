@@ -172,6 +172,14 @@ describe("t-078 · ateam release measures containment with git and shows three g
     const blind = containment(await w.b(), () => null)!;
     expect(blind.unmeasured.sort()).toEqual(["t-1", "t-2"]);
     expect(blind.contained).toEqual([]);
+    // t-203 判据 1：三桶一个不少地写进事实——unmeasured 算出来了，就得落进日志
+    const blindFact = containmentFact(await w.b(), blind)! as unknown as { value: Record<string, unknown> };
+    expect(blindFact.value.unmeasured, "第三桶算出来了却没写下去，正是那 85 件无声消失的形状").toEqual(["t-1", "t-2"]);
+    expect(blindFact.value).toMatchObject({ contained: [], not_contained: [] });
+    // 比较也比三桶：只有 unmeasured 变了，也要写一条新事实——否则那一桶永远停在旧值
+    const same = { ...blind, unmeasured: ["t-1"] };
+    expect(containmentFact(await w.b(), same), "unmeasured 变了却不写新事实").not.toBeNull();
+
     // another absorb form: not our business to measure
     const other = await world();
     await other.emit({ kind: "reading", actor: "pm", key: "absorb.form", surface: "project", value: "named-sha" });

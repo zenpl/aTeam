@@ -379,9 +379,13 @@ export const KEY_SYMBOLS = [
   "classifyFollowUp",
   "coverage",
   "defaultMissed",
+  "denominatorIs",
+  "denominatorUnknown",
   "deployHistory",
   "dueDefaults",
   "exampleLine",
+  "factCannotPlace",
+  "factPredatesThirdBucket",
   "followUps",
   "gateHonesty",
   "honestyLine",
@@ -745,6 +749,29 @@ export const noRealOverlap = (other: string, reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
 export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-203：包含事实的**第三桶**，以及分母算不算得出来。
+ *
+ * 那条事实原来只写两桶（contained / not_contained），而 `containment()` 一直分三类——第三类 unmeasured
+ * （没有证据 sha，或那个对象本地 git 里没有）算出来了却没落进日志。生产上写下的是 112 + 4，当时共 201 件，
+ * **缺的 85 件里有 63 件的 verified_on 含 production**：它们在生产上验过，而那条事实说不出它们在不在里面。
+ * qa 据此报过两个数（42 件、109 件），两次都栽在同一处——拿一份缺了一桶的名单当全集。
+ *
+ * 所以「还剩多少」这个数要么说得出分母是哪三类相加，要么就说算不出。**一个小了的数比没有数更贵**：
+ * 没有数会让人去量，一个小了的数会让人照着它排。
+ *
+ * 住在 core，同这一族的其余几句；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）——判断本身不必等谁，
+ * 但说法要 pd 定，我另发了 note。
+ */
+export const factCannotPlace = (task: string, sha: string) =>
+  `包含事实量过 ${task}，但放不进任何一边（它没有证据 sha，或那个 sha 本地 git 里没有）——对 ${sha.slice(0, 7)} 测的`;
+export const factPredatesThirdBucket = (task: string, sha: string) =>
+  `包含事实（对 ${sha.slice(0, 7)} 测的）是三桶那条规矩之前写下的，它只说了在与不在，没说量不出的有哪些——所以它答不了 ${task}。重跑 ateam release`;
+/** t-203 判据 2：分母是哪三类相加，或者为什么算不出。 */
+export const denominatorIs = (contained: number, notContained: number, unmeasured: number) =>
+  `分母 = 在里面 ${contained} + 不在里面 ${notContained} + 量不出 ${unmeasured} = ${contained + notContained + unmeasured} 件`;
+export const denominatorUnknown = "分母算不出：这条包含事实没写「量不出」那一桶，所以它的名单不是全集——别拿它当「生产上有什么」的分母";
 
 /**
  * t-201：接缝闸拿到一个 **git 里不存在的证据 sha** 时说的那几句。

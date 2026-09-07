@@ -306,7 +306,8 @@ export function release(b: Board): string {
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
   const counts = r.counts ?? { pending_deploy: 0, deployed_unverified: 0, unknown: (r.candidates ?? []).length };
-  out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.basis ? `  （${r.basis}）` : ""}`);
+  // t-203：这三个数跟着分母一起印。分母缺一桶时那句话自己会说算不出——一个小了的数比没有数更贵。
+  out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.denominator ? `  ${r.denominator}` : ""}${r.basis ? `  （${r.basis}）` : ""}`);
   if (!r.candidates) { out.push("  （默认板省略了清单：用 ateam release 或 board --full）"); return out.join("\n"); }
   if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
   const row = (c: BoardRelease) => {

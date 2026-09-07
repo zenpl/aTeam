@@ -735,6 +735,8 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     const moving = units.filter((u) => !u.held_by.length && u.brings > 0), stuck = units.filter((u) => u.held_by.length);
     // t-078's third state: with no containment fact the board cannot place these, so the page says why instead of a number.
     if (units.some((u) => u.brings_unknown)) out.push(`<p class="quiet">${esc(UI.waitingUnknown(b.release.basis || ""))}</p>`);
+    // t-203：那几个数的分母。整句来自 core（release.denominator），这里只放它，不新造一句人可见的话。
+    if (b.release.denominator) out.push(`<p class="quiet">${esc(b.release.denominator)}</p>`);
     if (stuck.length) out.push(`<ul class="plain stuck">${stuck.map(line).join("")}</ul>`);
     if (moving.length) {
       out.push(`<p class="meta">${UI.releaseBrings}</p>`);

@@ -71,10 +71,19 @@ export function containment(b: Board, isAncestor: IsAncestor): { sha: string; co
 /** The reading `ateam release` records when what git measured differs from the fact on the board; null when nothing changed. */
 export function containmentFact(b: Board, measured: ReturnType<typeof containment>): ClientEvent | null {
   if (!measured) return null;
-  const current = b.readings.find((r) => r.valid && r.surface === "production" && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[] } | undefined;
+  // t-203：**这条事实原来只写两桶，第三桶算出来了却没写下去。** `containment()` 一直分三类（上面那个函数的注释
+  // 里写着「neither contained nor not: the board lists them as unknown」），而这里只把 contained 与 not_contained
+  // 落进日志——于是 unmeasured 那一桶在日志上不存在。
+  //
+  // 代价是真的：生产上写下的是 112 + 4，而当时共 201 件；**缺的 85 件里有 63 件的 verified_on 含 production**。
+  // 读的人分不清「没上」与「量不出」，qa 据此报过两个数（42 件、109 件），两次都栽在这一处——它拿 contained
+  // 当「生产上有什么」的全集，而那份名单缺了一桶。
+  //
+  // 三桶一个不少地写下去，比较也比三桶（少了这一条，unmeasured 变了不会触发新事实，那一桶就永远停在旧值）。
+  const current = b.readings.find((r) => r.valid && r.surface === "production" && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
   const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
-  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained)) return null;
-  return { kind: "reading", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
+  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained) && same(current.unmeasured, measured.unmeasured)) return null;
+  return { kind: "reading", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {

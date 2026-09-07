@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -389,6 +389,13 @@ export interface Board {
     unknown?: (BoardRelease & { reason: string })[];
     /** t-078: the three counts, on every board. */
     counts: { pending_deploy: number; deployed_unverified: number; unknown: number };
+    /**
+     * t-203 判据 2：这几个数的**分母**——哪三类相加，或者为什么算不出。
+     *
+     * 「还剩多少」原来是从 `contained` 一份名单反推的，而那份名单缺了第三桶（量不出的那些），于是反推出来的数
+     * 偏小，方向还说不准。分母跟着数走，读的人不必再去别处凑。
+     */
+    denominator: string;
     /** t-078: what the split rests on: the containment fact used, or why there is none. */
     basis: string;
   };
@@ -857,7 +864,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
-    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
+    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
     batches: [],
     said: [],
     disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
@@ -1542,7 +1549,7 @@ export function slimBoard(b: Board): Board {
   const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, basis: b.release.basis };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
   const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
@@ -1591,13 +1598,18 @@ const shortSha = (a: unknown) => String(a).slice(0, 7);
 const sameSha = (a: unknown, b: unknown) => shortSha(a) === shortSha(b);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
-export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; method?: string; at: string } | null {
+export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; method?: string; at: string } | null {
   const id = s.latestReading.get(`production:${DEPLOYED_TASKS_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   if (!r || !r.valid || r.expired) return null;
-  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; method?: unknown };
+  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; method?: unknown };
   if (!v || typeof v !== "object" || typeof v.sha !== "string" || !Array.isArray(v.contained) || !Array.isArray(v.not_contained)) return null;
-  return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String), method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
+  // t-203：第三桶。**`null` 与 `[]` 是两件事**：`null` 说的是这条事实是三桶那条规矩之前写下的，它没说过量不出的
+  // 有哪些（今天生产上那几条就是这样，85 件无声消失）；`[]` 说的是量过了、一件都没有。分母算不算得出来，
+  // 全看这个区别——所以这里不把缺席补成空数组。
+  return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String),
+    unmeasured: Array.isArray(v.unmeasured) ? v.unmeasured.map(String) : null,
+    method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
 }
 
 /**
@@ -1744,9 +1756,16 @@ function splitRelease(s: State, b: Board) {
     if (!c.evidence_sha) { r.unknown.push({ ...c, reason: "证据里没有 sha，无从比对" }); continue; }
     if (fact!.contained.includes(c.task)) r.deployed_unverified.push(c);
     else if (fact!.not_contained.includes(c.task)) r.pending_deploy.push(c);
+    // t-203：**「事实量过它、放不进任何一边」与「事实根本没覆盖它」是两回事**，原来它们共用一句话，
+    // 而那句话说的是后者——于是 85 件被量过、放不下的活，在牌桌上被说成「在它之后才 done」。
+    else if (fact!.unmeasured?.includes(c.task)) r.unknown.push({ ...c, reason: factCannotPlace(c.task, fact!.sha) });
+    // 事实是三桶规矩之前写的：它连「量不出的有哪些」都没说过，所以它答不了这一件——这也不是「在它之后才 done」
+    else if (fact!.unmeasured === null) r.unknown.push({ ...c, reason: factPredatesThirdBucket(c.task, fact!.sha) });
     else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+  // t-203 判据 2：分母跟着数走。事实没写第三桶时说算不出——一个小了的数比没有数更贵。
+  r.denominator = !fact || fact.unmeasured === null ? denominatorUnknown : denominatorIs(fact.contained.length, fact.not_contained.length, fact.unmeasured.length);
   b.batches = batches(s, deployed, why, fact);   // t-129: judged on the same basis, so the two can never disagree
 }
 

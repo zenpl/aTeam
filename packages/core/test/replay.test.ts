@@ -1933,7 +1933,8 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
 
   it("with the fact: contained ones are deployed_unverified, the rest pending_deploy, no-sha and uncovered ones unknown", async () => {
     const { store, c } = await world();
-    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks", value: { sha: "eeeeeee5", contained: ["A"], not_contained: ["B"], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+    // t-203：三桶的事实（unmeasured 明写成空）——只有这样的事实才答得出「它没覆盖 E」；两桶的那种答不了，见下一条
+    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks", value: { sha: "eeeeeee5", contained: ["A"], not_contained: ["B"], unmeasured: [], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
     let r = await rel(store, c);
     expect(r.deployed_unverified!.map((x) => x.task)).toEqual(["A"]);
     expect(r.pending_deploy!.map((x) => x.task)).toEqual(["B"]);
@@ -1952,6 +1953,50 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     r = await rel(store, c);
     expect(r.counts.unknown).toBe(r.candidates!.length);
     expect(r.unknown![0].reason).toMatch(/ateam release/); // the deploy invalidated the fact (it depends on production:deployed.sha): measure again
+  });
+
+  /**
+   * t-203 判据 2、3：**从这条事实算出来的「还剩多少」，要么说得出分母是哪三类相加，要么就说算不出。**
+   *
+   * 生产上那几条事实只写了两桶：112 + 4，而当时共 201 件——缺的 85 件里有 63 件的 verified_on 含 production。
+   * 读的人分不清「没上」与「量不出」，qa 据此报过两个数（42 件、109 件），两次都栽在同一处。
+   *
+   * **一个小了的数比没有数更贵**：没有数会让人去量，一个小了的数会让人照着它排。
+   */
+  describe("t-203 · 分母是三类相加，缺一桶就说算不出", () => {
+    it("判据 3 正例：三桶齐全时分母说得出，且三桶各自落到该去的那一堆", async () => {
+      const { store, c } = await world();
+      await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks",
+        value: { sha: "eeeeeee5", contained: ["A"], not_contained: [], unmeasured: ["B"], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+      const r = await rel(store, c);
+      expect(r.denominator).toBe("分母 = 在里面 1 + 不在里面 0 + 量不出 1 = 2 件");
+      expect(r.deployed_unverified!.map((x) => x.task)).toEqual(["A"]);
+      expect(r.pending_deploy!.map((x) => x.task)).toEqual([]);
+      // B 在第三桶里：说的是「量过它、放不进任何一边」，不是「事实没覆盖它」——两句原来共用一句话，而那句说的是后者
+      expect(r.unknown!.find((x) => x.task === "B")!.reason).toContain("量过 B，但放不进任何一边");
+      // C 连证据 sha 都没有：那是更前面一层，说得比这一句还具体，不该被这一条盖掉
+      expect(r.unknown!.find((x) => x.task === "C")!.reason).toBe("证据里没有 sha，无从比对");
+    });
+
+    it("判据 3 反例：把第三桶去掉，分母当场说「算不出」，而不是给一个小了的数", async () => {
+      const { store, c } = await world();
+      await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks",
+        value: { sha: "eeeeeee5", contained: ["A"], not_contained: [], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+      const r = await rel(store, c);
+      expect(r.denominator).toContain("分母算不出");
+      expect(r.denominator, "别拿一份缺了一桶的名单当全集").toContain("不是全集");
+      // 这种事实连「量不出的有哪些」都没说过，所以它答不了 B——不许说成「在它之后才 done」
+      const why = r.unknown!.find((x) => x.task === "B")!.reason;
+      expect(why).toContain("三桶那条规矩之前写下的");
+      expect(why, "两桶的事实答不出「没覆盖」这件事").not.toContain("没有覆盖");
+    });
+
+    it("分母跟着那几个数走：数在哪儿，分母就在哪儿", async () => {
+      const { store, c } = await world();
+      const r = await rel(store, c);
+      expect(r.counts).toBeTruthy();
+      expect(r.denominator, "没有事实的时候同样不许留白——留白读起来就是「分母没问题」").toContain("分母算不出");
+    });
   });
 });
 
