@@ -8,7 +8,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { ago } from "@ateam/core";
 import { UI } from "../src/i18n.js";
 
@@ -27,17 +26,23 @@ describe("t-180 · 页面不自带梯子", () => {
    * 我一开始 grep `ago` 时因此漏了它，四份数成了两份）。
    */
   it("core 之外的源码里没有第二道梯子的任何一档", () => {
-    const roots = ["packages/server/src", "packages/cli/src"];
+    // 路径从这个文件自己算起，不从 cwd 算：第一版写的是 `process.cwd()/../..`，用 pnpm --filter 跑时
+    // 恰好对，从仓库根跑就指到了 /home，扫不到任何文件——**而扫不到文件的扫描器是全绿的**。
+    // 所以下面先钉「真的读到了这两处源码」，再钉「里面没有梯子」：一条断言若能在什么都没看的情况下通过，
+    // 它守的就不是它声称守的东西（今晚第六次同形）。
+    const roots = { "packages/server/src": new URL("../src/", import.meta.url), "packages/cli/src": new URL("../../cli/src/", import.meta.url) };
     const hits: string[] = [];
-    for (const root of roots) {
-      const dir = join(process.cwd(), "..", "..", root);
+    let scanned = 0;
+    for (const [name, dir] of Object.entries(roots)) {
       for (const f of readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
-        const src = readFileSync(join(dir, f), "utf-8");
+        scanned++;
+        const src = readFileSync(new URL(f, dir), "utf-8");
         src.split("\n").forEach((line, i) => {
-          for (const w of LADDER) if (line.includes(w)) hits.push(`${root}/${f}:${i + 1}  ${line.trim().slice(0, 70)}`);
+          for (const w of LADDER) if (line.includes(w)) hits.push(`${name}/${f}:${i + 1}  ${line.trim().slice(0, 70)}`);
         });
       }
     }
+    expect(scanned, "一个文件都没扫到——这条断言此刻什么也没守").toBeGreaterThan(8);
     expect(hits, `这几处自己拼了「多久以前」，应当调 core 的 ago：\n${hits.join("\n")}`).toEqual([]);
   });
 });
