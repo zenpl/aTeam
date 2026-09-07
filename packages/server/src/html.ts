@@ -523,6 +523,11 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   else if (!lightSeams.length) d.push(`<p class="quiet">${UI.none}</p>`);
   if (lightSeams.length) d.push(lightSeamGroup(lightSeams, base));
   if (closedSeams) d.push(`<p class="meta">${esc(UI.seamsElsewhere(closedSeams))}</p>`);
+  // t-150 (pd 06:37): 一道闸知道自己不可信时，它的每条结论都要带上实话。那句话 t-149 在 core 一处算出，
+  // 这里逐字印它，一个字不加——加一个前缀（「注意：」之类）就是在替它定调，而它已经把该说的都说了。
+  // 位置在挖层里、紧挨着这道闸产生的那些结论：人是在读接缝时才需要知道「报它的那道闸自己有毛病」。
+  // 没有已知缺陷时 core 返回空，这里一个字都不印——不印「暂无」（判据 3）：一句「暂无」会让人以为查过了。
+  for (const g of b.gate_honesty ?? []) d.push(`<p class="meta gate-honesty">${esc(g.line)}</p>`);
   d.push(`</section>`);
 
   // t-155 (pd 07:14): a fact shows its sentence, never its raw value. core computes the sentence (t-154's

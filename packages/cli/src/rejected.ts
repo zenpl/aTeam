@@ -7,6 +7,8 @@
  * same action goes through or the person crosses it off. Like the deaf notice (t-102): to this node only, no event, no
  * log line — a refusal is this node's business, not a broadcast.
  */
+import { ago } from "@ateam/core";
+
 export interface Refusal {
   /** ISO time of the refusal. */
   at: string;
@@ -41,13 +43,8 @@ export function actionOf(argv: string[]): string {
   return words.slice(0, 3).join(" ");
 }
 
-function howLong(ms: number): string {
-  const m = Math.round(ms / 60_000);
-  if (m < 1) return "刚刚";
-  if (m < 60) return `${m} 分钟前`;
-  const h = ms / 3_600_000;
-  return h < 24 ? `${h.toFixed(1)} 小时前` : `${(h / 24).toFixed(1)} 天前`;
-}
+// t-180: was a fourth copy of the ladder, under a different name — which is why a search for `ago` did not find it.
+const howLong = ago;
 
 /** The one line, or null when there is nothing to say. Only `sync` and `board` carry it: they are what a turn starts with. */
 export function refusalNotice(st: RefusalState, now: Date, clearWith = "ateam sync --clear-refused"): string | null {

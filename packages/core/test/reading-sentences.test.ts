@@ -29,17 +29,17 @@ describe("t-154 · 判据 1 与 2：声明了就说那一句，没声明就退�
     for (const id of [...v.contained, ...v.not_contained, v.sha, v.method]) expect(said.line).not.toContain(id);
   });
 
-  it("没有声明的结构化事实退化成「<名字> 由 X 在 N 分钟前记下」，值不在里面", async () => {
+  it("没有声明的结构化事实退化成「<名字>，N 分钟前由 X 记下」，值不在里面（t-180 起时间在句首）", async () => {
     const v = { n: 40, window: "03:02-03:44 UTC", seconds: { p50: 34.94, max: 80.77 } };
     const said = sayReading({ surface: "production", key: "wait.cli", value: v, by: "qa", at: at(-12).toISOString() }, at(0))!;
-    expect(said).toEqual({ line: "production:wait.cli 由 qa 在 12 分钟前记下", declared: false, said_elsewhere: false });
+    expect(said).toEqual({ line: "production:wait.cli，12 分钟前由 qa 记下", declared: false, said_elsewhere: false });
     expect(said.line).not.toContain("34.94");
   });
 
   it("形状不对就退化，不猜一个数——猜错的数比不说更坏", async () => {
     const said = sayReading({ surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: "abc1234" }, by: "release", at: at(-3).toISOString() }, at(0))!;
     expect(said.declared).toBe(false);
-    expect(said.line).toBe("这一版带上的活 由 release 在 3 分钟前记下");
+    expect(said.line).toBe("这一版带上的活，3 分钟前由 release 记下");
   });
 
   it("判据 2：标量照旧，没有这个字段", async () => {

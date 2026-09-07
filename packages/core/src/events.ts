@@ -282,13 +282,13 @@ export const KEY_SYMBOLS = [
   "FORWARD_LINK", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH",
   "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PROMISE_RULE", "REACH_RULE", "REACH_WORDS",
   "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND",
-  "SHOWS_RULE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago", "alertContact", "allocationSummary",
-  "alsoHere", "applyReading", "batches", "batchesEmptyLine", "blockedWhy", "board",
-  "capabilityKey", "coverage", "deployHistory", "followUps", "gateHonesty", "honestyLine",
-  "inFlightGroups", "judgeSeam", "lightSeamLine", "manualFor", "missingCard", "nobodyElse",
-  "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops",
-  "sayReading", "shapeFor", "slimBoard", "splitRelease", "standIns", "staticAllocation",
-  "taskHeading", "whoElseTouches",
+  "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago", "alertContact",
+  "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine", "blockedWhy",
+  "board", "capabilityKey", "coverage", "deployHistory", "followUps", "gateHonesty",
+  "honestyLine", "inFlightGroups", "judgeSeam", "lightSeamLine", "manualFor", "missingCard",
+  "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix", "runtimeAllocation",
+  "saidHops", "sayReading", "shapeFor", "slimBoard", "span", "splitRelease",
+  "standIns", "staticAllocation", "taskHeading", "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */

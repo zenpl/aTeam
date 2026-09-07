@@ -36,7 +36,9 @@ describe("t-154 · 一条事实的一句话，走一遍接口", () => {
     expect(say(DEPLOYED_TASKS_KEY)).toMatchObject({ line: "这一版带上了 3 件", declared: true, said_elsewhere: true });
     expect(say(`${BATCH_PREFIX}12`)).toMatchObject({ line: "这一批装了 3 件", declared: true, said_elsewhere: true });
     expect(say("wait.cli")).toMatchObject({ declared: false, said_elsewhere: false });
-    expect(say("wait.cli").line).toMatch(/^production:wait\.cli 由 qa 在 \d+ 分钟前记下$/);
+    // t-180 · pd 09:17：时间在句首。夹具是刚落下的读数，所以这里说的是「刚刚」——改前它靠 core 那个
+    // Math.max(m,1) 才说得出「1 分钟前」，梯子统一之后不到一分钟就是「刚刚」。
+    expect(say("wait.cli").line).toMatch(/^production:wait\.cli，(刚刚|\d+ 分钟前)由 qa 记下$/);
     for (const s of ["b3e3c53fbe19fac3c20dd0248751b517f1be93b5", "t-005", "git-ancestor", "34.94", "03:02-03:44"]) {
       expect(JSON.stringify(b.readings.map((r) => r.said?.line ?? "")), `值「${s}」漏进了那一句`).not.toContain(s);
     }

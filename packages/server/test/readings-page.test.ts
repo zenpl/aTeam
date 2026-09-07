@@ -42,16 +42,18 @@ describe("t-155 · 读数区只说那一句话", () => {
       await v.post("qa", { kind: "reading", surface: "production", key: "s2.walk", value: { scenario: "S2", blocked: true, why: "要一次真实的需求变更，我不替 human 造样本" }, method: "按场景在生产上走一遍" });
       const sec = readingsSection(await v.page());
       const first = firstLayer(sec);
-      expect(first).toContain("production:s2.walk 由 qa 在");   // 退化后的那一句：名字、谁、多久以前
-      expect(first).toContain("分钟前记下");
+      expect(first).toContain("production:s2.walk，");          // 退化后的那一句：名字、多久以前、谁
+      expect(first).toMatch(/(刚刚|\d+ 分钟前)由 \S+ 记下/);   // t-180: 时间在句首
       expect(first).not.toContain("scenario");                  // 值的字段名不在第一层
       expect(first).not.toContain("不替 human 造样本");           // 值里那句中文也不在第一层
       expect(sec).toContain('<details class="dig">');           // 但它挖得到，一个字节不少
       expect(sec).toContain("scenario");
       expect(sec).toContain("不替 human 造样本");
-      // 退化那句里已经有「由 qa 在 N 分钟前」，行尾不许再说一遍谁、也不许再说一遍多久以前
+      // 退化那句里已经有「N 分钟前由 qa 记下」，行尾不许再说一遍谁、也不许再说一遍多久以前。
+      // t-180 之后这一行本身就含「刚刚」，所以口径从「一次都不许出现」改成「恰好出现一次」——
+      // 这比原来更严：原来只挡得住行尾重复，现在连 core 那句里多说一遍也挡得住。
       expect(first.match(/qa/g) ?? []).toHaveLength(1);
-      expect(first).not.toContain("刚刚");
+      expect(first.match(/刚刚|\d+ 分钟前|\d+ 小时前|\d+ 天前/g) ?? []).toHaveLength(1);
     } finally { await v.stop(); }
   });
 

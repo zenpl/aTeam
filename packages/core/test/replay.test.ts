@@ -2639,7 +2639,9 @@ describe("t-119 · a fallback's state is proved by reaching, not by a string bei
     w.c.tick(min(7));
     const ok = await w.alert();
     expect(ok.status).toBe("reachable");
-    expect(ok.line).toBe("你不在时会发到这里，最近一次成功是 7 分钟前。");
+    // t-180 · pd 09:17：时间短语挪到句首，一种骨架管四档（改前「最近一次成功是 7 分钟前。」，
+    // 而「最近一次成功是 刚刚。」不是中文——只有某几档填得进去的句框，是句框错了）。
+    expect(ok.line).toBe("你不在时会发到这里，7 分钟前成功过一次。");
     for (const a of [await w.alert()]) expect(a.line).not.toContain("已配置");   // 四句里一句都不说「配没配」
   });
 
@@ -2661,7 +2663,8 @@ describe("t-119 · a fallback's state is proved by reaching, not by a string bei
     w.c.tick(2 * 24 * 3600_000);
     const stale = await w.alert();
     expect(stale.status).toBe("unproven");                  // 八天：退回去
-    expect(stale.line).toContain("上次成功是 8.0 天前。");
+    // t-180 · pd 09:09：相对时间永远不出现小数（改前这里是「8.0 天前」）。梯子在 core 的 ago 一处。
+    expect(stale.line).toContain("8 天前成功过一次。");
   });
 
   it("一次失败不退回，连续两次才退（pd 01:40：一次网络抖动不该吓人）", async () => {

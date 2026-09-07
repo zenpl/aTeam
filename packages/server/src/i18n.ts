@@ -1,4 +1,4 @@
-import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine } from "@ateam/core";
+import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, ago as agoOf } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -235,11 +235,9 @@ export const UI = {
   unauthorized: "这个页面需要项目 token。请打开一次",
   unauthorizedTail: "，之后会保存在 cookie 里。",
 
-  /** Relative time, in words. */
-  ago(sec: number): string {
-    if (sec < 60) return "刚刚";
-    if (sec < 5400) return `${Math.round(sec / 60)} 分钟前`;
-    if (sec < 172800) return `${Math.round(sec / 3600)} 小时前`;
-    return `${Math.round(sec / 86400)} 天前`;
-  },
+  /**
+   * Relative time, in words — core's ladder, not a second one (t-180). The page used to round and to run its
+   * minute band out to 90 minutes, so the same instant read differently here and in a sentence core handed over.
+   */
+  ago: (sec: number): string => agoOf(sec * 1000),
 };

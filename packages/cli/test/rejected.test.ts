@@ -37,9 +37,13 @@ describe("t-116 · a refusal is said again on the next turn", () => {
   });
 
   it("时长按量级说，不是一律「N 分钟」", () => {
+    // t-180 · pd 09:09：这一行过去有自己一份梯子（叫 howLong，所以按 `ago` 去搜找不到它），
+    // 会说「1.5 小时前」「1.1 天前」。四档全项目一处、向下取整、不出现小数之后是下面这些。
     expect(notice(record(20_000))).toContain("你刚刚有一次写入被拒");
-    expect(notice(record(min(90)))).toContain("1.5 小时前");
-    expect(notice(record(min(60 * 26)))).toContain("1.1 天前");
+    expect(notice(record(min(59)))).toContain("59 分钟前");
+    expect(notice(record(min(90)))).toContain("1 小时前");
+    expect(notice(record(min(60 * 26)))).toContain("1 天前");
+    for (const m of [1, 59, 90, 60 * 26, 60 * 24 * 400]) expect(notice(record(min(m)))).not.toMatch(/\d\.\d/);
   });
 
   it("划掉只认同一个动作：重做 claim 不该划掉一条被拒的 done", () => {

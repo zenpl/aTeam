@@ -53,6 +53,42 @@ export interface BoardTask {
 export interface BoardInFlight { id: string; title: string; owner?: string; updated_at: string }
 
 /** How an instruction to the human reads: asked, or derived (options → ask, otherwise do). */
+/**
+ * 「多久以前」，全项目一句话一个说法（t-180，pd 09:09 定的梯子）。牌桌、命令行、core 自己拼的句子都走这里。
+ *
+ * 梯子：不到 1 分钟「刚刚」／不到 1 小时「N 分钟前」／不到 1 天「N 小时前」／其余「N 天前」。
+ * 三条硬规矩，都是 pd 定的，不是风格：① 一律向下取整，不四舍五入——四舍五入会让「59 分钟」说成「1 小时前」，
+ * 把一个还没到的时刻说成已经到了；② 永远不出现小数，人读相对时间是为了一眼知道新旧，「1.2 小时前」逼他去算；
+ * ③ 绝对时刻只放在 title 里，不进这句话。
+ *
+ * 合并之前这段逻辑在仓库里有四份（core 这里、页面的 UI.ago、命令行的 howLong、下面 sayReading 里那句只会说分钟的），
+ * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
+ */
+export function ago(ms: number): string {
+  return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
+}
+export const AGO_JUST_NOW = "刚刚";
+
+/**
+ * 同一道梯子的另一半：**一段时长**说成几个字，不带「前」。
+ *
+ * qa 09:36 判 t-180 不成立时找到的第五份拷贝（`packages/cli/src/deaf.ts` 的 `howLong`）就在这一半上：它说的是
+ * 「你 3 分钟没拉过了」这种时长，不是「多久以前」，所以 `ago` 的形状套不上去，于是它自己长了一份——用四舍五入、
+ * 带小数、说不出「刚刚」，三条全违反 pd 09:09 的梯子。
+ *
+ * 所以这里不是「再写一个格式化函数」，而是**把梯子本身单独拿出来，`ago` 也调它**：两种句框共用同一段分档与取整，
+ * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
+ */
+export function span(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return SPAN_UNDER_A_MINUTE;
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时`;
+  return `${Math.floor(sec / 86400)} 天`;
+}
+export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
+const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
+
 export function instructionKind(i: Pick<Instruction, "intent" | "options">): InstructionIntent {
   return i.intent ?? (i.options?.length ? "ask" : "do");
 }
@@ -446,13 +482,6 @@ function failedTwice(s: State, at: string): boolean {
   const last2 = calls.slice(-2);
   return last2.length === 2 && last2.every((n) => n.body.includes(ALERT_FAILED));
 }
-function ago(at: string, now: Date): string {
-  const m = Math.round((now.getTime() - Date.parse(at)) / 60_000);
-  if (m < 60) return `${Math.max(m, 1)} 分钟前`;
-  const h = (now.getTime() - Date.parse(at)) / 3_600_000;
-  return h < 24 ? `${h.toFixed(1)} 小时前` : `${(h / 24).toFixed(1)} 天前`;
-}
-
 /** t-119: the last time a call actually got through, and to which address. Nothing else counts as proof. */
 export function reachedProof(s: State): { value: string; at: string } | null {
   // t-134: the proof is only worth anything if the one who wrote it could not have been wrong or lying about it.
@@ -482,8 +511,10 @@ export function alertContact(s: State, now: Date = new Date()): Board["alert"] {
     // t-119 (pd 01:21/01:40)：有个字符串不等于送得到。只有真送到过一次才敢说它是通的，证的是**这个**地址；
     // 而且证得不能太旧——兜底久不响就等于没有。配上就落在「还没真发成功过」，不因形状对而跳过去。
     const proof = reachedProof(s);
-    if (proof && proof.value === at && !stale(proof.at, now) && !failedTwice(s, at)) return { status: "reachable", value: at, source: "given", since: proof.at, line: `你不在时会发到这里，最近一次成功是 ${ago(proof.at, now)}。` };
-    const seen = proof && proof.value === at ? `上次成功是 ${ago(proof.at, now)}。` : "";
+    if (proof && proof.value === at && !stale(proof.at, now) && !failedTwice(s, at)) return { status: "reachable", value: at, source: "given", since: proof.at, line: `你不在时会发到这里，${agoAt(proof.at, now)}成功过一次。` };
+    // t-180 · pd 09:17 选 C：时间短语一律在句首，一种骨架管四档。一个句框若只有某几档填得进去，
+    // 那不是那一档特殊，是句框错了——「最近一次成功是 刚刚。」不是中文，加一条特例也只是把它藏起来。
+    const seen = proof && proof.value === at ? `${agoAt(proof.at, now)}成功过一次。` : "";
     return { status: "unproven", value: at, source: "given", since: proof?.value === at ? proof.at : undefined, line: `记下了外呼地址，还没真发成功过——不知道你收不收得到。${seen}` };
   }
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
@@ -971,9 +1002,10 @@ export function sayReading(r: { surface: string; key: string; value: unknown; by
   if (!r.value || typeof r.value !== "object") return null;   // 判据 2：标量照旧
   const saying = sayingFor(r.surface, r.key);
   const said = saying?.say?.(r.value) ?? null;
-  const mins = Math.max(1, Math.round((now.getTime() - Date.parse(r.at)) / 60_000));
+  // t-180: 这一句过去永远只会说分钟（17 小时的读数说成「1052 分钟前」）。走同一道梯子。
+  const when = agoAt(r.at, now);
   return {
-    line: said ?? `${saying?.name ?? `${r.surface}:${r.key}`} 由 ${r.by} 在 ${mins} 分钟前记下`,
+    line: said ?? `${saying?.name ?? `${r.surface}:${r.key}`}，${when}由 ${r.by} 记下`,
     declared: said !== null,
     said_elsewhere: !!saying?.said_elsewhere,
   };
