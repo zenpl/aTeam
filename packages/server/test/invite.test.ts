@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../src/app.js";
 import { MemoryRegistry } from "../src/projects.js";
+import { CONTACT_ASK } from "@ateam/core";
 
 const HUMAN = "human";
 let app: ReturnType<typeof createApp>;
@@ -58,7 +59,7 @@ describe("t-042 · POST /invite/<code>/join", () => {
     expect(a.body.manual).toContain("# 角色 · pm");
     const b = (await j(await api(p.project, "/board", a.body.node_key, "pm"))).body;
     expect(b.focus.body).toBe("等 human 说这个项目是什么");
-    expect(b.needs_human.map((n: { kind: string; body: string; from: string }) => [n.kind, n.from, n.body])).toEqual([["ask", "pm", "这个项目是什么？说一句。"], ["ask", "pm", "你不在时怎么找你？给个邮箱或 webhook；也可以先不要"]]); // t-069: the second card
+    expect(b.needs_human.map((n: { kind: string; body: string; from: string }) => [n.kind, n.from, n.body])).toEqual([["ask", "pm", "这个项目是什么？说一句。"], ["ask", "pm", CONTACT_ASK]]); // t-069: the second card
     expect(b.readings.find((r: { surface: string; key: string }) => r.surface === "node" && r.key === "pm:能力").value).toEqual(["写仓库", "有网"]);
     expect(b.presence.find((x: { actor: string }) => x.actor === "pm").present).toBe(true);
     // again: same key, same role, nothing new in the log

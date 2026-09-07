@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -32,7 +32,7 @@ export function patchingRole(b: Board): string | null {
 
 /** The contact card (t-069): the instruction whose body is the S0 second question. */
 export function isContactCard(i: { body: string }): boolean {
-  return i.body === CONTACT_ASK;
+  return isContactAsk(i.body);   // t-117: a card sent before the rewording keeps its box
 }
 
 /**
