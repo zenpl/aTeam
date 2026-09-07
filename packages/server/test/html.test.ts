@@ -1641,3 +1641,29 @@ describe("t-190 · 人打开牌桌算他看过了", () => {
     expect(reduce(await w2.store.read()).read_upto.get(HUMAN), "打开牌桌把他读到哪儿抹掉了").toBe(i.id);
   });
 });
+
+/**
+ * t-188 判据 3：**没有默认的那种卡，此前一句期限都不说。**
+ *
+ * 「不点的话…到期」是带默认的卡才有的话；一张只有选项、没有默认的卡（迁移核对卡就是这种）到期会怎样是另一回事，
+ * 但「什么时候到期」照样是人该知道的。卡上现在带着那个时刻了（t-188 给 needs_human 补上 ack_by），页面用现成的
+ * UI.due 印一句——不新造措辞。
+ */
+describe("t-188 · 没有默认的卡也说得出什么时候到期", () => {
+  const w3 = server();
+  beforeAll(() => w3.start());
+  afterAll(() => w3.stop());
+
+  it("有选项没默认：印期限；有默认：印那句按真状态说的话，不重复印期限", async () => {
+    const due = new Date(Date.now() + 3600_000);
+    const plain = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "甲还是乙？", intent: "ask", options: ["甲", "乙"], ack_by: due.toISOString() });
+    const withDefault = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "丙还是丁？", intent: "ask", options: ["丙", "丁"], default: "丁", ack_by: due.toISOString() });
+    const html = await w3.authedPage();
+    const card = (id: string) => { const i = html.indexOf(`value="${id}"`); return html.slice(html.lastIndexOf("<article", i), html.indexOf("</article>", i)); };
+    // pd 10:39：正文用相对，绝对只进 title——两种卡说的都是「还有多久」，不是一个光秃秃的 11:52
+    expect(card(plain.id), "没有默认的卡一句期限都没说").toMatch(/期限 还有 \d+ 分钟/);
+    expect(card(withDefault.id)).toMatch(/不点的话，还有 \d+ 分钟到期，按 丁 执行。/);
+    expect(card(withDefault.id), "带默认的卡不该把期限印两遍").not.toContain("期限 ");
+    expect(card(plain.id), "正文里不该出现绝对时刻").not.toContain(due.toISOString().slice(11, 16));
+  });
+});

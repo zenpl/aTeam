@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -241,7 +241,14 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // 页面只负责印它算出来的那一句：还没到期说到期时刻，落下了说「你没点，已按默认 X 执行」，
         // 到期了却还没落下就照实说「过期了，默认还没生效」——那一句是故障态，修好之后应当永不出现。
         const say = i.says_default?.line;
-        out.push(form("/decide", "actions", id, `${buttons}${say ? `<span class="hint${i.says_default!.state === "stuck" ? " stuck" : ""}">${esc(say)}</span>` : ""}`));
+        // t-188：**没有默认的那种卡，此前一句期限都不说。**「不点的话…到期」是 says_default 的话，它只对带默认的
+        // 卡成立；一张只有选项、没有默认的卡（迁移核对卡就是）到期时会怎样是另一回事，但「什么时候到期」照样是
+        // 人该知道的。卡上现在带着这个时刻（board 的 ack_by / ack_by_again），所以这里用现成的 UI.due 印一句。
+        // t-190 退回待答的卡看的是重算后的那个期限——原来那个已经过去了，印它只会误导。
+        // pd 10:39：正文用相对，绝对只进 title。所以这里印的是「还有多久」，与带默认的卡那句同一个说法
+        // （core 的 until），不是一个光秃秃的 11:52。
+        const dueLine = say ? "" : `<span class="hint">${esc(UI.due(until(Date.parse(i.ack_by_again ?? i.ack_by) - Date.now())))}</span>`;
+        out.push(form("/decide", "actions", id, `${buttons}${say ? `<span class="hint${i.says_default!.state === "stuck" ? " stuck" : ""}">${esc(say)}</span>` : dueLine}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
         // the role's own instructions stay unacked for the node that comes up.
