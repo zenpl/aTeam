@@ -201,8 +201,10 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   if (asks.length || reopen) {
     out.push(`<section class="needs" id="needs-you"><h2>${UI.needsYou} <span class="count">${asks.length + (reopen ? 1 : 0)}</span></h2>`);
     if (reopen) {
+      // Reopened from the grey line: no instruction stands behind it, so it reads the same words the service would send.
+      const reQ = cardTitle({ body: CONTACT_ASK });
       out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span></div>`);
-      out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+      out.push(`<p class="q">${esc(reQ.title)}</p><p class="body">${esc(reQ.detail)}</p>`);
       out.push(contactForm("/fact", `<input type="hidden" name="key" value="${esc(ALERT_WEBHOOK_KEY)}">`, contact));
       out.push(`</article>`);
     }
@@ -211,9 +213,11 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
       const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
       if (isContactCard(i)) {
-        // t-069: 请你做, with an input. pd's title and body; the buttons are 记下 / 先不要.
+        // t-069: 请你做, with an input. t-118: the words are the card's own — the page keeps no second copy of the
+        // question, so pd changing the instruction changes what the person reads, and the log and the page cannot
+        // drift apart. The whole body shows (title + the rest), not folded behind 「细节」: it is short and it is the ask.
         out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
-        out.push(`<p class="q">${esc(UI.contactTitle)}</p><p class="body">${esc(UI.contactBody)}</p>`);
+        out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else if (isMigrationCard(i)) {
         // t-095: the counts are the question; they are read, not folded away behind 「细节」.
         out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
@@ -265,7 +269,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
-      ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
+      ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(cardTitle({ body: just.i.body }).title)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     // t-111 (pd 00:39): the reason is welcome but never required — the invitation costs nothing and adds no control,
     // it just points at the 说一句 box that is already there.

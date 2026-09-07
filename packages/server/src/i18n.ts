@@ -24,10 +24,10 @@ export const UI = {
   detail: "细节",
   youJust: "你刚定了：",
   // 起项目第二张卡：你不在时怎么找你 (t-069, pd 21:08)
-  contactTitle: "你不在时怎么找你？",
   // t-117 · pd 01:17: the body ends by saying what the button does. A card whose body teaches the opposite
   // of the button right above it undoes the button (pd: 正文与按钮是一体的，改了一个必须回头读另一个).
-  contactBody: "给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。",
+  // t-118: 卡上那句话只有一处出处——指令正文（core 的 CONTACT_ASK）。这里不再存第二份问句，
+  // 页面渲染时从卡自己的正文拆出标题与正文，pd 改一次就是全改。下面剩的都是按钮与占位符，不是问句。
   contactPlaceholder: "https://…",
   contactSave: "记下",
   contactSkip: "不要了", // t-111 (pd 00:39): this one closes the question for good
@@ -49,7 +49,6 @@ export const UI = {
   deaf: (min: number) => `没在听 ${min} 分钟`,
   deafNever: "没在听",
   undelivered: (n: number) => `${n} 条没送到`,
-  missingCard: (role: string, min: number, count: number) => `${role} 已经缺了 ${min} 分钟，手里有 ${count} 条指令。起一个 ${role}？`,
   started: "起好了",
 
   // 说一句
