@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -341,7 +341,8 @@ export function alertContact(s: State): Board["alert"] {
     if (!/^https:\/\/\S+$/.test(v.trim())) return { status: "misconfigured", value: v.trim(), source: "given", line: `外呼地址配了但发不出去：不是 https（${v.trim()}）` };
     return { status: "set", value: v.trim(), source: "given" };
   }
-  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && st.chosen?.option === CONTACT_SKIP);
+  // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
+  const skipped = [...s.instructions.values()].some((st) => st.instruction.body === CONTACT_ASK && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
 }
 
@@ -791,6 +792,37 @@ export function ambiguousLabels(b: Board): Set<string> {
   for (const t of tasks) {
     if (!t.label) continue;
     if ((byLabel.get(t.label) ?? []).length > 1 || (ids.has(t.label) && t.label !== t.id)) out.add(t.id);
+  }
+  return out;
+}
+
+/**
+ * t-107 (display only): what to call a role where a person reads it — its display name when the project gave it one,
+ * the id otherwise. A name that could be mistaken for another role's id, or that two roles share, carries the real id
+ * after it, by the same rule t-100 uses for tasks.
+ */
+export function roleNamer(b: Board): (id: string) => string {
+  const names = b.role_names ?? {};
+  const ids = new Set<string>([...Object.keys(names), ...(b.roles ?? []), ...b.presence.map((p) => p.actor)]);
+  const shared = new Map<string, number>();
+  for (const n of Object.values(names)) shared.set(n, (shared.get(n) ?? 0) + 1);
+  return (id: string) => {
+    const name = names[id];
+    if (!name) return id;
+    return (shared.get(name) ?? 0) > 1 || (ids.has(name) && name !== id) ? `${name} (${id})` : name;
+  };
+}
+
+/**
+ * t-107: role ids inside a sentence the service already wrote (a coverage gap, an allocation warning) — swap each
+ * whole id for the name people read. Only exact ids are touched, so a name that happens to contain one is left alone.
+ */
+export function nameRoles(text: string, name: (id: string) => string, ids: string[]): string {
+  let out = text;
+  for (const id of [...ids].sort((a, b) => b.length - a.length)) {
+    const shown = name(id);
+    if (shown === id) continue;
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "g"), shown);
   }
   return out;
 }
