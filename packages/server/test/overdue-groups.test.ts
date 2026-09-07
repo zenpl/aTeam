@@ -35,3 +35,51 @@ describe("t-140 · 三种不答，页面说 core 那一句", () => {
     expect(b.needs_human.map((c) => c.body).join(" ")).not.toContain("条没确认");
   });
 });
+
+describe("t-152 · 在途只留人有杠杆的那一堆", () => {
+  it("keeps what a push would clear and drops what already runs in production", async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3_600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    const finish = async (id: string, title: string, sha: string) => {
+      await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+      await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [`src/${id}.ts`] });
+      await emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha}：做完了` });
+      await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "跑过了" });
+    };
+    await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+    await finish("t-push", "推一次就没了", "1111111");
+    await finish("t-running", "已经在生产上跑着", "2222222");
+    await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.tasks",
+      value: { sha: "aaaaaaa1111", contained: ["t-running"], not_contained: ["t-push"], method: "逐件测" } });
+
+    const s = reduce(await store.read());
+    const b = board(s, HUMAN);
+    expect(b.release.counts.pending_deploy).toBe(1);
+    expect(b.release.counts.deployed_unverified).toBe(1);
+
+    const html = renderBoard(b, s, { sha: "abc1234", human: HUMAN });
+    const inflight = html.slice(html.indexOf("在途"), html.indexOf("谁在"));
+    // 人有杠杆：推一次它就变小 (pd 06:54)
+    expect(inflight).toContain("推一次就没了");
+    // 没有杠杆：只会单调增长，从任何界面上拿掉，留在我们自己的账上
+    expect(inflight).not.toContain("已经在生产上跑着");
+  });
+
+  it("a task verified somewhere other than production, whose code was never shipped, is still ours to push", async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3_600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
+    await emit({ kind: "task", op: "create", actor: "pm", task: "t-s", title: "只在预演上验过", criteria: ["能用"] });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-s", touches: ["src/s.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-s", evidence: "3333333：做完了" });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-s", surface: "staging", pass: true, evidence: "预演过了" });
+    const s = reduce(await store.read());
+    const b = board(s, HUMAN);
+    const html = renderBoard(b, s, { sha: "abc1234", human: HUMAN });
+    // it is in no release group at all, so an "include only pending_deploy" filter would have dropped it silently
+    expect(b.release.counts.deployed_unverified).toBe(0);
+    expect(html.slice(html.indexOf("在途"), html.indexOf("谁在"))).toContain("只在预演上验过");
+  });
+});

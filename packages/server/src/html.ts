@@ -435,7 +435,16 @@ export function inFlightOf(b: Board): { key: string; label: string; total: numbe
     const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
     return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? whyLine(task.blocked_on) : undefined };
   });
-  const elsewhere = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production")).map((tk) => ({ title: tk.shows ?? tk.title, owner: tk.owner })); // t-056: the owner's sentence when there is one
+  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
+  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
+  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
+  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
+  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
+  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
+  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
+  const elsewhere = (b.tasks.verified ?? [])
+    .filter((tk) => !tk.verified_on?.includes("production") && !running.has(tk.id))
+    .map((tk) => ({ title: tk.shows ?? tk.title, owner: tk.owner })); // t-056: the owner's sentence when there is one
   const groups = [
     { key: "working", label: UI.groups.working, items: sortRecent(b, "working", g("working")) },
     { key: "blocked", label: UI.groups.blocked, items: sortRecent(b, "blocked", g("blocked")) },
