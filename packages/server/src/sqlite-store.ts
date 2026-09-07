@@ -4,7 +4,7 @@ const { DatabaseSync } = (process as unknown as { getBuiltinModule(id: string): 
 import { mkdirSync, existsSync, statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import { append, SERVICE_ACTOR, PROJECT_SURFACE } from "@ateam/core";
-import type { EventStore, Event, Log, Cursor, Delivery } from "@ateam/core";
+import type { EventStore, Event, Log, Cursor, Delivery, LogMark } from "@ateam/core";
 import { randomBytes } from "node:crypto";
 import { hashKey, newKey, newCode, projectId, deriveNodeKey, INVITE_TTL_MS, OWNER_AGENT, type Registry, type Project, type KeyRecord, type Invite } from "./projects.js";
 
@@ -45,6 +45,7 @@ export class SqliteDb {
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, node_secret TEXT NOT NULL DEFAULT '');
       CREATE TABLE IF NOT EXISTS keys (hash TEXT PRIMARY KEY, project TEXT NOT NULL, role TEXT, agent_id TEXT, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, project TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS event_counts (project TEXT PRIMARY KEY, n INTEGER NOT NULL);
     `);
     const cols = (table: string) => (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -62,6 +63,10 @@ export class SqliteDb {
     }
     if (!cols("projects").includes("node_secret")) this.db.exec(`ALTER TABLE projects ADD COLUMN node_secret TEXT NOT NULL DEFAULT ''`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS events_project ON events (project, id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS deliveries_project_at ON deliveries (project, at)`); // t-128
+    // t-128: how many events each project holds, so the incremental reduction's one safety check is a lookup and not a
+    // scan. Counting the rows is what a fresh file (or one written before this table existed) pays, once, at open.
+    this.db.exec(`INSERT OR IGNORE INTO event_counts (project, n) SELECT project, COUNT(*) FROM events GROUP BY project`);
   }
 }
 
@@ -105,16 +110,24 @@ export class SqliteStore implements EventStore {
   }
 
   /**
-   * t-121: three small lookups instead of reading the whole log. The newest event id covers appends; the cursors of a
-   * handful of nodes cover pulls and deliveries — a reduction depends on those too, so a token that watched only
-   * events would go stale the moment someone pulled.
+   * t-128: the rows a reduction has not folded yet. Events come by id, deliveries from the last instant seen inclusive
+   * (they share timestamps, and applying one twice does nothing), cursors whole — there is one per node, not one per
+   * event. The count is the guard: if the store holds more events than the caller has folded, it rebuilds.
    */
-  async version(): Promise<string | null> {
+  async readSince(mark: LogMark | null): Promise<{ log: Log; mark: LogMark; events: number }> {
+    const rows = mark?.event
+      ? this.db.prepare("SELECT id, json FROM events WHERE project = ? AND id > ? ORDER BY id").all(this.project, mark.event)
+      : this.db.prepare("SELECT id, json FROM events WHERE project = ? ORDER BY id").all(this.project);
+    const events = (rows as { id: string; json: string }[]).map((r) => JSON.parse(r.json) as Event);
+    const drows = mark?.delivery
+      ? this.db.prepare("SELECT event_id, to_actor, at FROM deliveries WHERE project = ? AND at >= ?").all(this.project, mark.delivery)
+      : this.db.prepare("SELECT event_id, to_actor, at FROM deliveries WHERE project = ?").all(this.project);
+    const deliveries = (drows as { event_id: string; to_actor: string; at: string }[]).map((d) => ({ event_id: d.event_id, to: d.to_actor, at: d.at }));
+    const cursors = this.db.prepare("SELECT actor, last_event_id, at FROM cursors WHERE project = ?").all(this.project) as unknown as Cursor[];
     const last = this.db.prepare("SELECT id FROM events WHERE project = ? ORDER BY id DESC LIMIT 1").get(this.project) as { id: string } | undefined;
-    const cursors = (this.db.prepare("SELECT actor, last_event_id FROM cursors WHERE project = ? ORDER BY actor").all(this.project) as { actor: string; last_event_id: string | null }[])
-      .map((c) => `${c.actor}@${c.last_event_id ?? ""}`).join(",");
-    const deliveries = (this.db.prepare("SELECT COUNT(*) AS n FROM deliveries WHERE project = ?").get(this.project) as { n: number }).n;
-    return `${last?.id ?? ""}:${cursors}:${deliveries}`;
+    const newest = this.db.prepare("SELECT at FROM deliveries WHERE project = ? ORDER BY at DESC LIMIT 1").get(this.project) as { at: string } | undefined;
+    const events_total = ((this.db.prepare("SELECT n FROM event_counts WHERE project = ?").get(this.project) as { n: number } | undefined)?.n) ?? 0;
+    return { log: { events, cursors, deliveries }, mark: { event: last?.id ?? null, delivery: newest?.at ?? null }, events: events_total };
   }
 
   async since(after: string | null): Promise<Event[]> {
@@ -126,6 +139,7 @@ export class SqliteStore implements EventStore {
 
   async appendRaw(e: Event): Promise<void> {
     this.db.prepare("INSERT INTO events (id, at, actor, kind, json, project) VALUES (?, ?, ?, ?, ?, ?)").run(e.id, e.at, e.actor, e.kind, JSON.stringify(e), this.project);
+    this.db.prepare("INSERT INTO event_counts (project, n) VALUES (?, 1) ON CONFLICT(project) DO UPDATE SET n = n + 1").run(this.project);
   }
 
   async setCursor(c: Cursor): Promise<void> {

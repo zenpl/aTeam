@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -117,27 +117,25 @@ export function createApp(opts: ServerOptions) {
   };
 
   /**
-   * t-121 (P0): every request rebuilt the world from scratch — read the whole log out of sqlite, JSON.parse every row,
-   * reduce it, derive the board. All of that is synchronous, so it does not merely make one request slow, it stops the
-   * instance serving anyone else while it runs. `GET /health` does no work at all and was still measured at 24.7s and
-   * 28.9s: that is what a blocked event loop looks like from outside.
+   * t-121 (P0), finished by t-128: every request rebuilt the world from scratch — read the whole log out of sqlite,
+   * JSON.parse every row, reduce it, derive the board. All of that is synchronous, so it does not merely make one
+   * request slow, it stops the instance serving anyone else while it runs.
    *
-   * So a request no longer redoes what the last one just did. The key is the log's own last event id, which costs an
-   * index lookup: if anything appended — by this process or another — the key changes and the work is redone. A store
-   * that cannot answer that question cheaply simply does not get cached, and behaves exactly as it did before.
+   * t-121 answered that with a cache keyed on the log's last event: a burst of callers shared one reduction, but the
+   * next append threw it away and the next caller paid for the whole log again. t-128 replaces the cache with a
+   * reduction that is never thrown away: it asks the store what has landed since it last looked and folds only that,
+   * then settles it at the moment being asked about. There is one per project, it belongs to the read path, and
+   * nothing invalidates it — it cannot be stale, because catching up is the first thing every answer does.
+   *
+   * It is settled in place, so it must not be handed to anyone who holds it across an await while another caller could
+   * settle it at a different moment. The write path therefore keeps its own (in core's `appendFrom`); the two share the
+   * algorithm, not the state. A store too old to answer `readSince` falls back to reducing the whole log, as before.
    */
-  const cached = new Map<string, { key: string; state: State }>();
+  const reading = new Map<string, Reduction>();
   const stateFor = async (projectId: string, store: EventStore, at: Date = now()): Promise<State> => {
-    const id = await store.version?.().catch(() => null);
-    // A reduction is of a log *at a moment*: it decides what has expired and who has gone quiet. So the key is both —
-    // the log's last event and the second it was read in. Within one second a burst of callers share one reduction;
-    // a caller a second later, or after anything appended, gets its own.
-    const key = id === null || id === undefined ? null : `${id}@${Math.floor(at.getTime() / 1000)}`;
-    const hit = key ? cached.get(projectId) : undefined;
-    if (hit && hit.key === key) return hit.state;
-    const state = reduce(await store.read(), at);
-    if (key) cached.set(projectId, { key, state });
-    return state;
+    let r = reading.get(projectId);
+    if (!r) reading.set(projectId, (r = new Reduction(store)));
+    return r.at(at);
   };
 
   // A role that has gone quiet with work in its hands: a card for the human, at most one per role per absence (pm 14:15).
