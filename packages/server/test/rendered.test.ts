@@ -395,8 +395,14 @@ describe("t-142 · core 已经有一句了，渲染方不许再拼一句", () =>
     const score = (x: string) => Math.max(...sentences.map((c) => similarity(x, c)));
     const t126 = "你不在时发到";              // i18n@babae6d contactTo, with its ${v} hole, as this check sees it
     const innocent = "填一个 https:// 开头的 webhook 地址";   // i18n@babae6d contactInvalid, guilty of nothing
+    // frontend 09:17: 它改了 core 的句子，这两个分数就跟着动了（0.182/0.179 → 0.200/0.180），写死的 0.01 于是红了。
+    // 红的不是结论，是写法：**我原来钉的是一次测量的余数，不是那个论证需要的东西**。论证要的是「没有任何一道
+    // 有用的线分得开这两句」，所以钉的应该是这个——两句的间距，比它们各自离 DUP_BAR 的距离小一个数量级以上。
+    // 语料再变，这个关系仍然成立；哪天它不成立了，那才是真的该重看这条结论。
+    const gap = Math.abs(score(t126) - score(innocent));
+    const room = DUP_BAR - Math.max(score(t126), score(innocent));
     expect(score(t126)).toBeLessThan(DUP_BAR);
-    expect(Math.abs(score(t126) - score(innocent))).toBeLessThan(0.01);   // no bar can tell these two apart
+    expect(gap * 10).toBeLessThan(room);   // 间距比到线的距离小一个数量级：线放在哪儿都同时抓到或同时放过
     expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${t126}";` }], DUP_BAR)).toEqual([]);
     expect(duplicated(sentences, [{ name: "i18n.ts", src: `const x = "${innocent}";` }], DUP_BAR)).toEqual([]);
     // and a sentence core never computed at all is nobody's duplicate
