@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
+import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -834,7 +834,8 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain('<p class="recent">你刚定了：<b>找你用 https://hooks.example/me</b>');
-      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/me</p>');
+      // t-126: an address just recorded has never delivered anything — the line says that, it does not promise delivery
+      expect(html).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       const readings = (await (await v.api("/board")).json()).readings;
       expect(readings.find((x: { surface: string; key: string }) => x.surface === "project" && x.key === "alert.webhook")?.value).toBe("https://hooks.example/me");
     } finally { await v.stop(); }
@@ -867,13 +868,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect((await v.form("/fact", { key: "deployed.sha", value: "https://h.example/x" }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(303);
       html = await v.page({ cookie });
-      expect(html).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/abc</p>');
+      expect(html).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       // reopened with an address: the input is prefilled
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
       expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
-      expect((await v.page({ cookie })).includes("你不在时发到 https://hooks.example/xyz")).toBe(true);
+      expect((await v.page({ cookie })).includes("记下了外呼地址，还没真发成功过——不知道你收不收得到。")).toBe(true);
     } finally { await v.stop(); }
   });
 
@@ -898,13 +899,13 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
       expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
-      expect(await v.page({ cookie })).toContain("你不在时发到 https://hooks.example/me");
+      expect(await v.page({ cookie })).toContain("记下了外呼地址，还没真发成功过——不知道你收不收得到。");
       // an address recorded any other way also counts as on
       const u = server();
       await u.start();
       try {
         await u.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/x" });
-        expect(await u.authedPage()).toContain('<p class="meta contact-line">你不在时发到 https://hooks.example/x</p>');
+        expect(await u.authedPage()).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       } finally { await u.stop(); }
     } finally { await v.stop(); }
   });
@@ -1503,6 +1504,58 @@ describe("t-125 · 按钮的标签就是它送出的值", () => {
       expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
       const after = await v.page({ cookie });
       expect(after).not.toContain(CONTACT_ASK);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配」", () => {
+  const line = (html: string) => /<p class="meta contact-line">(.*?)<\/p>/.exec(html)?.[1] ?? "(none)";
+  const REACHED = "alert.reached";
+
+  it("four states, four sentences: an address never delivered to is never described as one that works", async () => {
+    // 未配置
+    const none = server();
+    await none.start();
+    try {
+      expect(line(await none.authedPage())).toBe("你不在时，我们找不到你。");
+    } finally { await none.stop(); }
+
+    // 形状对、从没送到过 (t-119's unproven): the state this whole task exists for
+    const un = server();
+    await un.start();
+    try {
+      await un.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" });
+      const l = line(await un.authedPage());
+      expect(l).toBe("记下了外呼地址，还没真发成功过——不知道你收不收得到。");
+      // the promise this replaced, in either wording: the page must not claim a call-out will arrive
+      expect(l).not.toContain("你不在时发到");
+      expect(l).not.toContain("会发到这里");
+      expect(l).not.toContain("已配置");
+      expect(l).not.toContain("https://hooks.example/team");
+
+      // 验过能送到: only a real delivery moves it, and then the sentence changes
+      await un.post("pm", { kind: "reading", surface: "project", key: REACHED, value: "https://hooks.example/team", method: "外呼 全队停摆 真的送到了（HTTP 200）" });
+      expect(line(await un.authedPage())).toMatch(/^你不在时会发到这里，最近一次成功是 .+。$/);
+
+      // a different address is not covered by that proof: back to 还没真发成功过
+      await un.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/other" });
+      expect(line(await un.authedPage())).toContain("还没真发成功过");
+    } finally { await un.stop(); }
+  });
+
+  it("the page says core's sentence rather than deriving one, and falls back honestly on a server that has none", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/team" });
+      const b = JSON.parse(await (await v.api("/board?full=1")).text()) as Board;
+      // whatever core computed is what the human reads: no second wording to drift from (t-119's lesson)
+      expect(line(await v.authedPage())).toBe(b.alert!.line);
+      // an older server sends no alert at all: say what is true without it, never the promise
+      expect(contactLine(undefined, "https://hooks.example/team")).toBe("记下了外呼地址，这台服务说不出有没有真发成功过。");
+      expect(contactLine(undefined, null)).toBe("你不在时，我们找不到你。");
+      // 不要了 leaves no address and nothing to promise
+      expect(contactLine({ status: "skipped" }, null)).toBe("你不在时，我们找不到你。");
     } finally { await v.stop(); }
   });
 });
