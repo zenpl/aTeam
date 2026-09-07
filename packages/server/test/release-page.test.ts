@@ -103,8 +103,16 @@ describe("t-133 · 上线详情页", () => {
       const held = await v.page();
       // pd 05:12: core's sentence, with nothing of ours in front of it — 按住 means someone deliberately held it
       expect(held).toContain("推它会把");
+      // Both sides of this conflict were right and neither is dropped: dev's case keeps the sentence current, mine
+      // keeps the page from adding words of its own. The third assertion is what makes the first two survive the
+      // next rewording — it compares the page against what core actually computed, so a wording decision can never
+      // again silently invalidate a verified test (pm 06:15).
+      const board = await (await fetch(`${v.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa" } })).json() as Board;
+      const line = board.batches.find((x) => x.name === "2.10")!.line;
+      expect(line).not.toBe("");
+      expect(held).toContain(line);
+      expect(held).toContain("从生产上退回去。重装，别推。");
       expect(held).not.toContain("按住没发");
-      expect(held).toContain("从生产上退回去；要重装，别推。");
       // the page must not have written a second sentence of its own about the same thing
       expect(held).not.toContain("这批不能推");
     } finally { await v.stop(); }

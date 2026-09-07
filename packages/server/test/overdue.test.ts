@@ -43,7 +43,7 @@ describe("t-139 · 三态到得了读的人手里", () => {
     expect(g.listening.count).toBe(2);
     expect(g.listening.line).toBe("在听，2 条没确认");
     expect(g.missing.roles).toContain("qa");
-    expect(g.missing.line).toMatch(/^缺人 \d+ 分钟，\d+ 条没送到$/);
+    expect(g.missing.line).toBe("从没读过日志，1 条没送到");   // qa never pulled: no moment to count from
 
     // the cards the service raised: about qa, never about release — release is right here
     const cards = b.needs_human.filter((c) => missingRoleOf(c.body));
@@ -68,7 +68,7 @@ describe("t-139 · 三态到得了读的人手里", () => {
     const b = await board();
     const card = b.needs_human.find((c) => missingRoleOf(c.body) === "qa");
     expect(card).toBeTruthy();
-    expect(card!.body).toMatch(/^qa (缺人|没在听) \d+ 分钟，\d+ 条没送到/);
+    expect(card!.body).toMatch(/^qa (从没读过日志|缺人 \d+ 分钟|有 \d+ 分钟没读日志了)，\d+ 条没送到/);
     expect(card!.from).toBe(SERVICE_ACTOR);
   });
 });

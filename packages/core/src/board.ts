@@ -299,7 +299,10 @@ export interface BoardOverdueGroup {
   roles: string[];
   /** How many overdue instructions their recipients are sitting on. */
   count: number;
-  /** How long the longest-gone recipient has been out of touch, in seconds; null when they are listening. */
+  /**
+   * How long the longest-gone recipient has been out of touch, in seconds. `null` when there is no such fact — the
+   * recipient is listening, or has never read the log at all and so there is no moment to count from.
+   */
   away_s: number | null;
   /** The instruction ids, so a reader can go and look. */
   instructions: string[];
@@ -468,12 +471,19 @@ export function contactAskAnswered(s: State, i: Instruction): boolean {
  * (t-118). The remedy differs with the state and so does the sentence: a role nobody is running has to be started;
  * a node that is alive but no longer pulling has to be listening again, and starting a second one is the crude way.
  */
-export function missingCard(role: string, status: "missing" | "deaf", awayMin: number, count: number): string {
+export function missingCard(role: string, status: "missing" | "deaf", awayMin: number | null, count: number): string {
   // The card asks the human for the one thing a human can do. What separates the two states is what is *true*, not a
-  // second instruction: a deaf node is still talking, and saying so is what stops the reader thinking it has died.
+  // second instruction: this node is still writing, and saying so is what stops the reader concluding it has died.
+  // pd 06:04 retired 「没在听」 for the verb we can actually observe — whether it has come and read the log.
+  //
+  // `awayMin` is null when the role has never read the log at all, and then there is no such thing as how long it has
+  // been away — there is no moment to count from. Both sides of this used to invent one anyway, and differently: the
+  // board said 1 minute (a floor of one on zero) and the card said 10 (the length of the presence window), for the
+  // same role at the same instant (qa 06:07). Saying what is missing is the rule this repo already has (t-091).
+  const been = awayMin === null ? "从没读过日志" : status === "deaf" ? `有 ${awayMin} 分钟没读日志了` : `缺人 ${awayMin} 分钟`;
   return status === "deaf"
-    ? `${role} 没在听 ${awayMin} 分钟，${count} 条没送到——它还在说话，只是收不到。起一个 ${role}？`
-    : `${role} 缺人 ${awayMin} 分钟，${count} 条没送到。起一个 ${role}？`;
+    ? `${role} ${been}，${count} 条没送到——它还在写，只是没来读。起一个 ${role}？`
+    : `${role} ${been}，${count} 条没送到。起一个 ${role}？`;
 }
 
 /**
@@ -481,7 +491,7 @@ export function missingCard(role: string, status: "missing" | "deaf", awayMin: n
  * The older openings stay recognised: cards sent before t-139 are still in the log and still name their role.
  */
 export function missingRoleOf(body: string): string | undefined {
-  return /^(\S+) (已经缺了|没在听了|没在听|缺人|可能失联) /.exec(body)?.[1];
+  return /^(\S+) (?:(已经缺了|没在听了|没在听|缺人|可能失联) |有 \d+ 分钟没读日志了|从没读过日志)/.exec(body)?.[1];
 }
 
 /** Is nobody listening as this role: no pull within the listen window? Never pulled counts as missing (t-047). */
@@ -825,9 +835,17 @@ export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
     const away = p?.idle_pull_s ?? null;
     if (p?.status !== "listening" && away !== null && (g.away_s === null || away > g.away_s)) g.away_s = away;
   }
-  const mins = (sec: number | null) => Math.max(1, Math.round((sec ?? 0) / 60));
-  if (out.missing.count) out.missing.line = `缺人 ${mins(out.missing.away_s)} 分钟，${out.missing.count} 条没送到`;
-  if (out.deaf.count) out.deaf.line = `没在听 ${mins(out.deaf.away_s)} 分钟，${out.deaf.count} 条没送到`;
+  // null is not zero: a role that has never read the log has no "how long" to report, and the board says that rather
+  // than rounding an absent fact up to one minute (qa 06:07).
+  const mins = (sec: number) => Math.max(1, Math.round(sec / 60));
+  if (out.missing.count)
+    out.missing.line = out.missing.away_s === null
+      ? `从没读过日志，${out.missing.count} 条没送到`
+      : `缺人 ${mins(out.missing.away_s)} 分钟，${out.missing.count} 条没送到`;
+  if (out.deaf.count)
+    out.deaf.line = out.deaf.away_s === null
+      ? `从没读过日志，${out.deaf.count} 条没送到`
+      : `有 ${mins(out.deaf.away_s)} 分钟没读日志了，${out.deaf.count} 条没送到`;
   if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条没确认`;
   return out;
 }
@@ -924,12 +942,17 @@ export function deployedTasksFact(s: State): { sha: string; contained: string[];
 /**
  * t-129 (judged, then said). pd 02:53 asked for the batch to expire by itself; pm asked that the expiry say which of
  * two things it is, because they need opposite actions: one is "pack it again", the other is "do not push this".
- * The wording is pd's; it lives here so the page and the CLI say the same words (t-118).
+ *
+ * The words are pd's, set at 05:01, and they live here so the page and the CLI say the same ones (t-118). Two things
+ * pd decided against that an earlier draft had: neither sentence names the new head — 「生产已经往前走了」 is what the
+ * reader needs — and 「重装，别推」 stays, because it is the action, and pm repeated a dead sha three times for want
+ * of it. None of the three is a card: they appear in front of whoever is about to push, at the moment they are about
+ * to do it.
  */
 export const BATCH_LINES = {
-  stale: (base: string, head: string) => `这批以 ${base.slice(0, 7)} 为底，生产已是 ${head.slice(0, 7)}，重装一次即可。`,
-  rollback: (base: string, head: string, loses: string[]) =>
-    `这批以 ${base.slice(0, 7)} 为底，生产已是 ${head.slice(0, 7)}，推它会把 ${loses.join("、")} 从生产上退回去；要重装，别推。`,
+  stale: (base: string) => `这批是以 ${base.slice(0, 7)} 为底装的，生产已经往前走了；重装一次就能把新验的一起带上。`,
+  rollback: (base: string, loses: string[]) =>
+    `这批是以 ${base.slice(0, 7)} 为底装的，推它会把 ${loses.join("、")} 从生产上退回去。重装，别推。`,
   unknown: (why: string) => `这批是不是还能推，现在算不出来：${why}。`,
 };
 
@@ -981,7 +1004,7 @@ export function batches(s: State, deployed: string | null, why: string | null, f
     } else {
       loses = fact.contained.filter((t) => !contains.includes(t));
       state = loses.length ? "rollback" : "stale";
-      line = loses.length ? BATCH_LINES.rollback(v.base, deployed, loses) : BATCH_LINES.stale(v.base, deployed);
+      line = loses.length ? BATCH_LINES.rollback(v.base, loses) : BATCH_LINES.stale(v.base);
     }
     out.push({ name, sha: v.sha, base: v.base, contains, state, loses, line, at: r.reading.at });
   }

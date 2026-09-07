@@ -65,7 +65,7 @@ describe("t-063 · /_test/clock and /_test/run", () => {
     await w.post("/events", { kind: "instruction", to: "dev", body: "做 t-1", ack_by: new Date(Date.now() + 60_000).toISOString() });
     const run2 = await (await w.post("/_test/run", {})).json();
     expect(run2.ran[0].reminded).toBeGreaterThanOrEqual(1);
-    expect(((await w.store.read()).events as Event[]).some((e) => e.kind === "instruction" && e.actor === SERVICE_ACTOR && /dev 缺人|dev 没在听/.test(e.body))).toBe(true);
+    expect(((await w.store.read()).events as Event[]).some((e) => e.kind === "instruction" && e.actor === SERVICE_ACTOR && /dev 缺人|dev 从没读过日志|dev 有 \d+ 分钟没读日志/.test(e.body))).toBe(true);
     // a bad offset is 400; the hooks need the admin key
     expect((await w.post("/_test/clock", { offset: "soon" })).status).toBe(400);
     expect((await fetch(`${w.base}/_test/run`, { method: "POST" })).status).toBe(401);

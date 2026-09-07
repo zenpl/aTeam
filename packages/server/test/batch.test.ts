@@ -50,14 +50,15 @@ describe("t-129 · 批次在牌桌上说得出为什么过期与下一步", () =
     expect(a8.state).toBe("rollback");
     expect(a8.loses).toEqual(["t-080", "t-079a"]);
     expect(a8.line).toContain("推它会把 t-080、t-079a 从生产上退回去");
-    expect(a8.line).toContain("别推");
+    expect(a8.line).toContain("重装，别推");
     // 8b carries everything production carries: it only needs packing again
     expect(b8.state).toBe("stale");
     expect(b8.loses).toEqual([]);
-    expect(b8.line).toContain("重装一次即可");
+    expect(b8.line).toContain("重装一次就能把新验的一起带上");
     expect(b8.line).not.toContain("别推");
     // both name what they were packed on and where production actually is
-    for (const x of [a8, b8]) { expect(x.line).toContain(OLD.slice(0, 7)); expect(x.line).toContain(NEW.slice(0, 7)); }
+    // pd 05:01: each names what it was packed on; neither names the new head — 生产已经往前走了 is what the reader needs
+    for (const x of [a8, b8]) { expect(x.line).toContain(OLD.slice(0, 7)); expect(x.line).not.toContain(NEW.slice(0, 7)); }
   });
 
   it("小板上一个字不少：不能推的那一批正是不该被裁掉的东西", async () => {

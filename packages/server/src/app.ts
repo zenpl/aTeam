@@ -155,12 +155,13 @@ export function createApp(opts: ServerOptions) {
         const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
         if (lastAck && at.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
         const last = state.presence.get(role)?.last_pull;
-        const minutes = last ? Math.round((at.getTime() - Date.parse(last)) / 60_000) : Math.round(PRESENCE_WINDOW_MS / 60_000);
+        // never read the log: there is no moment to count from, so the card says that rather than inventing a duration
+        const minutes = last ? Math.max(1, Math.round((at.getTime() - Date.parse(last)) / 60_000)) : null;
         // t-139 (pd 05:15): which of pd's three words applies is the *presence* state, not a guess from whether
         // anything is undelivered — those are different questions, and answering the first with the second is how a
         // node that was plainly still talking got called 缺人. A listening role never reaches here at all.
         const status = b.presence.find((p) => p.actor === role)?.status === "deaf" ? "deaf" : "missing";
-        const body = missingCard(role, status, Math.max(1, minutes), undelivered?.count ?? overdue.length);
+        const body = missingCard(role, status, minutes, undelivered?.count ?? overdue.length);
         const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
       }
