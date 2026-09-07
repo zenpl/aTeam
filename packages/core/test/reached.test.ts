@@ -72,6 +72,6 @@ describe("t-134 · only the service can prove it reached anyone", () => {
     await s.appendRaw({ id: "01FORGED2", at: at(1).toISOString(), kind: "reading", actor: "frontend", surface: PROJECT_SURFACE, key: ALERT_REACHED_KEY, value: AT } as Event);
     const b = board(reduce(await s.read(), at(2)), HUMAN, at(2));
     expect(b.alert!.line).not.toContain("会发到这里");
-    expect(JSON.stringify(b)).not.toContain("最近一次成功是");
+    expect(JSON.stringify(b)).not.toContain("成功过一次");
   });
 });

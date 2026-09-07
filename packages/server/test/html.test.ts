@@ -1560,7 +1560,7 @@ describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配�
       // t-134: only the service's own record counts, and no key may speak as the service — so this is written the way
       // alerts.ts writes it, from inside, after a call that actually landed.
       await append(un.store, { kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: REACHED, value: "https://hooks.example/team", method: "外呼 全队停摆 真的送到了（HTTP 200）" }, { human: HUMAN });
-      expect(line(await un.authedPage())).toMatch(/^你不在时会发到这里，最近一次成功是 .+。$/);
+      expect(line(await un.authedPage())).toMatch(/^你不在时会发到这里，.+成功过一次。$/);
 
       // a different address is not covered by that proof: back to 还没真发成功过
       await un.post("pm", { kind: "reading", surface: "project", key: "alert.webhook", value: "https://hooks.example/other" });
