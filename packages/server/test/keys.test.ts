@@ -193,14 +193,43 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     // 判据 3（pd 01:17 定稿）：认不出时说清该粘什么形态，给一个假值例子；判据 4：不回显钥匙
     const wrong = await (await enter(`${p.ownerUrl}zzz`)).text();
     expect(wrong).not.toContain(p.ownerKey);
-    expect(wrong).toContain("这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。");
+    // pd 01:23：这一条是「地址对、k= 也在、钥匙不对」，所以说的是那个形状，不是通用的那句
+    expect(wrong).toContain("像一条地址，k= 那一段也在，但这张牌桌不认那把钥匙。");
     expect(wrong).not.toContain("token 不对");                       // 不用他手上没有的那个词
     expect(wrong).not.toContain("再试一次");                          // 不告诉他重来，告诉他形态
     expect(wrong).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");   // 假值、代码体
     expect(wrong).not.toMatch(/<a[^>]*ateam\.fly\.dev\/p\/demo/);   // 例子不做成链接：点不到
-    // pd 01:17 ③「粘错不清空」与 pd 01:02「钥匙一字不回显」撞了，先按已验收的后者做：输入框不回显任何东西
+    // pd 01:23 裁定：碰到秘密的那条赢——不回显任何原文；要让人知道错在哪，就说形状不说内容
     expect(wrong).toMatch(/<input type="password" name="token"/);
     expect(wrong).not.toContain("value=\"http");
+  });
+
+  it("pd 01:23：认不出时说形状不说内容，形状描述里不出现原文的任何片段", async () => {
+    const p = await fresh("说形状项目");
+    const url = new URL(p.ownerUrl);
+    const enter = async (pasted: string) => (await fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: pasted }), redirect: "manual" })).text();
+    // 一条地址，但没有 k=
+    expect(await enter(`${url.origin}${url.pathname}`)).toContain("像一条地址，但没找到 k= 那一段。");
+    // 一条地址，k= 也在，但钥匙不对
+    expect(await enter(`${url.origin}${url.pathname}?k=nk_${"x".repeat(32)}`)).toContain("像一条地址，k= 那一段也在，但这张牌桌不认那把钥匙。");
+    // 一段钥匙，长度不对
+    expect(await enter("nk_tooshort")).toContain("像一段钥匙，但长度对不上。");
+    // 一段钥匙，长度也对，但不认
+    expect(await enter(`nk_${"y".repeat(32)}`)).toContain("像一段钥匙，长度也对，但这张牌桌不认它。");
+    // 一整段字，里面根本没有 k=
+    expect(await enter("他发给我的那条消息里好像没有钥匙这种东西我把整段都粘过来了")).toContain("这一整段里没有 k=。");
+    // 说不出形状时退回 01:17 那句加例子
+    const short = await enter("abc");
+    expect(short).toContain("这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。");
+    // 三条约束：例子始终在；原文的任何片段都不出现；输入框清空
+    for (const [pasted, page] of [["abc", short], ["nk_tooshort", await enter("nk_tooshort")]] as const) {
+      expect(page).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");
+      expect(page).not.toContain(pasted.slice(0, 6));
+      expect(page).toMatch(/<input type="password" name="token"/);
+      expect(page).not.toMatch(/name="token"[^>]*value=/);
+    }
+    // 而含着真钥匙的那种粘贴，页面里一个字都不出现
+    expect(await enter(`${p.ownerUrl}zzz`)).not.toContain(p.ownerKey.slice(4, 20));
   });
 
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {

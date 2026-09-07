@@ -184,6 +184,15 @@ export const UI = {
   tokenWrong: "这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。",
   /** 完整形态、明显的假值，让人一眼对照；不拿真项目名当例子。 */
   tokenExample: "https://ateam.fly.dev/p/demo/?k=xxxxxxxx",
+  /**
+   * t-115 (pd 01:23)：说形状，不说内容。回显是让人自己去 diff，说形状是直接告诉他差在哪；而一次被拒的粘贴里可能
+   * 正含着真钥匙，所以这些句子里不出现原文的任何片段——长度、有没有 k= 这类判断可以说，字符不可以。
+   */
+  shapeNoKey: "像一条地址，但没找到 k= 那一段。",
+  shapeKeyUnknown: "像一条地址，k= 那一段也在，但这张牌桌不认那把钥匙。",
+  shapeKeyShort: "像一段钥匙，但长度对不上。",
+  shapeKeyUnknownBare: "像一段钥匙，长度也对，但这张牌桌不认它。",
+  shapeNoKeyAnywhere: "这一整段里没有 k=。",
   unauthorized: "这个页面需要项目 token。请打开一次",
   unauthorizedTail: "，之后会保存在 cookie 里。",
 

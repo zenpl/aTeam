@@ -673,19 +673,41 @@ export function unauthorizedPage(): string {
 }
 
 /** The token page: the only thing on it is a token box; the hidden fields carry the action the human clicked. */
+/** The body of a key: `nk_`/`ak_` plus this many base64url characters. Only its length is ever spoken of. */
+export const KEY_BODY_LEN = 32;
+
+/**
+ * t-115 (pd 01:23): say the **shape** of what was pasted, never its content. Telling someone "it looks like an address
+ * but there is no k= in it" is more use than handing their own text back for them to diff — and a rejected paste may be
+ * carrying a real key, so not one character of it comes back to the page. Length and "is there a k=" are shape;
+ * characters are content. Null when we cannot say anything true about the shape: then the caller falls back to the
+ * plain sentence and the example.
+ */
+export function pasteShape(pasted: string): string | null {
+  const t = pasted.trim();
+  if (!t) return null;
+  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || /^\/?[\w./-]+\?/.test(t);
+  const hasKeyParam = /[?&](?:k|token)=[^&#\s]/i.test(t);
+  if (looksLikeUrl) return hasKeyParam ? UI.shapeKeyUnknown : UI.shapeNoKey;
+  const bare = /^(?:nk|ak)_([A-Za-z0-9_-]*)$/.exec(t);
+  if (bare) return bare[1].length === KEY_BODY_LEN ? UI.shapeKeyUnknownBare : UI.shapeKeyShort;
+  if (!/[?&]?(?:k|token)=/i.test(t) && [...t].length >= 12) return UI.shapeNoKeyAnywhere;   // 一整段字，里面根本没有 k=
+  return null;
+}
+
 /**
  * t-115 (pd 01:17) 的第三条约束「粘错时不清空输入框」这里**没有做**，因为它与 pd 01:02 的另一条撞了：一次被拒的
  * 粘贴里照样可能含着一把真钥匙（地址对、末尾多几个字符就够），而那一条说钥匙一个字都不回显，t-110 有测试守着。
  * 我试过只回显形态（k= 后面换圆点），但那仍然要把粘进来的其余内容原样打回页面，同一条测试照样红。两条规矩谁让步
  * 归 pd，我不替它选：先按已经验收过的那条（不回显）做，冲突已报给 pd。
  */
-export function tokenPage(fields: Record<string, string>, wrong = false, base = ""): string {
+export function tokenPage(fields: Record<string, string>, wrong = false, base = "", shape: string | null = null): string {
   const hidden = Object.entries(fields).filter(([k]) => k !== "token").map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join("");
   return `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${UI.tokenTitle} · ${UI.title}</title>
 <style>${CSS}</style></head>
 <body><main class="token-page"><header><h1>${UI.header}</h1></header>
-<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${UI.tokenWrong}</p><p class="why">例如 <code>${esc(UI.tokenExample)}</code></p>` : ""}
+<section class="now"><h2>${UI.tokenTitle}</h2><p>${UI.tokenLead}</p>${wrong ? `<p class="why">${esc(shape ?? UI.tokenWrong)}</p><p class="why">例如 <code>${esc(UI.tokenExample)}</code></p>` : ""}
 <form method="post" action="${esc(base)}/token" class="line">${hidden}<input type="password" name="token" aria-label="${UI.tokenLabel}" autofocus autocomplete="off" required><button class="btn primary" type="submit">${UI.tokenSubmit}</button></form>
 </section></main></body></html>
 `;
