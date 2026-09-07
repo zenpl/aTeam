@@ -64,8 +64,10 @@ describe("t-133 · 上线详情页", () => {
       await task(v, "t-1", "灰字", "ccccccc3333", "verified");
       await task(v, "t-2", "按钮", "ccccccc3333", "verified");
       await task(v, "t-3", "外呼", "ccccccc3333", "done");
-      // and a unit of its own that is moving
+      // and a unit of its own that is moving — which needs the board to know its code is not in production yet,
+      // otherwise nothing is waiting to ship and 这次能带上 is correctly absent (t-078's three states)
       await task(v, "t-9", "接缝", "ddddddd4444", "verified");
+      await v.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-9"], method: "逐件测" } });
       const html = await v.page();
       expect(html).toContain("必须一起上的几件");
       expect(html).toContain("还没验，带不上：t-3");

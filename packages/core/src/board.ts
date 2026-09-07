@@ -1010,14 +1010,23 @@ export interface ReleaseUnit {
   tasks: { id: string; title: string; shows?: string; owner?: string; status: string; passed: boolean }[];
   /** The members that are not verified on repo: the reason the whole string is not moving. */
   held_by: { id: string; title: string; shows?: string; owner?: string; status: string }[];
-  /** Members already verified on repo and not yet in production: what this unit would actually bring. */
+  /**
+   * What this unit would actually put into production: members whose code is not there yet (t-078's pending_deploy).
+   * Not "verified but not verified on production" — that is deployed_unverified, whose code is already running, and
+   * counting it here said 28 when the board said 9 (qa 05:31).
+   */
   brings: number;
+  /** True when the board cannot place the tasks at all, so `brings` is not an answer (t-078's unknown). */
+  brings_unknown?: boolean;
   /** When the earliest member of this string was finished: how long it has been waiting. */
   since: string;
 }
 
 export function releaseUnits(b: Board): ReleaseUnit[] {
-  const shipped = new Set((b.release.candidates ?? []).map((c) => c.task));
+  // What is actually waiting to ship is t-078's pending_deploy, the same set the board's 「N 件验过了，等一次上线」
+  // counts. Absent means the board could not work it out (no containment fact): then this page must not invent one.
+  const pending = b.release.pending_deploy;
+  const shipped = new Set((pending ?? []).map((c) => c.task));
   const doneAt = new Map((b.release.candidates ?? []).map((c) => [c.task, c.done_at]));
   const units = new Map<string, ReleaseUnit>();
   for (const group of Object.values(b.tasks)) {
@@ -1027,20 +1036,19 @@ export function releaseUnits(b: Board): ReleaseUnit[] {
       // A member holds the string until it is verified — on whichever surface its own criteria needed. Asking for a
       // repo pass specifically would count a task verified only on production (t-002, t-012) as holding itself.
       const passed = t.status === "verified";
-      const inProduction = (t.surfaces ?? []).some((r) => r.surface === "production" && r.pass);
-      const u = units.get(sha) ?? { sha, tasks: [], held_by: [], brings: 0, since: "" };
+      const u = units.get(sha) ?? { sha, tasks: [], held_by: [], brings: 0, since: "", ...(pending ? {} : { brings_unknown: true }) };
       const at = doneAt.get(t.id);
       if (at && (!u.since || at < u.since)) u.since = at;
       u.tasks.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, passed });
       if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status });
-      if (passed && !inProduction && shipped.has(t.id)) u.brings += 1;
+      if (shipped.has(t.id)) u.brings += 1;
       units.set(sha, u);
     }
   }
   // Only the units with something left to ship: a sha whose whole string is already in production is history.
   // Oldest first, the same order the board lists candidates in: what has been waiting longest leads. Sorting by sha
   // would be an implementation detail deciding what a person reads first.
-  return [...units.values()].filter((u) => u.brings > 0 || u.held_by.length > 0)
+  return [...units.values()].filter((u) => u.brings > 0 || u.brings_unknown || u.held_by.length > 0)
     .sort((x, y) => (x.since || "~").localeCompare(y.since || "~") || x.sha.localeCompare(y.sha));
 }
 

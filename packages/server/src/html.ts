@@ -683,7 +683,9 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
         : "";
       return `<li>${head}<code>${esc(u.sha.slice(0, 7))}</code> ${members.join("；")}${waiting}</li>`;
     };
-    const moving = units.filter((u) => !u.held_by.length), stuck = units.filter((u) => u.held_by.length);
+    const moving = units.filter((u) => !u.held_by.length && u.brings > 0), stuck = units.filter((u) => u.held_by.length);
+    // t-078's third state: with no containment fact the board cannot place these, so the page says why instead of a number.
+    if (units.some((u) => u.brings_unknown)) out.push(`<p class="quiet">${esc(UI.waitingUnknown(b.release.basis || ""))}</p>`);
     if (stuck.length) out.push(`<ul class="plain stuck">${stuck.map(line).join("")}</ul>`);
     if (moving.length) {
       out.push(`<p class="meta">${UI.releaseBrings}</p>`);
