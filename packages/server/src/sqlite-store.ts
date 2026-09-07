@@ -104,6 +104,19 @@ export class SqliteStore implements EventStore {
     return { events, cursors, deliveries };
   }
 
+  /**
+   * t-121: three small lookups instead of reading the whole log. The newest event id covers appends; the cursors of a
+   * handful of nodes cover pulls and deliveries — a reduction depends on those too, so a token that watched only
+   * events would go stale the moment someone pulled.
+   */
+  async version(): Promise<string | null> {
+    const last = this.db.prepare("SELECT id FROM events WHERE project = ? ORDER BY id DESC LIMIT 1").get(this.project) as { id: string } | undefined;
+    const cursors = (this.db.prepare("SELECT actor, last_event_id FROM cursors WHERE project = ? ORDER BY actor").all(this.project) as { actor: string; last_event_id: string | null }[])
+      .map((c) => `${c.actor}@${c.last_event_id ?? ""}`).join(",");
+    const deliveries = (this.db.prepare("SELECT COUNT(*) AS n FROM deliveries WHERE project = ?").get(this.project) as { n: number }).n;
+    return `${last?.id ?? ""}:${cursors}:${deliveries}`;
+  }
+
   async since(after: string | null): Promise<Event[]> {
     const rows = after
       ? this.db.prepare("SELECT json FROM events WHERE project = ? AND id > ? ORDER BY id").all(this.project, after)

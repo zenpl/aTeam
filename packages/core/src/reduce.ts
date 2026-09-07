@@ -152,6 +152,14 @@ export interface State {
   instructions: Map<string, InstructionState>;
   tasks: Map<string, TaskState>;
   seams: Map<string, SeamState>;
+  /** t-121: the seams each task is in, so judging them is a lookup rather than a walk of every seam in the log. */
+  seamsOf: Map<string, Set<string>>;
+  /** t-121: which tasks declared each path, so a seam is looked for only where one could be. Derived, never read directly. */
+  byTouch: Map<string, Set<string>>;
+  /** The paths each task currently declares, so the index can be updated when a task's touches change. */
+  touchedBy: Map<string, Set<string>>;
+  /** Tasks with a touch that could contain another one (a directory); they are always candidates. */
+  dirTouchers: Set<string>;
   notes: Note[];
   /** actor -> when they last pulled (their cursor moved: they are listening) and when they last spoke (an event). */
   presence: Map<string, Presence>;
@@ -229,6 +237,10 @@ export function reduce(log: Log, now: Date = new Date()): State {
     instructions: new Map(),
     tasks: new Map(),
     seams: new Map(),
+    seamsOf: new Map(),
+    byTouch: new Map(),
+    touchedBy: new Map(),
+    dirTouchers: new Set(),
     notes: [],
     presence: new Map(),
   };
@@ -351,6 +363,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "claim":
       // the owner claiming again widens the declaration; anyone else claiming takes over an open/failed task
       t.touches = t.status === "working" && t.owner === e.actor ? [...new Set([...t.touches, ...e.touches])] : e.touches;
+      indexTouches(s, t);   // t-121: the index follows the declaration, always
       t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
       return;
@@ -360,7 +373,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
       // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
-      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; detectSeams(s, t); }
+      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; indexTouches(s, t); detectSeams(s, t); }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
@@ -389,13 +402,13 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "withdrawn"; t.blocked_on = undefined;
       t.withdrawn = { by: e.actor, at: e.at, reason: e.reason };
       // a withdrawn task touches nothing any more: its seams go with it
-      for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
+      for (const id of [...(s.seamsOf.get(t.id) ?? [])]) dropSeam(s, id);
       return;
     case "obsolete":
       t.status = "obsolete"; t.blocked_on = undefined;
       t.obsolete = { by: e.actor, at: e.at, decision: e.decision, reason: e.reason };
       // nothing will be merged or verified: its seams go with it
-      for (const [id, seam] of s.seams) if (seam.tasks.includes(t.id)) s.seams.delete(id);
+      for (const id of [...(s.seamsOf.get(t.id) ?? [])]) dropSeam(s, id);
       return;
   }
 }
@@ -405,13 +418,13 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
  * If the other task was already done when this one claimed, this one stacks on it: the seam is recorded but blocks nothing.
  */
 function detectSeams(s: State, t: TaskState) {
-  for (const other of s.tasks.values()) {
+  for (const other of seamCandidates(s, t.id, t.touches)) {
     if (other.id === t.id || other.status === "verified" || other.status === "withdrawn" || other.status === "obsolete" || !other.touches.length) continue;
     const overlap = overlapOf(t.touches, other.touches);
     if (!overlap.length) {
       // t-105: recomputing is not only "find more". A revision that narrows the touches can leave a seam describing an
       // overlap that no longer exists, and a seam nobody actually has is one more thing blocking a verify for nothing.
-      s.seams.delete(seamId(t.id, other.id));
+      dropSeam(s, seamId(t.id, other.id));
       continue;
     }
     const id = seamId(t.id, other.id);
@@ -420,8 +433,60 @@ function detectSeams(s: State, t: TaskState) {
     const existing = s.seams.get(id);
     if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
     s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
+    for (const who of [t.id, other.id]) { let ids = s.seamsOf.get(who); if (!ids) s.seamsOf.set(who, (ids = new Set())); ids.add(id); }
   }
-  for (const seam of s.seams.values()) if (seam.tasks.includes(t.id)) judgeSeam(s, seam);
+  for (const id of s.seamsOf.get(t.id) ?? []) { const seam = s.seams.get(id); if (seam) judgeSeam(s, seam); }
+}
+
+/**
+ * t-121 (P0): which tasks could possibly share a touch with `t`. Comparing every task against every other, and every
+ * touch against every other touch, is O(tasks squared x touches squared) over a log that grows all day: 120 tasks with
+ * 2 touches each reduce in 50ms, the same 120 tasks with 6 touches take 429ms — same number of events, 8x the work.
+ *
+ * Almost every one of those pairs shares nothing, and an index says so without comparing anything. Two touches can only
+ * overlap if they name the same path, or if one names a directory containing the other; the first is an exact lookup,
+ * and the second can only come from a touch whose last segment has no file extension, which is rare enough to keep in
+ * a small set and always consider. Nothing else can match, so nothing else is looked at.
+ */
+/** t-121: forget a seam, and forget that either side was in it. */
+function dropSeam(s: State, id: string) {
+  const seam = s.seams.get(id);
+  if (!seam) return;
+  s.seams.delete(id);
+  for (const who of seam.tasks) s.seamsOf.get(who)?.delete(id);
+}
+
+function seamCandidates(s: State, id: string, touches: string[]): Iterable<TaskState> {
+  // A task that names a directory could contain anything, so it is the one case that still looks at everyone.
+  if (touches.some(dirLike)) return s.tasks.values();
+  const out = new Map<string, TaskState>();
+  const add = (other: string) => { const o = s.tasks.get(other); if (o && o.id !== id) out.set(other, o); };
+  for (const touch of touches) for (const other of s.byTouch.get(touchPath(touch)) ?? []) add(other);
+  for (const other of s.dirTouchers) add(other);   // and anyone who named a directory could contain us
+  return out.values();
+}
+
+const touchPath = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+/** A touch that could contain another: no file extension on its last segment ("packages/core/test/", "docs"). */
+const dirLike = (t: string) => !t.includes("#") && !/\.[A-Za-z0-9]+$/.test(touchPath(t));
+
+/** Keep the index in step with a task's declared touches; called wherever `touches` is set. */
+function indexTouches(s: State, t: TaskState) {
+  for (const path of s.touchedBy.get(t.id) ?? []) {
+    const ids = s.byTouch.get(path);
+    if (ids) { ids.delete(t.id); if (!ids.size) s.byTouch.delete(path); }
+  }
+  const mine = new Set<string>();
+  s.dirTouchers.delete(t.id);
+  for (const touch of t.touches) {
+    const path = touchPath(touch);
+    mine.add(path);
+    let ids = s.byTouch.get(path);
+    if (!ids) s.byTouch.set(path, (ids = new Set()));
+    ids.add(t.id);
+    if (dirLike(touch)) s.dirTouchers.add(t.id);
+  }
+  s.touchedBy.set(t.id, mine);
 }
 
 /** The latest done a task stands on: none while it is back in flight (reopened, reclaimed), so the seam is judged afresh (t-067). */
@@ -482,7 +547,10 @@ export function blockingSeamsIfTouches(s: State, t: TaskState, touches: string[]
   const AFTER_EVERYTHING = "\uffff"; // a done happening now cannot precede a claim already in the log
   const mine: TaskState = { ...t, touches: [...new Set(touches.map((x) => x.trim()).filter(Boolean))], status: "done",
     history: [...t.history, { op: "done", id: AFTER_EVERYTHING, by: t.owner ?? "", at: AFTER_EVERYTHING, round: t.round + 1, evidence: t.evidence }] };
-  const shadow: State = { ...s, tasks: new Map(s.tasks), seams: new Map([...s.seams].map(([id, x]) => [id, { ...x }])) };
+  // The shadow differs from the real state in one task's touches. The touch index is only ever consulted to find
+  // *other* candidates, and this task is excluded from those anyway, so it is shared rather than copied (t-121).
+  const shadow: State = { ...s, tasks: new Map(s.tasks), seams: new Map([...s.seams].map(([id, x]) => [id, { ...x }])),
+    seamsOf: new Map([...s.seamsOf].map(([k, v]) => [k, new Set(v)])) };
   shadow.tasks.set(t.id, mine);
   detectSeams(shadow, mine);
   return openSeamsFor(shadow, t.id).map((x) => ({ with: x.tasks.find((id) => id !== t.id) ?? "", overlap: x.overlap }));

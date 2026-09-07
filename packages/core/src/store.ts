@@ -8,6 +8,13 @@ export interface EventStore {
   read(): Promise<Log>;
   /** Events with id > after, oldest first. */
   since(after: string | null): Promise<Event[]>;
+  /**
+   * t-121: a token that changes whenever anything in this store changes — a new event, a moved cursor, a delivery.
+   * It is the cheapest possible answer to "has anything changed?", which is what lets a caller reuse work it already
+   * did. A reduction depends on all three, so a token that covered only events would go stale the moment someone
+   * pulled. Optional: a store that cannot answer cheaply omits it, and every caller falls back to reading.
+   */
+  version?(): Promise<string | null>;
   appendRaw(e: Event): Promise<void>;
   setCursor(c: Cursor): Promise<void>;
   recordDelivery(d: Delivery): Promise<void>;
@@ -53,6 +60,10 @@ export class MemoryStore implements EventStore {
 
   async read(): Promise<Log> {
     return { events: [...this.events], cursors: [...this.cursors.values()], deliveries: [...this.deliveries] };
+  }
+  async version(): Promise<string | null> {
+    const cursors = [...this.cursors.values()].map((c) => `${c.actor}@${c.last_event_id ?? ""}`).sort().join(",");
+    return `${this.events.length}:${this.events[this.events.length - 1]?.id ?? ""}:${cursors}:${this.deliveries.length}`;
   }
   async since(after: string | null): Promise<Event[]> {
     return this.events.filter((e) => !after || e.id > after);
