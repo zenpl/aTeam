@@ -71,18 +71,20 @@ describe("t-050 · call-outs", () => {
     const ask = await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "部署第 5 批。合并后推到 production", ack_by: new Date(w.now().getTime() + min(15)).toISOString() });
     await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "牌桌认证？", ack_by: new Date(w.now().getTime() + min(15)).toISOString(), options: ["A", "B"], default: "B" });
     await pull(w.store, "pm", null, w.now());
-    w.tick(min(40));                                  // 25 past ack_by: not yet
+    // t-190：默认要在它到期后不久就落下——晚过 DEFAULT_LATE_MS 就不是「刚好晚了一点」，服务会记一笔
+    // 「我们没有执行」并把卡退回等人答，而不是替人把默认追认下去。这里模拟服务照常在跑。
+    w.tick(min(16));
+    {
+      const core0 = await import("@ateam/core");
+      await core0.runDueDefaults(w.store, core0.reduce(await w.store.read(), w.now()), HUMAN, w.now());
+    }
+    w.tick(min(24));                                  // 25 past ack_by: not yet
     await pull(w.store, "pm", null, w.now());          // keep the team listening so only human_overdue fires
     expect(await w.run()).toEqual([]);
     w.tick(min(6));
     await pull(w.store, "pm", null, w.now());
     // t-181：默认到期不再由读的时候算出来，要服务真落一条事件——服务器每分钟先跑这一步再报警（runPeriodic）。
     // 落之前那张带默认的卡确实还欠着一个答案，这里先证它算在里面，再落，再证它不算了。
-    const core = await import("@ateam/core");
-    // situations() 是纯的、不受外呼冷却影响，所以用它看落之前那一刻：两条都还欠着
-    const pending = situations(core.reduce(await w.store.read(), w.now()), HUMAN, w.now());
-    expect(pending[0].summary).toContain("有 2 条给你的事等了 31 分钟没人答");
-    await core.runDueDefaults(w.store, core.reduce(await w.store.read(), w.now()), HUMAN, w.now());
     const sent = await w.run();
     expect(sent.map((a) => a.kind)).toEqual(["human_overdue"]);
     expect(sent[0].summary).toContain("有 1 条给你的事等了 31 分钟没人答。最早的：部署第 5 批");

@@ -1592,3 +1592,39 @@ describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配�
     } finally { await v.stop(); }
   });
 });
+
+/**
+ * t-190 判据 2：**人打开牌桌，就是「人再看到那一刻」。**
+ *
+ * 一张被退回待答的卡，期限从这一刻起重算；在此之前它不算晚——他没看到的时间不该算进他的期限里。agent 那头
+ * 早就有这件事（`pull` 记游标），人这头一直没有：他只是看，从不拉。
+ *
+ * 第二条钉的是我差点写出来的那个回归：那一行是 upsert，`last_event_id` 写 null 会把他读到哪儿抹掉，于是发给
+ * 他的每一条都变回「还没读到」，t-050 那套「人很久没答」的外呼就会照着一个假前提去叫人。
+ */
+describe("t-190 · 人打开牌桌算他看过了", () => {
+  const w2 = server();
+  beforeAll(() => w2.start());
+  afterAll(() => w2.stop());
+
+  it("有权看的人打开牌桌，presence 记下这一刻；匿名的一眼不算", async () => {
+    const seenAt = async () => reduce(await w2.store.read()).presence.get(HUMAN)?.last_pull ?? null;
+    expect(await seenAt()).toBeNull();
+    await w2.page();                                   // 匿名（这块牌桌默认公开，看得到，但那不是「他」看的）
+    expect(await seenAt()).toBeNull();
+    await w2.authedPage();                             // 带钥匙：这才是他
+    const first = await seenAt();
+    expect(first).not.toBeNull();
+    await new Promise((r) => setTimeout(r, 5));
+    await w2.authedPage();
+    expect(await seenAt()! >= first!).toBe(true);      // 每看一次都记一次
+  });
+
+  it("记这一刻不会把他读到哪儿抹掉——发给他的东西不会因此变回「还没读到」", async () => {
+    const i = await w2.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: new Date(Date.now() + 3600_000).toISOString() });
+    await w2.store.setCursor({ actor: HUMAN, last_event_id: i.id, at: new Date().toISOString() });
+    expect(reduce(await w2.store.read()).read_upto.get(HUMAN)).toBe(i.id);
+    await w2.authedPage();
+    expect(reduce(await w2.store.read()).read_upto.get(HUMAN), "打开牌桌把他读到哪儿抹掉了").toBe(i.id);
+  });
+});

@@ -1,6 +1,6 @@
 import {
   type Event, type Log, type Reading, type Instruction, type Note, type ReadingShape,
-  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, SERVICE_ACTOR, isDefaultApplied, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm, type SeamVerdict } from "./events.js";
+  FOCUS_KEY, TEAM_SURFACE, DEFAULT_SHAPES, DECLINE_PREFIX, SERVICE_ACTOR, isDefaultApplied, isDefaultMissed, type Reach, ABSORB_PREFIX, ABSORB_FORM_KEY, ABSORB_FORMS, PROJECT_SURFACE, type AbsorbForm, type SeamVerdict } from "./events.js";
 
 export type TaskStatus = "open" | "working" | "blocked" | "done" | "verified" | "failed" | "withdrawn" | "obsolete";
 
@@ -121,6 +121,13 @@ export interface InstructionState {
    * 服务一扫到它就落事件，落完这个字段就是 false。牌桌在这一态照实说「过期了，默认还没生效」（判据 8 第二句）。
    */
   default_due?: boolean;
+  /**
+   * t-190: 服务记下的一次「本该按默认执行，我们没有执行」。这张卡回到等人答，**期限从人再看到那一刻重算**
+   * （`ack_by_again`），而不是把那个默认追认下去。`at` 是记下这件事的时刻，`window_ms` 是原来那张卡给人的时长。
+   */
+  default_missed?: { at: string; window_ms: number; option: string };
+  /** t-190: 重算后的期限。人自这次记录之后还没露过面时是 undefined——他还没看到，就还没开始算。 */
+  ack_by_again?: string;
   /**
    * For instructions with options: the option picked, by whom, and the decision note that records it.
    * `by: "default"` (no note) means nobody chose before ack_by and the default took effect; the human may still override it.
@@ -364,6 +371,14 @@ export function advance(s: State, log: Log): State {
           const st = s.instructions.get(id);
           if (st && st.instruction.to === e.actor && !st.chosen) { st.chosen = { option: DECLINE_PREFIX, by: e.actor, at: e.at, note: e.id }; s.pending.delete(id); st.overdue = false; }
         }
+        // t-190：服务记下「本该按默认执行，我们没有执行」——这张卡回到等人答，不追认那个默认。
+        if (e.actor === SERVICE_ACTOR && isDefaultMissed(e.body)) for (const id of e.refs ?? []) {
+          const missed = s.instructions.get(id);
+          if (!missed || missed.chosen) continue;
+          const i0 = missed.instruction;
+          missed.default_missed = { at: e.at, window_ms: Math.max(0, Date.parse(i0.ack_by) - Date.parse(i0.at)), option: i0.default ?? "" };
+          s.pending.add(id);
+        }
         const st = e.decides ? s.instructions.get(e.decides.of) : undefined;
         if (st && (!st.chosen || st.chosen.by === DEFAULT_DECIDER)) {
           // t-181：服务落下的那条「没人点，按默认 X」记成 DEFAULT_DECIDER，不记成服务自己——因为它不是一个
@@ -451,6 +466,16 @@ function* dirtySeams(s: State, ids: Set<string>): Generator<SeamState> {
  * advanced state can be settled again and again without being rebuilt. It walks only what the clock can still change
  * — the unresolved instructions and the readings that carry a valid_until — never the whole log.
  */
+/**
+ * t-190: `who` 在 `at` 之后第一次露面的时刻，没有就是 undefined。露面 = 拉过一次日志，或自己写过一条事件——
+ * 两者都证明这个人此刻在看，而「人再看到那一刻」正是期限该重新开始算的那一刻（判据 2）。
+ */
+function seenAfter(s: State, who: string, at: string): string | undefined {
+  const p = s.presence.get(who);
+  const times = [p?.last_pull, p?.last_event].filter((x): x is string => !!x && x >= at).sort();
+  return times[0];
+}
+
 export function settle(s: State, now: Date): State {
   const nowIso = now.toISOString();
   for (const id of s.perishable) {
@@ -466,7 +491,13 @@ export function settle(s: State, now: Date): State {
     // sync 读不到，人也无从翻案，而我们已经对他说了那句话。现在默认生效是服务写下的一条 note（`defaultApplied`），
     // 它经 R1b 落进 `chosen`，`by` 记成 DEFAULT_DECIDER（真人仍可推翻）。这里只算**时间说了什么**：
     // 到期了、还没人点、那条事件也还没落下 —— 那是一个故障态，牌桌要照实说（DEFAULT_LINES.stuck）。
-    st.default_due = !st.chosen && i.default !== undefined && !!i.options?.length && i.ack_by < nowIso;
+    // t-190 判据 2：记过一次「没执行」之后，期限从**人再看到那一刻**重算。人自那以后还没露过面，就还没开始
+    // 算——他没看到的时间不该算进他的期限里。`deadline` 因此是 undefined，这张卡既不到期也不算晚。
+    // 收件人就是人本身：带选项的卡只能发给人（rules.ts），所以不必另把 human 传进来。
+    const seenAgain = st.default_missed ? seenAfter(s, i.to, st.default_missed.at) : undefined;
+    st.ack_by_again = st.default_missed && seenAgain ? new Date(Date.parse(seenAgain) + st.default_missed.window_ms).toISOString() : undefined;
+    const deadline = st.default_missed ? st.ack_by_again : i.ack_by;
+    st.default_due = !st.chosen && i.default !== undefined && !!i.options?.length && !!deadline && deadline < nowIso;
     // t-147 判据 3 + 判据 7 (pm 07:04): overdue is a card with options, past its deadline, still unanswered.
     //
     // 判据 3 had a 「读到了」 clause and 判据 7 removed it, for a reason worth keeping next to the code: for an agent,
@@ -477,7 +508,7 @@ export function settle(s: State, now: Date): State {
     //
     // Options may only be addressed to the human (rules.ts), so this branch is only ever about the human's cards; the
     // agents' side is `owedTo` and t-139's three presence states, and nothing is counted in both.
-    st.overdue = i.ack_by < nowIso && !!i.options?.length && !st.chosen;
+    st.overdue = !!deadline && deadline < nowIso && !!i.options?.length && !st.chosen;
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   s.focus = focusId ? s.readings.get(focusId)!.reading : undefined;

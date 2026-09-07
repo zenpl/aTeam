@@ -2,7 +2,7 @@ import { append, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
 import { projectRoles, importCounts, standIns } from "./board.js";
 import { Rejected } from "./rules.js";
-import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, type Event, type NewEvent } from "./events.js";
+import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -133,12 +133,19 @@ export async function runFollowUps(store: EventStore, e: Event, human: string, n
  * 还没落」，落完它就是 false，所以这个函数天然幂等，不会落第二条。
  */
 export function dueDefaults(s: State, now: Date): NewEvent[] {
-  void now;   // 时刻已经由 settle(s, now) 算进 default_due 里；这里不再自己判一次，免得两处判法不一致
   const out: NewEvent[] = [];
   for (const st of s.instructions.values()) {
     if (!st.default_due) continue;
     const i = st.instruction;
     if (i.default === undefined || st.withdrawn) continue;
+    // t-190 (pd 10:40)：晚到这个地步，只可能是这套机制当时没在跑。**那不是人的选择，是我们没执行**，所以不补落
+    // 那个默认——记一笔「我们没有执行」，这张卡回到等人答，期限从人再看到那一刻重算。补落等于替他拍板。
+    // 已经记过一笔的不再记第二笔：那时用的是重算后的期限，晚多少都是真的晚。
+    const deadline = st.default_missed ? st.ack_by_again ?? i.ack_by : i.ack_by;
+    if (!st.default_missed && now.getTime() - Date.parse(deadline) > DEFAULT_LATE_MS) {
+      out.push({ kind: "note", actor: SERVICE_ACTOR, body: defaultMissed(i.default), refs: [i.id] });
+      continue;
+    }
     out.push({ kind: "note", actor: SERVICE_ACTOR, decision: true, body: defaultApplied(i.default), decides: { of: i.id, option: i.default }, refs: [i.id] });
   }
   return out;

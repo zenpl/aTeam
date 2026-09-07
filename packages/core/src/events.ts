@@ -279,20 +279,20 @@ export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual
  */
 export const KEY_SYMBOLS = [
   "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "DEFAULT_APPLIED_PREFIX", "DEFAULT_LINES",
-  "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE", "FORWARD_LINK", "INJECT_BUILD_BROKE", "INJECT_STILL_GREEN", "INJECT_USAGE",
-  "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
-  "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PASS_ONLY_GATE", "PROMISE_RULE", "REACH_RULE", "REACH_WORDS",
-  "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHAPE_OF",
-  "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE", "VERIFY_ASK", "ago",
-  "alertContact", "allocationSummary", "alsoHere", "applyReading", "batches", "batchesEmptyLine",
-  "blockedWhy", "board", "capabilityKey", "checkShape", "coverage", "deployHistory",
-  "dueDefaults", "exampleLine", "followUps", "gateHonesty", "honestyLine", "humanImpactPromised",
-  "inFlightGroups", "injectDirty", "injectManySites", "injectNoFile", "injectNoSite", "injectNotGit",
-  "judgeSeam", "lightSeamLine", "manual", "manualFor", "missingCard", "nobodyElse",
-  "overdueByPresence", "owedSentences", "releaseUnits", "responsibilityAppendix", "runtimeAllocation", "saidHops",
-  "sayReading", "shapeFor", "slimBoard", "span", "splitRelease", "standInBlocker",
-  "standIns", "staticAllocation", "taskHeading", "validate", "validateTask", "valueForm",
-  "verifierEligibility", "whoCanVerify", "whoElseTouches",
+  "DEFAULT_MISSED_PREFIX", "DEFAULT_RULE", "EMPTY_IS_NOT_NO_IMPACT", "FAIL_NOTICE", "FORWARD_LINK", "INJECT_BUILD_BROKE",
+  "INJECT_STILL_GREEN", "INJECT_USAGE", "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH",
+  "MIGRATION_PATCH", "NO_HUMAN_IMPACT", "NO_SYMBOL_MEANS_UNCLEAR", "PASSTHROUGH_IS_NOT_A_LITERAL", "PASS_ONLY_GATE", "PROMISE_RULE",
+  "REACH_RULE", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES", "RESPONSIBILITY_DOING", "SAID_PREFIX",
+  "SEAM_SAME_FILE", "SHAPE_OF", "SHOWS_GATE_BLIND", "SHOWS_RULE", "SPAN_UNDER_A_MINUTE", "STAND_IN_ASK_TITLE",
+  "VERIFY_ASK", "ago", "alertContact", "allocationSummary", "alsoHere", "applyReading",
+  "batches", "batchesEmptyLine", "blockedWhy", "board", "capabilityKey", "checkShape",
+  "coverage", "defaultMissed", "deployHistory", "dueDefaults", "exampleLine", "followUps",
+  "gateHonesty", "honestyLine", "humanImpactPromised", "inFlightGroups", "injectDirty", "injectManySites",
+  "injectNoFile", "injectNoSite", "injectNotGit", "judgeSeam", "lightSeamLine", "manual",
+  "manualFor", "missingCard", "nobodyElse", "overdueByPresence", "owedSentences", "releaseUnits",
+  "responsibilityAppendix", "runtimeAllocation", "saidHops", "sayReading", "shapeFor", "slimBoard",
+  "span", "splitRelease", "standInBlocker", "standIns", "staticAllocation", "taskHeading",
+  "validate", "validateTask", "valueForm", "verifierEligibility", "whoCanVerify", "whoElseTouches",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -479,6 +479,39 @@ export const defaultApplied = (option: string) => `${DEFAULT_APPLIED_PREFIX}${op
 export const isDefaultApplied = (body: string) => body.startsWith(DEFAULT_APPLIED_PREFIX);
 
 /**
+ * t-190（pd 10:40）：**默认只有真落成事件才算数；没落成的一律回待答，不得追认。**
+ *
+ * t-181 修好了「从此以后」那一半：到期，服务落一条事件。存量这一半是它漏的——今晚有三张卡到期时机制根本没在
+ * 跑（qa 10:39 量的：已过期、decides 事件 0 条，而牌桌都在说「已按默认 X 执行」；最久的一张这样说了 6 小时 41 分）。
+ *
+ * 那三张**不能补落**。pd 的理由：默认之所以正当，前提是它真的发生、落成事件、人能翻案；这三件一件都没发生，
+ * 所以那不是人的选择，是我们的机制没执行。**追认等于替他拍板。**也不作废重发——同一张卡回到待答，期限从人
+ * 再看到那一刻重算，页面照实说我们没执行过（不许悄悄改回）。
+ */
+export const DEFAULT_MISSED_PREFIX = "本该按默认执行，我们没有执行：";
+/** 服务写下的那条 note 的正文。人读的字，所以只有这一处。 */
+export const defaultMissed = (option: string) => `${DEFAULT_MISSED_PREFIX}默认是 ${option}，到期时这套机制没在跑，所以这张卡回到等你答。`;
+/** 那条 note 是不是「默认没执行」的记录。 */
+export const isDefaultMissed = (body: string) => body.startsWith(DEFAULT_MISSED_PREFIX);
+
+/**
+ * 到期多久还没落下，就算「我们没在跑」而不是「刚好晚了一点」。
+ *
+ * 扫描每分钟一次，所以正常情况下最多晚一分钟；这个数留出十倍余量。它不是一个策略选择，是一句关于**我们自己**
+ * 的事实判断：晚到这个程度，只可能是服务当时没在跑。数小了会把一次正常的迟到当成故障、把人的默认无故拖回待答；
+ * 数大了会把一次真故障当成迟到、替人把默认追认下去——后一种是 pd 明令不许的那一种，所以宁可小。
+ */
+export const DEFAULT_LATE_MS = 10 * 60_000;
+
+/**
+ * t-190 判据 3：这条通则要写进说明书，而且**按 t-179 的规矩从这里填进去**（`{{default_rule}}`），
+ * 说明书里不留第二份——那道通用的闸盯着这件事，抄一句进 markdown 就红。
+ */
+export const DEFAULT_RULE =
+  "带默认的卡，**只有服务真落成一条事件才算按了默认**。到期而事件没落成，说明这套机制当时没在跑——" +
+  "那不是你的选择，所以它不会被追认：卡回到等你答，期限从你再看到那一刻重算，牌桌照实说我们没有执行过。";
+
+/**
  * t-181 判据 8（pd 09:18 定稿，逐字）：一张带默认的卡在牌桌上按**真状态**说三句话，一句一态，不许混。
  *
  * · `waiting`：还没到期。它是一个承诺，主语是「到期会怎样」，所以要说出那个绝对时刻——人得知道还剩多久。
@@ -490,6 +523,11 @@ export const DEFAULT_LINES = {
   waiting: (at: string, option: string) => `不点的话，${at}到期，按 ${option} 执行。`,
   stuck: () => "过期了，默认还没生效。",
   applied: (option: string) => `你没点，已按默认 ${option} 执行。`,
+  /**
+   * t-190（pd 10:40）：第四态。**不许悄悄改回**——人要看得见我们没执行过，所以这一句自己说出那件事，
+   * 而不是把卡默默变回「等你答」。它不说「已按默认」，因为那没发生；也不说「过期了」，因为期限已经重算。
+   */
+  missed: (option: string) => `本该按默认执行，我们没有执行，现在仍在等你（默认是 ${option}）。`,
 };
 
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
