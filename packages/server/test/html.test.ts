@@ -1463,8 +1463,9 @@ describe("t-125 · 按钮的标签就是它送出的值", () => {
    * a reworded label cannot leave the logged value behind. That is exactly how 「记下」/「填写」 drifted — the label
    * came from i18n and the value from the card, and only one of them was changed.
    *
-   * Scope is name="option" on purpose: a name="note" button (「先不做」) sends a reason, not a label, and is not a
-   * second copy of anything.
+   * Scope is name="option" on purpose (pd 02:18): 「值即标签」 governs "the word a person clicks and the word the log
+   * keeps must be the same one". A name="note" button (「先不做」) sends a reason, not a label, so it has no second
+   * copy to drift from and is deliberately out of scope — not an omission.
    */
   const optionButtons = (html: string) =>
     [...html.matchAll(/<button[^>]*name="option"[^>]*value="([^"]*)"[^>]*>(.*?)<\/button>/g)]
