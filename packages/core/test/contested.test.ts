@@ -167,3 +167,25 @@ describe("t-216 判据 5 · 两角色共同声明这件事，human 看得见", (
     expect((await st(w.s)).disowned.has(w.bad.id)).toBe(false);
   });
 });
+
+/**
+ * t-220 判据 3（qa 16:58 在 t-216 证据里记的那处残留）：`reductionFor` 原来按 store 缓存，**`human` 只在首次
+ * 调用时定死**——同一个 store 换个人名再来，拿到的还是旧的那个。此刻服务只有一个 human，所以是潜在的、
+ * 不是活的；但今天这一族的教训正是「看起来有、其实没有」，钉死比记着强。
+ */
+describe("t-220 判据 3 · 人名不被第一次调用定死", () => {
+  it("同一个 store、两个不同的人名：各自按自己的名字判，互不串", async () => {
+    const s = new MemoryStore();
+    const put = (e: NewEvent, human: string, m: number) => append(s, e, { human, now: at(m) });
+    await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev"] }, "human", -300);
+    const note = await put({ kind: "note", actor: "dev", body: "dev 写的" }, "human", -280);
+
+    // 先以 human="human" 走一次写入路径（这一步会把那个 store 的 reduction 建起来）
+    await put({ kind: "note", actor: "pm", body: "先让 human 这一份建起来" }, "human", -270);
+    // 再以 human="boss" 发一条：boss 更正 dev 署名的事件 —— 只有折叠知道人叫 boss 才当场生效
+    await put({ kind: "disown", actor: "boss", of: note.id, reason: "这条是我让它代发的" }, "boss", -260);
+
+    const s1 = reduce(await s.read(), at(0), "boss");
+    expect(s1.disowned.get(note.id)?.by, "换了人名之后仍按旧名走：缓存把第一次的名字定死了").toBe("boss");
+  });
+});
