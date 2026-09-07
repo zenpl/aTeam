@@ -48,9 +48,14 @@ export const UI = {
   copied: "已复制",
   missing: (min: number) => `缺人 ${min} 分钟`,
   missingNever: "缺人",
-  deaf: (min: number) => `没在听 ${min} 分钟`,
-  deafNever: "没在听",
-  undelivered: (n: number) => `${n} 条没送到`,
+  /**
+   * t-140 · pd 05:42: the board says only what the server can actually see — how long since this role last read the
+   * log. Not 「没在听」: whether it is listening is a state we do not observe. Whether its own watch process died is
+   * something only that node knows, and it says so in its own terminal (t-102).
+   */
+  deaf: (min: number) => `${min} 分钟没读日志了`,
+  deafNever: "没读过日志",
+  undelivered: (n: number) => `${n} 条还没送到`,
   started: "起好了",
 
   // 说一句
@@ -96,7 +101,11 @@ export const UI = {
     working: "在做",
     blocked: "卡住",
     done: "做完了，等验",
-    verifiedElsewhere: "仓库验过，还没在生产验",
+    /**
+     * t-152 · pd 06:59: after the split this group is divided by whether it has shipped, not by which surface
+     * verified it — so 「仓库」 goes, and it reads as the standing line says it, being the same set of tasks.
+     */
+    verifiedElsewhere: "验过了，等上线",
     open: "没开始",
     failed: "验收未过",
   } as Record<string, string>,
@@ -148,8 +157,12 @@ export const UI = {
   releaseBrings: "这次能带上",
   releaseTogether: "必须一起上的几件",
   releaseNothing: "没有可上线的东西。",
-  /** pd 03:32: a held batch must say why. Without a reason it should not be held. */
-  releaseHeld: (why: string) => `按住没发：${why}`,
+  /**
+   * pd 05:12: 「按住」 means a person deliberately held it back, so it is not the word for anything else. A unit that
+   * is simply not verified yet is waiting, not held; a batch that would roll production back says so in core's own
+   * sentence, with nothing of ours in front of it.
+   */
+  releaseNotVerified: (who: string) => `还没验，带不上：${who}`,
   releaseHeldBy: (who: string) => `等 ${who}`,
   releaseBatches: "装好的几批",
   /** t-129: a batch packed on the head production is actually running has nothing standing in its way. */

@@ -53,9 +53,12 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     expect(text).toContain("INSTRUCTION → frontend: t-007 is yours: claim it");
     expect(text).toContain("⇐ FOR YOU");
     expect(text).toContain("INSTRUCTION → dev: not for frontend");
-    // t-147: the tail no longer asks for a receipt — it names the two things still owed
-    expect(text).toContain("1 instruction(s) for you. Do them, or say 「不办：<原因>」 in a note.");
+    // t-140 (pd 07:34): no tail at all. t-147 had stopped it asking for a receipt; pd then deleted the replacement
+    // too, integrally — what is owed is said once, at sync, from what is owed. Nothing here may say it a second time.
+    expect(text).not.toContain("instruction(s) for you");
     expect(text).not.toContain("ateam ack");
+    expect(text).not.toContain("Ack each with");
+    expect(text).not.toContain("不办：<原因>");
     expect(out[out.length - 1]).toBe("\ninstruction received");
     expect(out.indexOf("\ninstruction received")).toBeGreaterThan(out.findIndex((l) => l.includes("01C")));
     // quiet rounds print nothing

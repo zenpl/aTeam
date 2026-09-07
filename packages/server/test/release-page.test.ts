@@ -64,17 +64,19 @@ describe("t-133 · 上线详情页", () => {
       await task(v, "t-1", "灰字", "ccccccc3333", "verified");
       await task(v, "t-2", "按钮", "ccccccc3333", "verified");
       await task(v, "t-3", "外呼", "ccccccc3333", "done");
-      // and a unit of its own that is moving
+      // and a unit of its own that is moving — which needs the board to know its code is not in production yet,
+      // otherwise nothing is waiting to ship and 这次能带上 is correctly absent (t-078's three states)
       await task(v, "t-9", "接缝", "ddddddd4444", "verified");
+      await v.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "aaaaaaa1111", contained: [], not_contained: ["t-9"], method: "逐件测" } });
       const html = await v.page();
       expect(html).toContain("必须一起上的几件");
-      expect(html).toContain("按住没发：t-3");
+      expect(html).toContain("还没验，带不上：t-3");
       expect(html).toContain("等 dev");            // the owner of the member that has not passed
       expect(html).toContain("这次能带上");
       // a unit whose members all passed is not described as held
       const moving = html.slice(html.indexOf("这次能带上"));
       expect(moving).toContain("t-9");
-      expect(moving).not.toContain("按住没发");
+      expect(moving).not.toContain("还没验，带不上");
     } finally { await v.stop(); }
   });
 
@@ -92,16 +94,25 @@ describe("t-133 · 上线详情页", () => {
       expect(ok).toContain("装好的几批");
       expect(ok).toContain("2.10");
       expect(ok).toContain("可以推");
-      expect(ok).not.toContain("按住没发");
+      expect(ok).not.toContain("还没验，带不上");
 
       // production moved on, and the batch would take two tasks back off it: core's sentence, printed as it stands
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "bbbbbbb2222", contained: ["t-1", "t-2"], not_contained: [], method: "git merge-base --is-ancestor 逐件测" } });
       const held = await v.page();
-      expect(held).toContain("按住没发：");
+      // pd 05:12: core's sentence, with nothing of ours in front of it — 按住 means someone deliberately held it
       expect(held).toContain("推它会把");
+      // Both sides of this conflict were right and neither is dropped: dev's case keeps the sentence current, mine
+      // keeps the page from adding words of its own. The third assertion is what makes the first two survive the
+      // next rewording — it compares the page against what core actually computed, so a wording decision can never
+      // again silently invalidate a verified test (pm 06:15).
+      const board = await (await fetch(`${v.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa" } })).json() as Board;
+      const line = board.batches.find((x) => x.name === "2.10")!.line;
+      expect(line).not.toBe("");
+      expect(held).toContain(line);
       expect(held).toContain("从生产上退回去。重装，别推。");
+      expect(held).not.toContain("按住没发");
       // the page must not have written a second sentence of its own about the same thing
       expect(held).not.toContain("这批不能推");
     } finally { await v.stop(); }

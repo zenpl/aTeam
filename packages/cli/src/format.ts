@@ -80,7 +80,7 @@ export function board(b: Board, me: string): string {
 
   if (b.undelivered?.length) {
     out.push("", "UNDELIVERED (sent 5+ minutes ago, never pulled)");
-    for (const u of b.undelivered) out.push(`  ${who(u.to).padEnd(10)} ${u.count} 条没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没在听"}`);
+    for (const u of b.undelivered) out.push(`  ${who(u.to).padEnd(10)} ${u.count} 条还没送到，最早 ${ago(u.oldest_sent)} 前${u.listening ? "" : "  没读日志"}`);
   }
 
   // t-147: overdue is now one thing only — a card whose options nobody has answered past its time. Not acking is
@@ -176,8 +176,10 @@ export function board(b: Board, me: string): string {
   for (const p of b.presence) {
     const name = who(p.actor);
     const st = p.status ?? (p.present === false ? "missing" : "listening");
-    const label = st === "listening" ? `在听  ${ago(p.last_seen!)} 前`
-      : st === "deaf" ? `没在听 ${p.last_pull ? `${ago(p.last_pull)}` : "从未拉取"}（${ago(p.last_event!)} 前还说过话）`
+    // t-140 · pd 05:42: say what the server can see — when this role last read the log — not whether it is listening,
+    // which we do not observe. A node's own watch dying is its own business and its own terminal (t-102).
+    const label = st === "listening" ? `在读  ${ago(p.last_seen!)} 前`
+      : st === "deaf" ? `${p.last_pull ? `${ago(p.last_pull)} 没读日志` : "从未读过日志"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
     out.push(`  ${name.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
   }

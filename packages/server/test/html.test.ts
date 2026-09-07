@@ -488,7 +488,13 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
         expect(words, `English words on the page: ${[...new Set(words)].join(", ")}`).toEqual([]);
-        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "仓库验过，还没在生产验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "到期没人选", "接缝", "事实", "已定", "human 选择了「报表」", "还没读到", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
+        // t-152: 「验过了，等上线」 is not in this list on purpose — unlike 在做/卡住 it appears only when the board
+        // can tell something is waiting on a push (the containment fact), so asserting it here would pin a fixture,
+        // not a translation. Its own tests cover it. 「仓库验过，还没在生产验」 was that same label before t-152
+        // renamed it; it is gone from the page, so the list names neither.
+        // t-147 renamed two of these in place: 逾期 → 到期没人选 (only a card with options can be late now) and
+        // 待送达 → 还没读到 (delivery is computed from the reader's own cursor, not from a receipt).
+        for (const zh of ["aTeam · 牌桌", "需要你", "问你", "请你做", "告诉你", "做好了", "先不做", "知道了", "默认", "不点的话，到期按", "现在", "焦点", "线上", "在生产上验过", "核对", "在途", "在做", "卡住", "做完了，等验", "没开始", "谁在", "刚刚", "你说过的", "已收到", "其余：团队自己的状态", "到期没人选", "接缝", "事实", "已定", "human 选择了「报表」", "还没读到", "仓库", "已失效", "已过期", "同一份数据"]) expect(ui, zh).toContain(zh);
       }
       expect(await (await fetch(`${z.base}/token`)).text()).toContain("输入 token");
     // the note on t-1 (verified before this version) is on the task page, whose labels are Chinese too (t-065)
@@ -581,10 +587,14 @@ describe("t-043 · 起项目首屏的唯一一张卡与邀请链接、按角色�
     const who = html.slice(html.indexOf('<span class="label">谁在</span>'), html.indexOf("</section>", html.indexOf('<span class="label">谁在</span>')));
     expect(who).toMatch(/<span class="who-chip" data-role="pm" data-status="listening"><i><\/i>pm<span class="meta"><time[^>]*>2 分钟前<\/time><\/span><\/span>/);
     expect(who).toMatch(/<span class="who-chip" data-role="dev" data-status="listening"><i><\/i>dev<span class="meta"><time[^>]*>刚刚<\/time><\/span><\/span>/);
-    expect(who).toContain('<span class="who-chip away" data-role="qa" data-status="missing"><i></i>qa<span class="meta">缺人 12 分钟 · 1 条没送到</span></span>');
+    expect(who).toContain('<span class="who-chip away" data-role="qa" data-status="missing"><i></i>qa<span class="meta">缺人 12 分钟 · 1 条还没送到</span></span>');
     expect(who).toContain('<span class="who-chip away" data-role="pd" data-status="missing"><i></i>pd<span class="meta">缺人 45 分钟</span></span>');
     expect(who).toContain('<span class="who-chip away" data-role="frontend" data-status="missing"><i></i>frontend<span class="meta">缺人</span></span>');
-    expect(who).toContain('<span class="who-chip away" data-role="ops" data-status="deaf"><i></i>ops<span class="meta">没在听 30 分钟 · 3 条没送到</span></span>');   // t-047 deaf + t-048 undelivered
+    // t-140 · pd 05:42: the board says how long since it read the log, which is what the server can see — never
+    // 「没在听」, which claims to know a state we do not observe
+    expect(who).toContain('<span class="who-chip away" data-role="ops" data-status="deaf"><i></i>ops<span class="meta">30 分钟没读日志了 · 3 条还没送到</span></span>');   // t-047 + t-048
+    // scoped to the chips: 「没在听」 also survives in the service's own card text (app.ts), which is dev's to change
+    expect(who.slice(who.indexOf("who-chip"))).not.toContain("没在听");
     expect(who).not.toContain("human");
     expect(html).not.toContain('<span class="count">');                         // nobody is waiting on the human: no card, no red
 

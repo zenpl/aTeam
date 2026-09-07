@@ -435,11 +435,26 @@ export function inFlightOf(b: Board): { key: string; label: string; total: numbe
     const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
     return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? whyLine(task.blocked_on) : undefined };
   });
-  const elsewhere = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production")).map((tk) => ({ title: tk.shows ?? tk.title, owner: tk.owner })); // t-056: the owner's sentence when there is one
+  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
+  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
+  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
+  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
+  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
+  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
+  // t-152 (pd 07:07): group by what a thing is actually waiting for. 「验过了，等上线」 is exactly the set one push
+  // clears — the same set the standing line counts, because two numbers that mean the same thing must be one number.
+  // A task verified only on staging is waiting for a repo verification, not a deploy, so it belongs with 等验; and
+  // work already running in production that nobody walked there has no lever at all and leaves every surface.
+  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
+  const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
+  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
+  const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
+  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
+  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
   const groups = [
     { key: "working", label: UI.groups.working, items: sortRecent(b, "working", g("working")) },
     { key: "blocked", label: UI.groups.blocked, items: sortRecent(b, "blocked", g("blocked")) },
-    { key: "done", label: UI.groups.done, items: g("done") },
+    { key: "done", label: UI.groups.done, items: [...g("done"), ...awaitingRepo] },
     { key: "open", label: UI.groups.open, items: g("open") },
     { key: "failed", label: UI.groups.failed, items: g("failed") },
     { key: "verifiedElsewhere", label: UI.groups.verifiedElsewhere, items: elsewhere },
@@ -665,12 +680,12 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
   }
 
-  // 按住没发 — pd 03:32: a batch that is not going out must say why, and core already worked out why for each state.
+  // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
   if (batches.length) {
     out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
     for (const x of batches) {
       const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
-      const why = x.line ? ` <span class="held">${esc(UI.releaseHeld(x.line))}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+      const why = x.line ? ` <span class="held">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
       out.push(`<li>${named}${why}</li>`);
     }
     out.push(`</ul>`);
@@ -685,11 +700,13 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
       const members = u.tasks.map((t) => `${link(t.id)} ${esc(t.shows ?? t.title)}`);
       const head = u.tasks.length > 1 ? `<span class="tag">${UI.releaseTogether}</span> ` : "";
       const waiting = u.held_by.length
-        ? ` <span class="meta held">${esc(UI.releaseHeld(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
+        ? ` <span class="meta held">${esc(UI.releaseNotVerified(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
         : "";
       return `<li>${head}<code>${esc(u.sha.slice(0, 7))}</code> ${members.join("；")}${waiting}</li>`;
     };
-    const moving = units.filter((u) => !u.held_by.length), stuck = units.filter((u) => u.held_by.length);
+    const moving = units.filter((u) => !u.held_by.length && u.brings > 0), stuck = units.filter((u) => u.held_by.length);
+    // t-078's third state: with no containment fact the board cannot place these, so the page says why instead of a number.
+    if (units.some((u) => u.brings_unknown)) out.push(`<p class="quiet">${esc(UI.waitingUnknown(b.release.basis || ""))}</p>`);
     if (stuck.length) out.push(`<ul class="plain stuck">${stuck.map(line).join("")}</ul>`);
     if (moving.length) {
       out.push(`<p class="meta">${UI.releaseBrings}</p>`);

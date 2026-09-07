@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -1050,15 +1050,46 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
  * page once promised an address nobody had ever delivered to (t-126).
  */
 export interface OwedNow {
-  unanswered: { instruction: string; from: string; body: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
+  unanswered: { instruction: string; from: string; body: string; sent: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
   untouched: { instruction: string; from: string; body: string; sent: string }[];
+}
+
+/**
+ * t-140 (pd 06:23): what this node itself still owes, said only to it, only at `sync`. Two sentences because it
+ * owes two different things: an answer to a card, and an action on everything else. The second ends with both
+ * legitimate ways out on purpose — silence is no longer an answer and a refusal is information, so a line offering
+ * neither would read as nagging.
+ *
+ * It reads `owedNow`, not the batch a pull happened to bring. That is the whole of qa 06:32's failure: fed
+ * `for_me`, the line lived exactly as long as the instant an instruction arrived — printed directly under the
+ * instruction itself, the one moment nobody needs it — and a node that had synced once was never reminded again
+ * while the debt stood. What is owed has to be computed from what is owed.
+ *
+ * Data in, sentences out: no clock of its own, no i18n, no second copy in the renderers (pd 05:50).
+ */
+export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
+  if (!owed) return [];
+  const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
+  type Item = { body: string; sent: string };
+  const oldest = (xs: Item[]) => xs.reduce((a, b) => (a.sent < b.sent ? a : b));
+  const first = (x: Item) => splitTitle(x.body).title || x.body.trim().slice(0, 30);
+  const out: string[] = [];
+  if (owed.unanswered.length) {
+    const o = oldest(owed.unanswered);
+    out.push(`有 ${owed.unanswered.length} 条在等你答，最久的 ${mins(o.sent)} 分钟：${first(o)}`);
+  }
+  if (owed.untouched.length) {
+    const o = oldest(owed.untouched);
+    out.push(`你读过还没动的有 ${owed.untouched.length} 条，最久 ${mins(o.sent)} 分钟：${first(o)}。办了它，或者写一句「${DECLINE_PREFIX}原因」。`);
+  }
+  return out;
 }
 
 export function owedNow(s: State, to: string): OwedNow {
   const out: OwedNow = { unanswered: [], untouched: [] };
   for (const st of owedTo(s, to)) {
     const i = st.instruction;
-    if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
+    if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;
@@ -1356,14 +1387,23 @@ export interface ReleaseUnit {
   tasks: { id: string; title: string; shows?: string; owner?: string; status: string; passed: boolean }[];
   /** The members that are not verified on repo: the reason the whole string is not moving. */
   held_by: { id: string; title: string; shows?: string; owner?: string; status: string }[];
-  /** Members already verified on repo and not yet in production: what this unit would actually bring. */
+  /**
+   * What this unit would actually put into production: members whose code is not there yet (t-078's pending_deploy).
+   * Not "verified but not verified on production" — that is deployed_unverified, whose code is already running, and
+   * counting it here said 28 when the board said 9 (qa 05:31).
+   */
   brings: number;
+  /** True when the board cannot place the tasks at all, so `brings` is not an answer (t-078's unknown). */
+  brings_unknown?: boolean;
   /** When the earliest member of this string was finished: how long it has been waiting. */
   since: string;
 }
 
 export function releaseUnits(b: Board): ReleaseUnit[] {
-  const shipped = new Set((b.release.candidates ?? []).map((c) => c.task));
+  // What is actually waiting to ship is t-078's pending_deploy, the same set the board's 「N 件验过了，等一次上线」
+  // counts. Absent means the board could not work it out (no containment fact): then this page must not invent one.
+  const pending = b.release.pending_deploy;
+  const shipped = new Set((pending ?? []).map((c) => c.task));
   const doneAt = new Map((b.release.candidates ?? []).map((c) => [c.task, c.done_at]));
   const units = new Map<string, ReleaseUnit>();
   for (const group of Object.values(b.tasks)) {
@@ -1373,20 +1413,19 @@ export function releaseUnits(b: Board): ReleaseUnit[] {
       // A member holds the string until it is verified — on whichever surface its own criteria needed. Asking for a
       // repo pass specifically would count a task verified only on production (t-002, t-012) as holding itself.
       const passed = t.status === "verified";
-      const inProduction = (t.surfaces ?? []).some((r) => r.surface === "production" && r.pass);
-      const u = units.get(sha) ?? { sha, tasks: [], held_by: [], brings: 0, since: "" };
+      const u = units.get(sha) ?? { sha, tasks: [], held_by: [], brings: 0, since: "", ...(pending ? {} : { brings_unknown: true }) };
       const at = doneAt.get(t.id);
       if (at && (!u.since || at < u.since)) u.since = at;
       u.tasks.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, passed });
       if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status });
-      if (passed && !inProduction && shipped.has(t.id)) u.brings += 1;
+      if (shipped.has(t.id)) u.brings += 1;
       units.set(sha, u);
     }
   }
   // Only the units with something left to ship: a sha whose whole string is already in production is history.
   // Oldest first, the same order the board lists candidates in: what has been waiting longest leads. Sorting by sha
   // would be an implementation detail deciding what a person reads first.
-  return [...units.values()].filter((u) => u.brings > 0 || u.held_by.length > 0)
+  return [...units.values()].filter((u) => u.brings > 0 || u.brings_unknown || u.held_by.length > 0)
     .sort((x, y) => (x.since || "~").localeCompare(y.since || "~") || x.sha.localeCompare(y.sha));
 }
 
