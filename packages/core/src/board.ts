@@ -327,6 +327,11 @@ export interface Board {
     /** ask: answer it; do: do it and say "done"; info: read it. */
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     /**
+     * t-215：这张卡声明的条件被改动过（`stale_by` 是改动它的那条事件）。**只是「可能过期」，不是「不成立」**
+     * ——卡照旧在、人照旧能答；标出来是为了别让人照着一句已经不真的话动手。要给人看的那句归 pd。
+     */
+    stale_since?: string; stale_by?: string;
+    /**
      * t-188（frontend 10:36 的更正）：**这张卡原来根本没有这个字段。**牌桌上一张要人拍板的卡说得出「什么时候
      * 到期」，靠的就是它；缺了它，页面只能说「不点的话按 X」而说不出「到什么时候」，pd 09:18 那句定稿也就印不全。
      * pm 10:34 报的「board 报 null」其实是 JSON 里的缺席，不是有一处代码把值抹掉了——按后者去找，那处不存在。
@@ -990,6 +995,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         kind: instructionKind(i), ...splitTitle(body), id: i.id, from: i.actor, body, summary: `${i.actor}: ${body}${ask}`, since: i.at,
         ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st, now),
+        stale_since: st.stale_since, stale_by: st.stale_by,   // t-215：只出数据不出话
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }

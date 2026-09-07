@@ -35,7 +35,7 @@ every turn
       what passed on repo and not yet on production; --deploy pushes that sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
-  ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
+  ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info] [--depends-on surface:key,...]   instruction: one recipient, ≤280 chars, must be acked; --kind only for human; --depends-on says what this card is true of, and the board marks it when that fact changes
   ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
@@ -299,9 +299,11 @@ async function main(argv: string[]) {
       const [to, body] = exact(rest, "to", "body");
       const intent = str(a, "kind") as InstructionIntent | undefined;
       if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
+      // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
+      // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
-        options: list(a, "option"), default: str(a, "default") });
+        options: list(a, "option"), default: str(a, "default"), depends_on: list(a, "depends-on") });
     }
     case "decide": {
       const [id, option] = exact(rest, "id", "option");

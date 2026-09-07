@@ -168,7 +168,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 };
 /** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
-  reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
+  reading: {}, instruction: { options: "strings", default: "string", intent: "string", depends_on: "strings" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
   "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count", base_sha: "string" },
   "task:verify": { evidence: "string", shows: "string" },

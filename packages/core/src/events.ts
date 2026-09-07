@@ -67,6 +67,17 @@ export interface Instruction extends Base {
   default?: string;
   /** For the human's board: a question to answer, a thing to do, or something to know. Derived when absent. */
   intent?: InstructionIntent;
+  /**
+   * t-215：**这张卡活着的条件**，写成 `surface:key`。哪条事实一被 `writes` 命中，这张卡就被标成「可能已过期」。
+   *
+   * 读数那一侧早有这套机制（`depends_on` ＋ 被 `writes` 命中即失效），**指令这一侧一直没有**。代价今天摆在人
+   * 的首屏上：release 02:13 那张「37 件已验的没上线，谁来推？」挂了 13.5 小时、期间上了 19 批，此刻待上线
+   * 是 0，它请人推的那个 sha 早就是生产的祖先——**一张人写的卡，正文是自由文本，服务重算不了**（这正是它与
+   * t-202、t-210 那两种的分界）。所以出路是**发卡的人声明条件**，不是让服务猜。
+   *
+   * 标出来就够了，**不删卡**：过期与不成立是两回事，删掉一张人还没答的卡是 t-190 已经定过的错。
+   */
+  depends_on?: string[];
 }
 
 export interface Ack extends Base {

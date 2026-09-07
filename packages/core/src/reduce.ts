@@ -128,6 +128,12 @@ export interface InstructionState {
    * default because a cursor that has not passed it proves nothing was read.
    */
   reach: Reach;
+  /**
+   * t-215：这张卡声明的条件被改动了——`stale_by` 是改动它的那条事件，`stale_since` 是那一刻。
+   * **只是「可能过期」，不是「不成立」**：卡照旧在，人照旧可以答；标出来是为了别让人照着一句已经不真的话动手。
+   */
+  stale_since?: string;
+  stale_by?: string;
   /** t-147: what the recipient wrote that shows they acted on it — the first such event's id. */
   acted_by_event?: string;
   /**
@@ -623,6 +629,15 @@ function invalidate(s: State, e: Event) {
     if (rs.reading.depends_on?.some((d) => hit.has(d))) {
       rs.valid = false;
       rs.invalidated_by = e.id;
+    }
+  }
+  // t-215：指令那一侧走同一条路，但结果不同——读数**失效**（不许再被引用），指令只是**被标出来**：
+  // 卡还在，人还能答。删掉一张人没答的卡是 t-190 定过的错。
+  for (const st of s.instructions.values()) {
+    if (st.stale_since || st.instruction.id === e.id) continue;
+    if (st.instruction.depends_on?.some((d) => hit.has(d))) {
+      st.stale_since = e.at;
+      st.stale_by = e.id;
     }
   }
 }
