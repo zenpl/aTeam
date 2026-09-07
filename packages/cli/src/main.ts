@@ -10,7 +10,7 @@ import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
-import { revise, baseAt, type Diff } from "./touches.js";
+import { revise, baseAt, changedFiles, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -120,13 +120,9 @@ function gitDiff(): Diff {
   return {
     head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
     base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
-    changed: (base) => {
-      const r = git(["diff", "--name-only", base]);          // committed and uncommitted, against the claim point
-      if (r.status !== 0) return null;
-      const u = git(["ls-files", "--others", "--exclude-standard"]); // files created since and not yet added
-      // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
-      return [...r.stdout.split("\n"), ...(u.status === 0 ? u.stdout.split("\n") : [])].map((x) => x.trim()).filter((x) => x && !x.startsWith(".ateam/"));
-    },
+    // t-138: what this task changed, not what the branch did — a merge brings in other people's files, and merging
+    // is what the seam rules ask for. The three questions and their blind spots live next to changedFiles.
+    changed: (base) => changedFiles((args) => { const r = git(args); return r.status === 0 ? r.stdout : null; }, base),
   };
 }
 

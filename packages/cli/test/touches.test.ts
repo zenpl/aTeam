@@ -3,7 +3,7 @@
  * 从分支相对 claim 起点的 diff 算；没有 diff 的介质退回手工修订，那条退化路径是一等公民，不是「以后再说」。
  */
 import { describe, it, expect } from "vitest";
-import { revise, baseAt } from "../src/touches.js";
+import { revise, baseAt, changedFiles, type Git } from "../src/touches.js";
 
 const DECLARED = ["packages/cli/src/watch.ts", "packages/cli/src/heartbeat.ts", "packages/cli/src/index.ts", "packages/cli/src/format.ts"];
 const ACTUAL = ["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts", "packages/cli/test/deaf.test.ts"];
@@ -137,5 +137,80 @@ describe("t-135 · a reopened round is measured from where the round started", (
     expect(after.touches).toEqual(thisRound);
     for (const f of between) expect(after.lines.join("\n")).not.toContain(f);
     expect(after.lines.join("\n")).toContain("claim 时没声明、实际改了：packages/core/test/pass-only-gates.test.ts");
+  });
+});
+
+/**
+ * t-138: `git diff base..HEAD` cannot tell "I wrote this" from "I merged this", and merging is not the exception —
+ * the seam rules ask for it, and on a busy night everyone is doing it. t-136 was claimed at 7be4d67, merged
+ * frontend's c441b39 on the way, and came out claiming sixteen files and one seam that was not its own. The only way
+ * through was `--touches-only`, which is the escape hatch, not the answer: an algorithm you can only get past by
+ * declaring the answer by hand teaches the next person to declare the answer by hand.
+ *
+ * All times relative to now; git is faked so these say what the commands mean, not what this checkout happens to hold.
+ */
+describe("t-138 · 合进来的不是我改的", () => {
+  const MINE = ["packages/cli/src/deaf.ts", "packages/server/test/behind.test.ts"];
+  const THEIRS = ["packages/server/src/html.ts", "packages/server/src/i18n.ts"];
+  const RESOLVED = ["packages/server/src/app.ts"];
+
+  /** A fake git for a branch that carries my two commits and one merge of somebody else's branch. */
+  const git = (over: Record<string, string | null> = {}): Git => (args) => {
+    const k = args[0] === "diff-tree" ? "diff-tree" : args.slice(0, 2).join(" ");
+    if (k in over) return over[k];
+    if (k === "log --first-parent") return MINE.join("\n");
+    if (k === "rev-list --first-parent") return "merge1\n";
+    if (k === "diff-tree") return RESOLVED.join("\n");
+    if (k === "diff --name-only") return "";
+    if (k === "ls-files --others") return "";
+    return "";
+  };
+
+  it("my commits and my conflict resolutions count; what the merge dragged in does not", () => {
+    const files = changedFiles(git(), "7be4d67")!;
+    expect(files).toEqual([...MINE, ...RESOLVED]);
+    for (const f of THEIRS) expect(files).not.toContain(f);
+  });
+
+  it("uncommitted work and new files are still mine", () => {
+    const files = changedFiles(git({ "diff --name-only": "packages/cli/src/main.ts", "ls-files --others": "packages/cli/test/new.test.ts" }), "7be4d67")!;
+    expect(files).toContain("packages/cli/src/main.ts");
+    expect(files).toContain("packages/cli/test/new.test.ts");
+  });
+
+  it("the tool's own bookkeeping is never a thing the task touched", () => {
+    const files = changedFiles(git({ "ls-files --others": ".ateam/base.t-138\n.ateam/cursor.dev" }), "7be4d67")!;
+    expect(files.some((f) => f.startsWith(".ateam/"))).toBe(false);
+  });
+
+  it("git cannot answer at all: null, and the manual path takes over — never a wrong measurement", () => {
+    expect(changedFiles(git({ "log --first-parent": null }), "7be4d67")).toBeNull();
+    // a range with nothing of mine in it is an *answer*, not a failure: this task changed nothing yet
+    expect(changedFiles(git({ "log --first-parent": "", "rev-list --first-parent": "", "diff-tree": "" }), "7be4d67")).toEqual([]);
+  });
+
+  it("a merge with nothing of its own adds nothing: only files differing from every parent are the merger's", () => {
+    const files = changedFiles(git({ "diff-tree": "" }), "7be4d67")!;
+    expect(files).toEqual(MINE);
+  });
+
+  it("t-136's own case: sixteen files become the seven that were really its round", () => {
+    // the shape that produced the phantom seam: my commits, one merge of frontend's branch, one resolved file
+    const mine136 = ["packages/cli/src/client.ts", "packages/cli/src/deaf.ts", "packages/cli/src/main.ts",
+      "packages/cli/test/deaf.test.ts", "packages/server/src/app.ts", "packages/server/test/behind.test.ts",
+      "packages/server/test/rendered.test.ts"];
+    const theirs136 = ["packages/server/src/html.ts", "packages/server/src/i18n.ts", "packages/cli/src/format.ts",
+      "packages/server/test/release-page.test.ts", "packages/core/test/slim-cost.test.ts"];
+    const g: Git = (args) => {
+      const k = args[0] === "diff-tree" ? "diff-tree" : args.slice(0, 2).join(" ");
+      if (k === "log --first-parent") return mine136.join("\n");
+      if (k === "rev-list --first-parent") return "fe6bbd3";
+      if (k === "diff-tree") return "packages/server/src/app.ts";
+      return "";
+    };
+    const files = changedFiles(g, "7be4d67")!;
+    expect(files.sort()).toEqual([...mine136].sort());
+    for (const f of theirs136) expect(files).not.toContain(f);
+    expect(files).toHaveLength(7);
   });
 });
