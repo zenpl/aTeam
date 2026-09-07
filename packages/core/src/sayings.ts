@@ -91,6 +91,26 @@ export function duplicateKeys(): string[] {
  */
 export const HUMAN_FIELDS = ["shows", "title"] as const;
 
+/**
+ * t-178：core 里装着给人看的话的那几个文件——**那道闸扫的就是这几个**（build.test.ts），一处声明两处读。
+ *
+ * 我试过把它们也当成「碰了就算人可见」（像渲染文件那样），**改完就撤回了**，两个理由都是跑出来才知道的：
+ * ① qa 已经验过「app.ts + reduce.ts」是一种纯内部形状、必须过；把 reduce.ts 算进来，那条当场红——**改一条
+ *    已经被验过的行为，得先说服判它的人，不能顺手带过**。
+ * ② 更糟的是它会重新打开一个刚堵上的洞：这几个文件一旦享有具名出路，`events.ts#BATCH_LINES` 就又能用
+ *    `--internal-only` 解释掉了，而那正是 qa 08:46 判不过我的那一条。
+ *
+ * 所以留下的口径是符号级：`board.ts#inFlightGroups` 算，光写 `board.ts` 不算。**残留的缺口我说在明处**：
+ * `done` 量出来的触点是路径、符号要人自己写，所以只声明路径的人仍然过得去。要不要收，归 pm。
+ */
+export const SENTENCE_FILES = [
+  "packages/core/src/board.ts",
+  "packages/core/src/events.ts",
+  "packages/core/src/reduce.ts",
+  "packages/core/src/allocation.ts",
+  "packages/core/src/sayings.ts",
+] as const;
+
 /** t-178：这几张表本身只是名字的清单，引用一个名字不算「决定」——不排除它们，它们会把自己算进去。 */
 export const REGISTRY_SYMBOLS = ["KEY_SYMBOLS", "SAYINGS", "SECOND_HOMES", "LITERAL_CHECK_BLIND_SPOTS", "HUMAN_FIELDS", "REGISTRY_SYMBOLS"] as const;
 
