@@ -815,9 +815,11 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。不想要就点不要了，之后不再问你。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
       expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
-      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
+      // t-118 (pd 01:40)：按钮上写的就是它送出去的那个值，不做值与标签的映射；这张卡带的是旧值，按钮上就写旧值
+      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">填写</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
       expect(html).not.toContain('<p class="meta contact-line">'); // the card is on screen: no grey line under 线上
-      expect(html).not.toContain("填写</button>"); // the option names are not what the human reads
+      // t-118 (pd 01:40) 把这一条反过来了：选项的值就是人看到的那个词，所以按钮上写的必须与它送出去的值一致
+      expect(html).toContain('value="填写">填写</button>');
       expect(html).not.toContain("邮箱"); // pd 22:45: the service only calls webhooks, so the page never promises email
 
       const cookie = await v.cookie();

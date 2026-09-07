@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -193,8 +193,9 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const contactForm = (action: string, fields: string, current: string | null, options?: string[]) => {
     const [fill, skipValue] = [options?.[0] ?? CONTACT_FILL, options?.[1] ?? CONTACT_SKIP];
     const input = `<input type="text" name="value" placeholder="${esc(UI.contactPlaceholder)}" aria-label="${esc(UI.contactPlaceholder)}" autocomplete="off"${current ? ` value="${esc(current)}"` : ""}>`;
-    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
-    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
+    // t-118 (pd 01:40)：按钮上写的就是它送出去的那个值，不做值与标签的映射；老卡带着旧值，按钮上就写旧值。
+    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${esc(fill)}</button>` : `<button class="btn primary" type="submit">${esc(CONTACT_FILL)}</button>`;
+    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${esc(CONTACT_SKIP)}</a>`;
     return form(action, "actions contact", fields, `${input}${save}${skip}`);
   };
   const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);
@@ -269,7 +270,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
-      ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(cardTitle({ body: just.i.body }).title)} → <b>${esc(just.i.chosen.option)}</b>`)
+      ? ((just.i.chosen.option === CONTACT_FILL || just.i.chosen.option === CONTACT_FILL_WAS) && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(cardTitle({ body: just.i.body }).title)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
     // t-111 (pd 00:39): the reason is welcome but never required — the invitation costs nothing and adds no control,
     // it just points at the 说一句 box that is already there.

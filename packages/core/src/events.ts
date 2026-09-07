@@ -245,7 +245,13 @@ export const CONTACT_ASK_WAS = "你不在时怎么找你？给个邮箱或 webho
 export function isContactAsk(body: string): boolean {
   return body === CONTACT_ASK || body === CONTACT_ASK_WAS;
 }
-export const CONTACT_FILL = "填写";
+/**
+ * t-118 (pd 01:40)：选项的值就是人看到的那个词，不做值与标签的映射。换词就换值，历史带着旧值不改——
+ * 老卡上写的仍是它自己那个词，照样答得下去。
+ */
+export const CONTACT_FILL = "记下";
+/** 旧卡上的那个词，答起来与「记下」同义（同 CONTACT_SKIP_WAS）。 */
+export const CONTACT_FILL_WAS = "填写";
 /** t-111 (pd 00:39): a button says what it costs — this one closes the question for good, so it is not 「先不做」. */
 export const CONTACT_SKIP = "不要了";
 /** What the same button said before t-111. Cards already sent carry it; answering them must keep working. */
@@ -298,6 +304,14 @@ export const MIGRATION_PATCH = "human 说有漏：回去核对旧单据再补，
 /** t-069 / pm 22:39: the contact card exists only when this fact (surface project) is set; off by default. */
 export const ALERT_ASK_KEY = "alert.ask";
 /** Reading key (surface project) that names where to call out when the whole team is gone or the human is late (t-050). */
+/**
+ * t-119 (pd 01:21 的通则): 安全兜底的状态由**可达性**证明，不由字符串存在证明。这条事实只在真的送到过一次之后
+ * 才写下来，值是当时那个地址——换了地址就得重新证一次，因为证的是那个地址，不是「配过东西」这件事。
+ */
+export const ALERT_REACHED_KEY = "alert.reached";
+/** 服务写外呼结果时那条 note 的前缀与失败标记；牌桌据此判断「连续两次失败」（t-119）。 */
+export const ALERT_NOTE_PREFIX = "外呼：";
+export const ALERT_FAILED = "发送失败";
 export const ALERT_WEBHOOK_KEY = "alert.webhook";
 /** The whole team not listening for this long is a call-out. */
 export const ALL_MISSING_AFTER_MS = 15 * 60_000;

@@ -29,8 +29,6 @@ export const UI = {
   // t-118: 卡上那句话只有一处出处——指令正文（core 的 CONTACT_ASK）。这里不再存第二份问句，
   // 页面渲染时从卡自己的正文拆出标题与正文，pd 改一次就是全改。下面剩的都是按钮与占位符，不是问句。
   contactPlaceholder: "https://…",
-  contactSave: "记下",
-  contactSkip: "不要了", // t-111 (pd 00:39): this one closes the question for good
   saySomething: "想说一句就说",
   contactSet: (v: string) => `找你用 ${v}`,
   contactNone: "你不在时，我们找不到你。",

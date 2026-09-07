@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -421,8 +421,9 @@ export function createApp(opts: ServerOptions) {
           if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
-          const contact = isContactAsk(i.body) && option === CONTACT_FILL ? (form.get("value") ?? "").trim() : "";
-          if (isContactAsk(i.body) && option === CONTACT_FILL && !contact) return { status: 400, body: { error: "value", message: `填一个 https:// 开头的 webhook 地址；不想填就选「${i.options?.[1] ?? CONTACT_SKIP}」` } };
+          const filling = isContactAsk(i.body) && (option === CONTACT_FILL || option === CONTACT_FILL_WAS);   // 老卡带的是旧那个词
+          const contact = filling ? (form.get("value") ?? "").trim() : "";
+          if (filling && !contact) return { status: 400, body: { error: "value", message: `填一个 https:// 开头的 webhook 地址；不想填就选「${i.options?.[1] ?? CONTACT_SKIP}」` } };
           const [note, ...followed] = await serialize(async () => {
             const fresh = reduce(await store.read(), now()).instructions.get(of)!;
             if (!fresh.acked_at) emitAll([await append(store, { kind: "ack", actor: human, of }, { human, now: real() })]);

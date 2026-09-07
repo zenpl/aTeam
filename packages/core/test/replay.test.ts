@@ -1766,7 +1766,8 @@ describe("t-084 · the call-out address has a shape; a bad one is said, not hidd
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
     await emit(store, c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: "https://hooks.example/team" });
-    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert).toMatchObject({ status: "set", value: "https://hooks.example/team" });
+    // t-119 (pd 01:21)：形状对不等于送得到——配上之后的默认落点是「还没真发成功过」，不是「已配置」
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert).toMatchObject({ status: "unproven", value: "https://hooks.example/team" });
     for (const [bad, form] of [["a@b.com", "一个邮箱"], ["http://hooks.example/x", "一个 http 地址（不是 https）"], ["找我用微信", "一段文本「找我用微信」"], [42, "一个number"]] as const) {
       const r = await rejected(emit(store, c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: bad }));
       expect(r.rule).toBe("reading");
@@ -1776,7 +1777,8 @@ describe("t-084 · the call-out address has a shape; a bad one is said, not hidd
     const older = new MemoryStore();
     await older.appendRaw({ id: "01OLD", at: c.iso(-min(10)), kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: "human@example.com" } as never);
     const b = board(reduce(await older.read(), c.now()), HUMAN, c.now());
-    expect(b.alert).toMatchObject({ status: "misconfigured", value: "human@example.com", line: "外呼地址配了但发不出去：不是 https（human@example.com）" });
+    // t-119 (pd 01:40 ②)：这一句改成人关心的那件事——收不收得到，而不是我们存了什么
+    expect(b.alert).toMatchObject({ status: "misconfigured", value: "human@example.com", line: "这个外呼地址我们发不出去，它不是一个 https 地址。" });
   });
 });
 

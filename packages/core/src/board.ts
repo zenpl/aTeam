@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent } from "./events.js";
 import { lastSeen, overturnedOn } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -206,11 +206,17 @@ export interface Board {
   /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
   coverage: BoardCoverage[];
   /** t-069: how to reach the human when away. set: the fact exists (however it got there); skipped: 先不要 and no fact; else unanswered. */
+  /**
+   * t-119 (pd 01:21 的通则)：安全兜底的状态由**可达性**证明，不由字符串存在证明。四态说的都是「你收不收得到」，
+   * 不是「配没配」——人关心的是有事时会不会响。`unproven` 是配上之后的默认落点，形状对也不跳过去。
+   */
   alert: {
-    status: "unanswered" | "set" | "skipped" | "misconfigured";
+    status: "unanswered" | "skipped" | "misconfigured" | "unproven" | "reachable";
     value?: string;
     source?: "given";
-    /** t-084: one line for the board when the address is set but cannot be called (not https). */
+    /** When the last call actually got through to this address (reachable), or last did (unproven, if ever). */
+    since?: string;
+    /** t-084/t-119: the one line the board shows under 线上; not a card, not clickable, never in 需要你. */
     line?: string;
   };
   /** 分配预警 (t-061): the five patterns, at most one each, and the one-line summary for the dig layer. */
@@ -334,14 +340,45 @@ export function pushLevelOf(s: State, role: string): PushLevel {
 }
 
 /** t-069: the state of "how to reach the human": the fact, or the card's answer, or neither. */
-export function alertContact(s: State): Board["alert"] {
+/** t-119 (pd 01:40)：兜底久不响就等于没有——七天没有新的成功，退回「没真发成功过」。 */
+export const REACH_STALE_MS = 7 * 24 * 3600_000;
+function stale(at: string, now: Date): boolean { return now.getTime() - Date.parse(at) > REACH_STALE_MS; }
+/** 一次失败不退回，连续两次才退：一次网络抖动不该吓人（pd 01:40）。 */
+function failedTwice(s: State, at: string): boolean {
+  const calls = s.notes.filter((n) => n.actor === SERVICE_ACTOR && n.body.startsWith(ALERT_NOTE_PREFIX) && n.body.includes(at));
+  const last2 = calls.slice(-2);
+  return last2.length === 2 && last2.every((n) => n.body.includes(ALERT_FAILED));
+}
+function ago(at: string, now: Date): string {
+  const m = Math.round((now.getTime() - Date.parse(at)) / 60_000);
+  if (m < 60) return `${Math.max(m, 1)} 分钟前`;
+  const h = (now.getTime() - Date.parse(at)) / 3_600_000;
+  return h < 24 ? `${h.toFixed(1)} 小时前` : `${(h / 24).toFixed(1)} 天前`;
+}
+
+/** t-119: the last time a call actually got through, and to which address. Nothing else counts as proof. */
+export function reachedProof(s: State): { value: string; at: string } | null {
+  const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_REACHED_KEY}`);
+  const r = id ? s.readings.get(id) : undefined;
+  if (!r?.valid || r.expired) return null;
+  const v = r.reading.value;
+  return typeof v === "string" && v.trim() ? { value: v.trim(), at: r.reading.measured_at ?? r.reading.at } : null;
+}
+
+export function alertContact(s: State, now: Date = new Date()): Board["alert"] {
   const id = s.latestReading.get(`${PROJECT_SURFACE}:${ALERT_WEBHOOK_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   if (typeof v === "string" && v.trim()) {
+    const at = v.trim();
     // t-084: a value that is there but is not an https webhook (recorded before the shape was declared): said, not hidden
-    if (!/^https:\/\/\S+$/.test(v.trim())) return { status: "misconfigured", value: v.trim(), source: "given", line: `外呼地址配了但发不出去：不是 https（${v.trim()}）` };
-    return { status: "set", value: v.trim(), source: "given" };
+    if (!/^https:\/\/\S+$/.test(at)) return { status: "misconfigured", value: at, source: "given", line: `这个外呼地址我们发不出去，它不是一个 https 地址。` };
+    // t-119 (pd 01:21/01:40)：有个字符串不等于送得到。只有真送到过一次才敢说它是通的，证的是**这个**地址；
+    // 而且证得不能太旧——兜底久不响就等于没有。配上就落在「还没真发成功过」，不因形状对而跳过去。
+    const proof = reachedProof(s);
+    if (proof && proof.value === at && !stale(proof.at, now) && !failedTwice(s, at)) return { status: "reachable", value: at, source: "given", since: proof.at, line: `你不在时会发到这里，最近一次成功是 ${ago(proof.at, now)}。` };
+    const seen = proof && proof.value === at ? `上次成功是 ${ago(proof.at, now)}。` : "";
+    return { status: "unproven", value: at, source: "given", since: proof?.value === at ? proof.at : undefined, line: `记下了外呼地址，还没真发成功过——不知道你收不收得到。${seen}` };
   }
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
   const skipped = [...s.instructions.values()].some((st) => isContactAsk(st.instruction.body) && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
@@ -666,7 +703,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   b.coverage = coverage(s, now, listenWindow);
-  b.alert = alertContact(s);
+  b.alert = alertContact(s, now);
   b.allocation.warnings = allocation(s, now, human);
   b.allocation.summary = allocationSummary(b.allocation.warnings);
   for (const actor of [...s.presence.keys()].sort()) {
