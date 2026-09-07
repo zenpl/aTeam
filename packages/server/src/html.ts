@@ -267,12 +267,14 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       : isContactCard(just.i) && just.i.chosen
       ? (just.i.chosen.option === CONTACT_FILL && contact ? `<b>${esc(UI.contactSet(contact))}</b>` : `${esc(UI.contactTitle)} → <b>${esc(just.i.chosen.option)}</b>`)
       : just.i.chosen ? `${esc(title)} → <b>${esc(just.i.chosen.option)}</b>` : `${esc(title)} → <b>${clicked}</b>`;
-    out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span></p>`);
+    // t-111 (pd 00:39): the reason is welcome but never required — the invitation costs nothing and adds no control,
+    // it just points at the 说一句 box that is already there.
+    out.push(`<p class="recent">${just.i.chosen ? UI.youJust : UI.youJustDid}${what} <span class="meta">${t(just.at)}</span> <a class="say-hint" href="#say">${UI.saySomething}</a></p>`);
   }
 
   // ---------- 说一句 ----------
   out.push(`<section class="say" id="say">`);
-  out.push(form("/say", "", "", `<input type="text" name="text" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" aria-label="${esc(UI.sayPlaceholder)}" autocomplete="off"><button class="btn" type="submit">${UI.say}</button>`));
+  out.push(form("/say", "", "", `<input type="text" name="text" maxlength="500" placeholder="${esc(UI.sayPlaceholder)}" aria-label="${esc(UI.sayPlaceholder)}" autocomplete="off"${just ? " autofocus" : ""}><button class="btn" type="submit">${UI.say}</button>`));
   const said = saidOf(b);
   if (said.length) {
     const line = (x: Said) => `<li><span class="said-body">${esc(x.body)}</span> <span class="meta">${t(x.at)} · ${esc(saidStatus(x))}</span></li>`;
@@ -704,6 +706,7 @@ a.btn { text-decoration:none; display:inline-block; }
 .invite input { flex:1 1 14rem; min-width:0; font:.85rem var(--mono); padding:.35rem .6rem; border:1px solid var(--line); border-radius:6px; background:var(--soft); color:var(--ink); }
 .btn.copy { padding:.35rem .8rem; font-size:.85rem; }
 .recent { margin:-.25rem 0 0; padding-left:1.25rem; color:var(--muted); font-size:.85rem; } .recent b { color:var(--ink); }
+.say-hint { color:var(--muted); }
 .say form { display:flex; gap:.5rem; }
 .say input { flex:1; min-width:0; font:inherit; padding:.6rem .9rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
 .say .meta, .say .said { margin:.35rem 0 0 .25rem; }

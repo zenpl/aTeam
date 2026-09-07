@@ -1197,3 +1197,55 @@ describe("t-107 · 人看到的角色一律显示名", () => {
     } finally { await v.stop(); }
   });
 });
+
+describe("t-111 · 按钮说出后果", () => {
+  const CONTACT = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
+  const card = (html: string) => {
+    const needs = section(html, "needs-you", "say");
+    const i = needs.indexOf("你不在时怎么找你");
+    return i < 0 ? "" : needs.slice(needs.lastIndexOf("<article", i), needs.indexOf("</article>", i));
+  };
+
+  it("the permanent choice reads 不要了 and logs the same word; a one-off card still reads 先不做", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: "请重启一次服务", ack_by: soon() });
+      const cookie = await v.cookie();
+      const html = await v.page({ cookie });
+      // what the human reads on the permanent one is the value the log will carry
+      expect(card(html)).toContain('<button class="btn" type="submit" name="option" value="不要了">不要了</button>');
+      expect(html).not.toContain(">先不要<");
+      // the one-off card is untouched
+      expect(html).toContain('>先不做</button>');
+
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(after).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
+      // pd 00:39: the reason is invited, never required, and no new control appears
+      expect(after).toContain('<a class="say-hint" href="#say">想说一句就说</a>');
+      expect(after).toContain('name="text"');
+      expect(after.match(/name="text"/g)).toHaveLength(1);
+      const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
+      expect(events.some((e) => e.kind === "note" && e.body === `decision: ${CONTACT} -> 不要了`)).toBe(true);
+    } finally { await v.stop(); }
+  });
+
+  it("a card sent before the wording changed is still answerable with the word it carries", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      // an old card: its options are the words of its own time
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      expect(card(await v.page({ cookie }))).toContain('value="先不要">先不要</button>'); // its own word, not today's
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(card(after)).toBe(""); // answered and gone
+      expect(after).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>'); // and it counts as skipped
+    } finally { await v.stop(); }
+  });
+});
