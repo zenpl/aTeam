@@ -2,7 +2,7 @@
  * t-023: a stray positional argument is refused and echoed, never folded silently into a title or body.
  */
 import { describe, it, expect } from "vitest";
-import { exact, UsageError, parse } from "../src/args.js";
+import { exact, UsageError, parse, measuredAtOf } from "../src/args.js";
 import * as fmt from "../src/format.js";
 
 describe("t-023 · exact positionals", () => {
@@ -41,5 +41,38 @@ describe("t-023 · task create echoes what was sent", () => {
   it("prints the title and numbered criteria", () => {
     expect(fmt.created("服务器报告部署的 sha", ["GET /health 返回 sha", "缺 sha 时显示 unknown"])).toBe(
       "  title: 服务器报告部署的 sha\n  1. GET /health 返回 sha\n  2. 缺 sha 时显示 unknown");
+  });
+});
+
+describe("t-051 · --measured-at", () => {
+  it("takes an ISO time or how long ago, and refuses anything else", () => {
+    const now = new Date(1_700_000_000_000);
+    expect(measuredAtOf("10m", now)).toBe(new Date(now.getTime() - 600_000).toISOString());
+    expect(measuredAtOf("2h", now)).toBe(new Date(now.getTime() - 7_200_000).toISOString());
+    expect(measuredAtOf(new Date(now.getTime() - 5000).toISOString(), now)).toBe(new Date(now.getTime() - 5000).toISOString());
+    expect(() => measuredAtOf("yesterday", now)).toThrow(UsageError);
+  });
+});
+
+/**
+ * t-173：三个开关今天是死的，其中一个是 t-151 那道闸唯一的出路。三种症状各一条，qa 08:33 报的第三种最坏。
+ */
+describe("t-173 · 布尔开关必须真的设得上", () => {
+  it("单写开关就能设上（原来报 needs a value）", () => {
+    expect(parse(["task", "done", "t-1", "--no-human-impact"]).flags["no-human-impact"]).toBe(true);
+    expect(parse(["task", "seam", "a", "b", "--missed"]).flags.missed).toBe(true);
+    expect(parse(["sync", "--clear-refused"]).flags["clear-refused"]).toBe(true);
+  });
+
+  it("写成 --x true 也不会变成字符串（原来 bool() 仍然返回 false）", () => {
+    const f = parse(["task", "done", "t-1", "--no-human-impact", "true"]).flags;
+    expect(f["no-human-impact"]).toBe(true);
+    expect(f["no-human-impact"]).not.toBe("true");
+  });
+
+  it("qa 08:33 报的第三种、也是最坏的一种：它不再把后面那个开关当值吞掉", () => {
+    const f = parse(["task", "done", "t-1", "--no-human-impact", "--evidence", "abc1234"]).flags;
+    expect(f["no-human-impact"]).toBe(true);
+    expect(f.evidence).toBe("abc1234");   // 原来 evidence 静默丢失，不报错
   });
 });
