@@ -2852,6 +2852,19 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
  * 都在说「已按默认 X 执行」——最久的一张这样说了 6 小时 41 分。**那三张不能补落**：默认之所以正当，前提是它
  * 真的发生、落成事件、人能翻案；这三件一件都没发生，所以那不是人的选择，是我们的机制没执行。追认等于替他拍板。
  */
+/**
+ * t-192（qa 11:01 实测）：**这几条用例的时钟推进量，原来是由 `DEFAULT_LATE_MS` 自己算出来的**
+ * （`min(60) + DEFAULT_LATE_MS + min(1)`）。于是把那个常量调到 10 年，355 条用例全绿——它们守的是自洽，
+ * 不是行为。而「调大」正是 pd 不许的那个方向：把「过期了，默认还没生效」调成永不出现，我们就再也看不见
+ * 那个故障态了。
+ *
+ * 所以推进量是一个**写死的数**，与那个常量无关：过 ack_by 三十分钟。任何合理的阈值都在它之内，10 年不在。
+ *
+ * 今晚同族的第六种形态（前五种：正则配不上、析取项永远为真、循环在空集合上空转、门槛拿串跟自己比、
+ * 闸按顶层字段找）。通则写在下面那条断言里：**任何守着一个阈值的用例，它的输入不许由那个阈值算出来。**
+ */
+const LATE_ENOUGH = min(30);
+
 describe("t-190 · 默认只有真落成事件才算数", () => {
   const ask = (store: MemoryStore, c: ReturnType<typeof clock>) =>
     emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
@@ -2878,7 +2891,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));         // 机制当时没在跑
+    c.tick(min(60) + LATE_ENOUGH);         // 机制当时没在跑
     const out = await sweep(store, c);
     expect(out).toHaveLength(1);
     expect((out[0] as { body: string }).body).toBe(defaultMissed("B"));
@@ -2893,7 +2906,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     c.tick(min(600));                                   // 十小时过去，人一直没来
     let b = await at(store, c);
@@ -2914,7 +2927,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());            // 人看到了，期限从这一刻算
     c.tick(min(61));
@@ -2929,7 +2942,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await sweep(store, c);
     await pull(store, HUMAN, null, c.now());
     c.tick(min(5));
@@ -2945,7 +2958,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     const store = new MemoryStore();
     const c = clock();
     await ask(store, c);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     expect(await sweep(store, c)).toHaveLength(1);
     c.tick(min(600));
     expect(await sweep(store, c)).toHaveLength(0);      // 人还没露面，没有新的期限，也就没有新的到期
@@ -2998,7 +3011,7 @@ describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消�
     const store = new MemoryStore();
     const c = clock();
     const q = await ask(store, c, 60);
-    c.tick(min(60) + DEFAULT_LATE_MS + min(1));
+    c.tick(min(60) + LATE_ENOUGH);
     await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
     await pull(store, HUMAN, null, c.now());                // 人再看到那一刻
     const card = (await at(store, c)).needs_human[0];
@@ -3118,5 +3131,23 @@ describe("t-196 · 署名被证伪：历史不改，但那一条不再计入状�
     expect(inc.notes.map((x) => x.id), "增量那一头把它收回来了吗").not.toContain(n.id);
     expect(inc.notes.map((x) => x.id)).toEqual(full.notes.map((x) => x.id));
     expect([...inc.disowned.keys()]).toEqual([...full.disowned.keys()]);
+  });
+});
+
+describe("t-192 · 守着阈值的用例，输入不许由那个阈值算出来", () => {
+  it("判据 1、2：DEFAULT_LATE_MS 调大到那几条用例失效的地步，这条当场红并指名", () => {
+    // 上界由**用例自己的推进量**定，而那个推进量是写死的：阈值一旦超过它，「到期很久没落」那几条就会变成
+    // 「刚好晚了一点」，于是它们测的东西被悄悄换掉——qa 11:01 把它调到 10 年，355 条全绿，就是这么来的。
+    expect(DEFAULT_LATE_MS, `DEFAULT_LATE_MS 比用例推进的 ${LATE_ENOUGH / 60_000} 分钟还大：那几条「到期很久没落」的用例此刻测的是「刚好晚了一点」，它们守的东西没了`)
+      .toBeLessThan(LATE_ENOUGH);
+    // 下界：扫描每分钟一次，阈值小到这个量级就会把一次正常的迟到当成故障，把人的默认无故拖回待答
+    expect(DEFAULT_LATE_MS, "DEFAULT_LATE_MS 小到一次正常的迟到都会被当成故障").toBeGreaterThanOrEqual(5 * 60_000);
+  });
+
+  it("判据 3（通则）：那几条用例的推进量里不出现这个常量的名字", () => {
+    const src = readFileSync(new URL("./replay.test.ts", import.meta.url), "utf8");
+    const ticks = [...src.matchAll(/c\.tick\(([^)]*)\)/g)].map((m) => m[1]);
+    const derived = ticks.filter((t) => t.includes("DEFAULT_LATE_MS"));
+    expect(derived, `这些推进量由阈值自己算出来：${derived.join("、")}——调大阈值它们跟着走，守的就是自洽不是行为`).toEqual([]);
   });
 });
