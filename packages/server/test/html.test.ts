@@ -797,10 +797,10 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
   // The feature is off by default (pm 22:39 after the human's 「外呼地址先不做」): a fact turns it on
   const ask = async (v: ReturnType<typeof server>) => {
     await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
-    return v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+    return v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
   };
 
-  it("the card is 请你做 with pd's title and body, an input, 记下 (primary) and 先不要; anonymous goes through the token page; 记下 sets the address and the page says so", async () => {
+  it("the card is 请你做 with pd's title and body, an input, 记下 (primary) and 不要了; anonymous goes through the token page; 记下 sets the address and the page says so", async () => {
     const v = server();
     await v.start();
     try {
@@ -811,7 +811,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect(card).toContain('<p class="q">你不在时怎么找你？</p><p class="body">给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/token"><input type="hidden" name="then" value="/decide">');
       expect(card).toContain('<input type="text" name="value" placeholder="https://…" aria-label="https://…" autocomplete="off">');
-      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="先不要">先不要</button>');
+      expect(card).toContain('<button class="btn primary" type="submit" name="option" value="填写">记下</button><button class="btn" type="submit" name="option" value="不要了">不要了</button>');
       expect(html).not.toContain('<p class="meta contact-line">'); // the card is on screen: no grey line under 线上
       expect(html).not.toContain("填写</button>"); // the option names are not what the human reads
       expect(html).not.toContain("邮箱"); // pd 22:45: the service only calls webhooks, so the page never promises email
@@ -834,23 +834,23 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
     } finally { await v.stop(); }
   });
 
-  it("先不要 closes the card and leaves the grey line; the grey line reopens the card, which posts the address alone", async () => {
+  it("不要了 closes the card and leaves the grey line; the grey line reopens the card, which posts the address alone", async () => {
     const v = server();
     await v.start();
     try {
       const { id } = await ask(v);
       const cookie = await v.cookie();
-      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
       let html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
-      expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>先不要</b>");
+      expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
       expect(html).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>');
 
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       const card = html.slice(html.indexOf('<article class="ask" data-kind="do">'), html.indexOf("</article>"));
       expect(card).toContain('<p class="q">你不在时怎么找你？</p>');
       expect(card).toContain('<form class="actions contact" method="post" action="/fact"><input type="hidden" name="key" value="alert.webhook">');
-      expect(card).toContain('<button class="btn primary" type="submit">记下</button><a class="btn" href="/">先不要</a>');
+      expect(card).toContain('<button class="btn primary" type="submit">记下</button><a class="btn" href="/">不要了</a>');
       expect(html).not.toContain('<p class="meta contact-line">');
       // anonymous reopen goes through the token page too
       const anon = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html" } })).text();
@@ -878,7 +878,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
     const v = server();
     await v.start();
     try {
-      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT, intent: "ask", options: ["填写", "不要了"], ack_by: soon() });
       const cookie = await v.cookie();
       let html = await v.page({ cookie });
       expect(html).not.toContain("你不在时怎么找你");

@@ -230,7 +230,10 @@ export const VERIFY_ASK = " 做完了，验不验得过？";
 /** S0's second card (t-069, pd 21:07): how to reach the human when they are away. Optional; 先不要 skips it for good. */
 export const CONTACT_ASK = "你不在时怎么找你？给个邮箱或 webhook；也可以先不要";
 export const CONTACT_FILL = "填写";
-export const CONTACT_SKIP = "先不要";
+/** t-111 (pd 00:39): a button says what it costs — this one closes the question for good, so it is not 「先不做」. */
+export const CONTACT_SKIP = "不要了";
+/** What the same button said before t-111. Cards already sent carry it; answering them must keep working. */
+export const CONTACT_SKIP_WAS = "先不要";
 export const CONTACT_OPTIONS = [CONTACT_FILL, CONTACT_SKIP];
 /**
  * t-073: how this project tells that the later side of a seam absorbed the earlier one (fact project:absorb.form).

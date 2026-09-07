@@ -27,7 +27,8 @@ export const UI = {
   contactBody: "给个 webhook。全队都停了、或有事等你超过半小时，我们就往这里发一条。",
   contactPlaceholder: "https://…",
   contactSave: "记下",
-  contactSkip: "先不要",
+  contactSkip: "不要了", // t-111 (pd 00:39): this one closes the question for good
+  saySomething: "想说一句就说",
   contactSet: (v: string) => `找你用 ${v}`,
   contactNone: "你不在时，我们找不到你。",
   contactTo: (v: string) => `你不在时发到 ${v}`,

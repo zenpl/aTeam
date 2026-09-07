@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, CONTACT_ASK, CONTACT_FILL, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -188,10 +188,13 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
   const contact = contactOf(b);
   // t-069: an input, 记下 (primary) and 先不要. On the card the buttons are the card's options (POST /decide);
   // reopened from the grey line under 线上 it posts the address alone (POST /fact) and 先不要 just goes back.
-  const contactForm = (action: string, fields: string, current: string | null) => {
+  // t-111: the buttons send the values the card itself carries, so a card sent before the wording changed is still
+  // answerable; what the human reads is the value, so label and log never disagree.
+  const contactForm = (action: string, fields: string, current: string | null, options?: string[]) => {
+    const [fill, skipValue] = [options?.[0] ?? CONTACT_FILL, options?.[1] ?? CONTACT_SKIP];
     const input = `<input type="text" name="value" placeholder="${esc(UI.contactPlaceholder)}" aria-label="${esc(UI.contactPlaceholder)}" autocomplete="off"${current ? ` value="${esc(current)}"` : ""}>`;
-    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(CONTACT_FILL)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
-    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(CONTACT_SKIP)}">${UI.contactSkip}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
+    const save = action === "/decide" ? `<button class="btn primary" type="submit" name="option" value="${esc(fill)}">${UI.contactSave}</button>` : `<button class="btn primary" type="submit">${UI.contactSave}</button>`;
+    const skip = action === "/decide" ? `<button class="btn" type="submit" name="option" value="${esc(skipValue)}">${esc(skipValue)}</button>` : `<a class="btn" href="${esc(base)}/">${UI.contactSkip}</a>`;
     return form(action, "actions contact", fields, `${input}${save}${skip}`);
   };
   const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);
@@ -222,7 +225,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
       }
       const id = `<input type="hidden" name="id" value="${esc(i.id)}">`;
       if (isContactCard(i)) {
-        out.push(contactForm("/decide", id, contact));
+        out.push(contactForm("/decide", id, contact, i.options));
       } else if (kind === "ask" && !i.options?.length) {
         // A question with no options is answered in the 说一句 box (UC-S0: 「这个项目是什么？说一句。」).
         out.push(`<p class="hint answer">${UI.answerBelow}</p>`);
@@ -461,8 +464,8 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const cov = b.coverage ?? [];
   const gaps = cov.filter((c) => c.status !== "held");
   const teamLine = [cov.length ? UI.held(cov.length, cov.length - gaps.length) : "", b.allocation?.summary ?? ""].filter(Boolean).join(" · ");
-  if (teamLine) d.push(`<p class="meta team">${UI.team}：${esc(teamLine)}</p>`);
-  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(c.line.replace(/（能力事实[^）]*）/g, "").trim())}</li>`).join("")}</ul></section>`);
+  if (teamLine) d.push(`<p class="meta team">${UI.team}：${esc(nameRoles(teamLine, who, b.roles ?? []))}</p>`);
+  if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(nameRoles(c.line.replace(/（能力事实[^）]*）/g, "").trim(), who, b.roles ?? []))}</li>`).join("")}</ul></section>`);
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
   d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(who(i.to), i.body, who(i.from)))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);

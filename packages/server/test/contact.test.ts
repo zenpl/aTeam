@@ -1,6 +1,6 @@
 /**
  * t-069: a new project's second card asks how to reach the human when they are away. Optional: 填写 records the
- * fact the call-outs read (t-050); 先不要 closes it; a fact recorded any other way closes it too. Times relative.
+ * fact the call-outs read (t-050); 不要了 closes it; a fact recorded any other way closes it too. Times relative.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
@@ -32,11 +32,11 @@ async function start(name: string) {
 }
 
 describe("t-069 · the second card of a new project", () => {
-  it("unanswered: it follows the first card, with 填写 / 先不要, and blocks nothing; joining again does not repeat it", async () => {
+  it("unanswered: it follows the first card, with 填写 / 不要了, and blocks nothing; joining again does not repeat it", async () => {
     const w = await start("一");
     const c = await cards(w.project, w.key);
     expect(c.map((x) => x.body)).toEqual(["这个项目是什么？说一句。", CONTACT_ASK]);
-    expect(c[1].options).toEqual(["填写", "先不要"]);
+    expect(c[1].options).toEqual(["填写", "不要了"]); // t-111: the permanent choice says so
     await join((await (await api(w.project, "/board", w.admin)).json()).invite_url, "一-a");
     expect((await cards(w.project, w.key)).filter((x) => x.body === CONTACT_ASK)).toHaveLength(1);
     // nothing waits on it: a node can work, the human can answer the first card alone
@@ -59,14 +59,14 @@ describe("t-069 · the second card of a new project", () => {
     expect(events.find((e) => e.kind === "note" && e.decision)).toMatchObject({ body: `decision: ${CONTACT_ASK} -> 填写：https://hooks.example/team` });
   });
 
-  it("先不要: a note says it was skipped, the card never returns; a fact recorded later still works", async () => {
+  it("不要了: a note says it was skipped, the card never returns; a fact recorded later still works", async () => {
     const w = await start("三");
     const card = (await cards(w.project, w.key)).find((x) => x.body === CONTACT_ASK)!;
-    expect((await decide(w.project, w.admin, card.id, "先不要")).status).toBe(201);
+    expect((await decide(w.project, w.admin, card.id, "不要了")).status).toBe(201);
     expect((await cards(w.project, w.key)).map((x) => x.body)).not.toContain(CONTACT_ASK);
     expect((await (await api(w.project, "/board", w.key)).json()).alert).toEqual({ status: "skipped" });
     const events = (await (await api(w.project, "/log", w.key)).json()).events as Event[];
-    expect(events.some((e) => e.kind === "note" && e.decision && e.body === `decision: ${CONTACT_ASK} -> 先不要`)).toBe(true);
+    expect(events.some((e) => e.kind === "note" && e.decision && e.body === `decision: ${CONTACT_ASK} -> 不要了`)).toBe(true);
     expect(events.some((e) => e.kind === "reading" && e.key === "alert.webhook")).toBe(false);
     await api(w.project, "/events", w.key, { method: "POST", body: JSON.stringify({ kind: "reading", key: "alert.webhook", surface: "project", value: "https://hooks.example/later" }) });
     expect((await cards(w.project, w.key)).map((x) => x.body)).not.toContain(CONTACT_ASK);

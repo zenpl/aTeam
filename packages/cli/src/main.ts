@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
+import { roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -276,7 +276,9 @@ async function main(argv: string[]) {
       switch (op) {
         case "show": {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
-          console.log(fmt.task(t, seams, [])); // GET /task/<id> is the whole task: nothing omitted
+          // t-107: the same names the board shows; the role set comes from the board, one extra read
+          const nb = await client.board().catch(() => null);
+          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined)); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {
