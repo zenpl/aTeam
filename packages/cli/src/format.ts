@@ -1,4 +1,4 @@
-import { describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -59,7 +59,9 @@ export function board(b: Board, me: string): string {
     // t-083: 推的 only when release --deploy wrote the reading, 核对 (no 的, pd 22:47) when someone measured it, nothing when
     // the source is unsaid; each with how long ago, so nobody has to guess whether it was just now or six hours back
     const when = b.live.at ? `${ago(b.live.at)}前` : "";
-    const by = b.live.deployed_by ? ` (${b.live.deployed_by} ${when}推的)` : b.live.checked_by ? ` (${b.live.checked_by} ${when}核对)` : "";
+    // t-162：句子取 core 一处（页面用的是同一个），括号是命令行的版式、留在这里。
+    const by = b.live.deployed_by ? ` (${DEPLOY_SOURCE.pushed(b.live.deployed_by, when)})`
+      : b.live.checked_by ? ` (${DEPLOY_SOURCE.checked(b.live.checked_by, when)})` : "";
     const live = `LIVE       production ${b.live.deployed_sha ? `${b.live.deployed_sha.slice(0, 7)}${by}` : "sha unknown"}`;
     const recent = b.live.recent ?? b.live.verified_on_production;
     const earlier = b.live.earlier?.length ? ` (+${b.live.earlier.length} earlier)` : "";
@@ -134,7 +136,7 @@ export function board(b: Board, me: string): string {
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     for (const t of b.tasks[status] ?? []) {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
-      const overturned = (t.overturned ?? []).map((o) => `${o.surface} 验过，后被 ${o.by} 推翻`).join("；");
+      const overturned = (t.overturned ?? []).map((o) => overturnedLine(o.surface, o.by)).join("；");   // t-162：句子在 core 一处
       const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : status === "obsolete" ? `  已被 ${t.obsolete?.decision ?? "?"} 取代` : results ? `  ${results}${overturned ? `（${overturned}）` : ""}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${taskHeading(t, ambiguous)}${t.owner ? `  @${who(t.owner)}` : ""}${extra}`);
     }

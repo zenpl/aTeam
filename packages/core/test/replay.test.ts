@@ -2903,7 +2903,11 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
     expect(landed).toHaveLength(1);
     expect((landed[0] as { body: string }).body).toBe(defaultApplied("B"));
     const b = await at(store, c);
-    expect(b.instructions[0].chosen).toMatchObject({ option: "B", by: "default", at: landed[0].at, note: landed[0].id });
+    // t-189：投影带上 `note` 之后，这一条顺带钉住了「已决」的凭据——**那条事件的 id**，
+    // 而不只是「by 是 default」。已决与「该决而没决」的差别就在它有没有。
+    expect(b.instructions[0].chosen).toEqual({ option: "B", by: "default", at: landed[0].at, note: landed[0].id });
+    // 合并时两边写法不同：dev 用 toMatchObject，我用 toEqual。留 toEqual——两者都钉住了 note，
+    // 差别在 toEqual 还禁止多余字段。这张卡的形状是人看得见那句话的依据，多一个字段就该有人看一眼。
     expect(b.instructions[0].says_default!.state).toBe("applied");
     expect(b.needs_human).toHaveLength(0);
     expect(q.default).toBe("B");
