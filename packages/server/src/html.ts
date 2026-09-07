@@ -659,12 +659,12 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
   }
 
-  // 按住没发 — pd 03:32: a batch that is not going out must say why, and core already worked out why for each state.
+  // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
   if (batches.length) {
     out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
     for (const x of batches) {
       const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
-      const why = x.line ? ` <span class="held">${esc(UI.releaseHeld(x.line))}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+      const why = x.line ? ` <span class="held">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
       out.push(`<li>${named}${why}</li>`);
     }
     out.push(`</ul>`);
@@ -679,7 +679,7 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
       const members = u.tasks.map((t) => `${link(t.id)} ${esc(t.shows ?? t.title)}`);
       const head = u.tasks.length > 1 ? `<span class="tag">${UI.releaseTogether}</span> ` : "";
       const waiting = u.held_by.length
-        ? ` <span class="meta held">${esc(UI.releaseHeld(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
+        ? ` <span class="meta held">${esc(UI.releaseNotVerified(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
         : "";
       return `<li>${head}<code>${esc(u.sha.slice(0, 7))}</code> ${members.join("；")}${waiting}</li>`;
     };

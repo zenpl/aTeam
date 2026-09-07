@@ -145,8 +145,12 @@ export const UI = {
   releaseBrings: "这次能带上",
   releaseTogether: "必须一起上的几件",
   releaseNothing: "没有可上线的东西。",
-  /** pd 03:32: a held batch must say why. Without a reason it should not be held. */
-  releaseHeld: (why: string) => `按住没发：${why}`,
+  /**
+   * pd 05:12: 「按住」 means a person deliberately held it back, so it is not the word for anything else. A unit that
+   * is simply not verified yet is waiting, not held; a batch that would roll production back says so in core's own
+   * sentence, with nothing of ours in front of it.
+   */
+  releaseNotVerified: (who: string) => `还没验，带不上：${who}`,
   releaseHeldBy: (who: string) => `等 ${who}`,
   releaseBatches: "装好的几批",
   /** t-129: a batch packed on the head production is actually running has nothing standing in its way. */

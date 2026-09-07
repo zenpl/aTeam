@@ -68,13 +68,13 @@ describe("t-133 · 上线详情页", () => {
       await task(v, "t-9", "接缝", "ddddddd4444", "verified");
       const html = await v.page();
       expect(html).toContain("必须一起上的几件");
-      expect(html).toContain("按住没发：t-3");
+      expect(html).toContain("还没验，带不上：t-3");
       expect(html).toContain("等 dev");            // the owner of the member that has not passed
       expect(html).toContain("这次能带上");
       // a unit whose members all passed is not described as held
       const moving = html.slice(html.indexOf("这次能带上"));
       expect(moving).toContain("t-9");
-      expect(moving).not.toContain("按住没发");
+      expect(moving).not.toContain("还没验，带不上");
     } finally { await v.stop(); }
   });
 
@@ -92,15 +92,16 @@ describe("t-133 · 上线详情页", () => {
       expect(ok).toContain("装好的几批");
       expect(ok).toContain("2.10");
       expect(ok).toContain("可以推");
-      expect(ok).not.toContain("按住没发");
+      expect(ok).not.toContain("还没验，带不上");
 
       // production moved on, and the batch would take two tasks back off it: core's sentence, printed as it stands
       await v.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "线上看到" });
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.sha", value: "bbbbbbb2222" });
       await v.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "bbbbbbb2222", contained: ["t-1", "t-2"], not_contained: [], method: "git merge-base --is-ancestor 逐件测" } });
       const held = await v.page();
-      expect(held).toContain("按住没发：");
+      // pd 05:12: core's sentence, with nothing of ours in front of it — 按住 means someone deliberately held it
       expect(held).toContain("推它会把");
+      expect(held).not.toContain("按住没发");
       expect(held).toContain("从生产上退回去；要重装，别推。");
       // the page must not have written a second sentence of its own about the same thing
       expect(held).not.toContain("这批不能推");
