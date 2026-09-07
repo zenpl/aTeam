@@ -2589,3 +2589,78 @@ describe("t-113 · 同一个测试文件三次挡住验收：现在只是一句�
     for (const id of pairs.flatMap(([a, , b]) => [a, b])) expect(after.tasks.get(id)!.status, id).toBe("verified");
   });
 });
+
+/**
+ * t-119 (pd 01:21 的通则)。qa 01:20 在生产上量到一条会骗人的事实：牌桌把外呼地址报成「已配置」，而那是个邮箱、
+ * 永远发不出去——今天两次停摆共 10.4 小时靠的正是这条兜底。通则：安全兜底的状态由**可达性**证明，不由字符串
+ * 存在证明。四句说的都是「你收不收得到」，不是「配没配」。
+ */
+describe("t-119 · a fallback's state is proved by reaching, not by a string being there", () => {
+  const world = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    return { store, c, alert: async () => board(reduce(await store.read(), c.now()), HUMAN, c.now()).alert };
+  };
+  const AT = "https://hooks.example/team";
+
+  it("四态各一句，说的都是「你收不收得到」", async () => {
+    const w = await world();
+    // ① 未配置
+    expect(await w.alert()).toMatchObject({ status: "unanswered" });
+    // ② 形状不对：写在规则存在之前的老值
+    await w.store.appendRaw({ id: "01OLDMAIL", at: w.c.now().toISOString(), kind: "reading", actor: HUMAN, surface: "project", key: "alert.webhook", value: "a@b.com" } as never);
+    expect(await w.alert()).toMatchObject({ status: "misconfigured", line: "这个外呼地址我们发不出去，它不是一个 https 地址。" });
+    // ③ 形状对但没真发成功过——判据 5：新建项目刚配完地址的那一刻就落在这里，不因形状对而跳过去
+    await emit(w.store, w.c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: AT });
+    expect(await w.alert()).toMatchObject({ status: "unproven", value: AT, line: "记下了外呼地址，还没真发成功过——不知道你收不收得到。" });
+    // ④ 真送到过一次
+    w.c.tick(min(3));
+    await emit(w.store, w.c, { kind: "reading", actor: "ateam", key: "alert.reached", surface: "project", value: AT, method: "外呼 all_missing 真的送到了（HTTP 200）" });
+    w.c.tick(min(7));
+    const ok = await w.alert();
+    expect(ok.status).toBe("reachable");
+    expect(ok.line).toBe("你不在时会发到这里，最近一次成功是 7 分钟前。");
+    for (const a of [await w.alert()]) expect(a.line).not.toContain("已配置");   // 四句里一句都不说「配没配」
+  });
+
+  it("证的是那个地址：换一个地址就退回没验过", async () => {
+    const w = await world();
+    await emit(w.store, w.c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: AT });
+    await emit(w.store, w.c, { kind: "reading", actor: "ateam", key: "alert.reached", surface: "project", value: AT, method: "真的送到了" });
+    expect((await w.alert()).status).toBe("reachable");
+    await emit(w.store, w.c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: "https://hooks.example/别处" });
+    expect((await w.alert()).status).toBe("unproven");     // 证过的是旧地址，新地址还没证
+  });
+
+  it("兜底久不响就等于没有：七天没有新的成功退回③，并说出上次是什么时候（pd 01:40）", async () => {
+    const w = await world();
+    await emit(w.store, w.c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: AT });
+    await emit(w.store, w.c, { kind: "reading", actor: "ateam", key: "alert.reached", surface: "project", value: AT, method: "真的送到了" });
+    w.c.tick(6 * 24 * 3600_000);
+    expect((await w.alert()).status).toBe("reachable");     // 六天：还算数
+    w.c.tick(2 * 24 * 3600_000);
+    const stale = await w.alert();
+    expect(stale.status).toBe("unproven");                  // 八天：退回去
+    expect(stale.line).toContain("上次成功是 8.0 天前。");
+  });
+
+  it("一次失败不退回，连续两次才退（pd 01:40：一次网络抖动不该吓人）", async () => {
+    const w = await world();
+    await emit(w.store, w.c, { kind: "reading", actor: HUMAN, key: "alert.webhook", surface: "project", value: AT });
+    await emit(w.store, w.c, { kind: "reading", actor: "ateam", key: "alert.reached", surface: "project", value: AT, method: "真的送到了" });
+    await emit(w.store, w.c, { kind: "note", actor: "ateam", body: `外呼：all_missing 自 x 发送失败（三次，最后状态 0） ${AT}。全队失联` });
+    expect((await w.alert()).status).toBe("reachable");     // 一次失败：不吓人
+    await emit(w.store, w.c, { kind: "note", actor: "ateam", body: `外呼：all_missing 自 y 发送失败（三次，最后状态 0） ${AT}。全队失联` });
+    expect((await w.alert()).status).toBe("unproven");      // 连续两次：不敢再说它是通的
+    await emit(w.store, w.c, { kind: "note", actor: "ateam", body: `外呼：all_missing 自 z 已发到 ${AT}。全队失联` });
+    expect((await w.alert()).status).toBe("reachable");     // 又通了
+  });
+
+  it("判据 2：可达性只来自真的送到过一次——牌桌自己不会去戳别人的地址", async () => {
+    const src = readFileSync(new URL("../src/board.ts", import.meta.url), "utf8");
+    const fn = src.slice(src.indexOf("export function alertContact"), src.indexOf("export function contactAskAnswered"));
+    // 它只读日志：没有任何发请求的东西（https:// 是形状检查里的字面量，不是一次调用）
+    for (const forbidden of ["fetch(", "request(", "probe", "ping", "node:http"]) expect(fn.toLowerCase(), forbidden).not.toContain(forbidden);
+    expect(readFileSync(new URL("../src/board.ts", import.meta.url), "utf8")).not.toContain("node:http");
+  });
+});
