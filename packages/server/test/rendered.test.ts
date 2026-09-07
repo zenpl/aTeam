@@ -27,25 +27,52 @@ const RENDERERS = {
 export interface Unread { path: string; field: string; text: string }
 
 /**
- * Every human sentence on `b` whose top-level field no renderer mentions. Field-level on purpose: "does anyone read
- * this" is the whole question, and a finer check would start ruling on how it is printed.
+ * Does `src` read the property `leaf` off something — `x.line`, `b.alert.line`, `f()?.line`? Deliberately not a bare
+ * word search: 「line」 also appears in CSS as `line-height` and `var(--line)`, and counting those was how the first
+ * version of this check passed the very night it was written to catch (qa 05:23).
+ */
+const readsLeaf = (src: string, leaf: string) => new RegExp(`[A-Za-z0-9_$)\\]]\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`).test(src);
+
+/**
+ * Every human sentence on `b` that no renderer reads.
+ *
+ * **Why the leaf and not the field.** The first version asked only whether the *top-level* field appeared in a
+ * renderer, and qa proved it useless on the case it was written for: in t-119's defective html.ts the word `alert`
+ * appears nine times — in a comment, in `CONTACT_ASK_KEY = "alert.ask"`, in `opts.ask === "alert"`, in CSS variables —
+ * while `alert.line`, the sentence core had carefully computed, was read nowhere. The check would have said "alert has
+ * a reader" and waved that night through. So what has to be found is the property the sentence actually lands on.
+ *
+ * It still asks one thing only: does anybody read this. Where it is printed, in what order, in what words, remains
+ * pd's and the page's, and nothing here looks at any of that (pm, criterion 3). qa 05:23 said the same and it is worth
+ * recording that my earlier note here — that a finer check would start ruling on how a sentence is printed — was
+ * wrong: reading a property is not judging what is done with it.
  */
 function unread(b: Board, sources: string[]): Unread[] {
-  const out: Unread[] = [];
-  const seen = new Set<string>();
+  const all: { path: string; text: string; read: boolean }[] = [];
   const walk = (v: unknown, path: string) => {
     if (typeof v === "string") {
       if (!CJK.test(v) || [...v].length < SENTENCE_CHARS) return;
       const field = path.split(/[.[]/)[0];
-      if (sources.some((s) => s.includes(field)) || seen.has(field)) return;
-      seen.add(field);
-      out.push({ path, field, text: v });
+      const leaf = path.split(".").pop()!.replace(/\[\d+\]$/, "");   // criteria[0] is read as `.criteria`, not `.criteria[0]`
+      // read = someone names this exact path, or holds the field and reads the property off it (`for (const x of b.batches) x.line`)
+      const direct = new RegExp(`${field}\\s*[?!]?\\.\\s*${leaf}(?![\\w-])`);
+      all.push({ path, text: v, read: sources.some((s) => direct.test(s) || (s.includes(field) && readsLeaf(s, leaf))) });
       return;
     }
     if (Array.isArray(v)) return v.forEach((x, i) => walk(x, `${path}[${i}]`));
     if (v && typeof v === "object") return Object.entries(v).forEach(([k, x]) => walk(x, path ? `${path}.${k}` : k));
   };
   walk(b, "");
+  const out: Unread[] = [];
+  const seen = new Set<string>();
+  for (const x of all) {
+    if (x.read || seen.has(x.path)) continue;
+    // A phrase quoted inside a sentence somebody reads has reached the person already: coverage[i].name is nobody's
+    // to print, and coverage[i].line — 「没人管看着跑起来的东西说哪里不对：没有角色声明」 — carries it word for word.
+    if (all.some((y) => y.read && y.text !== x.text && y.text.includes(x.text))) continue;
+    seen.add(x.path);
+    out.push({ path: x.path, field: x.path.split(/[.[]/)[0], text: x.text });
+  }
   return out;
 }
 
@@ -83,13 +110,70 @@ describe("t-136 · 算好了没人印，构建当场红", () => {
     expect(it0.text).toBe("这一句是算好的，可是没有人会印它。");   // named, not just counted
   });
 
-  it("接上就绿：一个渲染方提到那个字段就够了，印在哪、印成什么样不归它管", async () => {
+  it("接上就绿，而且不管接上之后拿它做了什么", async () => {
     const b = await loudBoard();
     const withOrphan = { ...b, 孤儿: { line: "这一句是算好的，可是没有人会印它。" } } as unknown as Board;
-    const connected = unread(withOrphan, ["const x = b.孤儿.line;"]);
-    expect(connected.some((x) => x.field === "孤儿")).toBe(false);
-    // and it stays out of the business of how: a renderer that reads the field but prints it wrong is not this test's
-    expect(unread(withOrphan, ["if (b.孤儿) {/* 印别的 */}"]).some((x) => x.field === "孤儿")).toBe(false);
+    expect(unread(withOrphan, ["const x = b.孤儿.line;"]).some((x) => x.field === "孤儿")).toBe(false);
+    // 判据 3: reading it is the whole question. What a renderer then does with it — prints it somewhere else, wraps
+    // it, counts its length — is pd's and the page's business and never this check's.
+    expect(unread(withOrphan, ["const n = b.孤儿?.line.length; log(n);"]).some((x) => x.field === "孤儿")).toBe(false);
+    expect(unread(withOrphan, ["for (const x of [b.孤儿]) out.push(x.line)"]).some((x) => x.field === "孤儿")).toBe(false);
+  });
+
+  /**
+   * qa 05:23 proved the first version useless on the case it was written for: it asked only whether the *top-level
+   * field* appeared anywhere in a renderer, and in t-119's defective html.ts the word `alert` appears nine times — a
+   * comment, `CONTACT_ASK_KEY = "alert.ask"`, `opts.ask === "alert"`, two CSS variables — while `alert.line` was read
+   * nowhere. That hole is closed: what is looked for now is the property the sentence actually lands on.
+   */
+  it("字段被碰了、句子被无视：现在抓得住（旧口径会放行）", async () => {
+    const b = await loudBoard();
+    const defective = [
+      `export interface RenderOptions { /** \`?ask=alert\`: show the contact card again (t-069) */ ask?: string | null }`,
+      `export const CONTACT_ASK_KEY = "alert.ask";`,
+      `const reopen = contactOn && opts.ask === "alert" && !asks.some(isContactCard);`,
+      `--accent:#0F6E63; --alert:#B42318; --warn:#B7791F;`,
+      `.count { color:#fff; background:var(--alert); line-height:1.6; }`,
+      // what it printed instead: its own sentence, from the address string, never core's
+      `export function contactLine(address: string | null): string { return address ? \`你不在时发到 \${address}\` : UI.contactNone; }`,
+    ].join("\n");
+    expect(defective).toContain("alert");                                     // the old check's whole test, and it passed
+    const hit = unread(b, [defective]).find((x) => x.path === "alert.line");
+    expect(hit, "字段在源码里出现过，但那句话没人读——必须抓住").toBeTruthy();
+    expect(hit!.text).toBe(b.alert!.line);
+    // the fixed shapes, verbatim from today's two renderers, are not flagged
+    expect(unread(b, [`if (alert?.line) return alert.line;`]).some((x) => x.path === "alert.line")).toBe(false);
+    expect(unread(b, [`if (b.alert?.line) out.push(b.alert.line);`]).some((x) => x.path === "alert.line")).toBe(false);
+  });
+
+  /**
+   * And where it still cannot help, pinned so that nobody reads the test above as more than it is.
+   *
+   * On the real pair at babae6d this check would **not** have caught t-119, for a reason the fix above does not touch:
+   * `cli/src/format.ts` did read `b.alert.line` — only in the misconfigured state, but it read it — so by 判据 1's
+   * words ("没有**任何**渲染方读到它") the sentence had a reader, and the page inventing its own line beside it is
+   * invisible here. Catching that means saying which renderer has to show what, which is the one thing 判据 3 puts
+   * outside this check. It belongs to pd's placement or to another instrument, and it is dev's to report, not to
+   * quietly widen the check until it looks caught.
+   */
+  it("它管不了的那一种：一个渲染方读了，另一个自己另写一句", async () => {
+    const b = await loudBoard();
+    const pageInventsItsOwn = `export function contactLine(address: string | null) { return \`你不在时发到 \${address}\`; }`;
+    const cliReadsItInOneState = `if (b.alert?.status === "misconfigured" && b.alert.line) out.push(b.alert.line);`;
+    expect(unread(b, [pageInventsItsOwn, cliReadsItInOneState]).some((x) => x.path === "alert.line")).toBe(false);
+    // said plainly: with only the page, it is caught — the gap is exactly "somebody else read it"
+    expect(unread(b, [pageInventsItsOwn]).some((x) => x.path === "alert.line")).toBe(true);
+  });
+
+  it("引在别人句子里的短语不算孤儿：coverage[i].name 整句地长在被读的 coverage[i].line 里", async () => {
+    const b = await loudBoard();
+    const name = b.coverage.find((c) => c.line?.includes(c.name ?? "\u0000"));
+    expect(name, "样本板上应当有一条 line 里含着自己的 name").toBeTruthy();
+    const found = unread(b, [`for (const c of b.coverage) out.push(c.line)`]);
+    expect(found.some((x) => x.path.endsWith(".name"))).toBe(false);
+    // but a phrase nobody quotes and nobody reads is still an orphan
+    const withOrphan = { ...b, 孤儿: { name: "这一句谁也没有引用过，也没有人印。" } } as unknown as Board;
+    expect(unread(withOrphan, [`for (const c of b.coverage) out.push(c.line)`]).some((x) => x.field === "孤儿")).toBe(true);
   });
 
   it("标签、id、英文短语不算一句话：只有中文整句才要求有人读", async () => {
