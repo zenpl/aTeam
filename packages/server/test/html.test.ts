@@ -1249,3 +1249,63 @@ describe("t-111 · 按钮说出后果", () => {
     } finally { await v.stop(); }
   });
 });
+
+describe("t-110 · 钥匙三分后人看到的四处文字", () => {
+  it("the token page asks for the address, not a key", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const g = await (await fetch(`${v.base}/token`)).text();
+      expect(g).toContain("把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。");
+      expect(g).not.toContain("要作答，先输入一次项目 token");
+    } finally { await v.stop(); }
+  });
+
+  it("a key appears once, in the address, and is never echoed back — not in the box, not in a hidden field, not in the redirect", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const secret = TOKEN;
+      // arriving with the key in the address: the answer carries a cookie and sends the reader to a clean URL
+      const r = await fetch(`${v.base}/?token=${secret}`, { redirect: "manual", headers: { accept: "text/html" } });
+      expect(r.status).toBe(303);
+      expect(r.headers.get("location")).toBe("/");
+      expect(r.headers.get("location")).not.toContain(secret);
+      expect(r.headers.get("set-cookie")).toContain("HttpOnly");
+      expect(await r.text()).not.toContain(secret);
+      // a wrong key comes back as a fresh box, never as the thing that was typed
+      const wrong = await v.form("/token", { then: "/ack", id: "x", token: "not-the-key" }, { accept: "text/html" });
+      const page = await wrong.text();
+      expect(page).not.toContain("not-the-key");
+      expect(page).toContain('type="password"');
+      expect(page).not.toMatch(/name="token"[^>]*value=/);
+      // the pending action travels in the hidden fields; the key never does
+      expect(page).toContain('<input type="hidden" name="then" value="/ack">');
+      expect(page).not.toMatch(/<input type="hidden"[^>]*token/);
+    } finally { await v.stop(); }
+  });
+
+  it("says whether this board has an owner's key, by the fact and in three states, with no button and no key on the page", async () => {
+    const store = new MemoryStore();
+    await append(store, { kind: "note", actor: "pm", body: "起项目" } as never, { human: HUMAN });
+    const state = reduce(await store.read());
+    const base = board(state, HUMAN);
+    const page = (owner_key: unknown) => renderBoard({ ...base, owner_key } as Board, state, { human: HUMAN });
+
+    // ② nobody has been given a key yet: a statement, not a card and not a link
+    const none = page({ state: "none" });
+    expect(none).toContain('<p class="meta owner-key">这张牌桌还没有主人的钥匙。</p>');
+    expect(none).not.toMatch(/<p class="meta owner-key">[^<]*<\/p>\s*<(a|button|form)/);
+    // ③ the address went out and nobody has opened it: the first agent learns whether to send it again
+    expect(page({ state: "issued" })).toContain('<p class="meta owner-key">已把牌桌地址给出去了，还没人打开过。</p>');
+    // in use: nothing to say, so nothing is said
+    expect(page({ state: "in_use" })).not.toContain('<p class="meta owner-key">');
+    // an older server that says nothing about keys renders as before
+    expect(page(undefined)).not.toContain('<p class="meta owner-key">');
+    // nothing on any of these pages is a key or part of one
+    for (const html of [none, page({ state: "issued", since: new Date().toISOString() }), page({ state: "in_use" })]) {
+      expect(html).not.toMatch(/k=[A-Za-z0-9]/);
+      expect(html).not.toContain("secret");
+    }
+  });
+});

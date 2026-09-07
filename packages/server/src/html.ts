@@ -348,6 +348,12 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     ? roles.map((r) => `<span class="who-chip${r.present ? "" : " away"}" data-role="${esc(r.role)}" data-status="${r.status}"><i></i>${esc(who(r.role))}<span class="meta">${whoLabel(r)}</span>${r.push === "production" ? `<span class="can-push">${UI.canPushProduction}</span>` : ""}</span>`).join("")
     : b.presence.map((p) => `<span class="who-chip${(p.idle_s ?? 0) > 600 || !p.present ? " away" : ""}"><i></i>${esc(who(p.actor))}<span class="meta">${p.last_seen ? t(p.last_seen) : ""}</span></span>`).join("");
   out.push(`<div class="row"><span class="label">${UI.who}</span><div class="val chips">${whoChips || `<span class="quiet">${UI.nobody}</span>`}</div></div>`);
+  // t-110 (pd 00:28 ②③): whether this board has an owner's key yet — a statement in the 谁在 row, not a card and not a
+  // button; once the key is in use the board says nothing, because there is nothing to do.
+  const keyState = b.owner_key?.state;
+  if (keyState === "none" || keyState === "issued") {
+    out.push(`<div class="row"><span class="label"></span><div class="val"><p class="meta owner-key">${esc(keyState === "none" ? UI.noOwnerKey : UI.ownerKeyUnused)}</p></div></div>`);
+  }
   out.push(`</section>`);
 
   // ---------- 其余 ----------
@@ -693,6 +699,7 @@ h4 { margin:.75rem 0 .25rem; font:500 .85rem/1.4 var(--sans); color:var(--muted)
 a.btn { text-decoration:none; display:inline-block; }
 .waiting { margin:.35rem 0 0; }
 .from { margin:.15rem 0 0; } .from a { color:var(--accent); }
+.owner-key { margin:0; }
 .contact-line { margin:.35rem 0 0; } .contact-line a { color:var(--muted); text-decoration:underline dotted; }
 .btn { font:500 .95rem/1 var(--sans); padding:.6rem 1.1rem; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
 .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
