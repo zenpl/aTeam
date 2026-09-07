@@ -133,7 +133,7 @@ function gitDiff(): Diff {
 }
 
 /** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
-function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean; changed_files?: number } {
   if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
   if (only) return revise(declared, null, extra, "", true);
   const d = gitDiff();
@@ -361,14 +361,14 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }) });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
             for (const e of check.absorbs) await emit(e);
             return;
           }
-          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }) });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");

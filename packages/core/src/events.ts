@@ -140,6 +140,11 @@ export type TaskOp =
       no_human_impact?: boolean;
       /** t-170 (pd 08:33): 碰了人可见的文件时的具名出路——「文件#符号」，具体到符号才算数。 */
       internal_only?: string[];
+      /**
+       * t-198：这一轮**量出来**的改动文件数。带了才算量过；不带表示这次没量（老的 CLI、`--no-touches`、
+       * 这里没有 git）。`0` 与「没带」是两件事，闸只对明确的 `0` 放行——一个没量过的 done 说不出自己改了什么。
+       */
+      changed_files?: number;
     }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
@@ -363,6 +368,7 @@ export const KEY_SYMBOLS = [
   "allocationSummary",
   "alsoHere",
   "applyReading",
+  "basisOfTouches",
   "batches",
   "batchesEmptyLine",
   "blockedWhy",

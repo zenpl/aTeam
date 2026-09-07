@@ -21,6 +21,15 @@ export interface Revision {
   lines: string[];
   /** True when the list came from the diff; false when the person supplied it (no git, no base, or --touches only). */
   measured: boolean;
+  /**
+   * t-198：这一轮 git 量出来的**改动文件数**，`undefined` 表示这次没量得成（没有 git、没有 claim 起点、
+   * 或 `--touches-only` / `--no-touches`）。
+   *
+   * 它与 `measured` 不是一回事，这正是那个缺陷的藏身处：量出 0 个改动文件时 `measured` 是 `false`（因为这一份
+   * 触点没有按量出来的改），于是「没量」与「量了，是 0」在记录上长得一模一样。而闸恰恰要分开这两件：
+   * **量出 0 个是一条事实，没量是一句沉默。**
+   */
+  changed_files?: number;
 }
 
 /** Run a git command and return its stdout, or null when git could not answer. */
@@ -120,7 +129,9 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
     // git looked and found nothing changed since the claim point. That may be true (nothing saved yet) or a sign the
     // base is wrong. Either way, wiping a declaration on the strength of it would delete real seams, so say what
     // happened and leave the declaration standing — printed and recorded agree (qa 00:29 caught them disagreeing).
-    return { touches: undefined, lines: [`量出 0 个改动文件（${why}）：先不改触点，沿用 claim 时声明的 ${dec.length} 条。真的什么都没碰就不必管；碰了却没量到，先把改动落盘，或用 --touches 直接写实际碰到的`], measured: false };
+    // t-198：**触点不动，但把「量出 0 个」这条事实报上去。** 沿用声明是对的（抹掉声明会连真接缝一起删），
+    // 可闸看不见「量了、是 0」就只能拿那份陈年声明去判——t-034 那次就是这么被判成「动了人看得到的字」的。
+    return { touches: undefined, changed_files: 0, lines: [`量出 0 个改动文件（${why}）：先不改触点，沿用 claim 时声明的 ${dec.length} 条。真的什么都没碰就不必管；碰了却没量到，先把改动落盘，或用 --touches 直接写实际碰到的`], measured: false };
   }
   const kept = dec.filter((x) => !isPath(x));                       // symbols and the like: the diff never saw them
   const touches = clean([...measured, ...kept, ...ext]);
@@ -132,7 +143,7 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
   if (kept.length) lines.push(`  diff 看不见、保留声明的：${kept.join("、")}`);
   if (ext.length) lines.push(`  你补的：${ext.join("、")}`);
   if (!added.length && !dropped.length) lines.push("  与 claim 时声明的一致");
-  return { touches, lines, measured: true };
+  return { touches, lines, measured: true, changed_files: measured.length };
 }
 
 /**

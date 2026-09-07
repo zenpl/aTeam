@@ -137,7 +137,7 @@ export class Rejected extends Error {
  * and they mistyped a field. The fix is one table rather than a guard at each of those reads: a new op that forgets to
  * declare its required fields is the only way back to a crash, and the table is where you would look.
  */
-type FieldKind = "string" | "boolean" | "strings" | "pair";
+type FieldKind = "string" | "boolean" | "strings" | "pair" | "count";
 const REQUIRED: Record<string, Record<string, FieldKind>> = {
   reading: { key: "string", surface: "string" },
   instruction: { to: "string", body: "string" },
@@ -162,7 +162,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
   "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
@@ -173,8 +173,9 @@ const holds = (v: unknown, k: FieldKind): boolean =>
   k === "string" ? typeof v === "string" && v.length > 0
   : k === "boolean" ? typeof v === "boolean"
   : k === "strings" ? Array.isArray(v) && v.every((x) => typeof x === "string")
+  : k === "count" ? typeof v === "number" && Number.isInteger(v) && v >= 0
   : Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "string" && x.length > 0);
-const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", boolean: "true 或 false", strings: "一个字符串数组", pair: "两个任务 id 的数组，例如 [\"t-1\", \"t-2\"]" };
+const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", boolean: "true 或 false", strings: "一个字符串数组", pair: "两个任务 id 的数组，例如 [\"t-1\", \"t-2\"]", count: "一个非负整数" };
 
 /** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
 export function checkShape(e: NewEvent): void {
@@ -396,6 +397,17 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
  *
  * 所以这句话只写一遍。两处各写一份，迟早有一处先改——t-171 判据 2 那句「同一句拒绝话」就是这个函数存在的理由。
  */
+/**
+ * t-198 判据 4：**这个判断是照着量出来的算的，还是照着 claim 时声明的算的。**
+ *
+ * 两者原来长得一模一样，于是被拦下的人不知道该去改哪一份——他去改代码，而闸看的是一份陈年声明；这正是
+ * t-034 那次的形状。这句话与那道闸的其余话一样住在 rules.ts：它是闸对着 agent 说的拒绝，不是牌桌上的字。
+ */
+function basisOfTouches(e: { touches?: string[]; changed_files?: number }): string {
+  if (e.changed_files === undefined) return "（这几处来自 claim 时的声明——这次没有量到改动，所以判断照的是声明。）";
+  return `（这几处来自这一轮量出来的 ${e.changed_files} 个改动文件${e.touches === undefined ? "，触点沿用 claim 时那份" : ""}。）`;
+}
+
 function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_human_impact?: boolean }): void {
   const what = op === "create" ? "建一件任务要先说清它对人有什么影响" : "交活要说一句这件对人有什么影响";
   if (e.no_human_impact && e.shows?.trim()) throw new Rejected(op, `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
@@ -505,14 +517,27 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       humanImpactPromised("done", e);
       // t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——拦下，并把碰到的逐个列出来。
       // 出错的方式通常不是撒谎，是顺手：改 i18n 一个词、改说明书一行，正是不会重新想一遍这句话的时刻。
-      if (e.no_human_impact) {
+      // t-198：**量出 0 个改动文件时，不许拿 claim 时的陈年触点来判这件「动了人看得到的字」。**
+      //
+      // t-034 那次是样本：一件 reopen 之后代码一个字没改的 done，触点里还留着 claim 时声明的 html.ts、i18n.ts
+      // ——闸自己量出「0 个改动文件」，转头又按那份陈年声明判它动了给人看的字。**这道闸问的是「这件对人有什么
+      // 影响」（t-034 的裁定：rules.ts 这一处原话就是「这件」），而它此刻拿到的答案来自另一轮。**
+      //
+      // 界线在「量没量」上，不在「有没有触点」上（判据 2）：`changed_files` 是 CLI 量出来的事实，只有它明确等于
+      // 0 才放行；没带这个字段（老的 CLI、--no-touches、没有 git）一律照旧判，量出 ≥1 个也照旧判。
+      // 触点本身一个字不动（判据 3）——沿用 claim 时那份，接缝照样算得出来。**放行的是这道闸，不是那份记录。**
+      const measuredNothing = e.changed_files === 0;
+      if (e.no_human_impact && !measuredNothing) {
         // t-105 的口径照旧：done 带了 touches 就是事实、取代 claim 时的声明；没带才用声明。用声明去判一件已经
         // 量过的事，会拿一个当事人自己更正过的名单去拦他。
         //
         // t-170 (pd 08:22)：按改动算，不按文件算。拒绝只发生在**算得准**的那两档——改了只装文本的地方，或改了
         // core 里那些 key 本身；两者都指得出是哪一处，人可以据此反驳一个具体的判断。算不准的那一档（只给了
         // 文件名、没说改在哪儿）不拒绝，因为一个看不见的判断不该挡住别人干活（判据 3）。
-        const touches = [...new Set(e.touches ?? t.touches)];
+        // t-198 判据 3 的另一半：**不许用「把触点声明为空」来换放行。** `touches: []` 按 t-105 是一条事实声明
+        // （这一轮什么都没碰），记录照它改；但拿它当**这道闸的依据**，等于不量一次就把「我没碰人可见的东西」
+        // 说成已经核过——而这道闸要的正是那一次核对。没量过就照 claim 那份判；量过的那条路叫 changed_files。
+        const touches = [...new Set(e.touches?.length ? e.touches : t.touches)];
         const seen = touches.filter((x) => touchesHumanVisible(x) === "human_visible").sort();
         // t-170 第二轮 (pd 08:33)：具名出路。写得出「只动了哪几个内部符号」就放行——它要的不是一个开关，是一次
         // 注意；写不出符号名，就说明没看清自己改了什么，那就该写 shows。符号必须真的落在被拦的那几处文件里，
@@ -544,7 +569,9 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
           const uncovered = seen.filter((f) => !covers(f));
           if (uncovered.length) throw new Rejected("done", `这几处还没说清动了里面的什么：${uncovered.join("、")}——每一处都要有一个「文件#符号」，或者改用 --shows`);
         } else if (seen.length) {
-          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（${NO_SYMBOL_MEANS_UNCLEAR}）。判断就来自上面列出的那几处触点，不对就改触点`);
+          // t-198 判据 4：**说清这个判断依据的是量出来的还是 claim 时声明的。** 两者原来长得一模一样，于是被拦下
+          // 的人不知道该去改哪一份——改代码没用，因为闸看的是一份陈年声明。
+          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。${basisOfTouches(e)}用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（${NO_SYMBOL_MEANS_UNCLEAR}）。判断就来自上面列出的那几处触点，不对就改触点`);
         }
       }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
