@@ -1,4 +1,4 @@
-import { describeShape, ambiguousLabels, taskHeading, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
+import { describeShape, ambiguousLabels, taskHeading, roleNamer, type Event, type Board, type BoardRelease, type BoardTask } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -40,6 +40,7 @@ function at(overlap: string[] | undefined): string {
 
 export function board(b: Board, me: string): string {
   const out: string[] = [];
+  const who = roleNamer(b); // t-107: the CLI shows the same names the board does
   const now = Date.parse(b.now);
   const ago = (iso: string) => {
     const s = Math.round((now - Date.parse(iso)) / 1000);
@@ -104,7 +105,7 @@ export function board(b: Board, me: string): string {
       const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join(" ");
       const overturned = (t.overturned ?? []).map((o) => `${o.surface} 验过，后被 ${o.by} 推翻`).join("；");
       const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : status === "obsolete" ? `  已被 ${t.obsolete?.decision ?? "?"} 取代` : results ? `  ${results}${overturned ? `（${overturned}）` : ""}` : "";
-      out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${taskHeading(t, ambiguous)}${t.owner ? `  @${t.owner}` : ""}${extra}`);
+      out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${taskHeading(t, ambiguous)}${t.owner ? `  @${who(t.owner)}` : ""}${extra}`);
     }
   }
 
@@ -135,11 +136,12 @@ export function board(b: Board, me: string): string {
 
   out.push("", "PRESENCE");
   for (const p of b.presence) {
+    const name = who(p.actor);
     const st = p.status ?? (p.present === false ? "missing" : "listening");
     const label = st === "listening" ? `在听  ${ago(p.last_seen!)} 前`
       : st === "deaf" ? `没在听 ${p.last_pull ? `${ago(p.last_pull)}` : "从未拉取"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
-    out.push(`  ${p.actor.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
+    out.push(`  ${name.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
   }
   const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
   if (gaps.length) {

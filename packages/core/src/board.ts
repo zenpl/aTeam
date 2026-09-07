@@ -789,6 +789,23 @@ export function ambiguousLabels(b: Board): Set<string> {
   return out;
 }
 
+/**
+ * t-107 (display only): what to call a role where a person reads it — its display name when the project gave it one,
+ * the id otherwise. A name that could be mistaken for another role's id, or that two roles share, carries the real id
+ * after it, by the same rule t-100 uses for tasks.
+ */
+export function roleNamer(b: Board): (id: string) => string {
+  const names = b.role_names ?? {};
+  const ids = new Set<string>([...Object.keys(names), ...(b.roles ?? []), ...b.presence.map((p) => p.actor)]);
+  const shared = new Map<string, number>();
+  for (const n of Object.values(names)) shared.set(n, (shared.get(n) ?? 0) + 1);
+  return (id: string) => {
+    const name = names[id];
+    if (!name) return id;
+    return (shared.get(name) ?? 0) > 1 || (ids.has(name) && name !== id) ? `${name} (${id})` : name;
+  };
+}
+
 /** t-100: what one row calls a task — its display name and title, and the real id only when the name is ambiguous. */
 export function taskHeading(t: { id: string; title: string; label?: string }, ambiguous: Set<string>): string {
   const name = t.label ? `${t.label} ${t.title}` : t.title;

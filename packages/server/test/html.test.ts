@@ -1154,3 +1154,46 @@ describe("t-100 · 显示名撞了才附真 id", () => {
     } finally { await v.stop(); }
   });
 });
+
+describe("t-107 · 人看到的角色一律显示名", () => {
+  const roles = async (v: ReturnType<typeof server>, value: unknown) => v.post("pm", { kind: "reading", surface: "project", key: "roles", value });
+
+  it("shows the name the project gave a role, falls back to the id, and never leaves a blank", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await roles(v, { pm: { name: "主编", responsibilities: ["R1", "R3"] }, dev: { name: "写手", responsibilities: ["R5"] }, qa: ["R6"] });
+      await v.post("pm", { kind: "task", op: "create", task: "t-1", title: "登录修复", criteria: ["能登录"] });
+      await v.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["src/login.ts"] });
+      await v.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
+      const html = await v.authedPage();
+      const now = section(html, "now", "rest"), rest = html.slice(html.indexOf('<details class="rest"'));
+      // 谁在 and the owner chip read as people named them
+      expect(now).toContain(">主编<");
+      expect(now).toContain(">写手<");
+      expect(now).toContain('<span class="who">写手</span>');
+      // a role with no name of its own keeps its id, with no blank and no placeholder
+      expect(now).toContain(">qa<");
+      expect(now).not.toContain("><span class=\"meta\">缺人</span></span><span class=\"who-chip\"><i></i><");
+      // instructions between agents name both ends the same way
+      expect(rest).toContain("主编 → qa：复核限流");
+      // the id is still there for machines, in the dig layer
+      expect(rest).toContain("t-1");
+    } finally { await v.stop(); }
+  });
+
+  it("a name that is another role's id, or shared by two roles, carries the real id after it (t-100's rule)", async () => {
+    const v = server();
+    await v.start();
+    try {
+      // pd's name is literally another role's id; pm and dev share one name
+      await roles(v, { pd: { name: "qa", responsibilities: ["R2"] }, pm: { name: "编辑", responsibilities: ["R1"] }, dev: { name: "编辑", responsibilities: ["R5"] }, qa: ["R6"] });
+      await v.post("pd", { kind: "note", body: "看一眼" });
+      const now = section(await v.authedPage(), "now", "rest");
+      expect(now).toContain(">qa (pd)<");
+      expect(now).toContain(">编辑 (pm)<");
+      expect(now).toContain(">编辑 (dev)<");
+      expect(now).toContain(">qa<"); // the real qa keeps its own id, unadorned
+    } finally { await v.stop(); }
+  });
+});
