@@ -12,11 +12,11 @@ const HUMAN = "human";
 const apps: ReturnType<typeof createApp>[] = [];
 afterAll(() => Promise.all(apps.map((a) => new Promise<void>((r) => a.close(() => r())))));
 
-async function up(testHooks: boolean, clockOffsetMs = 0) {
+async function up(testHooks: boolean, clockOffsetMs = 0, clock?: () => Date) {
   const store = new MemoryStore();
   const calls: { url: string; body: unknown }[] = [];
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => { calls.push({ url: String(url), body: JSON.parse(String(init?.body)) }); return new Response("ok", { status: 200 }); }) as typeof fetch;
-  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0, testHooks, clockOffsetMs, fetchImpl });
+  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0, testHooks, clockOffsetMs, fetchImpl, clock });
   apps.push(app);
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
@@ -85,5 +85,48 @@ describe("t-063 · /_test/clock and /_test/run", () => {
     expect((await fetch(`${w.base}/_test/run`, { method: "POST" })).status).toBe(404); // no key: still 404, not 401
     const b = await (await w.get("/board")).json();
     expect(Math.abs(Date.parse(b.now) - Date.now())).toBeLessThan(10_000);
+  });
+});
+
+/**
+ * t-172：**`/_test/clock` 的两个读数必须来自同一次读表。**
+ *
+ * 它原本写成 `real: real().toISOString(), now: now().toISOString()`，而 `now()` 自己又叫一次 `real()`——
+ * 于是一次请求里读了**两次**表。两次之间跨过一个毫秒边界，`now - real` 就不再等于 offsetMs，那句毫秒等值
+ * 的断言当场红。qa 08:28 量的是 20000 次里 80 次（0.400%），也就是全队每约 250 次全量跑撞一次假红。
+ *
+ * 判据 2 说修接口不修断言，判据 3 说能做成确定性反例最好。**这一条是确定性的**：注入一个「每读一次就往前
+ * 走 1 毫秒」的钟——那正是真实漂移的最坏情形，只是不再靠运气发生。改前它必红（差值是 offsetMs + 1），改后
+ * 恒等于 offsetMs，因为偏移是加在一个已经读到手的瞬间上，不是又一次读表。
+ *
+ * 这个钟同时也证着另一半：它**每读一次就变**，所以任何仍然读两次表的写法都躲不过它。
+ */
+describe("t-172 · 一次读表，两个读数", () => {
+  /** 每读一次就往前 1 毫秒：真实漂移的最坏情形，不靠运气。 */
+  const ticking = (from = Date.parse("2026-09-07T00:00:00.000Z")) => { let n = 0; return () => new Date(from + n++); };
+
+  it("钟每读一次就走 1 毫秒，now 与 real 的差仍恒等于 offset", async () => {
+    const w = await up(true, 0, ticking());
+    for (const [text, ms] of [["16m", 16 * 60_000], ["0", 0], ["90s", 90_000]] as const) {
+      const c = await (await w.post("/_test/clock", { offset: text })).json();
+      expect(Date.parse(c.now) - Date.parse(c.real), `offset ${text}：两个读数来自两次读表`).toBe(ms);
+    }
+  });
+
+  it("连问 200 次，一次都不漂", async () => {
+    const w = await up(true, 0, ticking());
+    await w.post("/_test/clock", { offset: "16m" });
+    const drifts = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const c = await (await w.get("/_test/clock")).json();
+      drifts.add(Date.parse(c.now) - Date.parse(c.real) - 16 * 60_000);
+    }
+    expect([...drifts], "只要还读两次表，这里就会出现 1").toEqual([0]);
+  });
+
+  it("offset 为 0 时 now 与 real 是同一个时刻，但不是同一个对象", async () => {
+    const w = await up(true, 0, ticking());
+    const c = await (await w.get("/_test/clock")).json();
+    expect(c.now).toBe(c.real);
   });
 });

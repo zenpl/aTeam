@@ -95,7 +95,22 @@ export function createApp(opts: ServerOptions) {
   const testHooks = !!opts.testHooks;
   let offsetMs = testHooks ? (opts.clockOffsetMs ?? 0) : 0;
   const real = () => (opts.clock ? opts.clock() : new Date());
-  const now = () => new Date(real().getTime() + offsetMs);
+  /**
+   * t-172：**偏移是加在一个瞬间上的，不是一次独立的读表。**
+   *
+   * `now()` 原本写成 `new Date(real().getTime() + offsetMs)`——每叫一次就重新读一次表。想同时要「真时刻」
+   * 和「偏移后的时刻」的地方，于是拿到的是**两个瞬间**：两次 `Date.now()` 之间跨过一个毫秒边界，两者的差
+   * 就不再等于 offsetMs。qa 08:28 在 20000 次里量到 80 次偏 +1ms（0.400%），换算下来全队每约 250 次全量跑
+   * 撞一次假红。
+   *
+   * 修的是接口不是断言（判据 2）：把「加偏移」单拿出来成 `shift`，谁需要成对的两个读数就叫一次 `instant()`
+   * ——一次读表，两个读数由同一个瞬间算出来，差值恒等于 offsetMs。把那句毫秒等值调松是把漂移藏起来，不是
+   * 消掉它。
+   */
+  const shift = (at: Date) => new Date(at.getTime() + offsetMs);
+  const now = () => shift(real());
+  /** 同一次读表上的两个读数：`now - real` 恒等于 offsetMs，与调用之间有没有跨过毫秒边界无关。 */
+  const instant = () => { const at = real(); return { real: at, now: shift(at) }; };
   const doFetch: typeof fetch = opts.fetchImpl ?? ((u, i) => fetch(u, i));
   let lastOrigin = opts.publicUrl ?? "";
   const boardUrl = (p: string) => `${(opts.publicUrl ?? lastOrigin) || "http://localhost"}${p === defaultProject ? "/" : `/p/${encodeURIComponent(p)}/`}`;
@@ -226,7 +241,9 @@ export function createApp(opts: ServerOptions) {
             if (!Number.isFinite(ms)) return json(res, 400, { error: "offset", message: "offset 写成 16m / 2h / 90s，或 offset_ms 毫秒数；0 关闭" });
             offsetMs = ms;
           }
-          return json(res, 200, { offset_ms: offsetMs, real: real().toISOString(), now: now().toISOString() });
+          // t-172：两个读数来自同一次读表——这里原本是 real() 与 now() 各读一次表
+          const at = instant();
+          return json(res, 200, { offset_ms: offsetMs, real: at.real.toISOString(), now: at.now.toISOString() });
         }
         if (url.pathname === "/_test/run" && req.method === "POST") return json(res, 200, { now: now().toISOString(), ran: await runPeriodic() });
         return json(res, 404, { error: "not found" });
