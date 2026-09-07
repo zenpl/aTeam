@@ -37,14 +37,14 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
 // t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
-export const SECOND_HOME_FROZEN: number = 356;
+export const SECOND_HOME_FROZEN: number = 352;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
-  "packages/server/src/i18n.ts": 167,
-  "packages/cli/src/format.ts": 36,
+  "packages/server/src/i18n.ts": 165,
+  "packages/cli/src/format.ts": 34,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 23,
@@ -105,6 +105,19 @@ export const WATCH_LINES = {
   neverPulled: "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync",
   /** 心跳还在跳，但服务端很久没见它拉取了。`how` 是 core 的 span(ms)：这一句说的是时长不是时刻。 */
   behind: (how: string) => `⚠ 服务端说你 ${how}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`,
+} as const;
+
+/**
+ * t-162 · 线上这一版是谁弄上去的（pd 22:47 定的两种：`推的` 有「的」，`核对` 没有）。
+ *
+ * 这一句原来**页面与命令行各存一份**：`i18n.ts` 的 `pushedBy`/`checkedBy` 与 `format.ts:58` 的
+ * `` ` (${by} ${when}推的)` ``。两份的**句子本身一字不差**，差的只是命令行外面那对括号——所以它属于
+ * 「同一句话住在两个地方」而不是「两种说法」，搬进来不需要在措辞之间做选择（那种我留给 pd，见 t-162 的 note）。
+ * 括号留在命令行：那是版式，不是话。
+ */
+export const DEPLOY_SOURCE = {
+  pushed: (who: string, when: string) => `${who} ${when}推的`,
+  checked: (who: string, when: string) => `${who} ${when}核对`,
 } as const;
 
 /**

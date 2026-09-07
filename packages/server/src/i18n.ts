@@ -1,4 +1,4 @@
-import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, ago as agoOf } from "@ateam/core";
+import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -75,8 +75,9 @@ export const UI = {
   live: "线上",
   verifiedCount: (n: number) => `在生产上验过 ${n} 件`,
   // t-086: who pushed this version and who only checked which one is live are different claims, and never merged into one.
-  pushedBy: (who: string, when: string) => `${who} ${when}推的`,
-  checkedBy: (who: string, when: string) => `${who} ${when}核对`,
+  // t-162：这两句搬到 core 的 DEPLOY_SOURCE 一处，命令行也用它。这里保留同名入口，页面调用点不必改。
+  pushedBy: DEPLOY_SOURCE.pushed,
+  checkedBy: DEPLOY_SOURCE.checked,
   noDeployReading: "还没人核对过线上是哪一版",
   thisVersionUnverified: "这一版刚上线，还没在生产验过",
   // t-091: what is verified and still waiting for a deploy, so nobody has to send a card per batch
