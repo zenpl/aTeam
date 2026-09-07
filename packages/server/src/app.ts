@@ -223,6 +223,9 @@ export function createApp(opts: ServerOptions) {
   };
 
   const server = createServer(async (req, res) => {
+    // t-212：统一出口（catch 里）要用的两样，声明在 try 之外。
+    let whoIsAsking = human;
+    let refusalStore: EventStore | null = null;
     try {
       await ready;
       const url = new URL(req.url ?? "/", "http://x");
@@ -343,6 +346,11 @@ export function createApp(opts: ServerOptions) {
       if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
       const store = storeFor(projectId);
       const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
+      // t-212：这一请求是谁在发、往哪本账记，供统一出口用。牌桌那几个按钮是人点的，所以先按人算；
+      // 走 API 那一路解析出 x-actor 之后会改写它。存储也要在这里留一份引用——统一出口在 catch 里，
+      // 而 catch 看不见 try 里声明的那个 store。
+      whoIsAsking = human;
+      refusalStore = store;
 
       // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
       // token is the default project's admin key. A key of another project is refused outright.
@@ -469,7 +477,7 @@ export function createApp(opts: ServerOptions) {
         if (r.status >= 400 && store.recordRefusal) {
           const b = (r.body ?? {}) as { rule?: unknown; error?: unknown };
           const rule = typeof b.rule === "string" ? b.rule : typeof b.error === "string" ? b.error : "unknown";
-          await store.recordRefusal({ kind: "refused", who: human, rule, op: then, id: ulid(now().getTime()), at: now().toISOString() });
+          await store.recordRefusal({ kind: "refused", who: human, rule, op: `${req.method} ${then}`, id: ulid(now().getTime()), at: now().toISOString() });
         }
         return r;
       };
@@ -510,8 +518,10 @@ export function createApp(opts: ServerOptions) {
           const st = (await stateFor(projectId, store)).instructions.get(of);
           if (!st) return { status: 404, body: { error: "not found", message: `${of} is not an instruction` } };
           const i = st.instruction;
-          if (!i.options?.includes(option)) return { status: 409, body: { error: "rejected", rule: "decide", message: `"${option}" is not one of: ${(i.options ?? []).join(" | ")}` } };
-          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) return { status: 409, body: { error: "rejected", rule: "decide", message: `${of} already decided: ${st.chosen.option} by ${st.chosen.by}` } };
+          // t-212（pm 16:23）：**这两条从「自己拼一个 409」改成 throw Rejected，走统一出口。** 在两处各补
+          // 一次记账等于又一份靠人维护的名单，而这件事的全部教训就是名单会漏（今晚已漂四次）。
+          if (!i.options?.includes(option)) throw new Rejected("decide", `"${option}" is not one of: ${(i.options ?? []).join(" | ")}`);
+          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${of} already decided: ${st.chosen.option} by ${st.chosen.by}`);
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
           const filling = isContactAsk(i.body) && (option === CONTACT_FILL || option === CONTACT_FILL_WAS);   // 老卡带的是旧那个词
@@ -590,6 +600,7 @@ export function createApp(opts: ServerOptions) {
       // The API: a key of this project, and an identity. A node key is bound to its role; an admin key may speak as anyone.
       if (!record) return json(res, 401, { error: "unauthorized" });
       const actor = String(req.headers["x-actor"] ?? "").trim();
+      whoIsAsking = actor || human;
       if (!actor) return json(res, 400, { error: "X-Actor header is required" });
       if (record.role !== null && actor !== record.role) return json(res, 403, { error: "forbidden", message: `这把钥匙是 ${record.role} 的，不能以 ${actor} 说话` });
       // t-103: the service's own identity is never lent out, and the owner's is lent only until they first arrive.
@@ -672,7 +683,12 @@ export function createApp(opts: ServerOptions) {
 
       return json(res, 404, { error: "not found" });
     } catch (err) {
-      if (err instanceof Rejected) return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
+      if (err instanceof Rejected) {
+        // t-212：**Rejected 的唯一出口，也是记账的唯一出口。** 任何一条走到这里的拒绝都被数进去，
+        // 不管它是 validate 抛的还是某个处理器自己抛的——下一个人再加一条拒绝，不必记得来这里补一行。
+        await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
+        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
+      }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
       console.error(err);
       return json(res, 500, { error: "internal", message: (err as Error).message });

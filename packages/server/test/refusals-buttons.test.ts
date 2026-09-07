@@ -38,7 +38,7 @@ describe("t-212 · 人点按钮被挡住，也要被数进去", () => {
     expect(r.status).toBe(409);
     const rs = await store.refusals!();
     expect(rs.length).toBe(before + 1);
-    expect(rs[rs.length - 1]).toMatchObject({ rule: "decide", op: "/decide", who: HUMAN });
+    expect(rs[rs.length - 1]).toMatchObject({ rule: "decide", op: "POST /decide", who: HUMAN });
   });
 
   it("指着一条不存在的卡：404 也是被挡住，一样数", async () => {
