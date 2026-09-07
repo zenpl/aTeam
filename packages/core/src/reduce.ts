@@ -180,6 +180,16 @@ export function touchesOverlap(a: string, b: string): boolean {
 /** The touches of either task that overlap something the other declared. */
 export function overlapOf(a: string[], b: string[]): string[] {
   const out = new Set<string>();
+  // t-121 (pm 02:43): our own rules push touch counts up — claim wide, revise at done, name symbols. So the pairwise
+  // comparison has to stop being pairwise. Without a directory in play, two touches meet exactly when their paths are
+  // equal, which a set answers in one step instead of a scan. A directory can contain anything, so that case still walks.
+  if (!a.some(dirLike) && !b.some(dirLike)) {
+    const bPaths = new Set(b.map(touchPath));
+    const aPaths = new Set(a.map(touchPath));
+    for (const x of a) if (bPaths.has(touchPath(x))) out.add(x);
+    for (const y of b) if (aPaths.has(touchPath(y))) out.add(y);
+    return [...out];
+  }
   for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
   for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
   return [...out];
@@ -200,11 +210,17 @@ const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) :
 export function overlapIsLight(a: string[], b: string[]): boolean {
   const paths = new Set<string>();
   let any = false;
-  for (const x of a) for (const y of b) {
-    if (!touchesOverlap(x, y)) continue;
-    any = true;
-    if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
-    paths.add(pathOf(x));
+  // t-121: the same set trick — a shared path is what both sides must have named for the question to arise at all.
+  if (!a.some(dirLike) && !b.some(dirLike)) {
+    const bPaths = new Set(b.map(pathOf));
+    for (const x of a) if (bPaths.has(pathOf(x))) { any = true; paths.add(pathOf(x)); }
+  } else {
+    for (const x of a) for (const y of b) {
+      if (!touchesOverlap(x, y)) continue;
+      any = true;
+      if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
+      paths.add(pathOf(x));
+    }
   }
   if (!any) return false;
   for (const p of paths) {
