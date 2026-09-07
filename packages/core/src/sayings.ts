@@ -37,14 +37,14 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
 // t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
-export const SECOND_HOME_FROZEN: number = 352;
+export const SECOND_HOME_FROZEN: number = 351;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/i18n.ts": 165,
-  "packages/cli/src/format.ts": 34,
+  "packages/cli/src/format.ts": 33,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 23,
@@ -119,6 +119,16 @@ export const DEPLOY_SOURCE = {
   pushed: (who: string, when: string) => `${who} ${when}推的`,
   checked: (who: string, when: string) => `${who} ${when}核对`,
 } as const;
+
+/**
+ * t-162 · 一次验收后来被推翻，牌桌上那一行怎么说。
+ *
+ * 只有命令行说这一句（页面没有对应的话），所以搬进来不需要在两种说法之间做选择。
+ * **另一处相近的没搬**：`format.ts` 任务详情里那句带上了「谁验过的」与时刻
+ * （`overturned X 验过（Y），后被 Z 推翻 12:34`）。它与这一句是不是同一句话的详略两版、
+ * 还是两句，我判不了——那是产品判断，记在 t-162 的 note 上等 pd。
+ */
+export const overturnedLine = (surface: string, by: string) => `${surface} 验过，后被 ${by} 推翻`;
 
 /**
  * 一条人可见的话在 core 里的登记。

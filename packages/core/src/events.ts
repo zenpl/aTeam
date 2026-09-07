@@ -394,6 +394,7 @@ export const KEY_SYMBOLS = [
   "noRealOverlap",
   "nobodyElse",
   "overdueByPresence",
+  "overturnedLine",
   "owedSentences",
   "realOverlapIs",
   "releaseUnits",
