@@ -14,8 +14,8 @@ export interface Diff {
 }
 
 export interface Revision {
-  /** What goes on the done event. Empty means "say nothing": the claim declaration stands. */
-  touches: string[];
+  /** What goes on the done event. `undefined` says nothing, and the claim declaration stands. */
+  touches: string[] | undefined;
   /** Lines for the person: what the diff added, what it dropped, and where the value came from. */
   lines: string[];
   /** True when the list came from the diff; false when the person supplied it (no git, no base, or --touches only). */
@@ -49,6 +49,12 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
     return { touches, lines, measured: false };
   }
   const measured = clean(changed);
+  if (!measured.length && dec.length && !ext.length) {
+    // git looked and found nothing changed since the claim point. That may be true (nothing saved yet) or a sign the
+    // base is wrong. Either way, wiping a declaration on the strength of it would delete real seams, so say what
+    // happened and leave the declaration standing — printed and recorded agree (qa 00:29 caught them disagreeing).
+    return { touches: undefined, lines: [`量出 0 个改动文件（${why}）：先不改触点，沿用 claim 时声明的 ${dec.length} 条。真的什么都没碰就不必管；碰了却没量到，先把改动落盘，或用 --touches 直接写实际碰到的`], measured: false };
+  }
   const kept = dec.filter((x) => !isPath(x));                       // symbols and the like: the diff never saw them
   const touches = clean([...measured, ...kept, ...ext]);
   const added = measured.filter((x) => !dec.includes(x));

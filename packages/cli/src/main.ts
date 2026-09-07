@@ -121,8 +121,8 @@ function gitDiff(): Diff {
 }
 
 /** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
-function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean) {
-  if (keep) return { touches: [] as string[], lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+  if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
   const d = gitDiff();
   const base = d.base(task);
   if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
@@ -289,9 +289,12 @@ async function main(argv: string[]) {
         case "claim": {
           const t = need(id, "<id>");
           await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
-          // t-105: remember where this branch stood, so done can measure what the task actually touched
+          // t-105: remember where this branch stood, so done can measure what the task actually touched. Only the
+          // *first* claim sets it (qa 00:29): widening a claim is this rule's own way out, and re-basing there would
+          // move the measuring point to "now" and make every later diff empty — silently, on exactly the tasks that
+          // need this most.
           const head = gitDiff().head();
-          if (head) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
+          if (head && !existsSync(baseFile(t))) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
           return;
         }
         case "done": {

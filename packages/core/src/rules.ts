@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities } from "./board.js";
 
@@ -15,6 +15,14 @@ export function migrationApproved(s: State): boolean {
  * 排除的角色能落；说「没达标」与自身利益相反，只挡发布不放行，所以对所有人开放，不需要这份名单。候选是项目声明的角色
  * （`project:roles`），human 不在其中：human 什么都能验，把他算进去就永远不会出现「一个都没有」，而那正是最该说清楚的一种。
  */
+/** t-106: the ids a `project:roles` value declares, whatever shape it is written in. Nothing else is validated here. */
+export function declaredRoleIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((x): x is string => typeof x === "string");
+  if (typeof value === "string") return value.split(",").map((x) => x.trim()).filter(Boolean);
+  if (value && typeof value === "object") return Object.keys(value as object);
+  return [];
+}
+
 export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
   const authors = criteriaAuthors(t);
   const holds = roleResponsibilities(s);
@@ -107,6 +115,14 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       // t-089 (M4): a reading carried in from somewhere else says when it was measured there; without that it is a number
       // with no time and nobody can tell what it is worth. It lands expired either way — whoever needs it measures again.
       if (e.from && !e.measured_at) throw new Rejected("reading", "搬进来的事实必须带 measured_at（它在原处是什么时候测的）；缺 measured_at，不写入");
+      // t-106 (M4): a role id travels in an HTTP header, and a header is latin-1. A non-ASCII id therefore does not fail
+      // loudly — it becomes a different, unreadable identity, and the whole team shows up missing. Say so at declaration
+      // time, when it is one edit away, rather than never (qa 00:14 found this by making a team called 主编/写手/审稿).
+      if (e.surface === PROJECT_SURFACE && e.key === ROLES_KEY) {
+        const bad = declaredRoleIds(e.value).filter((x) => !ROLE_ID_RE.test(x));
+        if (bad.length)
+          throw new Rejected("reading", `角色 id 只能是 ASCII 小写（${ROLE_ID_RE.source}），这些不行：${bad.join("、")}。id 要走 HTTP 头（X-Actor），头按规矩只放 latin-1，非 ASCII 的 id 不会报错、会变成另一个谁也读不出的身份，整队在牌桌上显示不在场。出路：id 用 ASCII 小写，名字放显示名里——把 {"审稿": ["R6"]} 写成 {"reviewer": {"name": "审稿", "responsibilities": ["R6"]}}，把 {"主编": ["R1"]} 写成 {"editor": {"name": "主编", "responsibilities": ["R1"]}}。显示名不限语言、不限长度，人看到的到处都是它`);
+      }
       if (e.measured_at !== undefined) {
         const m = Date.parse(e.measured_at);
         if (Number.isNaN(m)) throw new Rejected("reading", `measured_at ${JSON.stringify(e.measured_at)} is not a time`);
@@ -280,8 +296,8 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
       // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it
       // blocks the done. Seams that were already open stay the caller's business, as before: done never judged them.
-      const revised = [...new Set((e.touches ?? []).map((x) => x.trim()).filter(Boolean))];
-      if (revised.length) {
+      const revised = e.touches === undefined ? undefined : [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))];
+      if (revised) {
         const before = new Set(blockingSeamsIfTouches(state, t, t.touches).map((x) => x.with));
         const fresh = blockingSeamsIfTouches(state, t, revised).filter((x) => !before.has(x.with));
         if (fresh.length) {

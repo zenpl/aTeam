@@ -56,3 +56,28 @@ describe("t-105 · what a task actually touched, measured", () => {
     expect(r.touches).toEqual(["a.ts", "b.ts", "c#x"]);
   });
 });
+
+/**
+ * qa 00:29 验 t-105 时找到的两处：跟着这条规则自己给出的出路走一遍，触点就不再是事实了。
+ * ① 出路第一步是「再 claim 一次把触点并进来」，而 claim 每次都重写量点，此后 diff 恒为空；
+ * ② 量出 0 个文件时 CLI 说「改成 0 个」、落库却是声明的七条——说的和记的对不上。
+ */
+describe("t-105 · 走一遍出路之后，触点还得是事实（qa 00:29）", () => {
+  it("量出 0 个改动时不悄悄抹掉声明，也不谎称改成了 0 条", () => {
+    const r = revise(["a/x.ts", "a/y.ts"], [], [], "相对 claim 起点 4247d7d");
+    expect(r.touches).toBeUndefined();                                  // 什么都不发，声明原样留着
+    const text = r.lines.join("\n");
+    expect(text).toContain("量出 0 个改动文件（相对 claim 起点 4247d7d）：先不改触点，沿用 claim 时声明的 2 条");
+    expect(text).toContain("--touches");                                // 说出两条出路
+    expect(text).not.toContain("改成 0 个文件");                         // 不再说一句与记录不符的话
+  });
+
+  it("量出 0 个但人自己写了实际碰到的：以人写的为准", () => {
+    const r = revise(["a/x.ts"], [], ["a/z.ts"], "相对 claim 起点 4247d7d");
+    expect(r.touches).toEqual(["a/z.ts"]);
+  });
+
+  it("真的什么都没碰、声明也是空的：照常走，不特殊对待", () => {
+    expect(revise([], [], [], "x").touches).toEqual([]);
+  });
+});

@@ -323,7 +323,8 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       if (e.shows?.trim()) t.shows = e.shows.trim();
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
-      if (e.touches?.length) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; detectSeams(s, t); }
+      // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
+      if (e.touches !== undefined) { t.touches = [...new Set(e.touches.map((x) => x.trim()).filter(Boolean))]; detectSeams(s, t); }
       return;
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again

@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1413,16 +1413,16 @@ describe("t-059 · who holds what: the board says which responsibilities nobody 
     x = await cov();
     expect(x.R9).toMatchObject({ status: "held", line: "上线：dev" });
     // the project says which role holds what: a writing project with two roles and no verifier
-    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { 写手: ["R5", "R9"], 审稿: ["R1", "R2", "R3", "R4", "R8", "R12"] } });
+    await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { writer: ["R5", "R9"], reviewer: ["R1", "R2", "R3", "R4", "R8", "R12"] } });
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.roles).toEqual(["写手", "审稿"]);
+    expect(b.roles).toEqual(["writer", "reviewer"]);
     x = await cov();
     expect(x.R6).toMatchObject({ status: "unclaimed", holders: [], line: "没人管验收：没有角色声明" });
-    expect(x.R5).toMatchObject({ status: "unheld", holders: ["写手"], line: "没人管做：写手 声明了但没在场" });
-    await pull(store, "写手", null, c.now());
+    expect(x.R5).toMatchObject({ status: "unheld", holders: ["writer"], line: "没人管做：writer 声明了但没在场" });
+    await pull(store, "writer", null, c.now());
     x = await cov();
     expect(x.R5.status).toBe("held");
-    expect(x.R9).toMatchObject({ status: "blocked", present: ["写手"] });
+    expect(x.R9).toMatchObject({ status: "blocked", present: ["writer"] });
     // a role name outside the default packing, declared as a plain list, holds nothing until the project says
     await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "writer"] });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
@@ -2311,5 +2311,94 @@ describe("t-105 · done's touches are the fact, and seams are recomputed from it
     const rule = src.slice(src.indexOf('case "done": {'), src.indexOf('case "verify": {'));
     for (const forbidden of ["spawnSync", "readFileSync", "node:fs", "node:child_process", "git "]) expect(rule).not.toContain(forbidden);
     expect(readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")).not.toContain("node:child_process");
+  });
+});
+
+/**
+ * t-106 (S8/M4)。qa 00:14 造了一支「主编/写手/审稿」的队伍来试 t-104，撞上一件不报错的事：角色 id 走 X-Actor，
+ * 而 HTTP 头按 RFC 只放 latin-1——有的客户端根本发不出去，有的把 UTF-8 原样发过去被当 latin-1 读回来，于是
+ * 「审稿」落库成 å®¡ç¨¿。整队在牌桌上显示不在场，旁边站着几个名字是乱码的角色，任务 owner 是 null。
+ * pd 00:15 定的：id 只收 ASCII 小写，显示名随便什么语言。它照着我们自己的例子写的，所以例子也一并改掉。
+ */
+describe("t-106 · a role id is ASCII; the name people read is not", () => {
+  const declare = (store: MemoryStore, c: ReturnType<typeof clock>, value: unknown) =>
+    emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value });
+
+  it("a non-ASCII id is refused when it is declared, with both halves of the way out spelled out", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    const r = await rejected(declare(store, c, { 主编: ["R1"], 写手: ["R5"], 审稿: ["R6"] }));
+    expect(r.rule).toBe("reading");
+    expect(r.message).toContain("这些不行：主编、写手、审稿");
+    expect(r.message).toContain("X-Actor");
+    expect(r.message).toContain("latin-1");
+    expect(r.message).toContain('{"reviewer": {"name": "审稿", "responsibilities": ["R6"]}}');   // 判据 1：两例
+    expect(r.message).toContain('{"editor": {"name": "主编", "responsibilities": ["R1"]}}');
+    // 纯数组、逗号字符串两种老形态一样管
+    expect((await rejected(declare(store, c, ["pm", "审稿"]))).message).toContain("这些不行：审稿");
+    expect((await rejected(declare(store, c, "pm,审稿"))).message).toContain("这些不行：审稿");
+    // 大写、空格、以数字开头也不行——一条规则，不是「只挡中文」
+    expect((await rejected(declare(store, c, ["QA"]))).message).toContain("这些不行：QA");
+    expect((await rejected(declare(store, c, ["front end"]))).message).toContain("这些不行：front end");
+    expect((await rejected(declare(store, c, ["2nd-dev"]))).message).toContain("这些不行：2nd-dev");
+    expect(reduce(await store.read(), c.now()).readings.size).toBe(0);   // 一条都没写进去
+  });
+
+  it("ASCII lowercase goes through in all three shapes, and the name is free in any language and any length", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await declare(store, c, ["editor", "writer", "reviewer"]);
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).roles).toEqual(["editor", "writer", "reviewer"]);
+    await declare(store, c, { editor: ["R1"], writer: ["R5"], reviewer: ["R6"] });                       // t-059 的形态
+    await declare(store, c, {                                                                           // t-106 的形态
+      editor: { name: "主编", responsibilities: ["R1", "R3"] },
+      writer: { name: "写手", responsibilities: ["R5"] },
+      reviewer: { name: "审稿 / Reviewer / Рецензент（这一栏想写多长写多长）", responsibilities: ["R6"] },
+      ops: { responsibilities: ["R9"] },                                                                // 没名字的照旧
+    });
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.roles).toEqual(["editor", "writer", "reviewer", "ops"]);
+    expect(b.role_names).toEqual({ editor: "主编", writer: "写手", reviewer: "审稿 / Reviewer / Рецензент（这一栏想写多长写多长）" });
+    expect(b.role_names.ops).toBeUndefined();                                                           // 没名字就用 id
+    // 职责照读，新形态不打断 t-059
+    const s = reduce(await store.read(), c.now());
+    expect(roleResponsibilities(s)).toEqual({ editor: ["R1", "R3"], writer: ["R5"], reviewer: ["R6"], ops: ["R9"] });
+    // 而且规则真的用它：只有 reviewer 持 R6，pass 的名单就是它
+    await emit(store, c, { kind: "task", op: "create", actor: "editor", task: "A", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "writer", task: "A", touches: ["x"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "writer", task: "A", evidence: "abc1234" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "writer", task: "A", surface: "repo", pass: true }))).message).toContain("可以由谁来落 pass：reviewer");
+  });
+
+  it("ids already in the log are not touched, not migrated, not cleaned: they keep working (判据 3)", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    // 一条谁也读不出的身份，写在规则存在之前——直接进库，像旧日志那样
+    await store.appendRaw({ id: "01OLDROLES", at: new Date(c.now().getTime() - 60_000).toISOString(), kind: "reading", actor: "pm", surface: "project", key: "roles", value: { "å®¡ç¨¿": ["R6"], dev: ["R5"] } } as never);
+    const s0 = reduce(await store.read(), c.now());
+    expect(projectRoles(s0)).toEqual(["å®¡ç¨¿", "dev"]);                 // 照常算，不假装它不存在
+    // 它照常收发事件：建任务、认领、完成、验收，一路走通
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["y"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "å®¡ç¨¿", task: "B", surface: "repo", pass: true });
+    expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
+    await pull(store, "å®¡ç¨¿", null, c.now());
+    expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.role === "å®¡ç¨¿")).toBeTruthy();
+  });
+});
+
+/** qa 00:29：`touches: []` 是「它什么都没碰」这条事实，与「没给最终值」是两回事，平台要分得开。 */
+describe("t-105 · an empty touches list is a fact, not a missing field", () => {
+  it("[] wipes the declaration; undefined leaves it alone", async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a.ts", "b.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" });          // 字段缺席
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual(["a.ts", "b.ts"]);
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再看" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678", touches: [] }); // 明确说空
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual([]);
   });
 });
