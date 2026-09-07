@@ -8,7 +8,12 @@
 import { LISTEN_WINDOW_MS } from "@ateam/core";
 import type { Lock } from "./lock.js";
 
-export const DEFAULT_WATCH_CMD = "ateam watch --interval 25s";
+/**
+ * t-139 (frontend, pm 05:47): the default interval *is* the protocol — nobody chose 25 seconds, they just never
+ * changed it, and this line was teaching every node to poll at a rate we had just decided was too fast. 60 is pm's
+ * judgement, not a measurement; it is to be revisited when the machine limits or a slower run give real numbers.
+ */
+export const DEFAULT_WATCH_CMD = "ateam watch --interval 60s";
 
 export type WatchState =
   /** No lock file: this node never started a watch in this checkout, or stopped one on purpose. Say nothing. */

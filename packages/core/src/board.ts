@@ -157,6 +157,16 @@ export interface Board {
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
   overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
   /**
+   * t-139 (pd 05:15): overdue instructions split by whether their recipient is there, because the three states cost
+   * different things and are fixed different ways. `missing` — nobody is pulling, so nothing arrives and only a person
+   * can start one. `deaf` — the node is alive and talking but not pulling, so instructions are piling up unseen.
+   * `listening` — it is receiving them and simply has not acked, which is a nudge, not an emergency.
+   *
+   * Never one number. release listening with 22 unacked and a role that has been gone for hours are not the same
+   * trouble, and adding them up produced a figure that made the second invisible behind the first.
+   */
+  overdue_by_presence: Record<"missing" | "deaf" | "listening", BoardOverdueGroup>;
+  /**
    * What is true on production right now, from valid readings and production verifications.
    * `since_sha` is the previous deployed sha (null before the second deploy); `recent` are the tasks verified on
    * production since the current sha was recorded, `earlier` the rest. With no previous deploy, everything is recent.
@@ -281,6 +291,19 @@ export interface BoardCoverage {
   /** Why it is not held, in the team's words; empty when held. */
   reason: string;
   /** One sentence for the human, e.g. 没人管上线：pm 声明了但缺推送许可. */
+  line: string;
+}
+
+export interface BoardOverdueGroup {
+  /** Roles in this state that have overdue instructions. */
+  roles: string[];
+  /** How many overdue instructions their recipients are sitting on. */
+  count: number;
+  /** How long the longest-gone recipient has been out of touch, in seconds; null when they are listening. */
+  away_s: number | null;
+  /** The instruction ids, so a reader can go and look. */
+  instructions: string[];
+  /** pd 05:15's sentence for this state, or "" when there is nothing in it. */
   line: string;
 }
 
@@ -439,9 +462,26 @@ export function contactAskAnswered(s: State, i: Instruction): boolean {
   return !!r && r.valid && !r.expired && typeof r.reading.value === "string" && !!r.reading.value.trim();
 }
 
-/** The role a service card is about, from its first words; undefined for any other instruction. */
+/**
+ * t-139 (pd 05:15): the card the service raises about a role nobody is answering for. Its words are core's, in one
+ * place, because the board says the same thing in `overdue_by_presence` and two derivations of one sentence drift
+ * (t-118). The remedy differs with the state and so does the sentence: a role nobody is running has to be started;
+ * a node that is alive but no longer pulling has to be listening again, and starting a second one is the crude way.
+ */
+export function missingCard(role: string, status: "missing" | "deaf", awayMin: number, count: number): string {
+  // The card asks the human for the one thing a human can do. What separates the two states is what is *true*, not a
+  // second instruction: a deaf node is still talking, and saying so is what stops the reader thinking it has died.
+  return status === "deaf"
+    ? `${role} 没在听 ${awayMin} 分钟，${count} 条没送到——它还在说话，只是收不到。起一个 ${role}？`
+    : `${role} 缺人 ${awayMin} 分钟，${count} 条没送到。起一个 ${role}？`;
+}
+
+/**
+ * The role a service card is about, from its first words; undefined for any other instruction.
+ * The older openings stay recognised: cards sent before t-139 are still in the log and still name their role.
+ */
 export function missingRoleOf(body: string): string | undefined {
-  return /^(\S+) (已经缺了|没在听了|可能失联) /.exec(body)?.[1];
+  return /^(\S+) (已经缺了|没在听了|没在听|缺人|可能失联) /.exec(body)?.[1];
 }
 
 /** Is nobody listening as this role: no pull within the listen window? Never pulled counts as missing (t-047). */
@@ -564,6 +604,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     needs_human: [],
     undelivered: [],
     overdue: [],
+    overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
     instructions: [],
     readings: [],
     tasks: {},
@@ -759,7 +800,36 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));
   }
+  b.overdue_by_presence = overdueByPresence(b);   // t-139: needs the presence rows, so it goes last
   return b;
+}
+
+/**
+ * t-139 (pd 05:15): the overdue list, split by whether whoever is supposed to answer is there.
+ *
+ * The three do not add up to anything worth knowing. A role nobody is running needs a person to start one; a node
+ * that is alive but has stopped pulling needs its watch back; a node that is listening and has not acked needs a
+ * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
+ * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
+ */
+export function overdueByPresence(b: Board): Board["overdue_by_presence"] {
+  const state = new Map(b.presence.map((p) => [p.actor, p]));
+  const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });
+  const out = { missing: empty(), deaf: empty(), listening: empty() };
+  for (const o of b.overdue) {
+    const p = state.get(o.to);
+    const g = out[p?.status ?? "missing"];   // a recipient with no presence row at all has never been here
+    g.count++;
+    g.instructions.push(o.instruction);
+    if (!g.roles.includes(o.to)) g.roles.push(o.to);
+    const away = p?.idle_pull_s ?? null;
+    if (p?.status !== "listening" && away !== null && (g.away_s === null || away > g.away_s)) g.away_s = away;
+  }
+  const mins = (sec: number | null) => Math.max(1, Math.round((sec ?? 0) / 60));
+  if (out.missing.count) out.missing.line = `缺人 ${mins(out.missing.away_s)} 分钟，${out.missing.count} 条没送到`;
+  if (out.deaf.count) out.deaf.line = `没在听 ${mins(out.deaf.away_s)} 分钟，${out.deaf.count} 条没送到`;
+  if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条没确认`;
+  return out;
 }
 
 /** Find one task on the board by id, whatever its status. */
