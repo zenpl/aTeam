@@ -387,6 +387,12 @@ export interface Board {
     verified_on_production: { id: string; title: string; shows?: string }[];
     recent: { id: string; title: string; shows?: string }[];
     earlier: { id: string; title: string; shows?: string }[];
+    /**
+     * t-223：**当过生产头的那些 sha**，老的在前。回滚的合法目标就是这一类——「回到我们确实上过的某一版」是
+     * 日志里查得到的一个类别（`production:deployed.sha` 那串事实），所以闸认得它，不用谁开例外。
+     * **只在完整板上**：它每上线一次长一条，而瘦身板是发给人的那一份（t-070 那个上限）。
+     */
+    deploys?: string[];
   };
   /**
    * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
@@ -1042,6 +1048,8 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
+  // t-223：同一个 sha 量第二次不是又上了一次线（与 deployHistory 同一条 7 位规矩）
+  b.live.deploys = deploys.map((r) => r.value as string).filter((x, i, all) => i === 0 || !sameSha(all[i - 1], x));
   // when the current sha was first recorded (the same sha re-measured later, short or long, does not move the line).
   // t-120: split by the log's own order (event ids), not by wall clock. Two appends can share a millisecond — under a
   // loaded test run they do — and then `at >= at` put a verification recorded *before* the deploy on this version's
@@ -1634,7 +1642,9 @@ export function slimBoard(b: Board): Board {
   const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
-  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
+  // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
+  const live: Board["live"] = { ...b.live, deploys: undefined };
+  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
   slim.omitted = omittedPaths(b, slim);
   return slim;
 }

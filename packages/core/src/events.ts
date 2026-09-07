@@ -492,12 +492,14 @@ export const KEY_SYMBOLS = [
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
   "PROMISE_RULE",
+  "PUSH_LINES",
   "REACH_RULE",
   "REACH_WORDS",
   "READING_SAYINGS",
   "REAL_OVERLAP_PREFIX",
   "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING",
+  "ROLLBACK_LINES",
   "SAID_LABEL",
   "SAID_PREFIX",
   "SEAM_SAME_FILE",
@@ -561,6 +563,7 @@ export const KEY_SYMBOLS = [
   "noRealOverlap",
   "noSuchObject",
   "nobodyElse",
+  "notARollbackTarget",
   "objectNotFound",
   "orphanReason",
   "overdueByPresence",
@@ -569,6 +572,8 @@ export const KEY_SYMBOLS = [
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
+  "rollbackCommitsLine",
+  "rollbackMessage",
   "runtimeAllocation",
   "saidHops",
   "sayReading",
@@ -1010,6 +1015,52 @@ export const orphanReason = (shas: string[]) =>
  * claim／reopen 是常态），区间退到它上一轮的证据 sha——那仍是这件任务自己写下的、可核的点，但窗口比原来宽。
  * 不说出来的放宽就是悄悄放行，那和把闸关掉只差一句话。
  */
+/**
+ * t-223：**回滚是第二种合法的发车，不是一次例外。**
+ *
+ * 今天这条路一次都没走过（20 次上线、0 次回滚），release 17:25 第一次去走：把旧 sha 推回生产被拒，
+ * non-fast-forward——不是配置问题，`release --deploy` 用的那个 push 就是 fast-forward only。
+ * 强推能过，但那会让「什么时候部署过什么」变得不可靠，是拿 O6 换省事。
+ *
+ * 所以回滚走「反向提交再往前推」：造一个新提交，**内容（树）与那一版逐字相同**，父是当前生产头，然后照常快进。
+ * 历史只进不退，而闸认得它——不靠 `--anyway`，因为「目标 sha 曾经当过生产头」是日志里查得到的一个类别。
+ */
+export const rollbackMessage = (sha: string, batch: string) =>
+  `回滚到 ${sha.slice(0, 7)}（第 ${batch} 批）：内容与那一版逐字相同，历史只进不退。`;
+
+/**
+ * t-223：`--rollback` 这一路上人（agent）会读到的每一句，住在 core 一处。
+ *
+ * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
+ * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
+ */
+/** t-223：`--deploy` 与 `--rollback` 都会说的那两句，住在一处（同 mayPush 那四问）。 */
+export const PUSH_LINES = {
+  noSuchCommit: (sha: string) => `本地没有提交 ${sha}；先 fetch。`,
+  pushFailed: (why: string) => `推送失败：${why}`,
+} as const;
+
+export const ROLLBACK_LINES = {
+  nothingToRollBack: (branch: string, sha: string) => `${branch} 已经在 ${sha.slice(0, 7)}，没有可回的。`,
+  tipUnknown: (branch: string) => `说不出 ${branch} 此刻在哪一版，不敢造这条提交；先 fetch。`,
+  cannotMake: () => `造不出那条回滚提交（git commit-tree 没给出结果）；什么都没推。`,
+  rolled: (branch: string, made: string, target: string, batch: string) =>
+    `已回滚：${branch} 现在是 ${made.slice(0, 7)}，内容与 ${target.slice(0, 7)}（第 ${batch} 批）逐字相同。`,
+  note: (me: string, from: string, batch: string, target: string, made: string, why?: string) =>
+    `回滚：${me} 把生产从 ${from.slice(0, 7)} 回到第 ${batch} 批 ${target.slice(0, 7)} 的内容，新提交 ${made.slice(0, 7)}（不改历史，快进推上去）。${why ? `理由：${why}` : ""}`,
+  failed: (me: string, made: string, target: string, branch: string, why: string) =>
+    `回滚失败：${me} 把 ${made.slice(0, 7)}（内容 = ${target.slice(0, 7)}）推到 ${branch} 未成功：${why}`,
+  method: (target: string, batch: string) => `ateam release --rollback：内容回到 ${target.slice(0, 7)}（第 ${batch} 批），反向提交再快进`,
+} as const;
+
+/** t-223：目标 sha 从来没当过生产头时说清楚——回滚的合法目标是「回到我们上过的某一版」，不是「换成任意一版」。 */
+export const notARollbackTarget = (sha: string) =>
+  `${sha.slice(0, 7)} 没当过生产头，回不回去无从谈起：回滚是回到我们确实上过的某一版（日志里 production:deployed.sha 记着的那些）。要上一个新版本用 --deploy。`;
+
+/** t-223：发车报告里，这一批里那几条「内容等于某个上过线的版本」的提交——它们有账可查，不是无主。 */
+export const rollbackCommitsLine = (shas: string[]) =>
+  `这一批里有 ${shas.length} 条提交是回滚（内容与某个上过线的版本逐字相同）：${shas.map((x) => x.slice(0, 7)).join("、")}——它们没有任务盖着，但有账可查。`;
+
 export const wideBaseReason = (tasks: string[]) =>
   `有 ${tasks.length} 件任务的起点证不出早于它自己的产出，区间已退到它上一轮的证据：${tasks.join("、")}——这几件的窗口比声明的宽，窗口里若有没人认领的提交，会被它们盖住。`;
 

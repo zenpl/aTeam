@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -111,12 +111,14 @@ export interface Plan {
    * claim／reopen 是常态），所以这个答案比 `(base, evidence]` 宽——宽在哪里、宽了几件，要说得出来，不能悄悄放行。
    */
   wide_base: string[];
+  /** t-223：这一批里那几条回滚提交——没有任务盖着，但树与某个上过线的版本逐字相同，所以不算无主。 */
+  rollbacks: string[];
 }
 /** t-093: the rule a refusal names (M4). */
 export const DEPLOY_RULE = "deploy-unverified";
 
 /** What the sha carries, and whether it may ship: every task whose evidence is inside it must be verified on repo with no open seam. */
-export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null, revList?: RevList): Plan {
+export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null, revList?: RevList, treeOf?: (sha: string) => string | null): Plan {
   const reasons: string[] = [];
   const included: string[] = [];
   const unverified: string[] = [];
@@ -153,7 +155,21 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 两次都是「算不到的东西等于不存在」。
   //
   // 算法：`deployed..sha` 里的每一个提交，减去从任何一个已算进来的证据 sha 可达的那些。剩下的就是没人盖着的。
-  const { orphans, unknown_span } = orphanCommits(sha, deployed, spans, revList);
+  const raw = orphanCommits(sha, deployed, spans, revList);
+  const unknown_span = raw.unknown_span;
+  // t-223：**回滚提交没有任务盖着，但有账可查。** 它的树与某个上过线的版本逐字相同——那是 git 答得出的一个类别，
+  // 不是谁开的例外。少了这一格，回滚每次都要 `--anyway`，而一道每次被越过的闸等于没有（release 17:25 的原话）。
+  const rollbacks: string[] = [];
+  let orphans = raw.orphans;
+  if (orphans?.length && treeOf) {
+    const shipped = new Set<string>();
+    for (const x of b.live?.deploys ?? []) { const t = treeOf(x); if (t) shipped.add(t); }
+    orphans = orphans.filter((c) => {
+      const t = treeOf(c);
+      if (t && shipped.has(t)) { rollbacks.push(c); return false; }
+      return true;
+    });
+  }
   if (orphans?.length) reasons.push(orphanReason(orphans));
   // t-209 判据 7：**「说不清」要说出来，但它不拦车。**
   //
@@ -165,9 +181,12 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 所以它进 `reasons`（发车前照样印在人眼前）、进 `unknown_span`（能被别处读），**但不改 `ok`**。
   // 真孤儿——有名有姓、确实没人认领的那些——照旧拦。
   const blocking = [...reasons];
+  // t-223：回滚提交要报出来，但**不拦车**——它有账可查，那正是这道认领的意思。与 unknown_span 同一格：
+  // 印在人眼前、别处读得到，不改 ok。
+  if (rollbacks.length) reasons.push(rollbackCommitsLine(rollbacks));
   if (unknown_span.length) reasons.push(unknownSpanReason(unknown_span));
   if (wide_base.length) reasons.push(wideBaseReason(wide_base));
-  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span, wide_base };
+  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span, wide_base, rollbacks };
 }
 
 /**
@@ -294,6 +313,10 @@ export interface Git {
   remoteTip(branch: string): string | null;
   /** Push `sha` to `branch` on the remote (fast-forward only). Throws with git's message on failure. */
   push(sha: string, branch: string): void;
+  /** t-223：一个提交的树对象。回滚认的是**树**：内容与那一版逐字相同，而历史只进不退。 */
+  treeOf?(sha: string): string | null;
+  /** t-223：拿 `tree` 做内容、`parent` 做父，造一个新提交。不改历史、不强推——这就是「反向提交再往前推」。 */
+  commitTree?(tree: string, parent: string, message: string): string | null;
   /** Resolve a short sha to the full one, or null when unknown locally. */
   resolve(sha: string): string | null;
   /** t-209: the commits `from` does not have and `to` does, newest first. null when git cannot say. */
@@ -318,6 +341,8 @@ export function realGit(cwd: string, token: string | undefined): Git {
     revList: (from, to) => { const r = run(["rev-list", `${from}..${to}`]); return r.status === 0 ? r.stdout.split("\n").map((x) => x.trim()).filter(Boolean) : null; },
     push: (sha, branch) => { const r = run(["push", remote(), `${sha}:refs/heads/${branch}`]); if (r.status !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/x-access-token:[^@]+@/g, "x-access-token:***@")); },
     resolve: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{commit}`]); return r.status === 0 ? r.stdout.trim() : null; },
+    treeOf: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{tree}`]); return r.status === 0 ? r.stdout.trim() : null; },
+    commitTree: (tree, parent, message) => { const r = run(["commit-tree", tree, "-p", parent, "-m", message]); return r.status === 0 ? r.stdout.trim() : null; },
   };
 }
 
@@ -346,20 +371,32 @@ export interface DeployDeps {
 
 export type DeployOutcome = "skipped" | "refused" | "pushed" | "already" | "failed";
 
-/** The whole `release --deploy <sha>` step. Returns what happened; the caller maps it to an exit code. */
-export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promise<DeployOutcome> {
+/**
+ * t-223：**推生产之前那四问，`--deploy` 与 `--rollback` 走同一份。** 第一版我把它照抄进回滚那一路，
+ * 闸当场看见：同样的四句话在仓库里多了一份（bin/wording 报了新增）。同一句话两个出处，改一处就会漏另一处
+ * ——那正是 SECOND_HOME 那道闸整天在数的东西。
+ */
+export function mayPush(b: Board, deps: DeployDeps): { setting: DeploySetting } | { outcome: "skipped" | "refused" } {
   const setting = deploySetting(b);
-  if (!setting) { deps.print(`这个项目没有开启团队部署（事实 project:${DEPLOY_KEY}），什么都没做。`); return "skipped"; }
-  if (!setting.by.includes(deps.me)) { deps.print(`只有 ${setting.by.join("/")} 可以推 ${setting.branch}，你是 ${deps.me}。`); return "refused"; }
+  if (!setting) { deps.print(`这个项目没有开启团队部署（事实 project:${DEPLOY_KEY}），什么都没做。`); return { outcome: "skipped" }; }
+  if (!setting.by.includes(deps.me)) { deps.print(`只有 ${setting.by.join("/")} 可以推 ${setting.branch}，你是 ${deps.me}。`); return { outcome: "refused" }; }
   const level: PushLevel = b.presence?.find((p) => p.actor === deps.me)?.push ?? "none";
   if (level !== "production") {
     deps.print(`不推：你（${deps.me}）加入时声明的推送能力是 ${level}，推 ${setting.branch} 要 production。缺的是许可：human 许可后，用 ateam join --me ${deps.me} --push production 重新声明。`);
-    return "refused";
+    return { outcome: "refused" };
   }
-  if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return "refused"; }
+  if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return { outcome: "refused" }; }
+  return { setting };
+}
+
+/** The whole `release --deploy <sha>` step. Returns what happened; the caller maps it to an exit code. */
+export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promise<DeployOutcome> {
+  const gate = mayPush(b, deps);
+  if (!("setting" in gate)) return gate.outcome;
+  const setting = gate.setting;
   const sha = deps.git.resolve(shaArg);
-  if (!sha) { deps.print(`本地没有提交 ${shaArg}；先 fetch。`); return "refused"; }
-  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null, deps.git.revList);
+  if (!sha) { deps.print(PUSH_LINES.noSuchCommit(shaArg)); return "refused"; }
+  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null, deps.git.revList, deps.git.treeOf?.bind(deps.git));
   if (!p.ok && !deps.anyway) {
     // t-093 (M4): a refusal names its rule, lists what is not verified, and says what would happen with a branch name
     deps.print(`REFUSED (${DEPLOY_RULE}): 不推 ${sha.slice(0, 7)}，它比生产多出的提交里有还没验收的东西：`);
@@ -385,12 +422,65 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   } catch (err) {
     const why = (err as Error).message;
     await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${gitReason(why)}`);
-    deps.print(`推送失败：${why}`);
+    deps.print(PUSH_LINES.pushFailed(why));
     return "failed";
   }
   deps.print(`已推 ${sha.slice(0, 7)} 到 ${setting.branch}（包含 ${p.included.length ? p.included.join("、") : "无候选任务"}）。`);
   await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
   return "pushed";
+}
+
+/** t-223：回滚被拒时点的规则名（与 DEPLOY_RULE 同一层）。 */
+export const ROLLBACK_RULE = "rollback-target";
+
+/** t-223：这个 sha 当过生产头吗——曾经上过线的那几批就是回滚的合法目标，日志里查得到，不用谁开例外。 */
+export function rollbackTarget(b: Board, sha: string): { sha: string; batch: string } | null {
+  // 口径是**事实**（production:deployed.sha 那一串），不是批次分组：批次是按任务证据derived 出来的，
+  // 而「这一版上过线」是日志里直接写着的一句话。第几次上线只是给人读的序号。
+  const all = b.live?.deploys ?? [];
+  const i = all.findIndex((x) => sameCommit(x, sha));
+  if (i < 0) return null;
+  return { sha: all[i], batch: String(i + 1) };
+}
+
+export type RollbackOutcome = "skipped" | "refused" | "rolled" | "already" | "failed";
+
+/**
+ * t-223：`ateam release --rollback <sha>`。
+ *
+ * **不强推**：造一个新提交，树取自那一版、父是当前生产头，然后照常快进推上去。历史只进不退，
+ * `deployed.sha` 与分支历史始终对得上，O6「从线上的版本回到需求、决策、验证」不被换掉。
+ */
+export async function rollback(b: Board, targetArg: string, deps: DeployDeps): Promise<RollbackOutcome> {
+  const gate = mayPush(b, deps);
+  if (!("setting" in gate)) return gate.outcome;
+  const setting = gate.setting;
+
+  const target = deps.git.resolve(targetArg);
+  if (!target) { deps.print(PUSH_LINES.noSuchCommit(targetArg)); return "refused"; }
+  const was = rollbackTarget(b, target);
+  if (!was) { deps.print(`REFUSED (${ROLLBACK_RULE}): ${notARollbackTarget(target)}`); return "refused"; }
+
+  const tip = deps.git.remoteTip(setting.branch) ?? b.live?.deployed_sha ?? null;
+  if (!tip) { deps.print(ROLLBACK_LINES.tipUnknown(setting.branch)); return "refused"; }
+  if (sameCommit(tip, target)) { deps.print(ROLLBACK_LINES.nothingToRollBack(setting.branch, target)); return "already"; }
+
+  const tree = deps.git.treeOf?.(target) ?? null;
+  const made = tree ? deps.git.commitTree?.(tree, tip, rollbackMessage(target, was.batch)) ?? null : null;
+  if (!made) { deps.print(ROLLBACK_LINES.cannotMake()); return "failed"; }
+
+  try {
+    deps.git.push(made, setting.branch);
+  } catch (err) {
+    const why = (err as Error).message;
+    await deps.note(ROLLBACK_LINES.failed(deps.me, made, target, setting.branch, gitReason(why)));
+    deps.print(PUSH_LINES.pushFailed(why));
+    return "failed";
+  }
+  deps.print(ROLLBACK_LINES.rolled(setting.branch, made, target, was.batch));
+  await deps.note(ROLLBACK_LINES.note(deps.me, tip, was.batch, target, made, deps.anyway));
+  await deps.reading("deployed.sha", made, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: ROLLBACK_LINES.method(target, was.batch) });
+  return "rolled";
 }
 
 /**

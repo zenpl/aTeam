@@ -37,7 +37,9 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
 // t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
-export const SECOND_HOME_FROZEN: number = 349;
+// t-223 再搬走 2 句：release.ts 里「本地没有提交…先 fetch」与「推送失败：」——`--deploy` 与 `--rollback` 会说同一句，
+// 与其在新那一路再抄一遍，不如两边都去 core 取（PUSH_LINES）。新写的回滚那一整路人可见的话全在 core（ROLLBACK_LINES）。
+export const SECOND_HOME_FROZEN: number = 347;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -47,7 +49,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/cli/src/format.ts": 33,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
-  "packages/cli/src/release.ts": 23,
+  "packages/cli/src/release.ts": 21,
   "packages/cli/src/main.ts": 20,
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,

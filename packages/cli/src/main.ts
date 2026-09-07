@@ -12,7 +12,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
-import { deploy, realGit, realBehind, containment, containmentFact } from "./release.js";
+import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
@@ -31,7 +31,8 @@ every turn
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
-  ateam release [--json] [--deploy <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
+  ateam release [--json] [--deploy <sha>] [--rollback <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
+      --rollback <sha> 回到我们上过的某一版：造一个内容与它逐字相同的新提交再快进推上去（不强推、不改历史）。目标必须当过生产头
       what passed on repo and not yet on production; --deploy pushes that sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
@@ -263,6 +264,18 @@ async function main(argv: string[]) {
       exact(rest);
       let b = await client.board(true); // candidates and evidence live on the full board (t-070)
       const target = str(a, "deploy");
+      const back = str(a, "rollback");
+      if (back !== undefined) {
+        // t-223：回滚是第二种合法的发车。走的是「反向提交再往前推」，不强推——所以它与 --deploy 共用同一条推送路径。
+        const outcome = await rollback(b, back, {
+          git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
+          reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
+          note: async (body) => { await emit({ kind: "note", body }); },
+          print: console.log,
+        });
+        if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+        return;
+      }
       if (target === undefined) {
         // t-078: measure with git which candidates production already contains, record it when it changed, then show the three groups
         const g = realGit(process.cwd(), undefined);
