@@ -518,7 +518,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 这里只管「给了 add，但里面是空白」——那是内容问题，形状闸看不出来。
       const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
       if (e.add !== undefined && (!add.length || add.length !== e.add.length)) throw new Rejected("criteria", "give at least one non-empty criterion");
-      if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
+      // t-166 的收口（pm 17:26 第一次真去用它，两条都被这一行挡了）：**挡的理由只对 add 成立**。
+      // 追加判据会改动「被判过的是什么」，所以已验之后不许；而标注搬迁不改任何一条判据的字，它只多说一句
+      // 「这一条不再归这件，去那件看」——被判过的那句话原样留着，判决也原样留着。两件事挤在同一行里的结果是：
+      // **这套机制对已验任务全用不了，而已验正是它要标的那一批**（生产上 60 条 criteria 事件带 moved 的 0 条，
+      // 不是没人用，是用不了）。
+      if (t.status === "verified" && !e.moved) throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
