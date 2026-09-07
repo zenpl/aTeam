@@ -190,9 +190,17 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     ]) expect((await enter(pasted)).status, JSON.stringify(pasted)).toBe(303);
     expect((await enter("这不是钥匙")).status).toBe(401);              // 乱粘仍然被挡，并且是「token 不对」那一页
     expect((await enter(`${url.origin}${url.pathname}`)).status).toBe(401);   // 一条不带钥匙的地址：也认不出
-    // 判据 4：认不出的那一页不回显粘进来的东西，更不回显钥匙
+    // 判据 3（pd 01:17 定稿）：认不出时说清该粘什么形态，给一个假值例子；判据 4：不回显钥匙
     const wrong = await (await enter(`${p.ownerUrl}zzz`)).text();
     expect(wrong).not.toContain(p.ownerKey);
+    expect(wrong).toContain("这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。");
+    expect(wrong).not.toContain("token 不对");                       // 不用他手上没有的那个词
+    expect(wrong).not.toContain("再试一次");                          // 不告诉他重来，告诉他形态
+    expect(wrong).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");   // 假值、代码体
+    expect(wrong).not.toMatch(/<a[^>]*ateam\.fly\.dev\/p\/demo/);   // 例子不做成链接：点不到
+    // 粘错不清空，他能看见自己粘的是什么形态；但钥匙那一段是圆点——pd 01:17 ③ 与 pd 01:02（钥匙一字不回显）都要
+    expect(wrong).toContain("?k=••••••••");
+    expect(wrong).toContain(new URL(p.ownerUrl).pathname);
   });
 
   it("re-issuing the address needs the admin key: a node key cannot ask for it", async () => {

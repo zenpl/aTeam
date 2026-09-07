@@ -481,7 +481,7 @@ export function createApp(opts: ServerOptions) {
         if (given === null) return html(res, 200, tokenPage(fields, false, base));
         const r0 = await registry.lookup(given);
         // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.
-        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base));
+        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base, form.get("token") ?? ""));
         if (r0.role === null && (await ownerArrived())) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         await registry.markUsed(given, now());
         const secure = proto === "https";
