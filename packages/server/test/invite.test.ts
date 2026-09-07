@@ -114,7 +114,7 @@ describe("t-048 · undelivered instructions become the same card, not a second o
     expect(b.undelivered).toEqual([]); // too young to count as undelivered
     const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
     expect(cards).toHaveLength(1);
-    expect(cards[0].body).toMatch(/^qa 缺人 \d+ 分钟，1 条没送到。起一个 qa？$/); // t-139: pd's word for a role nobody is running
+    expect(cards[0].body).toBe("qa 从没读过日志，1 条没送到。起一个 qa？"); // t-139: never pulled, so no duration is invented
     b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1);
     expect(b.presence.find((x: { actor: string }) => x.actor === "qa")).toMatchObject({ status: "missing", listening: false });
@@ -131,7 +131,7 @@ describe("t-042 · a quiet role with work in its hands becomes a card for the hu
     let b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
     const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ kind: "do", body: "dev 缺人 10 分钟，2 条没送到。起一个 dev？", title: "dev 缺人 10 分钟，2 条没送到" });
+    expect(cards[0]).toMatchObject({ kind: "do", body: "dev 从没读过日志，2 条没送到。起一个 dev？", title: "dev 从没读过日志，2 条没送到" });
     b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1); // not twice
     // dev joins and pulls: the role is back, the card is no longer true

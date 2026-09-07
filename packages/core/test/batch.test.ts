@@ -56,8 +56,9 @@ describe("t-129 · a batch expires by itself, and says which kind of expiry it i
     const { st, batch } = await seen(w, 4);
     expect(batch("8b").state).toBe("stale");
     expect(batch("8b").loses).toEqual([]);
-    expect(batch("8b").line).toBe(BATCH_LINES.stale(OLD, NEW));
-    expect(batch("8b").line).toContain("重装一次即可");
+    expect(batch("8b").line).toBe(BATCH_LINES.stale(OLD));
+    expect(batch("8b").line).toContain("重装一次就能把新验的一起带上");
+    expect(batch("8b").line).not.toContain(NEW.slice(0, 7));   // pd 05:01: the reader needs 生产已经往前走了, not another sha
     // the reading itself went stale on its own, because it said what it depends on — nobody had to remember
     const r = [...st.readings.values()].find((x) => x.reading.key === "batch.8b")!;
     expect(r.valid).toBe(false);
@@ -73,8 +74,8 @@ describe("t-129 · a batch expires by itself, and says which kind of expiry it i
     const { batch } = await seen(w, 4);
     expect(batch("8b").state).toBe("rollback");
     expect(batch("8b").loses).toEqual(["t-080", "t-079a"]);            // the two the night really lost
-    expect(batch("8b").line).toBe(BATCH_LINES.rollback(OLD, NEW, ["t-080", "t-079a"]));
-    expect(batch("8b").line).toContain("别推");
+    expect(batch("8b").line).toBe(BATCH_LINES.rollback(OLD, ["t-080", "t-079a"]));
+    expect(batch("8b").line).toContain("重装，别推");   // pd 05:01: those four characters are the action, never dropped
     expect(batch("8b").line).toContain("t-080、t-079a");
   });
 
@@ -87,7 +88,7 @@ describe("t-129 · a batch expires by itself, and says which kind of expiry it i
     expect(batch("8b").state).toBe("unknown");
     expect(batch("8b").loses).toEqual([]);
     expect(batch("8b").line).toBe(BATCH_LINES.unknown(b.release.basis));
-    expect(batch("8b").line).not.toContain("重装一次即可");            // never an answer it does not have
+    expect(batch("8b").line).not.toContain("重装一次就能");            // never an answer it does not have
     expect(batch("8b").line).not.toContain("别推");
     // a fact measured against the *old* head is not a fact about this one
     await contains(OLD, ["t-1"], [], 4, w);

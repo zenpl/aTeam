@@ -101,7 +101,7 @@ describe("t-133 · 上线详情页", () => {
       const held = await v.page();
       expect(held).toContain("按住没发：");
       expect(held).toContain("推它会把");
-      expect(held).toContain("从生产上退回去；要重装，别推。");
+      expect(held).toContain("从生产上退回去。重装，别推。");
       // the page must not have written a second sentence of its own about the same thing
       expect(held).not.toContain("这批不能推");
     } finally { await v.stop(); }

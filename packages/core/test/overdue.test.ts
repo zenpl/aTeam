@@ -49,7 +49,8 @@ describe("t-139 · 逾期按在场三态分组", () => {
     expect(g.listening.away_s).toBeNull();                    // it is here; how long it has been away is not a fact about it
     expect(g.missing.roles).toEqual(["qa"]);
     expect(g.missing.count).toBe(1);
-    expect(g.missing.line).toMatch(/^缺人 \d+ 分钟，1 条没送到$/);
+    expect(g.missing.line).toBe("从没读过日志，1 条没送到");   // qa 06:07: qa has never pulled, so there is no duration to report
+    expect(g.missing.away_s).toBeNull();
     // the two are never one number
     expect(g.listening.count + g.missing.count).toBe(b.overdue.length);
     expect(g.listening.instructions).not.toEqual(g.missing.instructions);
@@ -64,7 +65,7 @@ describe("t-139 · 逾期按在场三态分组", () => {
     const g = b.overdue_by_presence;
     expect(g.deaf.roles).toEqual(["dev"]);
     expect(g.deaf.count).toBe(1);
-    expect(g.deaf.line).toMatch(/^没在听 \d+ 分钟，1 条没送到$/);
+    expect(g.deaf.line).toMatch(/^有 \d+ 分钟没读日志了，1 条没送到$/);   // pd 06:04: the verb we can actually observe
     expect(g.missing.count).toBe(0);
     expect(g.listening.count).toBe(0);
     expect(g.missing.line).toBe("");                          // an empty state says nothing rather than "0"
@@ -88,7 +89,11 @@ describe("t-139 · 逾期按在场三态分组", () => {
   it("the card the human gets says which state it is, and asks only what a human can do", () => {
     expect(missingCard("qa", "missing", 20, 2)).toBe("qa 缺人 20 分钟，2 条没送到。起一个 qa？");
     const deaf = missingCard("dev", "deaf", 40, 3);
-    expect(deaf).toBe("dev 没在听 40 分钟，3 条没送到——它还在说话，只是收不到。起一个 dev？");
+    expect(deaf).toBe("dev 有 40 分钟没读日志了，3 条没送到——它还在写，只是没来读。起一个 dev？");
+    // never read the log: no moment to count from, so neither side invents one (qa 06:07)
+    expect(missingCard("qa", "missing", null, 1)).toBe("qa 从没读过日志，1 条没送到。起一个 qa？");
+    expect(missingCard("dev", "deaf", null, 1)).toBe("dev 从没读过日志，1 条没送到——它还在写，只是没来读。起一个 dev？");
+    for (const c of [missingCard("qa", "missing", null, 1), missingCard("dev", "deaf", null, 1)]) expect(c).not.toMatch(/\d+ 分钟/);
     // the difference is what is true, not a second instruction the human cannot carry out
     for (const card of [missingCard("qa", "missing", 20, 2), deaf]) expect(card).toContain("起一个");
     // the board is Chinese: the only Latin left is the role's own id, never an English word or a command name
