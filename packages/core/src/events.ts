@@ -104,7 +104,11 @@ export type TaskOp =
   /** t-096: change what people see it called. The id is untouched, as always. */
   | { op: "label"; task: string; label: string }
   | { op: "claim"; task: string; touches: string[] }
-  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string }
+  /**
+   * t-105: `touches` here is the **final value** — claim's was a declaration, done's is the fact. The platform only
+   * knows that: how the caller arrived at it (a git diff, a person retyping it) is the project's business, not the log's.
+   */
+  | { op: "done"; task: string; evidence?: string; /** one sentence for the owner: what a person can now see (t-056) */ shows?: string; touches?: string[] }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }

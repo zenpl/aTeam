@@ -3,7 +3,8 @@
  * Each test is one failure mode from that day. The tool must make it impossible or visible.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, appendFrom, pull, reduce, board, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { readFileSync } from "node:fs";
+import { MemoryStore, append, appendFrom, pull, reduce, board, openSeamsFor, boardTask, slimBoard, importCounts, runFollowUps, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -2222,5 +2223,93 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     // 出路是真的：qa 落不了 pass，但落得了 fail
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 1 不成立" });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("failed");
+  });
+});
+
+/**
+ * t-105 (T4)。pd 00:08 的 concern：touches 是 claim 时猜的，dev 那次四个文件全猜错，而接缝完全建立在 touches 上——
+ * 猜错等于那条接缝根本没声明，两个人真碰同一处也不会响。平台这一层只认一件事：done 带的 touches 是最终值，接缝按它
+ * 重算，冒出新接缝就挡住 done。怎么得到那个值（git diff、人手工重写）是调用方的事，核心里不出现 git、不出现文件系统。
+ */
+describe("t-105 · done's touches are the fact, and seams are recomputed from it", () => {
+  const two = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    return { store, c };
+  };
+
+  it("a seam the declaration was hiding blocks the done, and says which task and which touch", async () => {
+    const { store, c } = await two();
+    // 今天那一幕：dev 声明了四个文件，实际改的是另外四个，其中一个正是 frontend 在动的
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/cli/src/main.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/cli/src/watch.ts", "packages/cli/src/format.ts"] });
+    expect(reduce(await store.read(), c.now()).seams.size).toBe(0);   // 按声明，两件毫不相干
+    const r = await rejected(emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234",
+      touches: ["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts"] }));
+    expect(r.rule).toBe("done");
+    expect(r.message).toContain("多出 1 条挡住 done：B（碰在 packages/cli/src/main.ts）");
+    expect(r.message).toContain("claim 时没声明、实际碰了的是：packages/cli/src/deaf.ts、packages/cli/src/lock.ts、packages/cli/src/main.ts");
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("working"); // 没写进去
+    // 判据 2 的出路要真能走：接缝得先存在才谈得上定，所以拒绝信息叫人先 claim 进来
+    expect(r.message).toContain("task claim A --touches");
+    expect(r.message).toContain("task seam A B --resolution");
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["packages/cli/src/main.ts"] });
+    expect([...reduce(await store.read(), c.now()).seams.values()][0].overlap).toEqual(["packages/cli/src/main.ts"]);
+    await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "dev 先落，frontend 合它的 sha" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234",
+      touches: ["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts"] });
+    const t = reduce(await store.read(), c.now()).tasks.get("A")!;
+    expect(t.status).toBe("done");
+    expect(t.touches).toEqual(["packages/cli/src/deaf.ts", "packages/cli/src/lock.ts", "packages/cli/src/main.ts"]); // 最终值，不是并集
+  });
+
+  it("a revision that touches nothing new goes through, and a done with no touches leaves the declaration alone", async () => {
+    const { store, c } = await two();
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["packages/server/src/html.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a.ts", "b.ts", "c.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234", touches: ["a.ts", "d.ts"] });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual(["a.ts", "d.ts"]);
+    // 没带 touches 的 done：声明原样留着（没有 diff 的介质、老客户端都走这条）
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再改" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678" });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual(["a.ts", "d.ts"]);
+  });
+
+  it("exemptions survive the recompute: a same-owner sequence, and a seam that was already open, do not block", async () => {
+    const { store, c } = await two();
+    // 同一个 owner 的两件（t-045）：重算后碰上了也不挡
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["shared.ts"] });
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["own.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234", touches: ["own.ts", "shared.ts"] });
+    expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("done");
+    // 已经开着的接缝不因为重算而变成 done 的阻碍：done 从来不判已有接缝
+    const w = await two();
+    await emit(w.store, w.c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["x.ts"] });
+    await emit(w.store, w.c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x.ts"] });
+    expect(reduce(await w.store.read(), w.c.now()).seams.size).toBe(1);
+    await emit(w.store, w.c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234", touches: ["x.ts", "y.ts"] });
+    expect(reduce(await w.store.read(), w.c.now()).tasks.get("A")!.status).toBe("done");
+  });
+
+  it("a task done before the other side claimed still only stacks, recompute or not (t-067)", async () => {
+    const { store, c } = await two();
+    await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["p.ts"] });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234", touches: ["p.ts", "q.ts"] });
+    c.tick(min(1));
+    await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["q.ts"] });
+    const s = reduce(await store.read(), c.now());
+    const seam = [...s.seams.values()][0];
+    expect(seam.overlap).toEqual(["q.ts"]);                            // 重算把它变成一条真的接缝
+    expect(seam.stacked).toEqual({ done: "A", on: "B" });              // 但 A 先落了，B 叠在它上面，不挡任何人
+    expect(openSeamsFor(s, "A")).toEqual([]);
+  });
+
+  it("the platform layer knows nothing about git or files: the rule reads a list off the event and nothing else", async () => {
+    const src = readFileSync(new URL("../src/rules.ts", import.meta.url), "utf8");
+    const rule = src.slice(src.indexOf('case "done": {'), src.indexOf('case "verify": {'));
+    for (const forbidden of ["spawnSync", "readFileSync", "node:fs", "node:child_process", "git "]) expect(rule).not.toContain(forbidden);
+    expect(readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")).not.toContain("node:child_process");
   });
 });

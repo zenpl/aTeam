@@ -1,5 +1,5 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY } from "./events.js";
-import { type State, type TaskState, openSeamsFor, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
+import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
@@ -273,11 +273,24 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
       return;
-    case "done":
+    case "done": {
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("done", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.owner !== e.actor) throw new Rejected("done", `${t.id} is owned by ${t.owner ?? "nobody"}`);
       if (t.status !== "working") throw new Rejected("done", `${t.id} is ${t.status}`);
+      // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
+      // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it
+      // blocks the done. Seams that were already open stay the caller's business, as before: done never judged them.
+      const revised = [...new Set((e.touches ?? []).map((x) => x.trim()).filter(Boolean))];
+      if (revised.length) {
+        const before = new Set(blockingSeamsIfTouches(state, t, t.touches).map((x) => x.with));
+        const fresh = blockingSeamsIfTouches(state, t, revised).filter((x) => !before.has(x.with));
+        if (fresh.length) {
+          const added = revised.filter((x) => !t.touches.includes(x));
+          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），再与对方定下来（task seam ${t.id} ${fresh[0].with} --resolution "..."），然后 done。不属于这件的触点就去掉`);
+        }
+      }
       return;
+    }
     // R2: done is a claim; verified is another identity's act, on a named surface, with no open seam.
     // Verified on one surface is not verified on another: a verified task may be verified again on a new surface.
     // t-104 (pd 23:59): pass and fail are not the same act. A pass releases, so it needs independence — R6, and none of

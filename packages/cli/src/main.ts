@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
@@ -9,6 +10,7 @@ import { trace, isSha } from "./trace.js";
 import { seamWarnings, seamCheck, gitIsAncestor } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, deafNotice } from "./deaf.js";
+import { revise, type Diff } from "./touches.js";
 import { deploy, realGit, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -46,7 +48,10 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--no-seam-check]   before sending, warns if a resolved seam's other side is not merged into your evidence sha
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么"] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+                                             claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 算出实际改动的文件，
+                                             --touches 补 diff 看不见的（符号、字段、接口名），--no-touches 沿用声明的值（没有 diff 的介质用这个再手工 --touches）；
+                                             重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
   ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
@@ -92,6 +97,37 @@ function common(a: Args): { refs?: string[]; writes?: string[] } {
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`missing ${what}`);
   return v;
+}
+
+/**
+ * t-105: this project's way of knowing what a task actually touched. The base is the branch's head at claim time,
+ * kept beside the cursor in .ateam/ — local, never in the log, because it is this checkout's business. A checkout
+ * with no git, or a task claimed before this existed, simply has no base, and the revision falls back to hand.
+ */
+function baseFile(task: string) { return join(process.cwd(), ".ateam", `base.${task}`); }
+function gitDiff(): Diff {
+  const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
+  return {
+    head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
+    base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
+    changed: (base) => {
+      const r = git(["diff", "--name-only", base]);          // committed and uncommitted, against the claim point
+      if (r.status !== 0) return null;
+      const u = git(["ls-files", "--others", "--exclude-standard"]); // files created since and not yet added
+      // .ateam/ is the tool's own bookkeeping (cursors, watch locks, claim bases): never a thing the task touched
+      return [...r.stdout.split("\n"), ...(u.status === 0 ? u.stdout.split("\n") : [])].map((x) => x.trim()).filter((x) => x && !x.startsWith(".ateam/"));
+    },
+  };
+}
+
+/** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean) {
+  if (keep) return { touches: [] as string[], lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
+  const d = gitDiff();
+  const base = d.base(task);
+  if (!base) return revise(declared, null, extra, `没记下 claim 起点：.ateam/base.${task} 不在，这件是这个功能之前 claim 的，或者这里没有 git`);
+  const changed = d.changed(base);
+  return revise(declared, changed, extra, changed === null ? `git 说不出 ${base.slice(0, 7)} 到现在改了什么` : `相对 claim 起点 ${base.slice(0, 7)}`);
 }
 
 async function main(argv: string[]) {
@@ -250,9 +286,19 @@ async function main(argv: string[]) {
           console.log(fmt.created(title, criteria));
           return;
         }
-        case "claim": return emit({ kind: "task", op, task: need(id, "<id>"), touches: list(a, "touches") ?? [] });
+        case "claim": {
+          const t = need(id, "<id>");
+          await emit({ kind: "task", op, task: t, touches: list(a, "touches") ?? [] });
+          // t-105: remember where this branch stood, so done can measure what the task actually touched
+          const head = gitDiff().head();
+          if (head) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(baseFile(t), head + "\n"); }
+          return;
+        }
         case "done": {
           const task = need(id, "<id>"), evidence = str(a, "evidence");
+          // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
+          const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"));
+          for (const line of rev.lines) console.error(line);
           if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
           else {
             const b = await client.board();
@@ -260,7 +306,7 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows") });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), touches: rev.touches });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
