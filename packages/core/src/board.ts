@@ -782,7 +782,9 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       chosen: st.chosen ? { option: st.chosen.option, by: st.chosen.by, at: st.chosen.at, note: st.chosen.note } : undefined,
       says_default: sayDefault(st, now),   // t-181：这张卡此刻真正在哪一态，以及照实说它的那句话
     });
-    if (status === "acked" || status === "withdrawn") continue;
+    // t-193 判据 6：一张带选项的卡被 ack 过，**并不算答过**——它要留在「需要你」里，直到人真的选。
+    // 这一行原来把它一并拿掉，于是一次签收就替他把问题从桌上收走了。
+    if ((status === "acked" && !i.options?.length) || status === "withdrawn") continue;
     if (st.chosen) continue; // decided (by someone, or by its default at ack_by): nothing left to ask
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && !isMissing(s, missingRoleOf(i.body)!, now, listenWindow)) continue; // the role is back
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on

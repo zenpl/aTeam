@@ -63,8 +63,12 @@ describe("t-147 判据 6 · 拉取时把「你欠什么」一起给出来", () =
   it("动过就不欠了：口径是「有没有人办」，不是「有没有 ack」", async () => {
     const before = await sync("dev", null);
     const [one, two] = before.owed.untouched.map((x) => x.instruction);
-    // 一条用 ack 关掉，一条用一句「不办：」关掉——两种都是行动，都算办了
+    // t-193 (pd 11:15)：**这条用例名说的口径原来不成立。**它拿一条光秃秃的 ack 当「办了」，也就是把
+    // 「看见」读成「做了」——按 CLAUDE.md，ack 是「看见」，不是「同意」，更不是「做了」。现在两条都要
+    // 真动过：一条写引用它的 note，一条写「不办：原因」。两种都是行动，都算办了；只签收的仍然欠着。
     await post("dev", { kind: "ack", of: one });
+    expect((await sync("dev", null)).owed.untouched.map((x) => x.instruction), "只 ack 没动作，仍然欠着").toContain(one);
+    await post("dev", { kind: "note", body: "看了，CI 那条我接了", refs: [one] });
     await post("dev", { kind: "note", body: `${DECLINE_PREFIX}CI 那条归 release，我不接`, refs: [two] });
     const after = await sync("dev", null);
     expect(after.owed.untouched).toEqual([]);

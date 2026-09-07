@@ -7,6 +7,7 @@
  *
  * 时间一律相对 now。
  */
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event } from "../src/index.js";
 
@@ -34,10 +35,16 @@ describe("t-147 · 判据 1：读到哪一条了，是从游标算出来的", ()
     expect((await st(w.s)).instructions.get(one.id)!.reach).toBe("read");
     expect((await st(w.s)).instructions.get(two.id)!.reach).toBe("unread");   // qa 没拉过
 
-    // qa 补一个 ack：它确实动了，所以是「办了」——但那是因为它写了事件，不是因为那事件叫 ack
+    // t-193 (pd 11:15)：**这里原来把一条光秃秃的 ack 算成「办了」**，还在这行注释里给自己讲了个理由——
+    // 「它确实动了，只是那事件叫 ack」。那句话正是把「看见」读成「做了」的那一步：按 CLAUDE.md，ack 是
+    // 「看见」，不是「同意」，更不是「做了」。用例名说的口径（有没有人办，不是有没有 ack）从此真的成立。
     await w.put({ kind: "ack", actor: "qa", of: two.id }, -40);
     const s2 = await st(w.s);
-    expect(s2.instructions.get(two.id)!.reach).toBe("acted");
+    expect(s2.instructions.get(two.id)!.reach, "光秃秃的 ack 不算办了").toBe("unread");   // qa 仍然没拉过
+    expect(s2.instructions.get(two.id)!.acked_at, "回执照旧记下：它是一条「看见了」的记录").toBeTruthy();
+    // 真动过才算：写一条引用它的 note
+    await w.put({ kind: "note", actor: "qa", body: "验完了", refs: [two.id] }, -30);
+    expect((await st(w.s)).instructions.get(two.id)!.reach).toBe("acted");
     expect(REACH_STATES).toEqual(["unread", "read", "acted"]);
   });
 
@@ -139,8 +146,9 @@ describe("t-147 · 判据 4：历史不重算", () => {
     const log = await w.s.read();
     expect(log.events.find((e: Event) => e.id === a.id)).toMatchObject({ kind: "ack", of: i.id, actor: "dev" });
     const s = await st(w.s);
-    expect(s.instructions.get(i.id)!.acked_at).toBe(a.at);
-    expect(s.instructions.get(i.id)!.reach).toBe("acted");
+    expect(s.instructions.get(i.id)!.acked_at).toBe(a.at);   // 事件与 acked_at 都原样留着
+    // t-193：只是它不再被读成「办了」。dev 没拉过这条，也没写过引用它的事件，所以它还欠着。
+    expect(s.instructions.get(i.id)!.reach).toBe("unread");
   });
 
   it("增量折叠与全量重算给出同一个 reach：新口径可以被 t-128 的增量状态承载", async () => {
@@ -189,5 +197,66 @@ describe("t-147 · 判据 6：拉取时随手给出「此刻你欠什么」", ()
     const o = owedNow(await st(w.s), HUMAN);
     expect(o.unanswered.map((x) => x.instruction)).toEqual([card.id]);
     expect(o.unanswered[0]).toMatchObject({ from: "pm", options: ["A", "B"], default: "B", overdue: false });
+  });
+});
+
+/**
+ * t-193（pd 11:15、11:16）：**一条光秃秃的 ack 不算「办了」。**
+ *
+ * 按 CLAUDE.md，ack 是「看见」，不是「同意」，更不是「做了」。而 `didAct` 原来把 ack 直接算成办了，这个文件里
+ * 那条用例名（「有没有人办，不是有没有 ack」）说的口径因此**不成立**——注释里还替它讲了个理由：「它确实动了，
+ * 只是那事件叫 ack」。那句话正是把「看见」读成「做了」的那一步。今晚同族的第七种：名字说的和做的不一样。
+ *
+ * 判据 6 更宽一层：**结掉一张给人的卡，理由只能是人的答复，不能是任何人的一次 ack。**一次签收把问题从他桌上
+ * 收走，和替他答没有区别。
+ */
+describe("t-193 · 签收不是答复，也不是做过", () => {
+  it("判据 4 反例：只 ack 没动作的仍留在欠账里", async () => {
+    const w = await world();
+    const i = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "做 A", ack_by: at(15).toISOString() }, -60);
+    await w.s.setCursor({ actor: "dev", last_event_id: i.id, at: at(-50).toISOString() });
+    await w.put({ kind: "ack", actor: "dev", of: i.id }, -40);
+    const st1 = (await st(w.s)).instructions.get(i.id)!;
+    expect(st1.reach, "签收不是做过").toBe("read");
+    expect(st1.acked_at, "但回执照旧记下：它是一条「看见了」的记录").toBeTruthy();
+  });
+
+  it("判据 4 正例：真动过（引用了那条指令）的清掉", async () => {
+    const w = await world();
+    const i = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "做 A", ack_by: at(15).toISOString() }, -60);
+    const n = await w.put({ kind: "note", actor: "dev", body: "认领了", refs: [i.id] }, -40);
+    const row = (await st(w.s)).instructions.get(i.id)!;
+    expect(row.reach).toBe("acted");
+    expect(row.acted_by_event).toBe(n.id);
+  });
+
+  it("判据 6：一次 ack 不结掉给人的卡——它要留在「需要你」里，直到人真的选", async () => {
+    const w = await world();
+    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", intent: "ask", options: ["A", "B"], ack_by: at(15).toISOString() }, -60);
+    await w.put({ kind: "ack", actor: HUMAN, of: card.id }, -40);
+    const b1 = board(await st(w.s), HUMAN, at(0));
+    expect(b1.needs_human.map((x) => x.id), "一次签收把问题从他桌上收走了，那和替他答没有区别").toEqual([card.id]);
+    // 他真的选了，才结掉
+    await w.put({ kind: "note", actor: HUMAN, body: "就 A", decision: true, decides: { of: card.id, option: "A" } }, -30);
+    const b2 = board(await st(w.s), HUMAN, at(0));
+    expect(b2.needs_human).toEqual([]);
+    expect(b2.instructions.find((x) => x.id === card.id)!.chosen).toMatchObject({ option: "A", by: HUMAN });
+  });
+
+  it("不带选项的指令没有「答案」这回事：ack 仍然把它了结，不再挂在那里等一个不存在的答复", async () => {
+    const w = await world();
+    const i = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "去看一眼 CI", ack_by: at(-10).toISOString() }, -60);
+    await w.put({ kind: "ack", actor: "dev", of: i.id }, -40);
+    const b = board(await st(w.s), HUMAN, at(0));
+    expect(b.instructions.find((x) => x.id === i.id)!.status).toBe("acked");
+    expect(b.overdue.map((o) => o.instruction), "它没有选项，谈不上「到期没答案」").toEqual([]);
+  });
+
+  it("判据 2：口径与用例名一致——ack 那一支真的从『办了』的判定里拿掉了，不是靠注释解释", () => {
+    const src = readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const didAct = src.slice(src.indexOf("function didAct"), src.indexOf("function dirtySeams"));
+    expect(didAct, "didAct 里还认 ack，那用例名说的口径就还是假的").not.toMatch(/kind === "ack"/);
+    expect(didAct, "untell 留着：撤回是发的人说「不用做了」，不是收件人替自己签收").toMatch(/kind === "untell"/);
   });
 });
