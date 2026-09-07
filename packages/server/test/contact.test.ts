@@ -28,6 +28,9 @@ afterAll(() => new Promise<void>((r) => app.close(() => r())));
 async function start(name: string) {
   const p = await newProject(name);
   const first = await join(p.invite_url, `${name}-a`);
+  // t-122: the card exists only where the project asked for call-outs (fact project:alert.ask). It used to be sent
+  // unconditionally at join, which put it in needs_human on a page that would never render it.
+  await api(p.project, "/events", first.node_key, { method: "POST", headers: { "x-actor": "pm" }, body: JSON.stringify({ kind: "reading", surface: "project", key: "alert.ask", value: true }) });
   return { project: p.project as string, admin: p.admin_key as string, key: first.node_key as string };
 }
 
@@ -82,5 +85,32 @@ describe("t-069 · the second card of a new project", () => {
     const b = await (await api(w.project, "/board", w.key)).json();
     expect(b.needs_human.map((x: { body: string }) => x.body)).toEqual(["这个项目是什么？说一句。"]);
     expect(b.instructions.find((i: { body: string }) => i.body === CONTACT_ASK).status).not.toBe("acked"); // unanswered, just no longer asked
+  });
+});
+
+describe("t-122 · 日志里有几张卡，页面上就有几张", () => {
+  /**
+   * qa 01:57: a new project put two cards in needs_human and rendered one. The call-out card was sent
+   * unconditionally at join while the other generator and the page are both gated on project:alert.ask, so the
+   * human got a card they could never see and never answer — with 「不想要就点不要了」 written on it.
+   */
+  const cardCount = (html: string) => (html.match(/<article class="ask"/g) ?? []).length;
+
+  it("the first minute of a new project: the counts match, and they still match once call-outs are asked for", async () => {
+    const p = await newProject("数得上");
+    const first = await join(p.invite_url, "数得上-a");
+    const page = async () => await (await fetch(`${base}/p/${p.project}/?token=${p.admin_key}`, { headers: { accept: "text/html" }, redirect: "follow" })).text();
+
+    const before = await cards(p.project, first.node_key);
+    expect(before.map((x) => x.body)).toEqual(["这个项目是什么？说一句。"]);
+    expect(cardCount(await page())).toBe(before.length);
+    expect(await page()).not.toContain("你不在时怎么找你");
+
+    // asking for call-outs adds the card on both sides at once, never to only one
+    await api(p.project, "/events", first.node_key, { method: "POST", body: JSON.stringify({ kind: "reading", surface: "project", key: "alert.ask", value: true }) });
+    const after = await cards(p.project, first.node_key);
+    expect(after).toHaveLength(2);
+    expect(cardCount(await page())).toBe(after.length);
+    expect(await page()).toContain("你不在时怎么找你");
   });
 });
