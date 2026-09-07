@@ -140,7 +140,13 @@ export interface SeamState {
   /** Both sides belong to the same owner: sequential work by one hand, visible but never a collision (t-045). */
   same_owner?: boolean;
   /** t-149: `verdict`/`missed` judge the *gate*, not the two tasks: was this one real, and did it also miss something. */
-  resolution?: { by: string; at: string; text: string; verdict?: SeamVerdict; missed?: boolean };
+  resolution?: {
+    by: string; at: string; text: string;
+    /** t-149: `verdict`/`missed` judge the *gate*, not the two tasks: was this one real, and did it also miss something. */
+    verdict?: SeamVerdict; missed?: boolean;
+    /** Who judged the gate and when — may be a later event than the resolution, with its own reason. */
+    judged_by?: string; judged_at?: string; judged_why?: string;
+  };
   /** t-073: both sides done and the later absorbed the earlier, by the project's declared form; blocks nothing. */
   absorbed?: { later: string; earlier: string; basis: string; by?: string };
   /**
@@ -511,7 +517,10 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "seam": {
       const id = seamId(e.tasks[0], e.tasks[1]);
       const seam = s.seams.get(id) ?? { id, tasks: e.tasks, overlap: [] };
-      seam.resolution = { by: e.actor, at: e.at, text: e.resolution, verdict: e.verdict, missed: e.missed || undefined };
+      // t-149: a second event on a resolved seam only ever adds the verdict on the gate; the resolution itself —
+      // its text, its author, its time — is history and is never rewritten.
+      if (seam.resolution) seam.resolution = { ...seam.resolution, verdict: e.verdict, missed: e.missed || undefined, judged_by: e.actor, judged_at: e.at, judged_why: e.resolution };
+      else seam.resolution = { by: e.actor, at: e.at, text: e.resolution, verdict: e.verdict, missed: e.missed || undefined, ...(e.verdict || e.missed ? { judged_by: e.actor, judged_at: e.at } : {}) };
       s.seams.set(id, seam);
       return;
     }

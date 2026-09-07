@@ -115,6 +115,25 @@ describe("t-149 · 判据 3 与判决的写法", () => {
     expect(h.false_positives).toBe(1);   // 只有真的那一条被判为 false，正文里的字一个都不算数
   });
 
+  it("已经解决过的接缝还能补一个判决：只加判决，原来的解决一字不动；同一条不判两次", async () => {
+    const w = await world(2);
+    const first = await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "已由 frontend 执行完毕，不是待办", verdict: undefined }, -30);
+    let seam = [...(await st(w.s)).seams.values()].find((x) => x.resolution)!;
+    expect(seam.resolution).toMatchObject({ by: "pm", at: first.at, text: "已由 frontend 执行完毕，不是待办" });
+    expect(seam.resolution!.verdict).toBeUndefined();
+    // 补记：判决是后来才有的字段，今晚那些判断在它之前就做过了
+    const judged = await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "回原文核过：与 t-138 同一成因，是误报", verdict: "false" }, -5);
+    seam = [...(await st(w.s)).seams.values()].find((x) => x.resolution)!;
+    expect(seam.resolution).toMatchObject({
+      by: "pm", at: first.at, text: "已由 frontend 执行完毕，不是待办",   // 原来的解决一字未动
+      verdict: "false", judged_by: "pm", judged_at: judged.at, judged_why: "回原文核过：与 t-138 同一成因，是误报",
+    });
+    // 判过就不再判第二次
+    await expect(w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "再想想", verdict: "real" }, -4)).rejects.toThrow(/not made twice/);
+    // 不带判决的第二条仍然被拒：解决只有一次
+    await expect(w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "换个说法" }, -3)).rejects.toThrow(/already resolved/);
+  });
+
   it("判决只收声明过的那几个值", async () => {
     const w = await world(1);
     await expect(w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "假" as never }, -10)).rejects.toThrow(Rejected);
