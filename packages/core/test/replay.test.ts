@@ -164,7 +164,13 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.tasks.done[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: false }]);
     expect(b.tasks.done[0].verified_on).toEqual(["repo"]);
-    // after a redeploy, production can be judged again; repo still cannot
+    // t-104 ② (pd 00:12): one fail closes that surface to every pass until a new done — a redeploy is not one, and
+    // "someone else passes it instead" is changing judges, not overturning. The owner says it again, then production
+    // may be judged again; repo still cannot.
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true }))).message).toMatch(/要等一次新的 done/);
+    await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "t1", reason: "重新部署" });
+    await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1", evidence: "无需改动：重新部署后 /health 报的就是这个 sha" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true });
     expect(await status(store, c)).toBe("verified");
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/repo/);
@@ -2157,11 +2163,13 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     const t = reduce(await store.read(), c.now()).tasks.get("A")!;
     expect(t.status).toBe("done");
     expect(t.verifications.map((v) => [v.surface, v.pass, v.by])).toEqual([["repo", true, "qa"], ["repo", false, "qa"]]);
-    // ②：翻完自己不能再自己翻回来，除非 owner 重新 done。名单里也不再有它
+    // ② (pd 00:12)：一次 fail 之后，这个表面的下一次 pass 要等一次新的 done——换个人来判也不行，那是换裁判
     const back = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
-    expect(back.message).toContain("qa 这一轮推翻过自己在 repo 上的 pass");
-    expect(back.message).toContain("要么换人，要么等 owner 重新 done");
-    expect(back.message).toContain("qa 这一轮推翻过自己在 repo 上的 pass");   // 空名单那句里也说得出原因
+    expect(back.message).toContain("这一轮已经在 repo 上判过 fail（qa）");
+    expect(back.message).toContain("要等一次新的 done，换个人来判不算");
+    expect(back.message).toContain("owner 重发 done，证据写明无需改动及为什么");
+    const other = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }));
+    expect(other.message).toContain("要等一次新的 done");                     // 换裁判的洞堵上了
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补测试" });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678 补了" });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // 新一轮，同一人可以

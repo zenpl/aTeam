@@ -15,23 +15,13 @@ export function migrationApproved(s: State): boolean {
  * 排除的角色能落；说「没达标」与自身利益相反，只挡发布不放行，所以对所有人开放，不需要这份名单。候选是项目声明的角色
  * （`project:roles`），human 不在其中：human 什么都能验，把他算进去就永远不会出现「一个都没有」，而那正是最该说清楚的一种。
  */
-/**
- * t-104 ②: did `who` overturn their own pass on this surface in this round? `here` is that round's verifications on that
- * surface, in time order. A fail that overturns someone *else's* pass, or a plain fail with no pass of one's own before
- * it, is not this: only the person who said "met" and then said "not met" is barred from saying "met" again.
- */
-function selfOverturned(here: { by: string; pass: boolean }[], who: string): boolean {
-  const mine = here.filter((v) => v.by === who);
-  return mine.some((v) => v.pass) && mine[mine.length - 1]?.pass === false;
-}
-
 export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
   const authors = criteriaAuthors(t);
   const holds = roleResponsibilities(s);
   const here = surface ? t.verifications.filter((v) => v.round === t.round && v.surface === surface) : [];
   const standing = here[here.length - 1];
   const passers = standing?.pass ? new Set([standing.by]) : new Set<string>();
-  const overturnedSelf = new Set(here.filter((v) => v.by !== undefined).map((v) => v.by).filter((by) => selfOverturned(here, by)));
+  const failedHere = here.find((v) => !v.pass); // t-104 ②: one fail closes this surface to every pass until a new done
   const eligible: string[] = [];
   const blocked: { role: string; why: string }[] = [];
   for (const role of projectRoles(s)) {
@@ -41,7 +31,7 @@ export function verifierEligibility(s: State, t: TaskState, surface: string | un
     if (role === t.owner) why.push("是 owner");                              // the owner cannot pass their own task
     if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
     if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // a pass does not override a pass
-    else if (overturnedSelf.has(role)) why.push(`这一轮推翻过自己在 ${surface} 上的 pass`); // t-104 ②
+    else if (failedHere) why.push(`这一轮 ${surface} 上已有 ${failedHere.by} 的 fail，要等新的 done`); // t-104 ②
     if (why.length) blocked.push({ role, why: why.join("、") });
     else eligible.push(role);
   }
@@ -304,10 +294,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       const passer = standing?.pass ? standing.by : undefined;
       if (e.pass) {
         if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass. To overturn it, verify --fail with what was found`);
-        // t-104 ②: whoever overturned their own pass here does not get to say "met" again without the owner doing it again.
-        // A plain fail is not this — a surface can change under you (a redeploy) and be judged again, that is t-006.
-        if (selfOverturned(mine, e.actor))
-          throw new Rejected("verify", `${e.actor} 这一轮推翻过自己在 ${e.surface} 上的 pass；同一表面的下一次 pass 要么换人，要么等 owner 重新 done${whoCanVerify(state, t, e.surface, human)}`);
+        // t-104 ② (pd 00:12, superseding 23:59): after *any* fail on this surface, the next pass there waits for a new
+        // done — whoever would give it. "Someone else passes it instead" is not overturning a fail, it is changing judges.
+        // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
+        const failed = mine.find((v) => !v.pass);
+        if (failed)
+          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么`);
         if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}`);
         if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
           throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}`);

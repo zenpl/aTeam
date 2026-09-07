@@ -57,10 +57,13 @@ describe("t-101/t-104 · 409 on a pass says who could pass instead", () => {
     expect(vague.body.message).toContain("证据要指名推翻的是哪一条判据");
     const ok = await post("qa", { kind: "task", op: "verify", task: "t-b", surface: "repo", pass: false, evidence: "判据 2 没验：没有测试覆盖空输入" });
     expect(ok.status).toBe(201);
-    // ②：翻完自己不能再自己翻回来
+    // ② (pd 00:12)：一次 fail 之后这个表面就关到下一次 done——换个人来判也不行
     const back = await post("qa", { kind: "task", op: "verify", task: "t-b", surface: "repo", pass: true });
     expect(back.status).toBe(409);
-    expect(back.body.message).toContain("要么换人，要么等 owner 重新 done");
+    expect(back.body.message).toContain("要等一次新的 done，换个人来判不算");
+    const other = await post("frontend", { kind: "task", op: "verify", task: "t-b", surface: "repo", pass: true });
+    expect(other.status).toBe(409);
+    expect(other.body.message).toContain("要等一次新的 done");
   });
 
   it("a project where nobody can pass is told so, and why, instead of an empty list", async () => {
