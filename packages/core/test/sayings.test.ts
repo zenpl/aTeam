@@ -6,9 +6,15 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { SAYINGS, SECOND_HOMES, SECOND_HOME_FROZEN, SECOND_HOME_AT_FREEZE, humanSentences, duplicateKeys, LITERAL_CHECK_BLIND_SPOTS, PASSTHROUGH_IS_NOT_A_LITERAL } from "../src/index.js";
+import { SAYINGS, SECOND_HOMES_ROOT, sourceFiles, isSecondHome, SECOND_HOME_FROZEN, SECOND_HOME_AT_FREEZE, humanSentences, duplicateKeys, LITERAL_CHECK_BLIND_SPOTS, PASSTHROUGH_IS_NOT_A_LITERAL } from "../src/index.js";
 
 const read = (p: string) => readFileSync(new URL(`../../../${p}`, import.meta.url), "utf8");
+const repo = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
+/**
+ * t-185：**范围是走出来的，不是名单。**从仓库布局出发走到 packages 底下每一个源码文件，再按位置判哪些是
+ * 「第二个家」。原来这里是 SECOND_HOMES 那份手写的三个文件——qa 10:01 注入证过它：名单外加一句，闸全绿。
+ */
+const secondHomes = () => sourceFiles(`${repo}/${SECOND_HOMES_ROOT}`, SECOND_HOMES_ROOT).filter(isSecondHome);
 
 describe("t-143 · key 表本身", () => {
   it("判据 1：一个 key 只登记一次，且每一条都指名它出现在哪儿", () => {
@@ -31,14 +37,14 @@ describe("t-143 · key 表本身", () => {
 
 describe("t-143 · 存量只减不增（判据 8、10）", () => {
   it("那个数是算出来的，不是数出来的；比冻结值大就红", () => {
-    const per = SECOND_HOMES.map((f) => [f, humanSentences(read(f)).length] as const);
+    const per = secondHomes().map((f) => [f, humanSentences(read(f)).length] as const);
     const total = per.reduce((n, [, c]) => n + c, 0);
     const detail = per.map(([f, c]) => `${f} ${c}`).join("、");
     expect(total, `人可见的话住在 core 之外的还有 ${total} 条（${detail}），冻结值是 ${SECOND_HOME_FROZEN}。变大就是闸失效：新增的话一律进 core`).toBeLessThanOrEqual(SECOND_HOME_FROZEN);
   });
 
   it("变小了就要把冻结值改小——搬迁的记账动作，不是可选项", () => {
-    const total = SECOND_HOMES.reduce((n, f) => n + humanSentences(read(f)).length, 0);
+    const total = secondHomes().reduce((n, f) => n + humanSentences(read(f)).length, 0);
     expect(total, `已经搬走了一些：现在是 ${total} 条，SECOND_HOME_FROZEN 还写着 ${SECOND_HOME_FROZEN}。把它改成 ${total}，否则这条闸留着一格永远用不掉的余量`).toBe(SECOND_HOME_FROZEN);
   });
 });
@@ -151,7 +157,7 @@ describe("t-143 判据 6 · 出路自己退役，不靠谁记得", () => {
   });
 
   it("那个数是被闸盯着的，所以它是真的——比实际大就红，改小是搬迁的记账动作", () => {
-    const actual = SECOND_HOMES.reduce((n, f) => n + humanSentences(read(f)).length, 0);
+    const actual = secondHomes().reduce((n, f) => n + humanSentences(read(f)).length, 0);
     expect(actual).toBe(SECOND_HOME_FROZEN);
   });
 });

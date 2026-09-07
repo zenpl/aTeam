@@ -2556,7 +2556,10 @@ describe("t-113 · a seam is judged at the finest granularity both sides declare
 
   it("no whitelist and no path pattern: a source file behaves exactly like a test file", async () => {
     const src = "packages/core/src/rules.ts";
-    expect((await seamOf(await pair([`${src}#validate`], [`${src}#checkShape`]))).light).toBe(true);
+    // t-185：这两个符号原来写的是 validate / checkShape，范围扩到 rules.ts 之后它们都在 KEY_SYMBOLS 里了
+    // （拒绝话就是人读的字），于是这条测试的 done 被那道闸拦下。这条测的是接缝的粒度，不是那道闸，
+    // 所以换成同一个文件里两个确实不说话的符号，测的东西一个字没变。
+    expect((await seamOf(await pair([`${src}#matchesShape`], [`${src}#sameShape`]))).light).toBe(true);
     expect((await seamOf(await pair([src], [src]))).light).toBeUndefined();
     // 判据 2：代码里（注释不算）没有任何按路径模式的豁免
     const code = readFileSync(new URL("../src/reduce.ts", import.meta.url), "utf8")

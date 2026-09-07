@@ -1,5 +1,6 @@
 export * from "./events.js";
 export * from "./sayings.js";
+export * from "./scan.js";
 export * from "./ulid.js";
 export * from "./reduce.js";
 export * from "./rules.js";

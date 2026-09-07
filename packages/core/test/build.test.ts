@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, MANUAL_FILES, MANUAL_COPY_MIN, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -210,6 +210,12 @@ describe("t-173 · CLI 的开关名单与它的用法对得上", () => {
 describe("t-170 · core 里会说人话的符号，名单是量出来的不是数出来的", () => {
   const CJK = /[一-龥]/;
   /**
+   * t-185：**扫的是哪些文件，也是走出来的，不是名单。**这里原来写着 ["board.ts","events.ts","reduce.ts",
+   * "allocation.ts"] 与另一份七个文件的名单——core 里新加一个会说人话的文件，两道闸都看不见它。现在从
+   * `packages/core/src` 走一遍，谁都不用记得往哪份名单里加。
+   */
+  const CORE_FILES = sourceFiles(new URL("../src", import.meta.url).pathname, "").map((f) => f.replace(/^\//, ""));
+  /**
    * core 源码里「函数体或常量里含给人看的整句中文」的导出符号——**只有 pd 08:22 那两类中的第一类**：
    * 那句话是什么。第二类「哪句话出现在哪儿」这段扫法按定义看不见：`inFlightGroups` 决定在途每一行印 `shows`
    * 还是 `title`，一个中文字面量都没有，而它改了牌桌四行字（qa 08:54 在合并后的树上量出来的，闸没红）。
@@ -228,7 +234,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
   const deciding = (): string[] => {
     const froms = new Set(SAYINGS.map((x) => x.from.split(".")[0]));
     const out = new Set<string>();
-    for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts"]) {
+    for (const f of CORE_FILES) {
       let src: string;
       try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
       src = src.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length)).replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
@@ -247,7 +253,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
 
   const speaking = (): string[] => {
     const out = new Set<string>();
-    for (const f of ["board.ts", "events.ts", "reduce.ts", "allocation.ts", "manual.ts", "verifyflow.ts", "sayings.ts"]) {
+    for (const f of CORE_FILES) {
       let src: string;
       try { src = readFileSync(new URL(`../src/${f}`, import.meta.url), "utf8"); } catch { continue; }
       src = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -304,12 +310,12 @@ describe("t-179 · core 的句子在说明书里没有第二份", () => {
   const cores = () => Object.fromEntries(
     readdirSync(new URL("../src/", import.meta.url)).filter((f) => f.endsWith(".ts")).map((f) => [`src/${f}`, read(`../src/${f}`)]),
   );
-  const manuals = () => {
-    const out: Record<string, string> = {};
-    for (const f of MANUAL_FILES) out[f] = read(`../manual/${f}`);
-    for (const f of readdirSync(new URL("../manual/roles/", import.meta.url))) out[`roles/${f}`] = read(`../manual/roles/${f}`);
-    return out;
+  // t-185：说明书的范围也走出来。原来是「手写三份 + roles/ 再走一遍」，加一份新说明书就有一半的闸看不见它。
+  const entries = (rel: string) => {
+    const dir = new URL(`../manual/${rel}`, import.meta.url);
+    return readdirSync(dir, { withFileTypes: true }).map((d) => ({ name: d.name, dir: d.isDirectory() }));
   };
+  const manuals = () => Object.fromEntries(manualFiles(entries).map((f) => [f, read(`../manual/${f}`)]));
 
   it("判据 1：第 6 步与第 3.5 步是填进来的，说明书源文件里没有那几句的第二份", () => {
     const src = read("../manual/common.md");
