@@ -121,6 +121,12 @@ export interface Board {
    * apart from what it describes drifts (the omitted lesson). Absent id = show the id, which is what ids are for.
    */
   role_names: Record<string, string>;
+  /**
+   * t-103: whether this board has an owner who can speak for themselves. `none` — nobody was ever given the address;
+   * `issued` — it was given out and never opened; `in_use` — the owner has arrived, and from then on nothing else may
+   * speak as them. Filled in by the server (the log knows nothing about keys), absent when it did not look.
+   */
+  owner_key?: { state: "none" | "issued" | "in_use"; since?: string };
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
   undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
   /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */

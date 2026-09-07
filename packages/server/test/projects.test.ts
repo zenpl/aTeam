@@ -37,7 +37,8 @@ describe("t-041 · POST /projects", () => {
     const r = await j(await fetch(`${base}/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "菜谱本" }) }));
     expect(r.status).toBe(201);
     expect(r.body.project).toMatch(/^p-[0-9a-f]{6}$|^[a-z0-9-]+-[0-9a-f]{6}$/);
-    expect(r.body.board_url).toBe(`${base}/p/${r.body.project}/`);
+    // t-103: the address the first agent relays now carries the owner's own key — the sentence is unchanged, the address is theirs
+    expect(r.body.board_url).toMatch(new RegExp(`^${base}/p/${r.body.project}/\\?k=nk_[A-Za-z0-9_-]+$`));
     expect(r.body.admin_key).toMatch(/^ak_/);
     expect(r.body.invite_url).toBe(`${base}/invite/${(await registry.getInvite(r.body.invite_url.split("/").pop()))!.code}`);
     expect([...registry.keys.keys()]).toContain(hashKey(r.body.admin_key));
