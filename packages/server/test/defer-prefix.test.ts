@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import { MemoryStore, DEFER_PREFIX, slimBoard, type Board } from "@ateam/core";
 import { UI } from "../src/i18n.js";
 import { createApp } from "../src/app.js";
+import { readFileSync } from "node:fs";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -130,5 +131,54 @@ describe("t-165 · 那个 || 回退删掉之后，判定与 core 一一对上", 
       expect(kept, "这条卡也被瘦掉了，那这条断言换个形状再写").toBeTruthy();
       expect(kept!.deferred).toBeTruthy();
     } finally { await v.stop(); }
+  });
+});
+
+/**
+ * t-161 判据 2，按 pm 08:11 定的验收形态：t-165 删掉那个 fallback 之后，这一处只剩一个判定点，所以这条用例
+ * 该红的原因是**「那三个字又被写回去了」**——源码级断言，与 t-136 那道闸同一族。
+ *
+ * 它只看字符串与模板字面量，不看注释：html.ts 里两处散文提到那三个字（一处引 human 说过的话、一处解释按钮），
+ * 那是叙述不是谓词，拿它们当违规会逼人把正确的注释删掉。
+ *
+ * 扫法用的是一个走一遍字符的小状态机，不是正则。第一版我用正则挑字面量，它把注释里 `human's` 的那个撇号当成
+ * 了字符串起头，于是把一整句注释报成了违规——**一个会误报的闸，比没有闸更贵**，所以这里宁可多写十行。
+ */
+function stringLiterals(src: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i], nxt = src[i + 1];
+    if (c === "/" && nxt === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
+    if (c === "/" && nxt === "*") { i += 2; while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++; i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c, start = i++;
+      while (i < src.length && src[i] !== quote) i += src[i] === "\\" ? 2 : 1;
+      out.push(src.slice(start, ++i));
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+/** 那三个字，从 core 的常量取（去掉冒号）——这份用例自己也不写死它。 */
+const DEFER_WORDS = DEFER_PREFIX.replace(/[：:]$/, "");
+
+describe("t-161 判据 2 · html.ts 里不许再出现那三个字的字面量", () => {
+  it("源码里搜不到——谁写回去，这条当场红", () => {
+    const src = readFileSync(new URL("../src/html.ts", import.meta.url), "utf8");
+    const literals = stringLiterals(src);
+    expect(literals.length, "字面量一个都没扫到，说明这条断言的扫法坏了，不是真的干净").toBeGreaterThan(20);
+    const offenders = literals.filter((lit) => lit.includes(DEFER_WORDS));
+    expect(offenders, `html.ts 里这些字面量写死了「${DEFER_WORDS}」，该读 core 的 DEFER_PREFIX：${offenders.join(" / ")}`).toEqual([]);
+  });
+
+  it("扫法自己是准的：注释里那三个字不算违规，字面量里的算", () => {
+    // 正反各一个，跑在同一个扫法上——闸自己没被测过，就是下一个缺陷
+    expect(stringLiterals(`// human 说了${DEFER_WORDS}\nconst a = "干净";`).filter((l) => l.includes(DEFER_WORDS))).toEqual([]);
+    expect(stringLiterals(`const a = "${DEFER_WORDS}";`).filter((l) => l.includes(DEFER_WORDS))).toHaveLength(1);
+    // 第一版栽的那一处：注释里的撇号不该把后面整段吞成字符串
+    expect(stringLiterals(`/* the human's 「${DEFER_WORDS}」 */\nconst a = "干净";`).filter((l) => l.includes(DEFER_WORDS))).toEqual([]);
   });
 });
