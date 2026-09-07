@@ -81,8 +81,8 @@ describe("F4 · a seam appears when two in-flight tasks touch the same surface",
   it("blocks verification of either side until someone owns the seam", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-login", title: "Login redirect fix", criteria: ["user lands on /home after login"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-session", title: "Session cookie flags", criteria: ["cookie is SameSite=Lax"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-login", title: "Login redirect fix", criteria: ["user lands on /home after login"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-session", title: "Session cookie flags", criteria: ["cookie is SameSite=Lax"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-login", touches: ["auth/login.ts", "auth.session_cookie"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "t-session", touches: ["auth.session_cookie", "api/session.ts"] });
 
@@ -108,7 +108,7 @@ describe("F5 · separation of duties is a rule, not a role", () => {
   it("the owner cannot verify their own work; the criteria author cannot judge them met", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "x", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "x", criteria: ["y"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "t1", touches: ["a"] });
     // "done" is a claim, not a verdict
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/not done/);
@@ -123,7 +123,7 @@ describe("F5 · separation of duties is a rule, not a role", () => {
   it("verification names its surface; the board shows which surfaces a task passed on", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "copy fix", criteria: ["banner says X"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "copy fix", criteria: ["banner says X"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t1", touches: ["Banner.tsx"] });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t1" , no_human_impact: true});
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "", pass: true }))).message).toMatch(/surface/);
@@ -135,7 +135,7 @@ describe("F5 · separation of duties is a rule, not a role", () => {
 
 describe("t-006 · verified on one surface is not verified on another", () => {
   async function doneTask(store: MemoryStore, c: ReturnType<typeof clock>, id = "t1") {
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: "sha endpoint", criteria: ["/health has sha"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: "sha endpoint", criteria: ["/health has sha"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["app.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "fd76455" , no_human_impact: true});
   }
@@ -204,8 +204,8 @@ describe("t-006 · verified on one surface is not verified on another", () => {
 
     // a seam between two tasks that were in flight together blocks the next surface too
     const store2 = new MemoryStore();
-    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "sha endpoint", criteria: ["/health has sha"] });
-    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t2", title: "board page", criteria: ["GET / html"] });
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "sha endpoint", criteria: ["/health has sha"] , no_human_impact: true});
+    await emit(store2, c, { kind: "task", op: "create", actor: "pm", task: "t2", title: "board page", criteria: ["GET / html"] , no_human_impact: true});
     await emit(store2, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
     await emit(store2, c, { kind: "task", op: "claim", actor: "frontend", task: "t2", touches: ["app.ts"] });
     await emit(store2, c, { kind: "task", op: "done", actor: "dev", task: "t1" , no_human_impact: true});
@@ -215,7 +215,7 @@ describe("t-006 · verified on one surface is not verified on another", () => {
 
 describe("t-009 · a seam with a task that was done before you claimed is stacking, not a collision", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
-    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
 
   it("A claim -> A done -> B claim overlapping: verify A is accepted; the board lists the seam as stacked", async () => {
     const store = new MemoryStore();
@@ -264,7 +264,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
 
 describe("t-010 · touches overlap by path, and the owner can widen a claim", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
-    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
   const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
 
   it("main.ts#init overlaps main.ts; packages/cli overlaps packages/cli/src/main.ts; unrelated paths do not", async () => {
@@ -377,7 +377,7 @@ describe("t-008 · a reading key can declare what values it takes", () => {
 
 describe("t-017 · a task created on a false premise is withdrawn, not worked around", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, by = "pm") =>
-    emit(store, c, { kind: "task", op: "create", actor: by, task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: by, task: id, title: id, criteria: ["works"] , no_human_impact: true});
   const withdraw = (store: MemoryStore, c: ReturnType<typeof clock>, id: string, actor: string, reason = "premise was a measurement error") =>
     emit(store, c, { kind: "task", op: "withdraw", actor, task: id, reason });
 
@@ -509,7 +509,7 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
   const setup = async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "t-020", title: "牌桌卡片页", criteria: ["GET / 是卡片页"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "t-020", title: "牌桌卡片页", criteria: ["GET / 是卡片页"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-020", touches: ["html.ts"] });
     return { store, c };
   };
@@ -553,7 +553,7 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     // t-104: pass 收窄到持 R6 的角色，这里 qa 写了判据，只剩 human 能落
     await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["再加一条"] }))).message).toMatch(/t-020 is verified; its criteria are what was judged/);
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-x", add: ["z"] }))).message).toMatch(/is withdrawn/);
   });
@@ -589,7 +589,7 @@ describe("t-027 · the board tells this version's changes from history, and fold
   const deploy = (store: MemoryStore, c: ReturnType<typeof clock>, sha: string) =>
     emit(store, c, { kind: "reading", actor: HUMAN, key: "deployed.sha", surface: "production", value: sha });
   const passOnProd = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string, title: string) => {
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
@@ -640,7 +640,7 @@ describe("t-027 · the board tells this version's changes from history, and fold
   it("in_flight groups carry total and the 5 most recently touched; the full list stays", async () => {
     const store = new MemoryStore();
     const c = clock();
-    for (let i = 1; i <= 7; i++) { c.tick(min(1)); await emit(store, c, { kind: "task", op: "create", actor: "pm", task: `t-${i}`, title: `task ${i}`, criteria: ["x"] }); }
+    for (let i = 1; i <= 7; i++) { c.tick(min(1)); await emit(store, c, { kind: "task", op: "create", actor: "pm", task: `t-${i}`, title: `task ${i}`, criteria: ["x"] , no_human_impact: true}); }
     c.tick(min(1));
     await emit(store, c, { kind: "task", op: "block", actor: "pm", task: "t-2", on: "waiting" }); // touched last, but leaves the open group
     await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-1", add: ["more"] });   // t-1 is now the most recent open task
@@ -658,7 +658,7 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
   const setup = async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-020", title: "牌桌卡片页", criteria: ["卡片页"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-020", title: "牌桌卡片页", criteria: ["卡片页"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t-020", touches: ["html.ts", "i18n.ts"] });
     c.tick(min(10));
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020", evidence: "4bff806" , no_human_impact: true});
@@ -710,7 +710,7 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
     expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: " " }))).message).toMatch(/say why/);
     await emit(store, c, { kind: "task", op: "reopen", actor: HUMAN, task: "t-020", reason: "human 要改" });
     expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "again" }))).message).toMatch(/t-020 is working; only a done or failed/);
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-o", title: "o", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-o", title: "o", criteria: ["x"] , no_human_impact: true});
     expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "pm", task: "t-o", reason: "x" }))).message).toMatch(/t-o is open/);
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-o", reason: "dup" });
     expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "pm", task: "t-o", reason: "x" }))).message).toMatch(/is withdrawn/);
@@ -718,7 +718,7 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
 
   it("a task that reopens becomes in flight again: a seam stacked on it turns back into a collision", async () => {
     const { store, c } = await setup();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-026", title: "折叠", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-026", title: "折叠", criteria: ["x"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-026", touches: ["html.ts"] });
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toEqual({ done: "t-020", on: "t-026" });
@@ -731,7 +731,7 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
 
 describe("t-029 · board.release lists what passed on repo and not yet on production", () => {
   const ship = async (store: MemoryStore, c: ReturnType<typeof clock>, id: string, title: string, evidence?: string) => {
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     c.tick(min(1));
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence , no_human_impact: true});
@@ -742,7 +742,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
   it("no candidates: nothing verified on repo, or everything already on production", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" , no_human_impact: true});
     expect(await release(store, c)).toMatchObject({ deployed_sha: null, candidates: [] }); // done is a claim, not a verdict
@@ -822,7 +822,7 @@ describe("t-030 · what the human said, and where it went", () => {
     expect((await said(store, c))[0].links.requirements).toEqual([req.id]);
 
     c.tick(min(2));
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-40", title: "登录后回到原页", criteria: ["回跳"], refs: [s1.id] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-40", title: "登录后回到原页", criteria: ["回跳"], refs: [s1.id] , no_human_impact: true});
     [x] = await said(store, c);
     expect(x).toMatchObject({ status: "task", label: "已成为任务：登录后回到原页", links: { tasks: [{ id: "t-40", title: "登录后回到原页", status: "open" }] } });
 
@@ -841,8 +841,8 @@ describe("t-030 · what the human said, and where it went", () => {
     const s1 = await say(store, c, "牌桌要能折叠");
     c.tick(min(1));
     const s2 = await say(store, c, "部署要一键");
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "在途折叠", criteria: ["x"], refs: [s1.id] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "线上折叠", criteria: ["x"], refs: [s1.id] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "在途折叠", criteria: ["x"], refs: [s1.id] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "线上折叠", criteria: ["x"], refs: [s1.id] , no_human_impact: true});
     const list = await said(store, c);
     expect(list.map((x) => x.id)).toEqual([s2.id, s1.id]);
     expect(list[1].label).toBe("已成为任务：在途折叠、线上折叠");
@@ -857,7 +857,7 @@ describe("t-030 · what the human said, and where it went", () => {
   it("refs to a sentence that does not exist are refused by the existing rule", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const r = await rejected(emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "x", criteria: ["y"], refs: ["01M1TSDDK1VXP23K45CPR3KDH5"] }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "x", criteria: ["y"], refs: ["01M1TSDDK1VXP23K45CPR3KDH5"] , no_human_impact: true}));
     expect(r.rule).toBe("ref");
   });
 });
@@ -923,7 +923,7 @@ describe("t-039 · the manual is a resource of the platform, per role", () => {
 
 describe("t-045 · a seam between two tasks of one owner is sequential work, not a collision", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
-    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
   const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
 
   it("same owner: the seam is recorded and visible, but blocks neither verify", async () => {
@@ -1079,7 +1079,7 @@ describe("F6/F7/F8 · readings carry time, surface, assumptions, and die loudly"
     expect(b.readings[0].assumptions).toEqual(["production and roster have zero overlap"]);
 
     const r = await rejected(emit(store, c, {
-      kind: "task", op: "create", actor: "pm", task: "t-acceptance", title: "acceptance numbers", criteria: ["users.count == 128"], refs: [baseline.id],
+      kind: "task", op: "create", actor: "pm", task: "t-acceptance", title: "acceptance numbers", criteria: ["users.count == 128"], refs: [baseline.id], no_human_impact: true,
     }));
     expect(r.rule).toBe("stale-reading");
   });
@@ -1143,8 +1143,8 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     const c = clock();
     const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Board auth?", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private" });
     await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy 1.4.2", ack_by: c.iso(min(5)) });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "b", criteria: ["y"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "b", criteria: ["y"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "A", touches: ["f"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["f"] });
     c.tick(min(10));
@@ -1165,7 +1165,7 @@ describe("F11 · the human board is derived, never moved by hand", () => {
     const store = new MemoryStore();
     const c = clock();
     for (const [id, title] of [["A", "sha endpoint"], ["B", "html board"], ["C", "withdraw op"], ["D", "never started"]]) {
-      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["works"] , no_human_impact: true});
     }
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.live).toMatchObject({ deployed_sha: null, verified_on_production: [] });
@@ -1298,7 +1298,7 @@ describe("t-018 · notes attach to a task", () => {
   it("--task stores the reference, an unknown task is rejected, and the board lists the notes in order", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "Cookie flags", criteria: ["SameSite=Lax"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "Cookie flags", criteria: ["SameSite=Lax"] , no_human_impact: true});
     expect((await rejected(emit(store, c, { kind: "note", actor: "dev", body: "on a ghost", task: "t-9" }))).rule).toBe("note");
     const n1 = await emit(store, c, { kind: "note", actor: "dev", body: "concern: the proxy strips the flag", task: "t-1" });
     await emit(store, c, { kind: "note", actor: "dev", body: "unrelated, not attached" });
@@ -1319,7 +1319,7 @@ describe("t-056 · evidence has a layer for the owner: shows", () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
     for (const id of ["A", "B"]) {
-      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
       await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     }
     const long = "字".repeat(121);
@@ -1349,7 +1349,7 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     const c = clock(Date.now() - min(60));
     const decision = await emit(store, c, { kind: "note", actor: "pd", body: "决策：按钮改为永远可点", decision: true });
     const plain = await emit(store, c, { kind: "note", actor: "pd", body: "只是想法" });
-    for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
     for (const id of ["A", "B", "C", "E"]) await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["packages/server/src/html.ts"] });
     for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234", shows: "按钮现在永远可点" });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "不对" }); // B: failed
@@ -1392,14 +1392,14 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     const e = await rejected(obsolete(store, c, "E", "pm", decision.id)); // working
     expect(e.rule).toBe("obsolete");
     expect(e.message).toMatch(/is working/);
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "F", title: "题 F", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "F", title: "题 F", criteria: ["works"] , no_human_impact: true});
     expect((await rejected(obsolete(store, c, "F", "pm", decision.id))).message).toMatch(/is open.*task withdraw/);
     expect((await rejected(obsolete(store, c, "A", "dev", decision.id))).message).toMatch(/only pm .*not dev/);
     expect((await rejected(obsolete(store, c, "A", "qa", decision.id))).message).toMatch(/not qa/);
     await obsolete(store, c, "A", HUMAN, decision.id);
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("obsolete");
     // a criteria author who is not pm may do it too
-    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "G", title: "题 G", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "qa", task: "G", title: "题 G", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "G", touches: ["g"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "G" , no_human_impact: true});
     await obsolete(store, c, "G", "qa", decision.id);
@@ -1508,7 +1508,7 @@ describe("t-064 · the sender takes an instruction back", () => {
 
 describe("t-067 · the side that was done before the other claimed is never blocked by it, whoever owns them", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
-    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
   const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
 
   it("cross-owner: A done, then B (another owner) claims the same files: verify A passes, and B may be verified too once done; both in flight still collide", async () => {
@@ -1555,7 +1555,7 @@ describe("t-068 · every task says which layer it belongs to: this version, or e
   it("before any deploy everything is this version; after a second deploy, what production carried before it is earlier, the rest stays", async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(120));
-    const create = (id: string) => emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+    const create = (id: string) => emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
     const ship = async (id: string, who = "dev") => {
       await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
       await emit(store, c, { kind: "task", op: "done", actor: who, task: id, evidence: "abc1234" , no_human_impact: true});
@@ -1584,7 +1584,7 @@ describe("t-068 · every task says which layer it belongs to: this version, or e
 
 describe("t-073 · both sides done and the later absorbed the earlier: the seam settles by itself, by the declared form", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
-    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] });
+    emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
   const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
   /** A and B in flight at once (a collision), both done; B's evidence names A's sha. */
   const collide = async (store: MemoryStore, c: ReturnType<typeof clock>, bEvidence = "bbbbbbb2 合并了 aaaaaaa1") => {
@@ -1643,7 +1643,7 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
   const setup = async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234 全绿" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
@@ -1723,8 +1723,8 @@ describe("t-077 · the slim board tells omitted from empty", () => {
   it("omitted is exactly what disappeared, on a rich board and on a nearly empty one; empties stay empties", async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题 B", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题 B", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["x"] });
@@ -1746,7 +1746,7 @@ describe("t-077 · the slim board tells omitted from empty", () => {
     expect(slim.omitted.some((x) => x.startsWith("undelivered") || x.startsWith("needs_human"))).toBe(false);
     // a nearly empty board: only what actually went away
     const tiny = new MemoryStore();
-    await emit(tiny, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] });
+    await emit(tiny, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题 A", criteria: ["works"] , no_human_impact: true});
     const tf = board(reduce(await tiny.read(), c.now()), HUMAN, c.now());
     const ts = slimBoard(tf);
     check(tf, ts);
@@ -1801,7 +1801,7 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(60));
     const ship = async (id: string, sha: string | undefined, verifyProd = false) => {
-      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] });
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
       await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
       await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: sha ? `${sha} 完成` : "没有 sha 的证据" , no_human_impact: true});
       await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
@@ -1836,7 +1836,7 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     expect(r.counts).toEqual({ pending_deploy: 1, deployed_unverified: 1, unknown: 1 });
     expect(r.basis).toContain("git-ancestor");
     // a task finished after the fact was measured is not silently placed
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "E", title: "题 E", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "E", title: "题 E", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "E", touches: ["E"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "E", evidence: "fffffff6 完成" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "E", surface: "repo", pass: true });
@@ -1872,8 +1872,8 @@ describe("t-088 · an event can say where it came from, and the same source land
     expect(s.from.get("tracker#12")!.id).toBe(one.event.id);
     expect(s.from.size).toBe(2);
     // qa 23:37: a task carried in says so on the board and through GET /task/<id>, not only inside the event
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "im-1", title: "搬来的", criteria: ["x"], from: "tracker#20" });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "loc-1", title: "本地建的", criteria: ["x"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "im-1", title: "搬来的", criteria: ["x"], from: "tracker#20" , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "loc-1", title: "本地建的", criteria: ["x"] , no_human_impact: true});
     const bb = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(boardTask(bb, "im-1")!.from).toBe("tracker#20");
     expect(boardTask(bb, "loc-1")!.from).toBeUndefined();
@@ -1919,7 +1919,7 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
   const setup = async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(60));
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" , no_human_impact: true});
     const v = await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没满足" });
@@ -1976,7 +1976,7 @@ describe("t-092 · the service counts what an import landed and asks the human t
   const imported = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
     // two in-flight tasks, one finished (not counted), a decision and the one it superseded, two facts, one question
     for (const [id, from] of [["t-1", "pm/单据#1"], ["t-2", "pm/单据#2"], ["t-3", "pm/单据#3"]]) {
-      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `旧标题 ${id}`, criteria: ["旧判据"], from });
+      await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `旧标题 ${id}`, criteria: ["旧判据"], from , no_human_impact: true});
       await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     }
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-3", evidence: "来自 pm/单据#3" , no_human_impact: true});
@@ -2037,8 +2037,8 @@ describe("t-096 · a display name people recognise, next to an id that never mov
   it("a task and a decision can carry one, it can change, two records may share it, and every lookup still goes by id", async () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(30));
-    const a = await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录超时", criteria: ["works"], label: "T-07", from: "pm/单据#7" });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["works"], label: "T-07" }); // the same label, no from: they are independent
+    const a = await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-1", title: "登录超时", criteria: ["works"], label: "T-07", from: "pm/单据#7" , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-2", title: "另一件", criteria: ["works"], label: "T-07" , no_human_impact: true}); // the same label, no from: they are independent
     const d1 = await emit(store, c, { kind: "note", actor: "pm", body: "旧决定 12", decision: true, label: "决策 12", from: "pm/台账#12" });
     await emit(store, c, { kind: "note", actor: "pm", body: "没有显示名的决定", decision: true });
     let s = reduce(await store.read(), c.now());
@@ -2059,7 +2059,7 @@ describe("t-096 · a display name people recognise, next to an id that never mov
     expect((await rejected(emit(store, c, { kind: "task", op: "label", actor: "dev", task: "t-1", label: "  " }))).rule).toBe("label");
     expect((await rejected(emit(store, c, { kind: "task", op: "label", actor: "dev", task: "t-1", label: "字".repeat(31) }))).message).toMatch(/max 30/);
     // a task with no label at all is unchanged
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-3", title: "本地新建", criteria: ["works"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-3", title: "本地新建", criteria: ["works"] , no_human_impact: true});
     const t3 = boardTask(board(reduce(await store.read(), c.now()), HUMAN, c.now()), "t-3")!;
     expect(t3.label).toBeUndefined();
     expect("label" in t3).toBe(true); // the field exists on the board shape, absent when unset
@@ -2068,7 +2068,7 @@ describe("t-096 · a display name people recognise, next to an id that never mov
 
 describe("t-097 / t-098 · the invitation goes back at once; the old channel waits for the human's 对", () => {
   const moved = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "m-1", title: "旧任务", criteria: ["x"], from: "pm/单据#1", label: "T-01" });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "m-1", title: "旧任务", criteria: ["x"], from: "pm/单据#1", label: "T-01" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "m-1", touches: ["m-1"] });
     return emit(store, c, { kind: "note", actor: "pm", body: "导入完成：搬完了" });
   };
@@ -2138,7 +2138,7 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: list });
-    await emit(store, c, { kind: "task", op: "create", actor: criteriaBy, task: "A", title: "题", criteria: ["能用", "有测试"] });
+    await emit(store, c, { kind: "task", op: "create", actor: criteriaBy, task: "A", title: "题", criteria: ["能用", "有测试"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: owner, task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: owner, task: "A", evidence: "abc1234 全绿" , no_human_impact: true});
     return { store, c };
@@ -2257,8 +2257,8 @@ describe("t-105 · done's touches are the fact, and seams are recomputed from it
   const two = async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] , no_human_impact: true});
     return { store, c };
   };
 
@@ -2386,7 +2386,7 @@ describe("t-106 · a role id is ASCII; the name people read is not", () => {
     const s = reduce(await store.read(), c.now());
     expect(roleResponsibilities(s)).toEqual({ editor: ["R1", "R3"], writer: ["R5"], reviewer: ["R6"], ops: ["R9"] });
     // 而且规则真的用它：只有 reviewer 持 R6，pass 的名单就是它
-    await emit(store, c, { kind: "task", op: "create", actor: "editor", task: "A", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "editor", task: "A", title: "题", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "writer", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "writer", task: "A", evidence: "abc1234" , no_human_impact: true});
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "writer", task: "A", surface: "repo", pass: true }))).message).toContain("可以由谁来落 pass：reviewer");
@@ -2400,7 +2400,7 @@ describe("t-106 · a role id is ASCII; the name people read is not", () => {
     const s0 = reduce(await store.read(), c.now());
     expect(projectRoles(s0)).toEqual(["å®¡ç¨¿", "dev"]);                 // 照常算，不假装它不存在
     // 它照常收发事件：建任务、认领、完成、验收，一路走通
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["y"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "verify", actor: "å®¡ç¨¿", task: "B", surface: "repo", pass: true });
@@ -2415,7 +2415,7 @@ describe("t-105 · an empty touches list is a fact, not a missing field", () => 
   it("[] wipes the declaration; undefined leaves it alone", async () => {
     const store = new MemoryStore();
     const c = clock();
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["a.ts", "b.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" , no_human_impact: true});          // 字段缺席
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.touches).toEqual(["a.ts", "b.ts"]);
@@ -2434,8 +2434,8 @@ describe("t-112 · a gate against releasing early never blocks the news that it 
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["shared.ts"] });
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["shared.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "abc1234" , no_human_impact: true});
@@ -2494,8 +2494,8 @@ describe("t-113 · a seam is judged at the finest granularity both sides declare
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { pm: ["R1"], dev: ["R5"], frontend: ["R5"], qa: ["R6"] } });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] });
-    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] });
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "甲", criteria: ["能用"] , no_human_impact: true});
+    await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "乙", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: aTouches });
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: bTouches });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "abc1234" , no_human_impact: true});
@@ -2593,7 +2593,7 @@ describe("t-113 · 同一个测试文件三次挡住验收：现在只是一句�
     ];
     for (const [a, aBy, b, bBy] of pairs) {
       for (const [id, by] of [[a, aBy], [b, bBy]] as const) {
-        await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["能用"] });
+        await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["能用"] , no_human_impact: true});
         await emit(store, c, { kind: "task", op: "claim", actor: by, task: id, touches: [`${F}#${id}`] });
         await emit(store, c, { kind: "task", op: "done", actor: by, task: id, evidence: `sha-${id}` , no_human_impact: true});
       }

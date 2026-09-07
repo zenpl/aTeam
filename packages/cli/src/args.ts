@@ -3,8 +3,14 @@ export interface Args {
   flags: Record<string, string | boolean | string[]>;
 }
 
-const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "touches-only", "once", "force", "full"]);
-const REPEATABLE = new Set(["criteria", "assumes", "option"]);
+// t-173: 每一个 main.ts 里用 bool() 读的开关都必须在这里。漏一个，那个开关就是死的——`--x` 报「needs a value」，
+// `--x true` 存成字符串而 bool() 仍然返回 false，两种写法都设不上，而且**不报错**。今天漏了两个：
+// --no-human-impact（t-151 那道闸唯一的出路，出路死了等于逼人说假话）与 --missed（t-149 的补记）。
+// --clear-refused 是同一根因的另一种症状：它绕过解析器直接查 argv，于是先打一行「needs a value」再照常
+// 工作——不致命，但那行错误信息今晚出现在每一次 sync --clear-refused 上。
+// build.test.ts 里有一条闸守着这份名单与 main.ts 里的用法一致（bool() 与 argv.includes 两种读法都查），别手工对。
+const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "no-seam-check", "no-touches", "touches-only", "once", "force", "full", "no-human-impact", "missed", "clear-refused"]);
+const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only"]);
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };

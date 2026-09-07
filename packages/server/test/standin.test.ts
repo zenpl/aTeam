@@ -24,7 +24,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
   for (const [id, title] of [["t-113", "接缝按符号判"], ["t-9", "还没验的一件"]] as const) {
-    await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] });
+    await post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] , no_human_impact: true});
     await post("dev", { kind: "task", op: "claim", task: id, touches: [`packages/${id}.ts`] });
     await post("dev", { kind: "task", op: "done", task: id, evidence: `abc1234: ${id}` , no_human_impact: true});
   }

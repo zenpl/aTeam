@@ -26,7 +26,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
 
 const done = async (id: string, owner = "dev") => {
-  await post("pm", { kind: "task", op: "create", task: id, title: "题", criteria: ["能用", "有测试"] });
+  await post("pm", { kind: "task", op: "create", task: id, title: "题", criteria: ["能用", "有测试"] , no_human_impact: true});
   await post(owner, { kind: "task", op: "claim", task: id, touches: [id] });
   await post(owner, { kind: "task", op: "done", task: id, evidence: "abc1234: 做完了" , no_human_impact: true});
 };

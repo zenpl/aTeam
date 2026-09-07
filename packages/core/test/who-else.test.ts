@@ -19,7 +19,7 @@ async function world() {
   const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "frontend", "qa"] }, -300);
   const make = async (id: string, who: string, title: string, touches: string[], mins: number) => {
-    await put({ kind: "task", actor: "pm", op: "create", task: id, title, criteria: ["能用"] }, mins - 1);
+    await put({ kind: "task", actor: "pm", op: "create", task: id, title, criteria: ["能用"] , no_human_impact: true}, mins - 1);
     await put({ kind: "task", actor: who, op: "claim", task: id, touches }, mins);
   };
   await make("t-页面", "frontend", "牌桌那一行", ["packages/server/src/html.ts", "packages/server/src/i18n.ts"], -60);

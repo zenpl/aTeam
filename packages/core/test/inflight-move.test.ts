@@ -14,7 +14,7 @@ async function sixGroups() {
   const store = new MemoryStore();
   let t = Date.now() - 3_600_000;
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-  const mk = (id: string, title: string) => emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+  const mk = (id: string, title: string) => emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"], no_human_impact: true });
   const claim = (id: string, who = "dev") => emit({ kind: "task", op: "claim", actor: who, task: id, touches: [`src/${id}.ts`] });
   const done = (id: string, sha: string) => emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha}：做完了`, shows: `人能看到 ${id}` });
 

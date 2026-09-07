@@ -16,7 +16,7 @@ async function fixture() {
   await emit({ kind: "reading", actor: "dev", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
   await emit({ kind: "reading", actor: "dev", surface: "staging", key: "users", value: 3, valid_until: new Date(t + 1000).toISOString() });
   for (const [id, title] of [["t-a", "登录"], ["t-b", "导出"], ["t-c", "限流"], ["t-d", "日志"]]) {
-    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用", "有测试"] });
+    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用", "有测试"] , no_human_impact: true});
   }
   // t-a done first, t-b claims the same file later: a stacked seam
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["src/io.ts"] });
@@ -28,7 +28,7 @@ async function fixture() {
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-d", touches: ["src/limit.ts"] });
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-a", surface: "repo", pass: true, evidence: "测试 14/14" });
   // t-e and t-f: a seam whose both sides are final, which the default board drops entirely (t-070)
-  for (const [id, title] of [["t-e", "缓存"], ["t-f", "预热"]]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+  for (const [id, title] of [["t-e", "缓存"], ["t-f", "预热"]]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-e", touches: ["src/cache.ts"] });
   await emit({ kind: "task", op: "done", actor: "dev", task: "t-e", evidence: "提交 2345678" , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-f", touches: ["src/cache.ts"] });
@@ -126,10 +126,10 @@ describe("t-100 · CLI 用同一份判定", () => {
     const store = new MemoryStore();
     let t = Date.now() - 3_600_000;
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    await emit({ kind: "task", op: "create", actor: "pm", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" } as NewEvent);
-    await emit({ kind: "task", op: "create", actor: "pm", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" } as NewEvent);
-    await emit({ kind: "task", op: "create", actor: "pm", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" } as NewEvent);
-    await emit({ kind: "task", op: "create", actor: "pm", task: "L-4", title: "本地建的", criteria: ["可用"] } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-1", title: "登录超时", criteria: ["可用"], label: "T-99" , no_human_impact: true} as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-2", title: "导出乱码", criteria: ["可用"], label: "T-99" , no_human_impact: true} as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-3", title: "日志脱敏", criteria: ["可用"], label: "T-07" , no_human_impact: true} as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "pm", task: "L-4", title: "本地建的", criteria: ["可用"] , no_human_impact: true} as NewEvent);
     const b = board(reduce(await store.read()), HUMAN);
     const text = fmt.board(b, "pm");
     expect(text).toContain("T-99 登录超时 (L-1)");
@@ -147,7 +147,7 @@ describe("t-107 · CLI 与页面叫同一个名字", () => {
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
     await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: { editor: { name: "主编", responsibilities: ["R1", "R3", "R4"] }, writer: { name: "写手", responsibilities: ["R5"] }, reviewer: { name: "审稿", responsibilities: ["R6"] }, qa2: ["R6"] } } as NewEvent);
     await emit({ kind: "reading", actor: "editor", surface: "team", key: "focus", value: "先把登录修好" } as NewEvent);
-    await emit({ kind: "task", op: "create", actor: "editor", task: "t-1", title: "登录修复", criteria: ["能登录"] } as NewEvent);
+    await emit({ kind: "task", op: "create", actor: "editor", task: "t-1", title: "登录修复", criteria: ["能登录"] , no_human_impact: true} as NewEvent);
     await emit({ kind: "task", op: "claim", actor: "writer", task: "t-1", touches: ["src/login.ts"] } as NewEvent);
     await emit({ kind: "instruction", actor: "editor", to: "writer", body: "先做登录", ack_by: new Date(t + 3_600_000).toISOString() } as NewEvent);
     await emit({ kind: "instruction", actor: "editor", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], ack_by: new Date(t + 3_600_000).toISOString() } as NewEvent);

@@ -11,7 +11,7 @@ const ME = "frontend";
 const at = "2026-09-06T06:12:00.000Z";
 const LOG: Event[] = [
   { id: "01A", actor: "pm", at, kind: "note", body: "t-007 priority: whoever is free" },
-  { id: "01B", actor: "pm", at, kind: "task", op: "create", task: "t-007", title: "watch prints the wake event", criteria: ["prints the pull"] },
+  { id: "01B", actor: "pm", at, kind: "task", op: "create", task: "t-007", title: "watch prints the wake event", criteria: ["prints the pull"] , no_human_impact: true},
   { id: "01C", actor: "pm", at, kind: "instruction", to: ME, body: "t-007 is yours: claim it", ack_by: "2026-09-06T06:27:00.000Z" },
   { id: "01D", actor: "pm", at, kind: "instruction", to: "dev", body: "not for frontend", ack_by: "2026-09-06T06:27:00.000Z" },
 ];

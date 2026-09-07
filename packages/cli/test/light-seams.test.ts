@@ -13,7 +13,7 @@ async function fixture() {
   let t = Date.now() - 3_600_000;
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
   for (const [id, title] of [["t-a", "接缝"], ["t-b", "读数"], ["t-c", "导出"], ["t-d", "导入"]]) {
-    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] });
+    await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] , no_human_impact: true});
   }
   // t-a + t-b: both named the symbols they would touch in one file, and named different ones — a light seam.
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["packages/core/test/replay.test.ts#seams"] });

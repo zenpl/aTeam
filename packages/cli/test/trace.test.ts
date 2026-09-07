@@ -13,8 +13,8 @@ async function story() {
   const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date(60_000 * ++t) });
   const said = await emit({ kind: "note", actor: HUMAN, body: `${SAID_PREFIX}登录后应该回到我刚才那页` });
   const req = await emit({ kind: "note", actor: "pd", body: "场景需求：登录回跳到原页", decision: true, refs: [said.id] });
-  await emit({ kind: "task", op: "create", actor: "pm", task: "t-40", title: "登录后回到原页", criteria: ["登录后落在原页", "无回跳参数时回首页"], refs: [said.id, req.id] });
-  await emit({ kind: "task", op: "create", actor: "pm", task: "t-41", title: "别的任务", criteria: ["x"] });
+  await emit({ kind: "task", op: "create", actor: "pm", task: "t-40", title: "登录后回到原页", criteria: ["登录后落在原页", "无回跳参数时回首页"], refs: [said.id, req.id] , no_human_impact: true});
+  await emit({ kind: "task", op: "create", actor: "pm", task: "t-41", title: "别的任务", criteria: ["x"] , no_human_impact: true});
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-40", touches: ["auth/login.ts", "auth.redirect"] });
   const d1 = await emit({ kind: "note", actor: "pm", body: "决策：回跳只认站内地址", decision: true, refs: [req.id] });
   await emit({ kind: "note", actor: "dev", body: "concern: 开放回跳有钓鱼风险", task: "t-40" });

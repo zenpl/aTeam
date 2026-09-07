@@ -138,7 +138,7 @@ describe("t-167 · 补的是格不是 if", () => {
     const w = world();
     await w.put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa", "release"] }, -300);
     for (const [id, sha] of [["t-1", A], ["t-2", B]] as const) {
-      await w.put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] }, -200);
+      await w.put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] , no_human_impact: true}, -200);
       await w.put({ kind: "task", actor: "dev", op: "claim", task: id, touches: [id] }, -199);
       await w.put({ kind: "task", actor: "dev", op: "done", task: id, evidence: `${sha.slice(0, 7)}：做完了`, no_human_impact: true }, -198);
       await w.put({ kind: "task", actor: "qa", op: "verify", task: id, surface: "repo", pass: true, evidence: "跑过了" }, -197);

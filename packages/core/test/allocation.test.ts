@@ -66,8 +66,8 @@ describe("runtime metrics over the last window", () => {
     const w = world();
     expect(runtimeAllocation(await w.state(), w.at(), HUMAN)).toEqual([]);
     for (let i = 1; i <= 6; i++) {
-      await w.emit({ kind: "task", op: "create", actor: "pm", task: `a${i}`, title: `a${i}`, criteria: ["x"] });
-      await w.emit({ kind: "task", op: "create", actor: "pm", task: `b${i}`, title: `b${i}`, criteria: ["x"] });
+      await w.emit({ kind: "task", op: "create", actor: "pm", task: `a${i}`, title: `a${i}`, criteria: ["x"] , no_human_impact: true});
+      await w.emit({ kind: "task", op: "create", actor: "pm", task: `b${i}`, title: `b${i}`, criteria: ["x"] , no_human_impact: true});
       await w.emit({ kind: "task", op: "claim", actor: "dev", task: `a${i}`, touches: [`f${i}`] });
       await w.emit({ kind: "task", op: "claim", actor: "frontend", task: `b${i}`, touches: [`f${i}`] });
       await w.emit({ kind: "task", op: "seam", actor: i === 6 ? "dev" : "pm", tasks: [`a${i}`, `b${i}`], resolution: "dev 合" });
@@ -107,8 +107,8 @@ describe("runtime metrics over the last window", () => {
     const said = await w.emit({ kind: "note", actor: HUMAN, body: "human 说：登录后回到原页" });
     const req = await w.emit({ kind: "note", actor: "pd", body: "需求：登录后回到原页", decision: true, refs: [said.id] });
     const relay = await w.emit({ kind: "note", actor: "pm", body: "转述：登录后回到原页", refs: [req.id] });
-    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-9", title: "登录后回到原页", criteria: ["x"], refs: [relay.id] });
-    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-8", title: "直接的", criteria: ["x"], refs: [req.id] });
+    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-9", title: "登录后回到原页", criteria: ["x"], refs: [relay.id] , no_human_impact: true});
+    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-8", title: "直接的", criteria: ["x"], refs: [req.id] , no_human_impact: true});
     expect(saidHops(await w.state(), HUMAN)).toEqual([{ task: "t-9", hops: 3 }, { task: "t-8", hops: 2 }]);
     ws = runtimeAllocation(await w.state(), w.at(), HUMAN);
     expect(ws[0].evidence).toHaveLength(1);                                       // t-123 判据 2
@@ -120,14 +120,14 @@ describe("runtime metrics over the last window", () => {
 
   it("重叠 (runtime): two decisions on one task within ten minutes that do not supersede each other; a supersede clears it", async () => {
     const w = world();
-    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "x", criteria: ["x"] });
+    await w.emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "x", criteria: ["x"] , no_human_impact: true});
     const a = await w.emit({ kind: "note", actor: "pd", body: "决策：A", decision: true, task: "t-1" });
     await w.emit({ kind: "note", actor: "pm", body: "决策：B", decision: true, task: "t-1" });
     let ws = runtimeAllocation(await w.state(), w.at(), HUMAN);
     expect(ws.map((x) => x.pattern)).toEqual(["重叠"]);
     expect(ws[0].evidence[0]).toMatch(/^t-1 十分钟内有两条互不取代的决策（pd \w+ 与 pm \w+）$/);
     const w2 = world();
-    await w2.emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "x", criteria: ["x"] });
+    await w2.emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "x", criteria: ["x"] , no_human_impact: true});
     const a2 = await w2.emit({ kind: "note", actor: "pd", body: "决策：A", decision: true, task: "t-1" });
     await w2.emit({ kind: "note", actor: "pm", body: "决策：B", decision: true, task: "t-1", supersedes: a2.id });
     expect(runtimeAllocation(await w2.state(), w2.at(), HUMAN)).toEqual([]);

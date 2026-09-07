@@ -53,3 +53,26 @@ describe("t-051 · --measured-at", () => {
     expect(() => measuredAtOf("yesterday", now)).toThrow(UsageError);
   });
 });
+
+/**
+ * t-173：三个开关今天是死的，其中一个是 t-151 那道闸唯一的出路。三种症状各一条，qa 08:33 报的第三种最坏。
+ */
+describe("t-173 · 布尔开关必须真的设得上", () => {
+  it("单写开关就能设上（原来报 needs a value）", () => {
+    expect(parse(["task", "done", "t-1", "--no-human-impact"]).flags["no-human-impact"]).toBe(true);
+    expect(parse(["task", "seam", "a", "b", "--missed"]).flags.missed).toBe(true);
+    expect(parse(["sync", "--clear-refused"]).flags["clear-refused"]).toBe(true);
+  });
+
+  it("写成 --x true 也不会变成字符串（原来 bool() 仍然返回 false）", () => {
+    const f = parse(["task", "done", "t-1", "--no-human-impact", "true"]).flags;
+    expect(f["no-human-impact"]).toBe(true);
+    expect(f["no-human-impact"]).not.toBe("true");
+  });
+
+  it("qa 08:33 报的第三种、也是最坏的一种：它不再把后面那个开关当值吞掉", () => {
+    const f = parse(["task", "done", "t-1", "--no-human-impact", "--evidence", "abc1234"]).flags;
+    expect(f["no-human-impact"]).toBe(true);
+    expect(f.evidence).toBe("abc1234");   // 原来 evidence 静默丢失，不报错
+  });
+});

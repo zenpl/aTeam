@@ -20,7 +20,7 @@ async function bigDay() {
   const long = (n: number, s: string) => Array.from({ length: n }, (_, i) => `${s} ${i} ${"判据正文很长，说明人能看到什么，以及在哪个表面验".repeat(4)}`); // today's tasks carry ~6KB of text each
   for (let i = 0; i < 40; i++) {
     const id = `t-${String(i).padStart(3, "0")}`;
-    await b.task.create("pm", id, `任务 ${i}：牌桌上的一件事`, long(3, "判据"));
+    await b.task.create("pm", id, `任务 ${i}：牌桌上的一件事`, long(3, "判据"), { no_human_impact: true });
     const owner = i % 2 ? "dev" : "frontend";
     await b.task.claim(owner, id, [`packages/x/${i}.ts`, `packages/x/${i}.test.ts`, ...(i % 7 === 0 ? ["packages/server/src/app.ts"] : [])]);
     await b.note(owner, "note 正文也很长：".repeat(40), { task: id });

@@ -37,7 +37,7 @@ describe("t-088 · POST /events with from", () => {
     expect(events.filter((e) => e.from === "tracker#7")).toHaveLength(1);
     expect(events.filter((e) => e.from === "tracker#8")).toHaveLength(1);
     // qa 23:37: the board and GET /task/<id> carry from, not just the raw event
-    await post("pm", { kind: "task", op: "create", task: "f-1", title: "搬来的任务", criteria: ["x"], from: "tracker#42" });
+    await post("pm", { kind: "task", op: "create", task: "f-1", title: "搬来的任务", criteria: ["x"], from: "tracker#42" , no_human_impact: true});
     const one = await (await fetch(`${base}/task/f-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
     expect(one.task.from).toBe("tracker#42");
     const board = await (await fetch(`${base}/board`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
@@ -65,7 +65,7 @@ describe("t-089 · an imported reading over the API", () => {
 
 describe("t-092 · the check card over the API", () => {
   it("a note saying the import is done makes the service ask the human, with counts it took from the log", async () => {
-    await post("pm", { kind: "task", op: "create", task: "m-1", title: "旧任务", criteria: ["旧判据"], from: "pm/单据#1" });
+    await post("pm", { kind: "task", op: "create", task: "m-1", title: "旧任务", criteria: ["旧判据"], from: "pm/单据#1" , no_human_impact: true});
     await post("dev", { kind: "task", op: "claim", task: "m-1", touches: ["m-1"] });
     await post("pm", { kind: "note", body: "现行决定", decision: true, from: "pm/台账#1" });
     await post("pm", { kind: "reading", surface: "production", key: "users.count", value: 12, from: "pm/进度板", measured_at: new Date(Date.now() - 60_000).toISOString() });
@@ -96,8 +96,8 @@ describe("t-092 · the check card over the API", () => {
 
 describe("t-096 · display names over the API", () => {
   it("a task carries its old number to the board, the name can change, and lookups still go by id", async () => {
-    expect((await post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["x"], label: "T-07", from: "pm/单据#7" })).status).toBe(201);
-    expect((await post("pm", { kind: "task", op: "create", task: "L-2", title: "另一件", criteria: ["x"], label: "T-07" })).status).toBe(201);
+    expect((await post("pm", { kind: "task", op: "create", task: "L-1", title: "登录超时", criteria: ["x"], label: "T-07", from: "pm/单据#7" , no_human_impact: true})).status).toBe(201);
+    expect((await post("pm", { kind: "task", op: "create", task: "L-2", title: "另一件", criteria: ["x"], label: "T-07" , no_human_impact: true})).status).toBe(201);
     const byId = await (await fetch(`${base}/task/L-1`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).json();
     expect(byId.task).toMatchObject({ id: "L-1", label: "T-07", title: "登录超时" });
     expect((await fetch(`${base}/task/T-07`, { headers: { authorization: "Bearer k", "x-actor": "qa", "x-ateam-client": "2" } })).status).toBe(404); // a label finds nothing

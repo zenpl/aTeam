@@ -53,7 +53,7 @@ describe("t-030 · POST /say", () => {
 
   it("the board follows the sentence into a task", async () => {
     const note = await (await say("部署要一键")).json();
-    await post("pm", { kind: "task", op: "create", task: "t-50", title: "一键部署", criteria: ["按钮"], refs: [note.id] });
+    await post("pm", { kind: "task", op: "create", task: "t-50", title: "一键部署", criteria: ["按钮"], refs: [note.id] , no_human_impact: true});
     const b = await boardJson();
     expect(b.said[0]).toMatchObject({ id: note.id, status: "task", label: "已成为任务：一键部署" });
   });

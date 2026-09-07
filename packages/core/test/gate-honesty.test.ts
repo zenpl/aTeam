@@ -23,7 +23,7 @@ async function world(pairs: number) {
   for (let i = 0; i < pairs; i++) {
     const a = `t-a${i}`, b = `t-b${i}`;
     for (const [id, who] of [[a, "dev"], [b, "frontend"]] as const) {
-      await put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] }, -200);
+      await put({ kind: "task", actor: "pm", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] , no_human_impact: true}, -200);
       await put({ kind: "task", actor: who, op: "claim", task: id, touches: [`packages/core/src/f${i}.ts`] }, -190 + i);
     }
     ids.push([a, b]);
@@ -50,7 +50,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
   it("判出误报 + 修法还没在生产上验过：这才是已知缺陷", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "两侧其实没碰同一处", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ gate: "seam", reported: 2, judged: 1, false_positives: 1, missed: 0, unjudged: 1 });
@@ -60,7 +60,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
   it("修法已在生产上验过：缺陷不再是已知的，那句话自己消失，不用谁去关掉它", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -7);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -6);
@@ -76,7 +76,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
     // 七条误报，一条真接缝但闸同时漏报了它该报的文件——今晚的形状
     for (let i = 0; i < 7; i++) await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[i], resolution: `第 ${i + 1} 条：两侧其实没碰同一处`, verdict: "false" }, -20 + i);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[7], resolution: "真接缝，而且它还漏了两个真撞的文件", verdict: "real", missed: true }, -12);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] }, -11);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "按共同祖先算触点", criteria: ["每一侧只算自己改的"] , no_human_impact: true}, -11);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -10);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -9);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -8);
@@ -95,7 +95,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
   it("没人判过的那些如实说出来，不被算成任何一边", async () => {
     const w = await world(5);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ reported: 5, judged: 1, false_positives: 1, unjudged: 4 });
@@ -108,7 +108,7 @@ describe("t-149 · 判据 3 与判决的写法", () => {
     const w = await world(2);
     // 今晚 01M1XAN1V2Z150HBEYY6RQQCGX 的形状：正文里「真接缝」与「假接缝」同时出现，后者在一句否定里
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "真接缝，但已被排期化解。这条不属于今晚那八条假接缝。", verdict: "real" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[1], resolution: "误报", verdict: "false" }, -7);
     const h = gateHonesty(await st(w.s), "seam")!;
@@ -142,7 +142,7 @@ describe("t-149 · 判据 3 与判决的写法", () => {
   it("判据 3：那句话在完整板上，不随瘦身板出门，也不是给人的卡", async () => {
     const w = await world(2);
     await w.put({ kind: "task", actor: "pm", op: "seam", tasks: w.ids[0], resolution: "误报", verdict: "false" }, -10);
-    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] }, -9);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-fix", title: "修", criteria: ["修好"] , no_human_impact: true}, -9);
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const b = board(await st(w.s), HUMAN, at(0));
     expect(b.gate_honesty).toHaveLength(1);
@@ -150,5 +150,58 @@ describe("t-149 · 判据 3 与判决的写法", () => {
     const slim = slimBoard(b);
     expect(slim.gate_honesty).toEqual([]);
     expect(slim.omitted).toContain("gate_honesty[1 of 1]");           // 略了什么、略了几条，板自己说
+  });
+});
+
+/**
+ * t-170 判据 10 (pm 08:55，按 pd 06:37)：**这道闸知道自己看不见什么，就要把这句话带在结论上。**
+ *
+ * 「不改变人看到的东西」按两类判人可见的改动（pd 08:22）：那句话是什么、哪句话出现在哪儿。它此刻只认得第一类；
+ * 第二类 qa 08:54 在合并后的树上证明了它按定义看不见——`inFlightGroups` 改了牌桌在途四行字，一个中文字面量
+ * 都没有，闸没红。修法要等「哪个 key 在哪显示」变成可算的数据。
+ */
+describe("t-170 判据 10 · 认不出的那一类，闸自己说出来", () => {
+  const withFix = async (opts: { verified?: "repo" | "production" } = {}) => {
+    const w = await world(1);
+    await w.put({ kind: "task", actor: "pm", op: "create", task: "t-178", title: "哪个 key 在哪显示也要认得出", criteria: ["认得出"], no_human_impact: true }, -20);
+    await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("shows"), value: "t-178" }, -19);
+    if (opts.verified) {
+      await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-178", touches: ["x"] }, -18);
+      await w.put({ kind: "task", actor: "dev", op: "done", task: "t-178", evidence: "abc1234", no_human_impact: true }, -17);
+      await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-178", surface: opts.verified, pass: true, evidence: "核过" }, -16);
+    }
+    return w;
+  };
+
+  it("修法还没在生产上：这句实话出现，并指向那件任务", async () => {
+    const h = gateHonesty(await st((await withFix()).s), "shows")!;
+    expect(h.fix).toMatchObject({ task: "t-178", in_production: false });
+    expect(h.line).toContain("认不出「哪句话出现在哪儿变了」");
+    expect(h.line).toContain("t-178");
+    // pd 09:02：说完「我看不见」要说这时候谁来看——一句只说自己瞎的实话会让读的人停在原地
+    expect(h.line).toContain("请作者自己在判据里说出人会看到什么变化");
+    // pd 09:02：给人读的说法在前，字段名在括号里给要动代码的人
+    expect(h.line).toContain("「这件干了什么」（shows）");
+    expect(h.line).toContain("任务标题（title）");
+  });
+
+  it("只在仓库上验过还不算：它说的是生产上的行为", async () => {
+    expect(gateHonesty(await st((await withFix({ verified: "repo" })).s), "shows")).toBeTruthy();
+  });
+
+  it("修法在生产上验过之后，这句话自己消失——不用谁去关掉它", async () => {
+    expect(gateHonesty(await st((await withFix({ verified: "production" })).s), "shows")).toBeNull();
+  });
+
+  it("没人认领修法时不说话：一句没有出路的实话只是噪音", async () => {
+    expect(gateHonesty(await st((await world(1)).s), "shows")).toBeNull();
+  });
+
+  it("它进牌桌的挖层，不生成给人的卡", async () => {
+    const w = await withFix();
+    const b = board(await st(w.s), HUMAN, at(0));
+    expect(b.gate_honesty.map((x) => x.gate)).toContain("shows");
+    expect(JSON.stringify(b.needs_human)).not.toContain("这道闸");
+    expect(slimBoard(b).gate_honesty).toEqual([]);
   });
 });

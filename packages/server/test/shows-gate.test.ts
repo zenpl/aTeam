@@ -18,7 +18,7 @@ describe("t-151 · 交活要说一句对人的影响", () => {
     return { status: r.status, body: await r.json() as { rule?: string; message?: string } };
   };
   const task = async (id: string) => {
-    await post("pm", { kind: "task", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] });
+    await post("pm", { kind: "task", op: "create", task: id, title: `题 ${id}`, criteria: ["能用"] , no_human_impact: true});
     await post("dev", { kind: "task", op: "claim", task: id, touches: [id] });
   };
 
@@ -72,18 +72,29 @@ describe("t-151 · pd 07:49：碰了人看得到的东西却说没变，接口�
     await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
-    await post("pm", { kind: "task", op: "create", task: "t-9", title: "改一个词", criteria: ["能用"] });
+    await post("pm", { kind: "task", op: "create", task: "t-9", title: "改一个词", criteria: ["能用"] , no_human_impact: true});
     await post("dev", { kind: "task", op: "claim", task: "t-9", touches: ["packages/server/src/i18n.ts"] });
   });
   afterAll(() => new Promise<void>((r) => app.close(() => r())));
 
-  it("409，列出碰到的那几处，并给出出路", async () => {
+  it("409，列出它认定的那一处，并给出出路与反驳的办法", async () => {
     const r = await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234", no_human_impact: true });
     expect(r.status).toBe(409);
     expect(r.body.rule).toBe("done");
     expect(r.body.message).toContain("packages/server/src/i18n.ts");
     expect(r.body.message).toContain(NO_HUMAN_IMPACT);
     expect(r.body.message).toContain("--shows");
+    expect(r.body.message).toContain("不对就改触点");   // t-170 判据 2：人要能反驳一个看得见的判断
+  });
+
+  it("t-170 第二轮：光说没变仍然被拒，说出是哪几个内部符号才放行（接口上跑一遍）", async () => {
+    await post("pm", { kind: "task", op: "create", task: "t-10", title: "删一段死代码", criteria: ["能用"] , no_human_impact: true});
+    await post("dev", { kind: "task", op: "claim", task: "t-10", touches: ["packages/server/src/html.ts#justDeferred"] });
+    const bare = await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true });
+    expect(bare.status).toBe(409);
+    expect(bare.body.message).toContain("--internal-only");
+    const named = await post("dev", { kind: "task", op: "done", task: "t-10", evidence: "abc1234", no_human_impact: true, internal_only: ["packages/server/src/html.ts#justDeferred"] });
+    expect(named.status).toBe(201);
   });
 
   it("补一句人能看到什么就过", async () => {

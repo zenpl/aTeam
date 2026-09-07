@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
 
@@ -160,10 +160,10 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean" },
+  "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
-  "task:create": { label: "string" },
+  "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
   "task:obsolete": { reason: "string" },
 };
 
@@ -358,11 +358,27 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
   }
 }
 
+/**
+ * t-151 与 t-171 是同一道闸的两头：**承诺的时候和交活的时候，都要说一句这件对人有什么影响，或者明写它没有。**
+ *
+ * 所以这句话只写一遍。两处各写一份，迟早有一处先改——t-171 判据 2 那句「同一句拒绝话」就是这个函数存在的理由。
+ */
+function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_human_impact?: boolean }): void {
+  const what = op === "create" ? "建一件任务要先说清它对人有什么影响" : "交活要说一句这件对人有什么影响";
+  if (e.no_human_impact && e.shows?.trim()) throw new Rejected(op, `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
+  if (!e.shows?.trim() && !e.no_human_impact)
+    throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+}
+
 function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
   if (e.op === "create") {
     if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`);
     if (!e.title?.trim()) throw new Rejected("task", "title is required");
     if (!e.criteria?.length) throw new Rejected("task", "at least one acceptance criterion is required");
+    // t-171 (pd 08:27)：承诺那头也要有闸。一件任务在**被写下来的时候**就该说清它对人有什么影响，而不是等到
+    // 交活时才第一次被问——那时范围已经定死了，答案只能是把已经做的事描述一遍。今晚 83 件里 78 件说不出人能
+    // 看到什么，问题不在交活的人身上：没有人在建它的时候问过这个问题。
+    humanImpactPromised("create", e);
     return;
   }
   if (e.op === "seam") {
@@ -453,17 +469,43 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 一模一样。这道闸只对新的 done 生效，日志里已有的事件一律不动（判据 2）。
       //
       // 它排在「是不是你的」「能不能交」之后：先告诉一个连交都交不了的人去补一句话，是把出路指错。
-      if (e.no_human_impact && e.shows?.trim()) throw new Rejected("done", `既写了 shows「${e.shows.trim()}」又说「${NO_HUMAN_IMPACT}」，这两句话互相矛盾：留一个`);
-      if (!e.shows?.trim() && !e.no_human_impact)
-        throw new Rejected("done", `交活要说一句这件对人有什么影响：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。空着不算「没影响」，只说明没人问过这个问题`);
+      humanImpactPromised("done", e);
       // t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——拦下，并把碰到的逐个列出来。
       // 出错的方式通常不是撒谎，是顺手：改 i18n 一个词、改说明书一行，正是不会重新想一遍这句话的时刻。
       if (e.no_human_impact) {
         // t-105 的口径照旧：done 带了 touches 就是事实、取代 claim 时的声明；没带才用声明。用声明去判一件已经
         // 量过的事，会拿一个当事人自己更正过的名单去拦他。
-        const seen = [...new Set((e.touches ?? t.touches).filter(touchesHumanVisible))].sort();
-        if (seen.length)
-          throw new Rejected("done", `这件碰了人看得到的东西：${seen.join("、")}——所以不能说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只改了内部（注释、类型），也用 --shows 说清那一句`);
+        //
+        // t-170 (pd 08:22)：按改动算，不按文件算。拒绝只发生在**算得准**的那两档——改了只装文本的地方，或改了
+        // core 里那些 key 本身；两者都指得出是哪一处，人可以据此反驳一个具体的判断。算不准的那一档（只给了
+        // 文件名、没说改在哪儿）不拒绝，因为一个看不见的判断不该挡住别人干活（判据 3）。
+        const touches = [...new Set(e.touches ?? t.touches)];
+        const seen = touches.filter((x) => touchesHumanVisible(x) === "human_visible").sort();
+        // t-170 第二轮 (pd 08:33)：具名出路。写得出「只动了哪几个内部符号」就放行——它要的不是一个开关，是一次
+        // 注意；写不出符号名，就说明没看清自己改了什么，那就该写 shows。符号必须真的落在被拦的那几处文件里，
+        // 否则这句话可以拿任何一个符号名蒙混过去。
+        // t-170 第三轮 (qa 08:46 ②)：**具名出路只属于「人可见文件里的内部符号」那一档。**
+        // 上一版让它对所有被拦的触点都生效，于是多打一个编出来的符号名，就能把「只装文本的地方」和「key 本身」
+        // 一起放过去——`i18n.ts` 加一个 `#随便编` 就过，而 markdown 文件里根本没有符号这种东西。pd 08:33 给这条
+        // 出路的原话就是给内部符号的；被拦在①②两档的，本来就该写 shows。
+        const noExit = seen.filter((x) => !RENDERING_FILES.some((f) => x.split("#")[0] === f));
+        const named = (e.internal_only ?? []).map((x) => x.trim()).filter(Boolean);
+        if (noExit.length && named.length)
+          throw new Rejected("done", `这几处不能用 --internal-only 解释掉：${noExit.join("、")}——那里改的就是给人看的字（只装文本的地方，或 core 里那些 key 本身），没有「内部符号」这一说。用 --shows 说一句人现在能看到什么`);
+        if (seen.length && named.length) {
+          const covers = (f: string) => named.some((n) => n.startsWith(`${f.split("#")[0]}#`));
+          const bare = named.filter((n) => !n.includes("#"));
+          if (bare.length) throw new Rejected("done", `--internal-only 要写成「文件#符号」，具体到符号才算数：${bare.join("、")} 没说是哪个文件里的哪个符号`);
+          // t-170 判据 8 (pm 08:46)：符号名必须与这件真正碰过的东西对得上。不然谁都能编一个——qa 实测用
+          // `i18n.ts#随便编` 就过了。触点是这件碰了什么的唯一记录，所以名出来的每一个符号都要在触点里。
+          const invented = named.filter((n) => !touches.includes(n));
+          if (invented.length)
+            throw new Rejected("done", `这几个符号不在这件的触点里：${invented.join("、")}——名出来的符号要是你真的碰过的那个。先把它 claim 进触点（task claim <id> --touches ...），或者改用 --shows`);
+          const uncovered = seen.filter((f) => !covers(f));
+          if (uncovered.length) throw new Rejected("done", `这几处还没说清动了里面的什么：${uncovered.join("、")}——每一处都要有一个「文件#符号」，或者改用 --shows`);
+        } else if (seen.length) {
+          throw new Rejected("done", `这件动了人看得到的字：${seen.join("、")}——所以不能光说「${NO_HUMAN_IMPACT}」。用 --shows 说一句人现在能看到什么；若这几处真的只动了内部符号，用 --internal-only "文件#符号" 具体说出是哪几个（写不出符号名，就说明还没看清自己改了什么）。判断就来自上面列出的那几处触点，不对就改触点`);
+        }
       }
       // t-105: claim's touches were a declaration; these are the fact. Seams are recomputed from the fact, by the same
       // rules — a seam that only appears once the truth is told is the collision the declaration was hiding, and it

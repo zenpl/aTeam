@@ -100,7 +100,12 @@ export interface Note extends Base {
 }
 
 export type TaskOp =
-  | { op: "create"; task: string; title: string; criteria: string[]; /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string }
+  | {
+      op: "create"; task: string; title: string; criteria: string[];
+      /** t-096: the number people knew it by elsewhere; never an identifier. */ label?: string;
+      /** t-171: 这件做完之后人会看到什么。与 `no_human_impact` 二选一——承诺那头也要有闸。 */ shows?: string;
+      /** t-171: 明写这件不改变人看到的东西。与 `shows` 二选一。 */ no_human_impact?: boolean;
+    }
   /** t-096: change what people see it called. The id is untouched, as always. */
   | { op: "label"; task: string; label: string }
   | { op: "claim"; task: string; touches: string[] }
@@ -114,6 +119,8 @@ export type TaskOp =
       touches?: string[];
       /** t-151: 明写这件对人没有影响。与 `shows` 二选一——两个都不给会被拒绝，两个都给也会。 */
       no_human_impact?: boolean;
+      /** t-170 (pd 08:33): 碰了人可见的文件时的具名出路——「文件#符号」，具体到符号才算数。 */
+      internal_only?: string[];
     }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
@@ -244,27 +251,59 @@ export const SHOWS_MAX_CHARS = 120;
 export const NO_HUMAN_IMPACT = "不改变人看到的东西";
 
 /**
- * t-151 (pd 07:49)：说了「不改变人看到的东西」，却碰了人看到的东西——闸当场拦下，并把碰到的逐个列出来。
+ * t-170 (pd 08:22)：**「碰了人可见的东西」按改动算，不按文件算。**
  *
- * 这不是不信任写下它的人，是因为**这句话最可能出错的方式不是撒谎，是没注意**：改 i18n 里一个词、改说明书一行、
- * 改卡上的一句，都是「顺手」，而顺手正是人不会重新想一遍「这对人意味着什么」的时刻。
+ * t-151 第一版按文件前缀判，当天就误伤了一次真实的活：t-165 删的是 html.ts 里一段死代码（`#justDeferred`），
+ * 人看到的东西一个字没变，闸却拦下它，逼作者写一句内容是「什么都没变」的 shows。那句 shows 长得像「说得出人
+ * 能看到什么」，其实是第二类的合法版本——**这道闸本来就是为了把这两类分开的，文件级判定反而在往日志里掺第三类。**
  *
- * 名单是声明的，会漏；漏了就是一次没被拦下的顺手改。所以它按**出处**列，不按猜测：页面与它的词、说明书、
- * 以及 core 里那几处专门产生给人看的话的符号（t-154 之后它们集中在 READING_SAYINGS/sayReading 一带）。
- * 测试文件不在名单里——改一个用例不改变任何人看到的东西。
+ * 按 pd 的口径，只有三件事算人可见：动了那些 key、动了它们的文本、动了哪个 key 在哪显示。所以判定分三档：
+ *
+ * ① **只装文本的地方**（`WORDS_FILES`）——i18n 与说明书里没有内部符号可言，改它就是改人看到的字。拒绝。
+ * ② **core 里的 key 本身**（`KEY_SYMBOLS`）——触点写成 `路径#符号` 且符号是其中之一。拒绝。
+ * ③ **其余**：人可见文件里的内部符号（`html.ts#justDeferred` 这种）不算；只给了文件名、没说改在哪儿的，
+ *    **算不准**——那时只提醒，不拒绝（判据 3：别人装上我们的闸，最坏是被提醒，不该被我们的纪律挡住干活）。
+ *
+ * 名单仍然会漏，而且这一版比上一版更依赖它。t-143/t-144 把人可见的每句话收进唯一 key 之后，②那一档就该从
+ * 那张表算出来，而不是在这里数符号名。在那之前，漏掉一个 key 的代价是一次没被拦下的顺手改。
  */
-export const HUMAN_VISIBLE_TOUCHES = [
-  "packages/server/src/html.ts",
-  "packages/server/src/i18n.ts",
-  "packages/core/manual/",
-  "packages/cli/src/format.ts",
+export const WORDS_FILES = ["packages/server/src/i18n.ts", "packages/core/manual/"] as const;
+/**
+ * t-170: core 里装着给人看的整句话的那些符号。动它们就是动人看到的字，没有「内部符号」这一说。
+ *
+ * **这份名单不是我数出来的，是量出来的**：build.test.ts 里有一条闸，从 core 的源码里把「函数体或常量里含给人看
+ * 的整句中文」的导出符号全找出来，与这份名单逐个对；少一个就红。qa 08:46 判不过的第一条正是名单漏了一个
+ * （frontend 的 board.ts#inFlightGroups，它改的是牌桌在途那一段的四行字），而漏的原因就是当时这份名单靠手数。
+ *
+ * t-143 把人可见的每句话收进唯一 key 之后，这份名单该由那张表取代；在那之前，这条闸让它不会悄悄过时。
+ */
+export const KEY_SYMBOLS = [
+  "ALLOCATION_PATTERNS", "BATCH_LINES", "CONTACT_ASK", "CONTACT_ASK_WAS", "FAIL_NOTICE", "FORWARD_LINK",
+  "INVITE_SENT_PREFIX", "LITERAL_CHECK_BLIND_SPOTS", "MIGRATION_ASK_TITLE", "MIGRATION_FINISH", "MIGRATION_PATCH", "NO_HUMAN_IMPACT",
+  "PASSTHROUGH_IS_NOT_A_LITERAL", "REACH_RULE", "REACH_STALE_MS", "REACH_WORDS", "READING_SAYINGS", "RESPONSIBILITIES",
+  "RESPONSIBILITY_DOING", "SAID_PREFIX", "SEAM_SAME_FILE", "SHOWS_GATE_BLIND", "STAND_IN_ASK_TITLE", "VERIFY_ASK",
+  "alertContact", "allocationSummary", "alsoHere", "batches", "board", "capabilityKey",
+  "coverage", "deployHistory", "followUps", "lightSeamLine", "manualFor", "missingCard",
+  "nobodyElse", "overdueByPresence", "owedSentences", "responsibilityAppendix", "runtimeAllocation", "saidHops",
+  "sayReading", "shapeFor", "standIns", "staticAllocation",
 ] as const;
 
-/** t-151: 这个触点是不是「人看得到的东西」。`路径#符号` 按路径判；测试文件一律不算。 */
-export function touchesHumanVisible(touch: string): boolean {
+/** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
+export const RENDERING_FILES = ["packages/server/src/html.ts", "packages/cli/src/format.ts"] as const;
+
+/** t-170: 一个触点算不算「碰了人可见的东西」，以及算不算得准。 */
+export type TouchVerdict = "human_visible" | "internal" | "unsure";
+
+
+export function touchesHumanVisible(touch: string): TouchVerdict {
   const path = touch.split("#")[0].trim();
-  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return false;
-  return HUMAN_VISIBLE_TOUCHES.some((x) => path === x || path.startsWith(x));
+  const symbol = touch.includes("#") ? touch.slice(touch.indexOf("#") + 1).trim() : "";
+  if (/(^|\/)test\//.test(path) || /\.test\.[cm]?[jt]sx?$/.test(path)) return "internal";   // 改一个用例不改变任何人看到的东西
+  if (WORDS_FILES.some((x) => path === x || path.startsWith(x))) return "human_visible";        // ① 只装文本的地方
+  if (symbol && KEY_SYMBOLS.includes(symbol as (typeof KEY_SYMBOLS)[number])) return "human_visible"; // ② key 本身
+  // t-170 第二轮：**不再按符号自动放过**。带不带符号都算碰了人可见的东西；要出去，走 --internal-only 那条具名出路。
+  if (RENDERING_FILES.some((x) => path === x)) return "human_visible";
+  return "internal";
 }
 /** Roles that verify. A project whose role set has none of them gets its verification asked of the human (t-055). */
 export const VERIFIER_ROLES = ["qa"];
@@ -391,7 +430,7 @@ export const DECLINE_PREFIX = "不办：";
  * t-149: 一道闸（一条自动判断，做出结论并据此挡人）的名字。判决与「修哪道闸」都指它，所以两边说的是同一道闸。
  * 今天只有接缝闸有过被人核对的历史；再加一道闸，就在这里加一个名字，不在别处另起一套。
  */
-export const GATES = ["seam"] as const;
+export const GATES = ["seam", "shows"] as const;
 export type Gate = (typeof GATES)[number];
 
 /**
@@ -412,6 +451,23 @@ export const SEAM_VERDICT_WORDS: Record<SeamVerdict, string> = { real: "真接�
  * 它只是个指针；「这道闸此刻可不可信」不由它决定，由被判过的结论算出来（见 gateHonesty）。
  */
 export const gateFixKey = (gate: Gate) => `gate.${gate}.fix`;
+
+/**
+ * t-170 判据 10 (pm 08:55，按 pd 06:37)：**一道闸知道自己看不见什么时，要把这句话带在结论上。**
+ *
+ * 「不改变人看到的东西」这道闸按两类判人可见的改动（pd 08:22）：那句话是什么、哪句话出现在哪儿。它此刻只认得
+ * 第一类。第二类没有名字可数——`inFlightGroups` 改了牌桌在途那四行字，而它一个中文字面量都没有（qa 08:54 在
+ * 合并后的树上实测，闸没红）。修法要等「哪个 key 在哪显示」变成可算的数据。
+ *
+ * 与 t-149 同一个机制：这句话由 `project:gate.shows.fix` 指的那件任务的状态决定，那件在生产上验过之后它自己
+ * 消失，不用谁去关掉它。
+ *
+ * 措辞是 pd 09:02 定稿的，两处是它改的、理由值得留着：① 末尾那句出路——**一句只说「我看不见」的实话会让读的人
+ * 停在原地**；我们对拒绝话立的规矩是「说完不行要说谁行」，闸声明自己瞎的时候同样适用。② 「这件干了什么」「任务
+ * 标题」是给人读的说法，`shows` / `title` 是我们内部的字段名，放括号里给要动代码的人。
+ */
+export const SHOWS_GATE_BLIND = (fix: string) =>
+  `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」：比如在途那几行改成印「这件干了什么」（shows）还是印任务标题（title），它看不见。这一类改动请作者自己在判据里说出人会看到什么变化。修法在 ${fix}。`;
 
 export const BATCH_PREFIX = "batch.";
 export const BATCH_SURFACE = "repo";

@@ -44,8 +44,8 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
       [{ kind: "ack" }, "ack 要带 of"],
       [{ kind: "untell", of: "01X" }, "untell 要带 reason"],
       [{ kind: "note" }, "note 要带 body"],
-      [{ kind: "task", op: "create", task: "t-1", criteria: ["x"] }, "task:create 要带 title"],
-      [{ kind: "task", op: "create", task: "t-1", title: "题" }, "task:create 要带 criteria"],
+      [{ kind: "task", op: "create", task: "t-1", criteria: ["x"] , no_human_impact: true}, "task:create 要带 title"],
+      [{ kind: "task", op: "create", task: "t-1", title: "题" , no_human_impact: true}, "task:create 要带 criteria"],
       [{ kind: "task", op: "label", task: "t-1" }, "task:label 要带 label"],
       [{ kind: "task", op: "claim", task: "t-1" }, "task:claim 要带 touches"],
       [{ kind: "task", op: "done" , no_human_impact: true}, "task:done 要带 task"],
@@ -72,7 +72,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
       [{ kind: "task", op: "verify", task: "t-1", surface: "repo", pass: "true" }, "task:verify 要带 pass（true 或 false）"],
       [{ kind: "task", op: "seam", tasks: ["t-1"], resolution: "x" }, "task:seam 要带 tasks"],
       [{ kind: "task", op: "seam", tasks: "t-1,t-2", resolution: "x" }, "task:seam 要带 tasks"],
-      [{ kind: "task", op: "create", task: "t-1", title: "题", criteria: "能用" }, "task:create 要带 criteria（一个字符串数组）"],
+      [{ kind: "task", op: "create", task: "t-1", title: "题", criteria: "能用" , no_human_impact: true}, "task:create 要带 criteria（一个字符串数组）"],
       [{ kind: "note", body: "x", decides: { of: "01X" } }, "note 的 decides 要是"],
       [{ kind: "note", body: "x", decides: "01X" }, "note 的 decides 要是"],
       [{ kind: "note", body: "x", refs: "01X" }, "refs 要是一个字符串数组"],
@@ -91,7 +91,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
   });
 
   it("合法事件一字不变地照走（判据 3 的另一半：不是靠把所有东西都拒掉换来的）", async () => {
-    expect((await post("pm", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] })).status).toBe(201);
+    expect((await post("pm", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] , no_human_impact: true})).status).toBe(201);
     expect((await post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["a.ts"] })).status).toBe(201);
     expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" , no_human_impact: true})).status).toBe(201);
     expect((await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true })).status).toBe(201);
