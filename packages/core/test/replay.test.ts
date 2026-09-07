@@ -3145,8 +3145,24 @@ describe("t-192 · 守着阈值的用例，输入不许由那个阈值算出来"
   });
 
   it("判据 3（通则）：那几条用例的推进量里不出现这个常量的名字", () => {
-    const src = readFileSync(new URL("./replay.test.ts", import.meta.url), "utf8");
-    const ticks = [...src.matchAll(/c\.tick\(([^)]*)\)/g)].map((m) => m[1]);
+    // 注释先抹掉：不抹的话，**这段闸自己的说明**里那句 `c.tick(min(60) + DEFAULT_LATE_MS + min(1))` 会被它
+    // 自己抓成违例——闸报出的第一个违例是解释它的那句话。扫源码的东西不跳注释，今晚已经栽过一次（t-143）。
+    const src = readFileSync(new URL("./replay.test.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    // qa 12:08 抓到的：`[^)]*` 在**第一个**右括号处就停了，而这个文件里每一个真实的推进量都长成 `min(...)`，
+    // 天生带一层嵌套括号——`c.tick(min(60) + DEFAULT_LATE_MS + min(1))` 只被读成 `min(60`，那个常量看都看不到。
+    // 「闸抓不住它要抓的东西」是今晚同族的第七种，前六种里正好有一种就是「正则配不上」。所以这里数括号，
+    // 一直读到与它配对的那一个右括号为止。
+    const ticks: string[] = [];
+    for (let i = src.indexOf("c.tick("); i >= 0; i = src.indexOf("c.tick(", i + 1)) {
+      let depth = 0, j = i + "c.tick".length;
+      for (; j < src.length; j++) {
+        if (src[j] === "(") depth++;
+        else if (src[j] === ")" && --depth === 0) break;
+      }
+      ticks.push(src.slice(i + "c.tick(".length, j));
+    }
+    expect(ticks.length, "一个 c.tick( 都没扫到——这条断言此刻什么也没守").toBeGreaterThan(10);
     const derived = ticks.filter((t) => t.includes("DEFAULT_LATE_MS"));
     expect(derived, `这些推进量由阈值自己算出来：${derived.join("、")}——调大阈值它们跟着走，守的就是自洽不是行为`).toEqual([]);
   });
