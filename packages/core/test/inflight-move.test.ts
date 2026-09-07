@@ -39,13 +39,11 @@ describe("t-153 · 六组的成员判定在 core 一处", () => {
   it("六组同时有人，每组装的是它该装的那一件", async () => {
     const gs = inFlightGroups(await sixGroups());
     expect(gs.map((g) => g.key)).toEqual(["working", "blocked", "done", "open", "failed", "verifiedElsewhere"]);
-    expect(titles(gs, "working")).toEqual(["正在做的一件"]);
+    expect(titles(gs, "working")).toEqual(["正在做的一件"]);   // 没写 shows 的落在标题那一支
     expect(titles(gs, "blocked")).toEqual(["卡住的一件"]);
     expect(titles(gs, "open")).toEqual(["没人开始的一件"]);
-    expect(titles(gs, "failed")).toEqual(["验收未过的一件"]);
-    // t-056：有 shows 就说 shows。done 这一组里两支来源不同，一支印 title 一支印 shows——
-    // 这个不一致是搬迁前就有的，pd 07:56 定了统一成 shows，但那是 t-163，不混进搬家。
-    expect(titles(gs, "done")).toEqual(["做完等验的一件"]);
+    expect(titles(gs, "failed")).toEqual(["人能看到 t-f1"]);   // t-163：有 shows 就说 shows
+    expect(titles(gs, "done")).toEqual(["人能看到 t-d1"]);
     expect(titles(gs, "verifiedElsewhere")).toEqual(["人能看到 t-v1"]);
     expect(gs.map((g) => g.total)).toEqual([1, 1, 1, 1, 1, 1]);
   });
@@ -72,5 +70,41 @@ describe("t-153 · 六组的成员判定在 core 一处", () => {
       const tk = Object.values(b.tasks).flat().find((x) => x.id === id);
       if (tk) expect(shown.has(tk.shows ?? tk.title)).toBe(false);
     }
+  });
+});
+
+/**
+ * t-163（pd 07:56）：六组一律「有 shows 就印 shows，没有就印标题」，不分组别。
+ *
+ * 搬迁前 working/blocked 两组印标题、另两组印 shows ?? title——那不是设计，是先做的那两组没跟上。
+ * 这份用例守的是「不分组别」这四个字：同一件事在六组里读起来一样。
+ */
+describe("t-163 · 六组一律先说 shows", () => {
+  it("有 shows 的组组都印 shows，没有的落回标题——同一组里两种来源也一致", async () => {
+    const b = await sixGroups();
+    // t-w1 与 t-b1 建的时候没写 shows；给它们补上，看那两组是不是跟着变
+    const withShows = { ...b, tasks: Object.fromEntries(Object.entries(b.tasks).map(([k, list]) => [k, list.map((t) => (t.id === "t-w1" || t.id === "t-b1" ? { ...t, shows: `人能看到 ${t.id}` } : t))])) } as typeof b;
+    const gs = inFlightGroups(withShows);
+    expect(titles(gs, "working")).toEqual(["人能看到 t-w1"]);
+    expect(titles(gs, "blocked")).toEqual(["人能看到 t-b1"]);
+    expect(titles(gs, "done")).toEqual(["人能看到 t-d1"]);
+    expect(titles(gs, "failed")).toEqual(["人能看到 t-f1"]);
+    expect(titles(gs, "verifiedElsewhere")).toEqual(["人能看到 t-v1"]);
+  });
+
+  it("那些没写 shows 的仍然印标题——不许为了好看造一句话填上（判据 2）", async () => {
+    const gs = inFlightGroups(await sixGroups());
+    // 夹具里 t-o1/t-w1/t-b1 三件没有 shows，它们印的就是我们给任务起的名字
+    expect(titles(gs, "open")).toEqual(["没人开始的一件"]);
+    expect(titles(gs, "working")).toEqual(["正在做的一件"]);
+    expect(titles(gs, "blocked")).toEqual(["卡住的一件"]);
+  });
+
+  it("一行只说一件事：印了 shows 就不再把标题也带上", async () => {
+    const b = await sixGroups();
+    const gs = inFlightGroups(b);
+    const done = gs.find((g) => g.key === "done")!.items[0];
+    expect(done.title).toBe("人能看到 t-d1");
+    expect(done.title).not.toContain("做完等验的一件");
   });
 });

@@ -1176,9 +1176,13 @@ function sortRecent(b: Board, k: string, items: FlightItem[]): FlightItem[] {
 }
 
 export function inFlightGroups(b: Board): { key: string; total: number; items: FlightItem[] }[] {
+  // t-163 (pd 07:56): every group reads the same way — the task's own 「人能看到什么」 if it has one, otherwise the
+  // title we gave it. A person reading this section is asking what is moving right now, and `shows` is that sentence;
+  // the title is our name for the task, the fallback. Never both on one row: one line saying the same thing twice
+  // reads as two things. The tasks written before that rule land on the title branch — plain, and true.
   const g = (k: string): FlightItem[] => (b.in_flight[k]?.all ?? []).map((x) => {
     const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
-    return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? blockedWhy(task.blocked_on) : undefined };
+    return { title: task?.shows ?? x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? blockedWhy(task.blocked_on) : undefined };
   });
   // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
   // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
