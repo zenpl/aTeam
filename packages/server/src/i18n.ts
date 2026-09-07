@@ -173,9 +173,15 @@ export const UI = {
   tokenTitle: "输入 token",
   // t-110 (pd 00:28 ④): what the human has is the whole board address, not a key they must cut out of it
   tokenLead: "把牌桌地址整条粘进来，或只粘地址里 k= 后面那一段。",
-  tokenLabel: "token",
+  tokenLabel: "牌桌地址",
   tokenSubmit: "继续",
-  tokenWrong: "token 不对，再试一次。",
+  /**
+   * t-115 (pd 01:17)：不说「token 不对」——人手上有的是一条地址，不是一个 token，用他没有的词说他手上的东西，
+   * 他不知道该找什么；也不说「再试一次」，他会粘同一个东西，除非我们先告诉他形态。
+   */
+  tokenWrong: "这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。",
+  /** 完整形态、明显的假值，让人一眼对照；不拿真项目名当例子。 */
+  tokenExample: "https://ateam.fly.dev/p/demo/?k=xxxxxxxx",
   unauthorized: "这个页面需要项目 token。请打开一次",
   unauthorizedTail: "，之后会保存在 cookie 里。",
 

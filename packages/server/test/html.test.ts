@@ -199,7 +199,10 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
 
     const wrong = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: "nope" });
     expect(wrong.status).toBe(401);
-    expect(await wrong.text()).toContain("token 不对，再试一次。");
+    // t-115 (pd 01:17)：不再说「token 不对，再试一次」——人手上是一条地址不是 token，那句要说清形态并给例子
+    const wrongText = await wrong.text();
+    expect(wrongText).toContain("这不像一条牌桌地址。把 agent 给你的那条整个粘进来就行，末尾带 k= 的那种。");
+    expect(wrongText).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");
     expect(wrong.headers.get("set-cookie")).toBeNull();
 
     const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: TOKEN });
