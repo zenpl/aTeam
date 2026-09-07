@@ -1261,6 +1261,30 @@ describe("t-110 · 钥匙三分后人看到的四处文字", () => {
     } finally { await v.stop(); }
   });
 
+  it("a key appears once, in the address, and is never echoed back — not in the box, not in a hidden field, not in the redirect", async () => {
+    const v = server();
+    await v.start();
+    try {
+      const secret = TOKEN;
+      // arriving with the key in the address: the answer carries a cookie and sends the reader to a clean URL
+      const r = await fetch(`${v.base}/?token=${secret}`, { redirect: "manual", headers: { accept: "text/html" } });
+      expect(r.status).toBe(303);
+      expect(r.headers.get("location")).toBe("/");
+      expect(r.headers.get("location")).not.toContain(secret);
+      expect(r.headers.get("set-cookie")).toContain("HttpOnly");
+      expect(await r.text()).not.toContain(secret);
+      // a wrong key comes back as a fresh box, never as the thing that was typed
+      const wrong = await v.form("/token", { then: "/ack", id: "x", token: "not-the-key" }, { accept: "text/html" });
+      const page = await wrong.text();
+      expect(page).not.toContain("not-the-key");
+      expect(page).toContain('type="password"');
+      expect(page).not.toMatch(/name="token"[^>]*value=/);
+      // the pending action travels in the hidden fields; the key never does
+      expect(page).toContain('<input type="hidden" name="then" value="/ack">');
+      expect(page).not.toMatch(/<input type="hidden"[^>]*token/);
+    } finally { await v.stop(); }
+  });
+
   it("says whether this board has an owner's key, by the fact and in three states, with no button and no key on the page", async () => {
     const store = new MemoryStore();
     await append(store, { kind: "note", actor: "pm", body: "起项目" } as never, { human: HUMAN });
