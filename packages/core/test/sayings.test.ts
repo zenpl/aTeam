@@ -102,6 +102,22 @@ describe("t-143 · 那个数的算法，按 frontend 09:06 的两条合同", () 
     expect(humanSentences(split).length).toBe(humanSentences(base).length);
   });
 
+  /**
+   * 这条是**修复的证据**，不是记事：让扫描器失明的那个输入现在会被扫到。
+   *
+   * `html.ts:954` 有一句 `s.replace(/[&<>"']/g, …)`。第一版扫描器不认正则字面量，那个 `"` 被当成字符串开头，
+   * **从那一行往后整份文件都数不到**。html.ts 的中文恰好都在 954 之前，所以数出来的 1 看着没错——它错在
+   * 任何写在 954 之后的中文都不会被发现，而那正是这条闸要防的事。**「一整份文件不被扫到」的表现形式，
+   * 就是「这份文件很干净」。**
+   */
+  it("正则字面量里的引号不再让扫描器失明——那一行之后的中文照样扫得到", () => {
+    const input = `const esc = (s) => s.replace(/[&<>"']/g, (c) => c);\nconst x = "这一句写在正则之后";`;
+    expect(humanSentences(input)).toEqual(["这一句写在正则之后"]);
+    // 真文件上的同一件事：整份 html.ts 之后接一句，探针必须活着穿到末尾
+    const probe = read("packages/server/src/html.ts") + '\nconst z = "探针中文";\n';
+    expect(humanSentences(probe)).toContain("探针中文");
+  });
+
   it("模板串里 ${…} 内部的字面量也算——它照样是人会读到的话", () => {
     expect(humanSentences('const s = `${x ? "在听" : "缺人"}`;')).toEqual(["在听", "缺人"]);
   });
