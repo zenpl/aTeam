@@ -86,7 +86,17 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   if (st.default_missed) return { state: "missed", line: DEFAULT_LINES.missed(i.default) };
   if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
   // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
-  return { state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(i.ack_by) - now.getTime()), i.default) };
+  //
+  // t-200：**期限已经过去时，这里不再说「不点的话…到期」。** 这是 qa 12:31 那张卡的落点：它 08:12 就到期了，
+  // 却还停在 waiting（一次误 ack 把它弄成了异常态，根在 t-193），于是这一句拿着一个负数去问梯子，梯子答
+  // 「还有不到 1 分钟」——过期四小时说还有不到一分钟。
+  //
+  // 现在梯子答 null（见 otherSideOfNow），**由这里决定说什么**。我没有新写一句：`stuck` 那句「过期了，默认
+  // 还没生效。」是 pd 早就定过的，而它此刻说的正是真的——期限过了、默认没生效。这不是替 pd 写字，是把它已经
+  // 写好的那一句用在它本来就该用的地方；deaf 那种「要不要另说一句新话」的问题不在这里。
+  const left = until(Date.parse(i.ack_by) - now.getTime());
+  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  return { state: "waiting", line: DEFAULT_LINES.waiting(left, i.default) };
 }
 
 /**
@@ -100,10 +110,35 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
  * 合并之前这段逻辑在仓库里有四份（core 这里、页面的 UI.ago、命令行的 howLong、下面 sayReading 里那句只会说分钟的），
  * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
  */
-export function ago(ms: number): string {
+export function ago(ms: number): string | null {
+  if (otherSideOfNow(ms)) return null;
   return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
 }
 export const AGO_JUST_NOW = "刚刚";
+
+/**
+ * t-200：**三把梯子唯一判负的地方。**
+ *
+ * 三把梯子（`ago`／`span`／`until`）都只定义了非负的那一半，而另一半没人定义——**它不报错，它回答**：
+ * 任何负数都掉进最小的那一档，于是 `until(-4小时)` 说「还有不到 1 分钟」、`span(负)` 说「不到 1 分钟」、
+ * `ago(负)` 说「刚刚」。qa 12:31 那张卡是真样本：08:12 就到期了，页面说它「还有不到 1 分钟到期」——过期四小时。
+ *
+ * pd 09:17 那条规矩说的正是这件事：一个句框如果只有某几档填得进去，那不是那一档特殊，是句框错了。
+ * frontend 12:33 把它用在「刚刚」上时说全了另一半：**梯子只定义了非负的那一半，另一半没人定义。**
+ *
+ * **这里只判「在现在的哪一侧」，不说那一侧该说什么话。** 负数在三把梯子里的含义不一样——对 `until` 是「已经
+ * 过去了」，对 `ago`／`span` 是「一个未来的时刻被当成过去问」——所以那句话该由**调用方**说，它才知道自己在
+ * 问什么。梯子答不了就答 `null`，绝不猜一档。这也是判据 4 要的：判负只此一处，改它一处就改了三把。
+ *
+ * **「已经过去」那句新话归 pd**（判据 2，人可见的字 11:17 起冻结），所以此刻没有任何一个调用方在新写一句：
+ * 它们要么用现成的、pd 早已定过的那一句，要么就不印这一句。各自的理由写在各自的调用点上。
+ *
+ * 判据 3 也在这里说一次：**不许用「正常流程拿不到负数」结案。** 这次显形是因为一次误 ack 把卡弄成了异常态，
+ * 而异常态恰恰是梯子该说实话的时候——一个只在顺境里正确的说法，等于把「不会发生」当成了保证。
+ */
+export function otherSideOfNow(ms: number): boolean {
+  return ms < 0;
+}
 
 /**
  * 同一道梯子的另一半：**一段时长**说成几个字，不带「前」。
@@ -115,7 +150,8 @@ export const AGO_JUST_NOW = "刚刚";
  * 所以这里不是「再写一个格式化函数」，而是**把梯子本身单独拿出来，`ago` 也调它**：两种句框共用同一段分档与取整，
  * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
  */
-export function span(ms: number): string {
+export function span(ms: number): string | null {
+  if (otherSideOfNow(ms)) return null;   // t-200：另一侧不是最小的一档，见 otherSideOfNow
   const sec = Math.floor(ms / 1000);
   if (sec < 60) return SPAN_UNDER_A_MINUTE;
   if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
@@ -134,7 +170,8 @@ export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
  * 梯子：不到 1 小时「还有 N 分钟」／不到 1 天「还有 N 小时」／更远「N 天后」。取整与不出小数同前两把。
  * 不到一分钟那一档 pd 没定，我按前两把的形状写成「还有不到 1 分钟」，已单独发它过目。
  */
-export function until(ms: number): string {
+export function until(ms: number): string | null {
+  if (otherSideOfNow(ms)) return null;   // t-200：已经过去了，这把梯子答不了，见 otherSideOfNow
   const sec = Math.floor(ms / 1000);
   if (sec < 60) return UNTIL_UNDER_A_MINUTE;
   if (sec < 3600) return `还有 ${Math.floor(sec / 60)} 分钟`;

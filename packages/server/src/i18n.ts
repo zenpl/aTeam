@@ -240,5 +240,8 @@ export const UI = {
    * Relative time, in words — core's ladder, not a second one (t-180). The page used to round and to run its
    * minute band out to 90 minutes, so the same instant read differently here and in a sentence core handed over.
    */
-  ago: (sec: number): string => agoOf(sec * 1000),
+  ago: (sec: number): string => agoOf(Math.max(0, sec) * 1000)!,
+  // t-200：core 的 ago 对负数答 null（见 otherSideOfNow）。**页面的决定是「未来的时刻就说刚刚」**，而这个决定
+  // 不是这次新做的：两个喂进来的 secAgo 早就写着 Math.max(0, …)（html.ts:166 与 :672）。所以这里的 clamp 是
+  // 把那个已经存在的决定说出来、并且放在一处，不是在梯子里又偷偷加一档。这一路的负数只来自钟不同步。
 };

@@ -47,7 +47,10 @@ export function deafNotice(st: WatchState): string | null {
   if (st.kind === "never" || st.kind === "listening") return null;
   // t-162：句子搬到 core 的 WATCH_LINES 一处，这里只把数据递进去。
   // pd 09:17 的句框规矩仍然成立（时间短语在句首，四档都得通顺），那条规矩现在写在 core 那一处。
-  return st.kind === "stopped" ? WATCH_LINES.stopped(ago(st.sinceMs), st.cmd) : WATCH_LINES.unreadable(st.cmd);
+  // t-200：`ago` 对负数答 null（见 core 的 otherSideOfNow）。**这里的决定是把它当 0。** 这一路的负数只有一个
+  // 来源：心跳文件的时刻在本机时钟的前面（钟不同步）。那时「刚刚」不是猜的——心跳确实刚跳过。**这不是把负数
+  // 当最小档，是这个调用点自己知道它的负数意味着什么**，而这正是判负放在一处、说法留给调用方的用处。
+  return st.kind === "stopped" ? WATCH_LINES.stopped(ago(Math.max(0, st.sinceMs))!, st.cmd) : WATCH_LINES.unreadable(st.cmd);
 }
 
 /**
@@ -73,7 +76,9 @@ export function behindNotice(idle: PullIdle, windowMs = LISTEN_WINDOW_MS): strin
   if (idle.kind === "never") return WATCH_LINES.neverPulled;
   if (idle.s * 1000 <= windowMs) return null;
   // 这一句说的是时长不是时刻（「你 12 分钟没拉过了」），所以用 span，不是 ago——同一道梯子，另一个句框。
-  return WATCH_LINES.behind(span(idle.s * 1000));
+  // t-200：`idle.s` 由 pullIdle 保证非负（`s >= 0` 那一条），所以 span 在这一路答不了 null——不是我在这里
+  // 兜底，是这个数从源头就不可能是负的。断言写在用例里。
+  return WATCH_LINES.behind(span(idle.s * 1000)!);
 }
 
 /**
