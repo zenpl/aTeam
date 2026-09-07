@@ -83,6 +83,10 @@ export function board(b: Board, me: string): string {
 
   if (b.overdue?.length) {
     out.push("", "OVERDUE");
+    // t-140: the same three sentences the board shows, from the same place (t-139's overdue_by_presence).
+    for (const g of [b.overdue_by_presence?.missing, b.overdue_by_presence?.deaf, b.overdue_by_presence?.listening]) {
+      if (g?.count && g.line) out.push(`  ${g.roles.map(who).join("、")} ${g.line}`);
+    }
     for (const o of b.overdue) out.push(`  ${who(o.to)} has not acked "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 

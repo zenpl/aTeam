@@ -72,3 +72,4 @@ describe("t-139 · 三态到得了读的人手里", () => {
     expect(card!.from).toBe(SERVICE_ACTOR);
   });
 });
+

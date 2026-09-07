@@ -486,6 +486,18 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   if (gaps.length) d.push(`<section id="coverage"><h3>${UI.coverage} <span class="meta">${gaps.length}</span></h3><ul class="plain">${gaps.map((c) => `<li>${esc(nameRoles(c.line.replace(/（能力事实[^）]*）/g, "").trim(), who, b.roles ?? []))}</li>`).join("")}</ul></section>`);
 
   d.push(`<section id="overdue"><h3>${UI.overdue} <span class="meta">${b.overdue.length}</span></h3>`);
+  // t-140 (pd 05:15): three ways of not answering, and they ask different things of a reader — a role nobody is
+  // running has to be started, a node that stopped reading has to read, and one that is reading owes only an answer.
+  // Each group's sentence is core's (t-139's overdue_by_presence), counted there and said here, never a second time.
+  const byPresence = b.overdue_by_presence;
+  if (byPresence) {
+    // core's sentence already carries the count, so the row adds only who it is about — never the number twice.
+    const group = (g: typeof byPresence.missing) => g.count
+      ? `<li><b>${esc(g.roles.map(who).join("、"))}</b> ${esc(g.line)}</li>`
+      : "";
+    const rows = [byPresence.missing, byPresence.deaf, byPresence.listening].map(group).filter(Boolean);
+    if (rows.length) d.push(`<ul class="plain by-presence">${rows.join("")}</ul>`);
+  }
   d.push(b.overdue.length ? `<ul class="plain">${b.overdue.map((i) => `<li><span class="tag warn">${UI.instrStatus.overdue}</span> ${esc(UI.overdueLine(who(i.to), i.body, who(i.from)))} <span class="meta">（${esc(UI.due(ago(i.ack_by)))} · <code>${esc(i.instruction)}</code>）</span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(`</section>`);
 
