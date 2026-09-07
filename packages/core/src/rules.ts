@@ -155,7 +155,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   "task:withdraw": { task: "string", reason: "string" },
   "task:obsolete": { task: "string", decision: "string" },
   "task:reopen": { task: "string", reason: "string" },
-  "task:criteria": { task: "string", add: "strings" },
+  "task:criteria": { task: "string" },
   "task:seam": { tasks: "pair", resolution: "string" },
 };
 /** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
@@ -167,6 +167,17 @@ const OPTIONAL: Record<string, Record<string, FieldKind>> = {
   "task:seam": { verdict: "string", missed: "boolean" },
   "task:create": { label: "string", shows: "string", no_human_impact: "boolean" },
   "task:obsolete": { reason: "string" },
+  // t-166：`add` 与 `moved` 谁都不是必填，但两个都不给这条事件就没有内容——那一句归形状闸（见 EITHER）。
+  // `moved` 的字段类型也在形状闸里查；它的**含义**（序号在范围内、目标任务真的存在）要读任务表，只能留在业务规则里。
+  "task:criteria": { add: "strings" },
+};
+
+/**
+ * t-166: ops where no single field is required but the event is empty without one of them. Missing all of them is a
+ * shape problem, not a business one — the same as a missing required field, and it says so in the same voice.
+ */
+const EITHER: Record<string, string[]> = {
+  "task:criteria": ["add", "moved"],
 };
 
 const holds = (v: unknown, k: FieldKind): boolean =>
@@ -198,6 +209,16 @@ export function checkShape(e: NewEvent): void {
   }
   for (const [field, kind] of Object.entries(OPTIONAL[slot] ?? {})) {
     if (rec[field] !== undefined && !holds(rec[field], kind)) throw new Rejected("shape", `${slot} 的 ${field} 可以不带，带了就要是${SHAPE_OF[kind]}，收到 ${valueForm(rec[field])}`);
+  }
+  const either = EITHER[slot];
+  if (either && either.every((f) => rec[f] === undefined))
+    throw new Rejected("shape", `${slot} 要带 ${either.join(" 或 ")} 之一，这条一个都没带：${either.join("、")} 各自可以不写，但两个都不写这条事件就什么也没说`);
+  // t-166: the one nested shape the criteria rule reaches into — its meaning is checked there, its type here.
+  const mv = (e as { moved?: unknown }).moved;
+  if (mv !== undefined) {
+    const o = mv as { index?: unknown; to?: unknown };
+    if (!mv || typeof mv !== "object" || Array.isArray(mv) || typeof o.index !== "number" || !holds(o.to, "string"))
+      throw new Rejected("shape", `task:criteria 的 moved 要是 {index: <判据序号，从 1 起>, to: "<任务 id>"}，收到 ${valueForm(mv)}`);
   }
   // one nested shape a rule reaches into: a note that decides an instruction
   const d = (e as { decides?: unknown }).decides;
@@ -461,12 +482,28 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       return;
     // R7: criteria can grow while the task is unfinished, only from those who own its scope; the adder then owns it too.
     case "criteria": {
+      // t-166：一个 op 两件事——追加，或标注某一条已经搬到别的任务上。「两个都不给」由形状闸挡（EITHER）；
+      // 这里只管「给了 add，但里面是空白」——那是内容问题，形状闸看不出来。
       const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
-      if (!add.length || add.length !== (e.add ?? []).length) throw new Rejected("criteria", "give at least one non-empty criterion");
+      if (e.add !== undefined && (!add.length || add.length !== e.add.length)) throw new Rejected("criteria", "give at least one non-empty criterion");
       if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);
+      if (e.moved) {
+        // t-166 判据 4：只有判据作者、pm 或 human 能标。**这一条比 add 那一行严**——add 还允许 pd。
+        // 我按判据 4 的字面实现，并把这处不一致说给了 pm：搬迁是「这条不再归这件」的裁定，判据里没写 pd。
+        if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== human)
+          throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR} or ${human} can mark a criterion moved on ${t.id}, not ${e.actor}`);
+        const n = e.moved.index;
+        if (!Number.isInteger(n) || n < 1)
+          throw new Rejected("criteria", `判据序号要是从 1 起的整数，就是人在 task show 里读到的那个数，收到 ${JSON.stringify(n)}`);
+        if (n > t.criteria.length)
+          throw new Rejected("criteria", `${t.id} 只有 ${t.criteria.length} 条判据，标不了第 ${n} 条——序号从 1 起，就是人读到的那个数`);
+        if (!e.moved.to?.trim()) throw new Rejected("criteria", "说出它搬到哪一件去了（--to <任务 id>）：一条只说「搬走了」的标注，读的人还是不知道该去哪儿看");
+        if (e.moved.to === t.id) throw new Rejected("criteria", `${t.id} 搬不到它自己身上`);
+        if (!state.tasks.has(e.moved.to)) throw new Rejected("criteria", `${e.moved.to} 不是这个日志里的任务——搬到一件不存在的任务上，等于把判据搬进空气里`);
+      }
       return;
     }
     // R6b: finished work that a later decision made moot ends as obsolete, pointing at the decision. Verified is final either way.

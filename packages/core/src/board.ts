@@ -32,6 +32,8 @@ export interface BoardTask {
   evidence?: string;
   /** The sha in the evidence, if any: what release and the seam check need without the text (t-070). */
   evidence_sha?: string;
+  /** t-166：已经搬到别的任务上的那几条判据（1 起的序号）。原文仍在 `criteria` 里，一字不动。 */
+  criteria_moved?: { index: number; to: string; by: string; at: string }[];
   /** t-209：这一轮的起点 sha（`done` 记下的 claim 起点）。缺席 = 这件没记过，它的产出区间不可知。 */
   base_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
@@ -1025,7 +1027,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
       // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
-      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),

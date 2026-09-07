@@ -18,6 +18,11 @@ export interface TaskState {
   refs: string[];
   /** Criteria added after creation: which index in `criteria`, by whom, when. */
   criteria_added: { index: number; by: string; at: string }[];
+  /**
+   * t-166：**已经搬到别的任务上的那几条判据**，按 1 起的序号记。原文不动、不删——搬走不是删除，历史不改。
+   * 读的人据此一眼看出哪几条不再属于这件；只读判据不读 note 的人不会再去做一件已经不归它的活。
+   */
+  criteria_moved: { index: number; to: string; by: string; at: string }[];
   created_at: string;
   /** Time of the last task event that touched it: what "most recent" means on the board. */
   updated_at: string;
@@ -609,7 +614,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
   switch (e.op) {
     case "create":
       s.tasks.set(e.task, {
-        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], refs: e.refs ?? [],
+        id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], criteria_moved: [], refs: e.refs ?? [],
         created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
@@ -681,7 +686,13 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "unblock":
       t.status = t.owner ? "working" : "open"; t.blocked_on = undefined; return;
     case "criteria":
-      for (const text of e.add) { t.criteria.push(text); t.criteria_added.push({ index: t.criteria.length - 1, by: e.actor, at: e.at }); }
+      for (const text of e.add ?? []) { t.criteria.push(text); t.criteria_added.push({ index: t.criteria.length - 1, by: e.actor, at: e.at }); }
+      // t-166：标注一条已搬走。同一条再标一次就更新指向（搬了两次的情况），不叠加两条记录。
+      if (e.moved) {
+        const at = t.criteria_moved.findIndex((m) => m.index === e.moved!.index);
+        const rec = { index: e.moved.index, to: e.moved.to, by: e.actor, at: e.at };
+        if (at >= 0) t.criteria_moved[at] = rec; else t.criteria_moved.push(rec);
+      }
       return;
     case "withdraw":
       t.status = "withdrawn"; t.blocked_on = undefined;

@@ -62,6 +62,7 @@ tasks
   ateam task obsolete <id> --by <decision note id> [--reason "..."]   terminal; a done/failed task a decision made moot, by the criteria author, pm, pd or human
   ateam task reopen <id> --reason "..."     done/failed -> working again, same owner and touches; by the owner, pm or human
   ateam task criteria add <id> "..."         one more criterion, numbered after the rest; by a criteria author, pm, pd or human; not once verified
+  ateam task criteria moved <id> <n> --to <task-id>   mark criterion n as taken over by another task; the text stays, by a criteria author, pm or human
   ateam task seam <a> <b> --resolution "..." [--verdict real|false] [--missed]
   ateam touches <路径…>                       此刻还有谁在动这些东西（不必先 claim；只看在途，不算你自己）
 
@@ -411,9 +412,19 @@ async function main(argv: string[]) {
           stampBase(t, "reopen");   // t-135: a new round is measured from where the round started, not from the first claim
           return e;
         }
+        // t-166: two things a criterion can have done to it, and neither is an edit — one more is appended, or an
+        // existing one is marked as having moved to another task. The text itself is never touched: ids are forever
+        // and so is what was written under them.
         case "criteria": {
-          const [sub, task, text] = exact(given, "add", "id", "text");
-          if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" exists (criteria are never edited; ids are forever)`);
+          const sub = given[0];
+          if (sub === "moved") {
+            const [, task, index] = exact(given, "moved", "id", "criterion-number");
+            const to = str(a, "to");
+            if (!to) throw new UsageError(`task criteria moved <id> <criterion-number> --to <task-id>: say which task took it over`);
+            return emit({ kind: "task", op, task, moved: { index: Number(index), to } });
+          }
+          const [, task, text] = exact(given, "add", "id", "text");
+          if (sub !== "add") throw new UsageError(`task criteria ${sub}: only "add" and "moved" exist (criteria are never edited; ids are forever)`);
           return emit({ kind: "task", op, task, add: [text] });
         }
         // t-149: --verdict/--missed judge the *gate*, separately from what the resolution does about the two tasks.

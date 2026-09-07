@@ -168,7 +168,19 @@ export type TaskOp =
   /** Back to working after done or failed, same owner and touches: the owner has more to change (a review, a fail). */
   | { op: "reopen"; task: string; reason: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
-  | { op: "criteria"; task: string; add: string[] }
+  /**
+   * t-166：追加判据，或**标注某一条已经搬到别的任务上**。
+   *
+   * 两件事共用一个 op，因为它们是同一个动作的两面：判据表变了。`add` 追加，`moved` 标注——**标注不删除、不改
+   * 原文**（判据 1）：搬走的那条一字不动地留在原处，只是显示时说清它已由哪一件承接。
+   *
+   * 为什么需要它：pm 今天自己被绊过一次——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事。
+   * **只读判据不读 note 的人，会去做一件已经不属于这件任务的活。** 今晚这样的搬迁至少三次（t-141 判据 3 →
+   * t-148、t-149 判据 5 → t-158、t-137 判据 4 → t-140）。
+   *
+   * `index` 是 1 起的序号——人读判据时数的就是那个数（「判据 3」），不是数组下标。
+   */
+  | { op: "criteria"; task: string; add?: string[]; moved?: { index: number; to: string } }
   | {
       op: "seam"; tasks: [string, string]; resolution: string;
       /** t-149: 对闸本身的判决——这条是真撞车（real）还是它报错了（false）。不写就是没判过，句子里如实说。 */
@@ -432,6 +444,8 @@ export const KEY_SYMBOLS = [
   "manual",
   "manualFor",
   "missingCard",
+  "movedCriterion",
+  "movedCriterionTrace",
   "noOutputSeam",
   "noRealOverlap",
   "noSuchObject",
@@ -805,6 +819,19 @@ export const realOverlapIs = (other: string, real: string[], reported: string[])
  */
 export const unknownSpanReason = (tasks: string[]) =>
   `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
+
+/**
+ * t-166：一条判据**已经搬到别的任务上**时，显示在它后面的那一句。
+ *
+ * 原文一字不动地留在原处（判据 1：标注不是删除，历史不改），后面跟这一句说清它由哪一件承接。
+ * 为什么要它：pm 今天自己被绊过——t-137 判据 4 早搬去了 t-140，而任务上只有一条 note 说这件事，
+ * **只读判据不读 note 的人会去做一件已经不属于这件任务的活**。今晚这样的搬迁至少三次。
+ *
+ * 住在 core，命令行与页面共用一句；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
+ */
+export const movedCriterion = (to: string) => `已搬到 ${to}，这件不再据它验收`;
+export const movedCriterionTrace = (index: number, to: string) =>
+  `标注：判据 ${index} 已搬到 ${to}（原文不动，这件不再据它验收）`;
 
 export const orphanReason = (shas: string[]) =>
   `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;

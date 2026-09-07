@@ -1,4 +1,4 @@
-import { band, type Band, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { band, type Band, movedCriterion, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -31,7 +31,8 @@ export function event(e: Event, me: string): string {
         case "unblock": return `${t} ${who} task ${e.task} unblocked`;
         case "withdraw": return `${t} ${who} task ${e.task} WITHDRAWN: ${e.reason}`;
         case "obsolete": return `${t} ${who} task ${e.task} OBSOLETE, superseded by ${e.decision}${e.reason ? `: ${e.reason}` : ""}`;
-        case "criteria": return `${t} ${who} task ${e.task} criteria added: ${e.add.join(" | ")}`;
+        // t-166：一个 op 两件事——追加判据，或标注某一条已经搬到别的任务上。
+        case "criteria": return `${t} ${who} task ${e.task} ${e.moved ? `criterion ${e.moved.index} moved to ${e.moved.to}` : `criteria added: ${(e.add ?? []).join(" | ")}`}`;
         case "reopen": return `${t} ${who} task ${e.task} REOPENED: ${e.reason}`;
         case "seam": return `${t} ${who} seam ${e.tasks.join("+")} resolved: ${e.resolution}`;
       }
@@ -244,7 +245,10 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
     if (!t.criteria.length) out.push("  (none)");
     t.criteria.forEach((c, i) => {
       const added = t.criteria_added?.find((a) => a.index === i);
-      out.push(`  ${i + 1}. ${c}${added ? `  (added by ${who(added.by)} ${hhmm(added.at)})` : ""}`);
+      // t-166：搬走的那几条与仍然有效的那几条要一眼分得开——序号后面加一个记号，句尾说清由哪一件承接。
+      // 整句来自 core（movedCriterion），页面与这里共用一处。
+      const moved = t.criteria_moved?.find((m) => m.index === i + 1);
+      out.push(`  ${i + 1}.${moved ? "→" : ""} ${c}${moved ? `  （${movedCriterion(moved.to)}）` : ""}${added ? `  (added by ${who(added.by)} ${hhmm(added.at)})` : ""}`);
     });
   }
   out.push(`touches    ${left("touches") ? `(not in the default board; ateam task show ${t.id} has them)` : touches.length ? touches.join(", ") : "—"}`);
