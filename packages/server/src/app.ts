@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { type Board, CONTACT_ASK, CONTACT_FILL, CONTACT_OPTIONS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, pull, reduce, board, manual, runFollowUps, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
-import { renderBoard, renderTask, unauthorizedPage, tokenPage, notFoundPage, contactEnabled } from "./html.js";
+import { renderBoard, renderTask, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -481,7 +481,7 @@ export function createApp(opts: ServerOptions) {
         if (given === null) return html(res, 200, tokenPage(fields, false, base));
         const r0 = await registry.lookup(given);
         // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.
-        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base));
+        if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base, pasteShape(form.get("token") ?? "")));
         if (r0.role === null && (await ownerArrived())) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         await registry.markUsed(given, now());
         const secure = proto === "https";
