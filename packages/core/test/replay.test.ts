@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, missingRoleOf, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -1933,7 +1933,8 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
 
   it("with the fact: contained ones are deployed_unverified, the rest pending_deploy, no-sha and uncovered ones unknown", async () => {
     const { store, c } = await world();
-    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks", value: { sha: "eeeeeee5", contained: ["A"], not_contained: ["B"], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+    // t-203：三桶的事实（unmeasured 明写成空）——只有这样的事实才答得出「它没覆盖 E」；两桶的那种答不了，见下一条
+    await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks", value: { sha: "eeeeeee5", contained: ["A"], not_contained: ["B"], unmeasured: [], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
     let r = await rel(store, c);
     expect(r.deployed_unverified!.map((x) => x.task)).toEqual(["A"]);
     expect(r.pending_deploy!.map((x) => x.task)).toEqual(["B"]);
@@ -1952,6 +1953,50 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     r = await rel(store, c);
     expect(r.counts.unknown).toBe(r.candidates!.length);
     expect(r.unknown![0].reason).toMatch(/ateam release/); // the deploy invalidated the fact (it depends on production:deployed.sha): measure again
+  });
+
+  /**
+   * t-203 判据 2、3：**从这条事实算出来的「还剩多少」，要么说得出分母是哪三类相加，要么就说算不出。**
+   *
+   * 生产上那几条事实只写了两桶：112 + 4，而当时共 201 件——缺的 85 件里有 63 件的 verified_on 含 production。
+   * 读的人分不清「没上」与「量不出」，qa 据此报过两个数（42 件、109 件），两次都栽在同一处。
+   *
+   * **一个小了的数比没有数更贵**：没有数会让人去量，一个小了的数会让人照着它排。
+   */
+  describe("t-203 · 分母是三类相加，缺一桶就说算不出", () => {
+    it("判据 3 正例：三桶齐全时分母说得出，且三桶各自落到该去的那一堆", async () => {
+      const { store, c } = await world();
+      await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks",
+        value: { sha: "eeeeeee5", contained: ["A"], not_contained: [], unmeasured: ["B"], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+      const r = await rel(store, c);
+      expect(r.denominator).toBe("分母 = 在里面 1 + 不在里面 0 + 量不出 1 = 2 件");
+      expect(r.deployed_unverified!.map((x) => x.task)).toEqual(["A"]);
+      expect(r.pending_deploy!.map((x) => x.task)).toEqual([]);
+      // B 在第三桶里：说的是「量过它、放不进任何一边」，不是「事实没覆盖它」——两句原来共用一句话，而那句说的是后者
+      expect(r.unknown!.find((x) => x.task === "B")!.reason).toContain("量过 B，但放不进任何一边");
+      // C 连证据 sha 都没有：那是更前面一层，说得比这一句还具体，不该被这一条盖掉
+      expect(r.unknown!.find((x) => x.task === "C")!.reason).toBe("证据里没有 sha，无从比对");
+    });
+
+    it("判据 3 反例：把第三桶去掉，分母当场说「算不出」，而不是给一个小了的数", async () => {
+      const { store, c } = await world();
+      await emit(store, c, { kind: "reading", actor: "qa", surface: "production", key: "deployed.tasks",
+        value: { sha: "eeeeeee5", contained: ["A"], not_contained: [], method: "git-ancestor" }, depends_on: ["production:deployed.sha"] });
+      const r = await rel(store, c);
+      expect(r.denominator).toContain("分母算不出");
+      expect(r.denominator, "别拿一份缺了一桶的名单当全集").toContain("不是全集");
+      // 这种事实连「量不出的有哪些」都没说过，所以它答不了 B——不许说成「在它之后才 done」
+      const why = r.unknown!.find((x) => x.task === "B")!.reason;
+      expect(why).toContain("三桶那条规矩之前写下的");
+      expect(why, "两桶的事实答不出「没覆盖」这件事").not.toContain("没有覆盖");
+    });
+
+    it("分母跟着那几个数走：数在哪儿，分母就在哪儿", async () => {
+      const { store, c } = await world();
+      const r = await rel(store, c);
+      expect(r.counts).toBeTruthy();
+      expect(r.denominator, "没有事实的时候同样不许留白——留白读起来就是「分母没问题」").toContain("分母算不出");
+    });
   });
 });
 
@@ -3265,5 +3310,71 @@ describe("t-157 · 多轮任务的触点，对外给并集", () => {
     // （t-105/qa 00:29：`[]` 说的是「它什么都没碰」，和别的事实一样）。所以并集里只有第一轮那条事实。
     // **并集只增不减说的是「已经交出去的那些轮」不会消失**，不是「说过的每一句声明都作数」。
     expect([...t.touches!].sort()).toEqual(["html.ts"]);
+  });
+});
+
+/**
+ * t-210 · **卡上给人的理由是发卡那一刻的快照。**
+ *
+ * qa 14:26 在生产（39353bf）上量到的样子：frontend 那张卡仍写着「有 6 分钟没读日志了……**它还在写，只是没来读**」，
+ * 而那个节点已经 62 分钟没动。卡此刻**该不该在**是对的（它真的失联了，t-202 已在生产验过那一半）；不对的是
+ * **卡上的话**——那是发卡那一刻的状态，之后再没人重述过。
+ *
+ * **它骗过的不是粗心的读者，是给它写规矩的人**（判据 5）：pm 13:31 把那句话当成对当下的描述，据此落了一条错读数
+ * （needs_human.false_cards = 2），13:42 自己更正为 1。所以这不是「读的人小心点」能了的问题。
+ *
+ * 判据 3：这一轮不新写一个字——同一个 `missingCard`，只是参数取自现在。
+ */
+describe("t-210 · 卡上的理由说当下，不说发卡那一刻", () => {
+  const world = async () => {
+    const store = new MemoryStore();
+    const c = clock();
+    await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
+    await pull(store, "dev", null, c.now());                       // 它读过日志，所以「离开多久」算得出来
+    await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "干一件", ack_by: c.iso(min(60)) });
+    c.tick(min(4));
+    await emit(store, c, { kind: "note", actor: "dev", body: "我在写" });   // 还在写
+    c.tick(min(2));                                                 // 6 分钟没拉、2 分钟前刚说过话：deaf
+    return { store, c };
+  };
+  const cards = async (store: MemoryStore, c: ReturnType<typeof clock>) =>
+    board(reduce(await store.read(), c.now()), HUMAN, c.now()).needs_human.filter((x) => missingRoleOf(x.body));
+
+  it("判据 1、4 正例：理由已经不成立的那张卡，人看到的是当下的说法，不是旧快照", async () => {
+    const { store, c } = await world();
+    // 发卡那一刻 dev 是 deaf：卡文说「它还在写，只是没来读」
+    // 这张卡是**它还 deaf 的时候**发出去的，正文用的是 deaf 那一档的说法
+    const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, intent: "do",
+      body: "dev 有 6 分钟没读日志了，1 条没送到——它还在写，只是没来读。起一个 dev？", ack_by: c.iso(min(600)) });
+    // t-202 之后 deaf 的那一态本来就不出卡，所以此刻它不在首屏上——生产上那张之所以还在，是因为它后来真失联了
+    expect(await cards(store, c), "deaf 那一态不出卡，那一半是 t-202").toEqual([]);
+    // 一小时后：dev 既没拉也没再说话，它成了真失联——卡回到首屏，而正文还停在发卡那一刻
+    c.tick(min(62));
+    const shown = (await cards(store, c))[0];
+    expect(shown.body, "卡还在说发卡那一刻的事——qa 在生产上量到的正是这一句").not.toContain("它还在写");
+    expect(shown.body, "此刻它是真失联，说的该是这一档").toContain("缺人");
+    expect(shown.body, "分钟数也要是当下的，不是发卡那一刻的 6 分钟").not.toContain("6 分钟");
+    expect(shown.id, "重述的是同一张卡，不是新发一张").toBe(card.id);
+    // 事件里的原文一个字没改：历史不改
+    const raw = (await store.read()).events.find((e) => e.id === card.id) as { body: string };
+    expect(raw.body, "改的是牌桌此刻显示什么，不是日志里躺着的那一条").toContain("它还在写");
+  });
+
+  it("判据 4 反例：理由仍然成立的那张卡照常显示，一个字不改", async () => {
+    const { store, c } = await world();
+    c.tick(min(62));   // 很久没拉、也很久没说话：此刻是真失联
+    // 按当下状态发一张卡：它说的就是当下
+    const away = Math.round(min(68) / 60_000);
+    const body = `dev 缺人 ${away} 分钟，1 条没送到。起一个 dev？`;
+    await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, intent: "do", body, ack_by: c.iso(min(600)) });
+    expect((await cards(store, c))[0].body, "理由仍成立时不该被改写成另一句").toBe(body);
+  });
+
+  it("回来读日志的那张卡本来就该消失，不必替它重述（那一半是 t-202）", async () => {
+    const { store, c } = await world();
+    await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, intent: "do",
+      body: "dev 有 6 分钟没读日志了，1 条没送到——它还在写，只是没来读。起一个 dev？", ack_by: c.iso(min(600)) });
+    await pull(store, "dev", null, c.now());
+    expect(await cards(store, c)).toEqual([]);
   });
 });

@@ -54,7 +54,13 @@ export function report(r: PullResult, me: string, after: string | null): string[
   if (!r.events.length) lines.push(after ? "nothing new" : "log is empty");
   const batch = new Set(r.events.map((e) => e.id));
   for (const e of r.events) {
-    lines.push(fmt.event(e, me));
+    // t-206：**带上 id。** `fmt.event` 自己不印 id 是对的（印不印由调用方决定），漏的是这个调用方——而它正是
+    // 「让指令叫醒你」那条路：从 watch 的流里读到一条给自己的指令，手上却没有那串 id，要引用它就得再去查一次
+    // 日志，不查就只能凭印象敲。pm 今夜为此编造了六次不存在的 id，六次被服务拒。
+    //
+    // **这一处同时是 sync 的渲染器**（下面 77 行与 116 行两个调用方共用它），所以补它一处，两条路一起补上——
+    // pm 12:52 的诊断先说「sync 不印 id」、13:15 更正成「只有 watch 那一处」，两句其实说的是同一行。
+    lines.push(`${e.id}  ${fmt.event(e, me)}`);
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }

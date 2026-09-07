@@ -140,6 +140,23 @@ export type TaskOp =
       no_human_impact?: boolean;
       /** t-170 (pd 08:33): 碰了人可见的文件时的具名出路——「文件#符号」，具体到符号才算数。 */
       internal_only?: string[];
+      /**
+       * t-198：这一轮**量出来**的改动文件数。带了才算量过；不带表示这次没量（老的 CLI、`--no-touches`、
+       * 这里没有 git）。`0` 与「没带」是两件事，闸只对明确的 `0` 放行——一个没量过的 done 说不出自己改了什么。
+       */
+      changed_files?: number;
+      /**
+       * t-209：**这一轮从哪儿开始算的**——claim（或 reopen）那一刻分支所在的那个 sha。
+       *
+       * CLI 一直知道它（`.ateam/base.<task>`，claim 时 `stampBase` 戳下的，`done` 就是从它开始量改动的），
+       * 但它**只活在敲命令那台机器上，日志里没有**。qa 14:31 指出来的：没有它，「这条提交属于哪件任务」就只能
+       * 退回「从某个证据 sha 可达」，而那样任何一条孤儿提交只要被后来的任务盖在下面就永远消失（它 14:29 在真
+       * 仓库上量到 9ac8cee 正是这样消失的）。
+       *
+       * 有了它，一件任务声称的产出就是一段区间 `(base, evidence]`——**那也正是判决真正覆盖过的范围**。
+       * 缺这个字段的老任务按「区间不可知」处理：明说算不出，不许猜（判据 7）。
+       */
+      base_sha?: string;
     }
   | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
   | { op: "block"; task: string; on: string }
@@ -187,6 +204,25 @@ export const ROLES_KEY = "roles";
  */
 export const ROLE_ID_RE = /^[a-z][a-z0-9_-]*$/;
 export const PROJECT_SURFACE = "project";
+
+/**
+ * t-132（S3）：**这个项目认得的那几个表面，按「离人有多远」从近到远排。**
+ *
+ * 表面本身一直是自由字符串，这一条不收紧它——一个项目可以有别的表面，服务端也不该替它规定。这份名单只做两件事：
+ * ① 拒绝话里那句提示从它生成，不再手写（`repo/staging/production/...` 原来是写死在 rules.ts 里的一句，
+ *    加一个表面就会漏——今晚已经有四件活栽在手写名单上）；② 牌桌要排序、要说「在哪几个表面验过」时读同一份。
+ *
+ * **`staging` 之所以要被写下来，不是为了限制，是为了它存在。** 在这之前它只在那句提示里当例子，谁都没在上面验过
+ * 一次；而 t-132 判据 3 记着的那次教训正是这么来的：`repo` 上验的是新形态、生产上跑的是旧形态，**牌桌当时的样子
+ * 没有任何一次验收对应它**。多一个表面就多一次「在哪儿验的」要说清楚，少一句就多一处能说假话的地方。
+ *
+ * **哪个表面算「人真的看得到」仍然只有 production 一个**（t-132 判据 4）：在 staging 上验过不等于生产上验过，
+ * 这条界线由读这份名单的地方各自守着，不因为多了一个表面就松。
+ */
+export const SURFACES = ["repo", "staging", "production"] as const;
+export type Surface = (typeof SURFACES)[number];
+/** t-132 判据 4：人真的看得到的那一个。「验过」只有落在它上面才等于「人那边好了」。 */
+export const HUMAN_SURFACE = "production";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
@@ -357,11 +393,13 @@ export const KEY_SYMBOLS = [
   "UNTIL_UNDER_A_MINUTE",
   "VERIFY_ASK",
   "WATCH_LINES",
+  "WHOLE_GATE_OFF",
   "ago",
   "alertContact",
   "allocationSummary",
   "alsoHere",
   "applyReading",
+  "basisOfTouches",
   "batches",
   "batchesEmptyLine",
   "blockedWhy",
@@ -372,9 +410,13 @@ export const KEY_SYMBOLS = [
   "classifyFollowUp",
   "coverage",
   "defaultMissed",
+  "denominatorIs",
+  "denominatorUnknown",
   "deployHistory",
   "dueDefaults",
   "exampleLine",
+  "factCannotPlace",
+  "factPredatesThirdBucket",
   "followUps",
   "gateHonesty",
   "honestyLine",
@@ -392,7 +434,10 @@ export const KEY_SYMBOLS = [
   "missingCard",
   "noOutputSeam",
   "noRealOverlap",
+  "noSuchObject",
   "nobodyElse",
+  "objectNotFound",
+  "orphanReason",
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
@@ -402,6 +447,7 @@ export const KEY_SYMBOLS = [
   "runtimeAllocation",
   "saidHops",
   "sayReading",
+  "seamWaived",
   "shapeFor",
   "slimBoard",
   "span",
@@ -412,6 +458,7 @@ export const KEY_SYMBOLS = [
   "symbolsMeasured",
   "symbolsUnnamed",
   "taskHeading",
+  "unknownSpanReason",
   "until",
   "validate",
   "validateTask",
@@ -735,6 +782,74 @@ export const noRealOverlap = (other: string, reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 自共同祖先以来没有一个文件是两边都改过的——先前报的${reported.length ? `（${reported.join("、")}）` : "那几个"}是清单相交，不是真撞。这条接缝不挡任何人。`;
 export const realOverlapIs = (other: string, real: string[], reported: string[]) =>
   `${REAL_OVERLAP_PREFIX}与 ${other} 真正两边都改过的是 ${real.join("、")}${reported.length && reported.join() !== real.join() ? `（先前报的是 ${reported.join("、")}，那是清单相交）` : ""}`;
+
+/**
+ * t-209：这一批里**没有任何任务证据链盖着**的提交。
+ *
+ * 发车闸原来只数任务——它问「每件任务的证据 sha 在不在这个 sha 里」，从不反过来问「这一批里有哪些提交不属于
+ * 任何一件任务」。于是一条谁都没判过的提交跟着一起上生产：真样本是 9ac8cee（补 t-206 那道闸自己的两处盲区），
+ * 在 b537a31 之后、不在 a134fcc 里，**没有任何任务盖着它，也就没有任何判决盖着它**。
+ *
+ * 这是 t-203 同一个形状的第二例：分母漏了一类，而「算不到的东西等于不存在」。
+ *
+ * 住在 core（新的人可见的话一律进这里）；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
+ */
+/**
+ * t-209 判据 7：**区间算不出来的那几件任务。**
+ *
+ * 一件任务声称的产出是 `(claim 起点, 证据 sha]`，而那个起点是 `done` 从 t-209 起才记进事件的——**这条规矩之前
+ * 落的 done 没有它**。缺了它就说不清那件任务盖住了哪几条提交，于是那几条也说不清是不是孤儿。
+ * 明说算不出，不许猜：不并进孤儿（那是诬告），也不并进「已覆盖」（那是把它们变没）。
+ *
+ * 住在 core；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
+ */
+export const unknownSpanReason = (tasks: string[]) =>
+  `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
+
+export const orphanReason = (shas: string[]) =>
+  `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;
+
+/**
+ * t-203：包含事实的**第三桶**，以及分母算不算得出来。
+ *
+ * 那条事实原来只写两桶（contained / not_contained），而 `containment()` 一直分三类——第三类 unmeasured
+ * （没有证据 sha，或那个对象本地 git 里没有）算出来了却没落进日志。生产上写下的是 112 + 4，当时共 201 件，
+ * **缺的 85 件里有 63 件的 verified_on 含 production**：它们在生产上验过，而那条事实说不出它们在不在里面。
+ * qa 据此报过两个数（42 件、109 件），两次都栽在同一处——拿一份缺了一桶的名单当全集。
+ *
+ * 所以「还剩多少」这个数要么说得出分母是哪三类相加，要么就说算不出。**一个小了的数比没有数更贵**：
+ * 没有数会让人去量，一个小了的数会让人照着它排。
+ *
+ * 住在 core，同这一族的其余几句；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）——判断本身不必等谁，
+ * 但说法要 pd 定，我另发了 note。
+ */
+export const factCannotPlace = (task: string, sha: string) =>
+  `包含事实量过 ${task}，但放不进任何一边（它没有证据 sha，或那个 sha 本地 git 里没有）——对 ${sha.slice(0, 7)} 测的`;
+export const factPredatesThirdBucket = (task: string, sha: string) =>
+  `包含事实（对 ${sha.slice(0, 7)} 测的）是三桶那条规矩之前写下的，它只说了在与不在，没说量不出的有哪些——所以它答不了 ${task}。重跑 ateam release`;
+/** t-203 判据 2：分母是哪三类相加，或者为什么算不出。 */
+export const denominatorIs = (contained: number, notContained: number, unmeasured: number) =>
+  `分母 = 在里面 ${contained} + 不在里面 ${notContained} + 量不出 ${unmeasured} = ${contained + notContained + unmeasured} 件`;
+export const denominatorUnknown = "分母算不出：这条包含事实没写「量不出」那一桶，所以它的名单不是全集——别拿它当「生产上有什么」的分母";
+
+/**
+ * t-201：接缝闸拿到一个 **git 里不存在的证据 sha** 时说的那几句。
+ *
+ * 住在 core，同 t-191 的两句：新的人可见的话一律进这里（t-143 只减不增那条规矩；我第一版写在 cli 里，
+ * 四条闸当场红，它们是对的）。**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）——判断本身不必等谁，
+ * 但说法要 pd 定，我另发了 note。
+ *
+ * 两句话故意长得不一样，那正是这件事的判据 2：**「我找不到那个对象」谈的是视线，「你没合上」谈的是义务。**
+ * 上一版把前者混进「无法验证」，而那条给的唯一出路是 `--no-seam-check`——一把关掉全部接缝义务的钥匙。
+ */
+export const noSuchObject = (shas: string[]) => `本地 git 里没有 ${shas.map((x) => x.slice(0, 7)).join(" 和 ")} 这个对象`;
+export const objectNotFound = (seamId: string, sha: string, other: string) =>
+  `${seamId}：${sha.slice(0, 7)}（${other} 的证据 sha）这个对象我在本地 git 里找不到——占位、写错、或还没 fetch。这不是说你没合并，是说我看不见，所以判不了。三条出路，从窄到宽：先 git fetch 把它取回来；若那个 sha 本身是错的，请 ${other} 的 owner 用一条更正把它改对；确实取不回来就 --no-seam-check-for ${seamId} 单独免掉这一条（其余接缝照判），并在证据里说明为什么`;
+/** t-201：这一条被单独免掉时落在日志上的那句——免掉不等于没发生。 */
+export const seamWaived = (seamId: string, key: string, owner: string) =>
+  `${seamId}：这一条被 --no-seam-check-for ${key} 单独免掉了，其余接缝照判；免的理由由 ${owner} 的 owner 写在证据里`;
+/** t-201：`--no-seam-check` 仍在，但它现在会说清自己关掉的是什么，以及那条窄的出路。 */
+export const WHOLE_GATE_OFF = "跳过 seam 合并检查（--no-seam-check）：这把钥匙关掉的是全部接缝义务；只想免掉一条时用 --no-seam-check-for <接缝 id>";
 
 /**
  * t-183：`done` 量触点时，符号那一层的两句话。住在 core（新的人可见的话一律进这里）；**措辞是我写的、

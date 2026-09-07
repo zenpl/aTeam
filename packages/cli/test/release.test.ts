@@ -9,7 +9,8 @@ const HUMAN = "human";
 const A = "aaaaaaa" + "1".repeat(33), B = "bbbbbbb" + "1".repeat(33), C = "ccccccc" + "1".repeat(33); // 40-char shas
 // history: A -> B -> C ; X is unrelated
 const X = "0000000" + "2".repeat(33);
-const lineage: Record<string, string[]> = { [A]: [A], [B]: [A, B], [C]: [A, B, C], [X]: [X] };
+const D = "ddddddd" + "1".repeat(33);   // t-209: A -> B -> C -> D，用来把「区间」与「可达」分开
+const lineage: Record<string, string[]> = { [A]: [A], [B]: [A, B], [C]: [A, B, C], [D]: [A, B, C, D], [X]: [X] };
 const fakeGit = (opts: { tip?: string | null; pushFails?: string } = {}) => {
   const pushes: string[] = [];
   const g: Git & { pushes: string[] } = {
@@ -18,6 +19,12 @@ const fakeGit = (opts: { tip?: string | null; pushFails?: string } = {}) => {
     remoteTip: () => opts.tip ?? null,
     push: (sha, branch) => { if (opts.pushFails) throw new Error(opts.pushFails); pushes.push(`${sha}->${branch}`); },
     resolve: (sha) => Object.keys(lineage).find((k) => k.startsWith(sha)) ?? null,
+    // t-209：`from..to` 里的提交 = to 的祖先里去掉 from 的祖先。null 表示问不出来。
+    revList: (from, to) => {
+      if (!lineage[to] || !lineage[from]) return null;
+      const had = new Set(lineage[from]);
+      return lineage[to].filter((x) => !had.has(x)).reverse();
+    },
   };
   return g;
 };
@@ -172,6 +179,20 @@ describe("t-078 · ateam release measures containment with git and shows three g
     const blind = containment(await w.b(), () => null)!;
     expect(blind.unmeasured.sort()).toEqual(["t-1", "t-2"]);
     expect(blind.contained).toEqual([]);
+    // t-203 判据 1：三桶一个不少地写进事实——unmeasured 算出来了，就得落进日志
+    const blindFact = containmentFact(await w.b(), blind)! as unknown as { value: Record<string, unknown> };
+    expect(blindFact.value.unmeasured, "第三桶算出来了却没写下去，正是那 85 件无声消失的形状").toEqual(["t-1", "t-2"]);
+    expect(blindFact.value).toMatchObject({ contained: [], not_contained: [] });
+    // 比较也比三桶：**只有 unmeasured 变了**，也要写一条新事实——否则那一桶永远停在旧值。
+    //
+    // qa 13:51 证过我上一版这条是空的：它拿刚落的那条（contained ["t-1"]）去比一个 contained 为空的，
+    // 判断在第一桶就分出来了，**永远走不到第三桶那一步**——删掉比较第三桶的那半句，cli 一条都不红。
+    // 所以先把 blind 那条真的落下去，再造一个**只有第三桶不同**的：其余逐字相同，差别只在 unmeasured。
+    await w.emit({ ...(blindFact as unknown as { key: string; value: unknown; surface: string }), actor: "pm" } as never);
+    expect(containmentFact(await w.b(), blind), "逐字相同却又写一条新事实").toBeNull();
+    const onlyThird = { ...blind, unmeasured: ["t-1"] };
+    expect(containmentFact(await w.b(), onlyThird), "只有第三桶变了，却不写新事实——那一桶会永远停在旧值").not.toBeNull();
+
     // another absorb form: not our business to measure
     const other = await world();
     await other.emit({ kind: "reading", actor: "pm", key: "absorb.form", surface: "project", value: "named-sha" });
@@ -237,5 +258,97 @@ describe("t-093 · the deploy entry refuses a sha that adds unverified work", ()
     const git3 = fakeGit();
     expect(await deploy(await w.b(), C, w.deps(git3))).toBe("pushed");
     expect(git3.pushes).toEqual([`${C}->production`]);
+  });
+});
+
+/**
+ * t-209 · **发车闸只数任务，于是不是任务的东西它看不见。**
+ *
+ * 它一直只问一个方向：「每件任务的证据 sha 在不在这个 sha 里」。反过来那一问从来没人问过——**这一批里有哪些
+ * 提交不属于任何一件任务的证据链？** 真样本是 9ac8cee（dev 补 t-206 那道闸自己的两处盲区）：在 b537a31 之后、
+ * 不在 a134fcc 里，qa 14:05 量到**没有任何任务盖着它，也就没有任何判决盖着它**，而它照样会跟着上生产。
+ *
+ * 这是 t-203 同一个形状的第二例：分母漏了一类。那次漏的是「量不出」那一桶，这次漏的是「不是任务的提交」。
+ */
+describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
+  const orphanWorld = async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 1000)) });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
+    await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "题", criteria: ["x"], no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["a"] });
+    // t-209：done 记下这一轮的起点。生产在 A，这件从 A 开始做，证据是 B ⇒ 它声称的产出是 (A, B]
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${B} 完成`, base_sha: A, no_human_impact: true });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true });
+    return board(reduce(await store.read()), HUMAN);
+  };
+
+  it("判据 1、4 正例：目标 sha 比任何任务的证据都新，多出来的那条提交被点名", async () => {
+    const b = await orphanWorld();
+    // 生产在 A；这一批推到 C，而唯一一件任务的证据是 B——C 自己没有任何任务盖着
+    const p = plan(b, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "C 没有任何任务盖着它").toEqual([C]);
+    expect(p.ok, "有孤儿提交就不该直接放行").toBe(false);
+    expect(p.reasons.join("\n")).toContain("不属于任何一件任务的证据链");
+    expect(p.reasons.join("\n"), "要说得出是哪一条").toContain(C.slice(0, 7));
+  });
+
+  it("判据 4 反例：把它并进任务的证据链之后，就不再被点名", async () => {
+    const b = await orphanWorld();
+    // 同一批，但任务的证据就是 C 本身：这一批里每一条提交都有任务盖着
+    const withC = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(withC.tasks).flat()) if (t.id === "t-1") { t.evidence_sha = C; t.base_sha = A; }
+    const p = plan(withC, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "证据链盖住了 B 与 C，一条孤儿都不该剩").toEqual([]);
+    expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
+  });
+
+  /**
+   * **这一条是这次 fail 的核心，也是我上一版整套用例漏掉的那一格。**
+   *
+   * qa 14:29 证伪的是「被盖住 = 从某个证据 sha 可达」：那样一来，孤儿只要被后来的任务盖在下面就永远消失。
+   * 上一版三条用例造的都是「孤儿挂在头上」，那一种**两种口径给出同一个答案**，所以它们分不出对错——
+   * 我把它们当成了闸，其实是自我描述。这一条造的是唯一能分开两者的形状：**孤儿夹在生产头与某件任务的起点之间。**
+   */
+  it("判据 6：孤儿夹在中间时也点得出来——这正是「可达」口径看不见的那一格", async () => {
+    const b = await orphanWorld();
+    // 生产在 A；B 是那条没人认领的提交；任务从 B 开始做，证据是 D ⇒ 它声称的产出是 (B, D] = {C, D}
+    const mid = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(mid.tasks).flat()) if (t.id === "t-1") { t.evidence_sha = D; t.base_sha = B; }
+    const p = plan(mid, D, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.orphans, "B 在任务的区间之外，没人认领它").toEqual([B]);
+    expect(p.ok).toBe(false);
+    expect(p.reasons.join("\n")).toContain(B.slice(0, 7));
+    // 按可达口径（deployed..evidence）B 是可达的，于是它会消失——那正是被证伪的那一版
+    const reachable = fakeGit().revList(A, D)!;
+    expect(reachable, "可达口径把 B 也算成被盖住了").toContain(B);
+  });
+
+  it("判据 7：有一件任务没记起点，整个答案就说不清——不猜，也不诬告", async () => {
+    const b = await orphanWorld();
+    const noBase = JSON.parse(JSON.stringify(b)) as Board;
+    for (const t of Object.values(noBase.tasks).flat()) if (t.id === "t-1") delete (t as { base_sha?: string }).base_sha;
+    const p = plan(noBase, C, fakeGit().isAncestor, A, fakeGit().revList);
+    expect(p.unknown_span, "说不清的是哪几件，要点得出名字").toEqual(["t-1"]);
+    expect(p.orphans, "它的提交没有区间盖着，若照算就会被诬告成孤儿").toBeNull();
+    expect(p.reasons.join("\n")).toContain("没记下自己这一轮从哪儿开始");
+    expect(p.ok, "说不清不拦车——一道挡住一切的闸，下一步就是被整个关掉").toBe(true);
+  });
+
+  it("问不出来答 null，不是空数组——「没问出来」与「一条都没有」是两件事", async () => {
+    const b = await orphanWorld();
+    expect(plan(b, C, fakeGit().isAncestor, A).orphans, "没有 revList 就问不出来").toBeNull();
+    expect(plan(b, C, fakeGit().isAncestor, null, fakeGit().revList).orphans, "没有生产头就没有「这一批」").toBeNull();
+    // git 答不上来（那个 sha 本地根本没有）：同样是 null，不许当成「一条都没有」
+    const unknown = "9999999" + "9".repeat(33);
+    expect(plan(b, C, fakeGit().isAncestor, unknown, fakeGit().revList).orphans).toBeNull();
+  });
+
+  it("null 不构成拒绝：它只是说不出来，报警要有东西可指", async () => {
+    const b = await orphanWorld();
+    const p = plan(b, B, fakeGit().isAncestor, A);   // 没有 revList
+    expect(p.orphans).toBeNull();
+    expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
   });
 });

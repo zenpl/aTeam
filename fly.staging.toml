@@ -1,0 +1,34 @@
+# t-132（S3）：staging 的部署配置。**它此刻不能被部署，缺的是一个产品判断，不是一行配置。**
+#
+# 与 fly.toml 只差两处：app 名字，以及数据放在哪儿。第二处就是判据 2 说的那个决定——
+# **staging 与生产共用不共用同一条日志**：
+#   · 共用：staging 指向生产那份数据（不挂自己的卷，ATEAM_URL 指生产），于是 staging 上量到的事实
+#     会和生产的事实挤在同一个牌桌上，人得自己分清哪条是哪儿的；
+#   · 各自一条：staging 挂自己的卷（下面那段 [mounts]），两边互不相干，代价是 staging 上验过的东西
+#     在生产那份日志里查不到。
+#
+# **这个决定归 pd，必要时它问 human**（t-132 判据 2，pm 03:25 定的）。dev 不许自行选一个——所以下面那一行
+# 故意留着未决，`bin/deploy staging` 读到它就拒绝，并把这两条路说出来。决定落下来之后，把这一行改成
+# `shared` 或 `own`，并按它把 [mounts] 与 ATEAM_URL 补齐，这个文件就能用了。
+#
+# STAGING_LOG_DECISION: unset
+
+app = "ateam-staging"
+primary_region = "sin"
+
+[build]
+  dockerfile = "packages/server/Dockerfile"
+
+[env]
+  ATEAM_HUMAN = "human"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+# [mounts] 与 ATEAM_URL 等 STAGING_LOG_DECISION 落下来再填：
+#   own    → source = "ateam_staging_data" / destination = "/data"
+#   shared → 不挂卷，改为指向生产那份数据

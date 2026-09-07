@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore, append, reduce, board, NO_OUTPUT_PREFIX, type NewEvent } from "@ateam/core";
-import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, unjudgeableSeams, gitCommitsSince, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince } from "../src/seamcheck.js";
+import { seamWarnings, seamErrors, absorbEvents, seamCheck, judgeAbsorb, gitIsAncestor, gitHasObject, unjudgeableSeams, gitCommitsSince, outputSinceClaim, realOverlap, seamTruthEvents, type CommitsSince, type ChangedSince, type HasObject } from "../src/seamcheck.js";
 
 const HUMAN = "human";
 let repo = "";
@@ -405,5 +405,95 @@ describe("t-191 · 排掉的是被验任务的证据 sha，不是谁的 HEAD", (
 
   it("不是 git 仓库：答 null，接缝照旧挡着", () => {
     expect(gitCommitsSince(mkdtempSync(join(tmpdir(), "notgit-")))(EPOCH, ["x.ts"], "HEAD")).toBeNull();
+  });
+});
+
+/**
+ * t-201：**闸拿到一个 git 里不存在的证据 sha 时，唯一的出路是关掉整道闸。**
+ *
+ * 真样本是我自己 12:41 那次（判据 3）：t-191 第三轮要交，接缝 t-183+t-191 要求证据写明合并了 t-183 的证据
+ * sha `72e8f6e`——而那个 sha **从来没有存在过**，它是 t-183 的 owner 写下的一个占位，12:18 已经用 note 更正过
+ * （真 sha 是 `59b795b`），可牌桌上那一栏仍留着占位。闸于是拿它去要一个合不了的东西，而它给的唯一出路是
+ * `--no-seam-check`——一把把**所有**接缝义务一起免掉的钥匙。合并义务其实早已履行。
+ *
+ * 两件事分开（判据 1、2）：
+ * ① 「我在本地 git 里找不到这个对象」——**这不是说你没合并，是说我看不见**；
+ * ② 「git 说你的 sha 不含它」——义务没履行，那句话不该长得像①。
+ * 出路也分开（判据 4，今晚第三次「唯一出路是全关」）：`--no-seam-check-for <接缝 id>` 只免这一条，
+ * 其余接缝照判，而且被免掉的那一条随 done 落在日志上——免掉不等于没发生。
+ */
+describe("t-201 · 找不到那个对象，与「你没合上」，是两句不同的话", () => {
+  const world = async () => {
+    const store = new MemoryStore();
+    let t = Date.now() - 3600_000;
+    const emit = (e: NewEvent) => append(store, e, { human: "human", now: new Date((t += 1000)) });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
+    for (const id of ["t-a", "t-b", "t-c"]) await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"], no_human_impact: true });
+    // 两条接缝都是「我在它们 done 之后才 claim」——那正是要我合并的那一种（t-160 的 stacked）
+    await emit({ kind: "task", op: "claim", actor: "dev", task: "t-a", touches: ["app.ts"] });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-a", evidence: "72e8f6e1111111 完成", no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "qa", task: "t-c", touches: ["board.ts"] });
+    await emit({ kind: "task", op: "done", actor: "qa", task: "t-c", evidence: "ccccccc2222222 完成", no_human_impact: true });
+    await emit({ kind: "task", op: "claim", actor: "frontend", task: "t-b", touches: ["app.ts", "board.ts"] });
+    return board(reduce(await store.read()), "human");
+  };
+  // 本地 git 里有 ccccccc、没有 72e8f6e：正是那次的形状——一个占位，一个真 sha
+  const has: HasObject = (sha) => sha !== "72e8f6e1111111";
+  const isAncestor = () => null;   // 有对象缺着，git 答不了
+
+  it("判据 1、2：找不到对象那一条自己一句话，且不叫人去关整道闸", async () => {
+    const b = await world();
+    const r = seamCheck(b, "t-b", "bbbbbbb3333333 完成", isAncestor, has);
+    const line = r.errors.find((x) => x.includes("t-a"))!;
+    expect(line, "要说得出是「我找不到」").toContain("这个对象我在本地 git 里找不到");
+    expect(line, "要说清它不是「你没合上」").toContain("这不是说你没合并，是说我看不见");
+    expect(line, "窄出路要指名道姓").toContain("--no-seam-check-for");
+    expect(/--no-seam-check(?!-for)/.test(line), "不许再把人推向那把关掉全部的钥匙").toBe(false);
+  });
+
+  it("判据 2：「你没合上」那句与它长得不一样——一句谈义务，一句谈视线", async () => {
+    const b = await world();
+    const notContained = seamCheck(b, "t-b", "bbbbbbb3333333 完成", () => false, () => true);
+    const line = notContained.errors.find((x) => x.includes("t-a"))!;
+    expect(line).toContain("并不包含它");
+    expect(line, "义务那句不许说成「我看不见」").not.toContain("我在本地 git 里找不到");
+  });
+
+  it("判据 3：只免掉那一条，其余接缝照判", async () => {
+    const b = await world();
+    // 免掉 t-a 那条（用对方任务 id）：t-c 那条仍然要判，而它此刻判不了，所以仍然拦着
+    const r = seamCheck(b, "t-b", "bbbbbbb3333333 完成", isAncestor, has, ["t-a"]);
+    expect(r.errors.some((x) => x.includes("找不到")), "被免掉的那条不再拦").toBe(false);
+    expect(r.errors.some((x) => x.includes("t-c")), "另一条接缝照判，没有被一起免掉——这正是 --no-seam-check 做不到的").toBe(true);
+    expect(r.unverified.some((x) => x.includes("单独免掉")), "免掉不等于没发生：它随 done 落在日志上").toBe(true);
+  });
+
+  it("免掉可以按接缝 id 说，也可以按对方任务 id 说", async () => {
+    const b = await world();
+    const seamId = b.seams.find((x) => x.tasks.includes("t-a") && x.tasks.includes("t-b"))!.id;
+    for (const key of [seamId, "t-a"]) {
+      const r = seamCheck(b, "t-b", "bbbbbbb3333333 完成", isAncestor, has, [key]);
+      expect(r.errors.some((x) => x.includes("找不到")), `按 ${key} 免不掉`).toBe(false);
+    }
+  });
+
+  it("没有 git 的时候不许说成「找不到那个对象」：那是我们看不见的另一种", async () => {
+    const b = await world();
+    const r = seamCheck(b, "t-b", "bbbbbbb3333333 完成", isAncestor, () => null);
+    expect(r.errors.some((x) => x.includes("找不到")), "没有 git 与「这个对象不存在」不是同一件事").toBe(false);
+  });
+
+  it("gitHasObject 在真仓库上答得准，在非仓库里答 null 而不是 false", () => {
+    const repo = mkdtempSync(join(tmpdir(), "t201-"));
+    const run = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    run("init", "-q", ".");
+    run("config", "user.email", "t@t"); run("config", "user.name", "t");
+    writeFileSync(join(repo, "a.ts"), "x\n");
+    run("add", "."); run("commit", "-qm", "base");
+    const real = run("rev-parse", "HEAD").stdout.trim();
+    expect(gitHasObject(repo)(real)).toBe(true);
+    expect(gitHasObject(repo)("72e8f6e"), "那个占位在真仓库里也找不到").toBe(false);
+    expect(gitHasObject(mkdtempSync(join(tmpdir(), "notgit-")))(real), "不是仓库：判不了，不是「没有」").toBeNull();
+    rmSync(repo, { recursive: true, force: true });
   });
 });

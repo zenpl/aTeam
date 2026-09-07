@@ -364,3 +364,125 @@ describe("t-178 · qa 08:54 构造的那一刻：inFlightGroups 不能再光说�
     expect(await donex(["packages/core/src/board.ts"])).toBe("过");
   });
 });
+
+/**
+ * t-198 · **零改动的 done：闸量出 0 个改动文件时，不得据 claim 时的陈年触点判定。**
+ *
+ * 真样本是 t-034 那次：一件 reopen 之后代码一个字没改的 done，触点里还留着 claim 时声明的 `html.ts`、`i18n.ts`
+ * ——闸自己量出「0 个改动文件」，转头又按那份陈年声明判它「动了人看得到的字」。这道闸问的是**这件**对人有什么
+ * 影响（rules.ts 那句原话就是「这件」），而它此刻拿到的答案来自另一轮。
+ *
+ * 界线在「量没量」上，不在「有没有触点」上：`changed_files` 是 CLI 量出来的事实，**明确等于 0 才放行**；
+ * 不带这个字段（老的 CLI、`--no-touches`、没有 git）一律照旧判。**0 与「没带」是两件事**——前者是一条事实，
+ * 后者是一句沉默，而一个没量过的 done 说不出自己改了什么。
+ */
+describe("t-198 · 零改动的 done 不按陈年触点判", () => {
+  const human = async () => {
+    const s = new MemoryStore();
+    const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
+    await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -300);
+    await put({ kind: "task", actor: "pm", op: "create", task: "t-1", title: "题", criteria: ["能用"], no_human_impact: true }, -200);
+    // claim 时声明了人可见的文件——t-034 那次正是这个形状
+    await put({ kind: "task", actor: "dev", op: "claim", task: "t-1", touches: ["packages/server/src/i18n.ts", "packages/server/src/html.ts"] }, -190);
+    return { s, put };
+  };
+
+  it("判据 1：量出 0 个改动文件的 done 过得去，不再被那份陈年声明判成「动了人看得到的字」", async () => {
+    const w = await human();
+    const e = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, changed_files: 0 }, -10);
+    expect(e.kind).toBe("task");
+  });
+
+  it("判据 1 的反面：同一件、同一份触点，不带 changed_files 就照旧被拦——「没量」不是「量出 0」", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true }, -10).catch((x) => x as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+    expect(err.message).toContain("这件动了人看得到的字");
+  });
+
+  it("判据 2：量出 ≥1 个改动文件时判定与今天完全一致——人可见文件 + no-human-impact 仍被拒", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts"], changed_files: 1 }, -10).catch((x) => x as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+    expect(err.message).toContain("这件动了人看得到的字");
+    expect(err.message).toContain("packages/server/src/i18n.ts");
+  });
+
+  it("判据 3：触点不被抹掉——零改动放行之后，这件的触点仍是 claim 时那份，接缝照样算得出来", async () => {
+    const w = await human();
+    await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, changed_files: 0 }, -10);
+    const t = (await st(w.s)).tasks.get("t-1")!;
+    expect(t.touches, "放行的是那道闸，不是这份记录").toEqual(["packages/server/src/i18n.ts", "packages/server/src/html.ts"]);
+  });
+
+  it("判据 3 的另一半：不许用「把触点声明为空」来换放行", async () => {
+    const w = await human();
+    // 明写 touches: [] 是一条事实声明（t-105/qa 00:29），它不带 changed_files，所以判的仍是 claim 那份
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, touches: [] }, -10).catch((x) => x as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+    expect(err.message).toContain("这件动了人看得到的字");
+  });
+
+  it("判据 4：拒绝的话说得出这个判断照的是量出来的还是 claim 时声明的", async () => {
+    const w = await human();
+    const declared = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true }, -10).catch((x) => x as Rejected);
+    expect(declared.message, "没量到改动时要说清判的是声明").toContain("来自 claim 时的声明");
+    const measured = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts"], changed_files: 1 }, -10).catch((x) => x as Rejected);
+    expect(measured.message, "量到了就要说清量出几个").toContain("量出来的 1 个改动文件");
+    // 两句话不许长得一样——那正是被拦下的人不知道该改哪一份的原因
+    expect(declared.message).not.toBe(measured.message);
+  });
+
+  /**
+   * t-208 · **零改动放行的另一半，是我在 t-198 那一轮没看见的。**
+   *
+   * t-198 判据 3 拦的是「把触点声明为空来换放行」，而这一种是反过来的：**触点照写，闸照样不看。**
+   * `--touches packages/server/src/i18n.ts` 加上树上一个字没改，`changed_files` 就是 0，整道判定跳过——
+   * 人可见的文件是自己写进去的，判定却因此不做了。qa 13:42 在真 `revise` 上跑出来的。
+   *
+   * 两种换的是同一样东西：**不量一次，就把「我没碰人可见的东西」说成已经核过。** 当时我只想到了前一种。
+   */
+  it("判据 1：写了触点又量出 0，闸照常判——那是拿一份自己写的触点换掉整道判定", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts"], changed_files: 0 }, -10).catch((x) => x as Rejected);
+    expect(err, "树上一个字没改，而人可见的文件是这一轮自己写进去的").toBeInstanceOf(Rejected);
+    expect(err.message).toContain("这件动了人看得到的字");
+    expect(err.message).toContain("packages/server/src/i18n.ts");
+  });
+
+  it("判据 1：符号触点也是亲手写的——同样不放行", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts#UI"], changed_files: 0 }, -10).catch((x) => x as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+  });
+
+  it("判据 2：t-198 判据 1 那种一个字没收——量出 0 且没亲手写触点，照旧放行", async () => {
+    const w = await human();
+    const e = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, changed_files: 0 }, -10);
+    expect(e.kind).toBe("task");
+    // 触点仍是 claim 时那份（t-198 判据 3），这一件没有动它
+    const t = (await st(w.s)).tasks.get("t-1")!;
+    expect(t.touches).toEqual(["packages/server/src/i18n.ts", "packages/server/src/html.ts"]);
+  });
+
+  it("判据 2：写了触点但那几处不是人可见的——量出 0 时照样过得去，收紧只落在该收的那一格", async () => {
+    const w = await human();
+    const e = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/core/src/rules.ts"], changed_files: 0 }, -10);
+    expect(e.kind, "这一格闸本来就不该拦：写的触点里没有人可见的东西").toBe("task");
+  });
+
+  it("changed_files 是一个非负整数，别的形状当场被形状闸挡住", async () => {
+    const w = await human();
+    for (const bad of [-1, 1.5, "0"]) {
+      const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+        changed_files: bad } as unknown as NewEvent, -10).catch((x) => x as Rejected);
+      expect(err, `changed_files=${bad}`).toBeInstanceOf(Rejected);
+      expect(err.rule).toBe("shape");
+    }
+  });
+});

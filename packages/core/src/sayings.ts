@@ -37,7 +37,7 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-144 再搬走 2 句：html.ts 那个 `aria-label="邀请链接"` ⇒ INVITE_URL_LABEL，以及「例如 {值}」⇒ exampleLine。
 // html.ts 到此为 0——**它是第一个搬空的**，而它本来就只剩两句：页面早就走 UI.* 了，真正的存量在 i18n.ts 与 format.ts。
 // t-181 又搬走 1 句：i18n.ts 那句「不点的话，到期按 X」，现在由 core 的 DEFAULT_LINES 按真状态算。
-export const SECOND_HOME_FROZEN: number = 351;
+export const SECOND_HOME_FROZEN: number = 350;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -48,7 +48,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 23,
-  "packages/cli/src/main.ts": 22,
+  "packages/cli/src/main.ts": 21,
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,
   "packages/server/src/alerts.ts": 11,
@@ -261,6 +261,25 @@ export const LITERAL_CHECK_BLIND_SPOTS = [
  * 五种读法里没有一种能复现它——**一个谁也复现不出的数，冻它没有意义**。
  */
 export function humanSentences(src: string): string[] {
+  return literals(src).filter((t) => /[一-龥]/.test(t));
+}
+
+/**
+ * t-204：**源码里的每一个字面量，按语言词法取出来——不靠引号配对。**
+ *
+ * 这段词法原来只长在 `humanSentences` 里，而 `keysyms.ts` 的 `speaking()` 自己用了一条正则去配引号
+ * （`` /[`"']((?:[^`"'\\]|\\.)*)[`"']/g ``）。模板串里嵌一个引号，配对就从那里开始错位：frontend 13:11 实测
+ * `span` 那一段抽出 7 个片段，**含汉字的 0 个**——分钟／小时／天三个词全部落在配对之外。于是**任何写成
+ * 「模板里嵌引号」的人可见中文，对那份名单都是隐形的**。
+ *
+ * 所以词法只此一处，两个量法都调它：`humanSentences` 在它上面加一道中文筛，`speaking` 按声明切片之后调它。
+ * 想让两把尺子对同一段代码给出不同的字面量，得先把这个函数改坏。
+ *
+ * 它认得的三件事，每一件都是被真样本逼出来的：注释整段跳过；正则字面量整段跳过（不跳它，`/[&<>"']/g` 里那个
+ * 引号会被当成字符串开头，从那里往后整份文件都数不到——html.ts 那一处就是这么丢的）；模板串里的 `${…}`
+ * 递归再扫一遍，因为 `` `${x ? "在听" : "缺人"}` `` 里那两句照样是人会读到的话。
+ */
+export function literals(src: string): string[] {
   const out: string[] = [];
   let i = 0;
   const n = src.length;
@@ -302,12 +321,12 @@ export function humanSentences(src: string): string[] {
           const from = i + 2;
           let depth = 1; i += 2;
           while (i < n && depth) { if (src[i] === "{") depth++; else if (src[i] === "}") depth--; i++; }
-          out.push(...humanSentences(src.slice(from, i - 1)));
+          out.push(...literals(src.slice(from, i - 1)));
           continue;
         }
         text += src[i++];
       }
-      if (/[一-龥]/.test(text)) out.push(text);
+      out.push(text);
       continue;
     }
     i++;

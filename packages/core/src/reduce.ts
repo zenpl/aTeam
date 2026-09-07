@@ -42,6 +42,8 @@ export interface TaskState {
    * 所以接缝检测与触点索引都读这一份；每一轮自己那一份仍然只算本轮。
    */
   touched_all: string[];
+  /** t-209：这一轮的起点 sha（claim/reopen 那一刻分支在哪儿）。缺席 = 这件任务没记过，区间不可知。 */
+  base_sha?: string;
   status: TaskStatus;
   blocked_on?: string;
   /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
@@ -646,6 +648,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "done":
       t.status = "done"; t.evidence = e.evidence; t.round += 1;
       if (e.shows?.trim()) t.shows = e.shows.trim();
+      if (e.base_sha?.trim()) t.base_sha = e.base_sha.trim();   // t-209：这一轮从哪儿开始算的
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
       // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)

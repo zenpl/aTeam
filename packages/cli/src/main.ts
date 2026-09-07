@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor } from "./seamcheck.js";
+import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
@@ -49,7 +49,7 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
-  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check]
+  ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check] [--no-seam-check-for <接缝 id>]
                                              --internal-only "文件#符号,…" 碰了人可见的文件、但只动了里面的内部符号时，具体说出是哪几个
                                              claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
                                              --touches 补 diff 量不到的（符号、字段、接口名）；量不出来时（没有 git、没起点）--touches 就是最终值，覆盖声明那份；
@@ -133,7 +133,7 @@ function gitDiff(): Diff {
 }
 
 /** t-105: assemble the final touches for a done. `--no-touches` keeps the claim declaration as the final value. */
-function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean } {
+function touchesAtDone(task: string, declared: string[], extra: string[], keep: boolean, only = false): { touches: string[] | undefined; lines: string[]; measured: boolean; changed_files?: number } {
   if (keep) return { touches: undefined, lines: ["触点不改，沿用 claim 时声明的（--no-touches）"], measured: false };
   if (only) return revise(declared, null, extra, "", true);
   const d = gitDiff();
@@ -186,7 +186,7 @@ async function main(argv: string[]) {
     if (push !== undefined) {
       if (!(PUSH_LEVELS as readonly string[]).includes(push)) throw new UsageError(`--push 只能是 ${PUSH_LEVELS.join(" | ")}`);
       const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
-      console.log(fmt.event(e, eff.me));
+      console.log(`${e.id}  ${fmt.event(e, eff.me)}`);   // t-206：第五处，与其余四处一致——印事件就带上它的 id
     }
     await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
@@ -350,22 +350,29 @@ async function main(argv: string[]) {
           const internal = list(a, "internal-only")?.length ? { internal_only: list(a, "internal-only")! } : {};
           // t-105: what this task actually touched, measured from the branch; --touches adds what a diff cannot see
           const rev = touchesAtDone(task, await client.task(task).then((x) => x.task.touches ?? []).catch(() => [] as string[]), list(a, "touches") ?? [], bool(a, "no-touches"), bool(a, "touches-only"));
+          // t-209：把这一轮的起点也记进事件。CLI 一直知道它（claim 时 stampBase 戳的），但它只活在本机的
+          // .ateam/base.<task> 里——日志里没有，于是「这条提交属于哪件任务」在别的机器上只能靠可达性猜，
+          // 而那样任何一条孤儿提交被后来的任务盖在下面就消失（qa 14:29 在真仓库上量到 9ac8cee 正是这样没的）。
+          const baseSha = gitDiff().base(task) ?? undefined;
           for (const line of rev.lines) console.error(line);
-          if (bool(a, "no-seam-check")) console.error("跳过 seam 合并检查（--no-seam-check）");
+          // t-201：--no-seam-check 是把所有接缝义务一起免掉的那把钥匙，留着但不再是唯一的出路；
+          // --no-seam-check-for <接缝 id | 对方任务 id> 只免一条，其余照判，且被免的那条会随 done 落在日志上。
+          const waived = list(a, "no-seam-check-for") ?? [];
+          if (bool(a, "no-seam-check")) console.error(WHOLE_GATE_OFF);
           else {
             const b = await client.board();
-            const check = seamCheck(b, task, evidence, gitIsAncestor());
+            const check = seamCheck(b, task, evidence, gitIsAncestor(), gitHasObject(), waived);
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches });
+            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
             // t-074: a fallback is never silent — what could not be verified goes on record next to the done
             if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
             // t-073: seams this done settles by itself: recorded right after, with the basis
             for (const e of check.absorbs) await emit(e);
             return;
           }
-          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");

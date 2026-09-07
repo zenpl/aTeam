@@ -53,7 +53,8 @@ describe("t-070 · GET /board is slim by default", () => {
     const slim = slimBoard(full);
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
     expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
-    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
+    // t-203：分母跟着那几个数一起留在瘦身板上——数在、分母不在，正是那几个数被当成全集读的形状
+    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, denominator: full.release.denominator, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
     expect(slim.omitted).toEqual(omittedPaths(full, slim)); // computed, not written; the recursive walk itself is proven in core
     expect(slim.omitted).toContain("tasks.done[].criteria");
     expect(full.omitted).toEqual([]);

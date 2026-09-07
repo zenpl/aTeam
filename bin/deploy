@@ -3,8 +3,31 @@
 # Falls back to "unknown" (never fails) when the sha cannot be determined, e.g. outside a git checkout.
 set -eu
 cd "$(dirname "$0")/.."
+
+# t-132（S3）：多一个 staging 目标。`bin/deploy` 照旧是生产，`bin/deploy staging` 用 fly.staging.toml。
+# **它此刻会拒绝**，而且拒绝的理由不是配置缺了一行，是缺一个只有 pd 能做的判断：staging 与生产共用不共用
+# 同一条日志（判据 2）。共用意味着两边的事实挤在同一个牌桌上，人分不分得清、要不要分，是产品判断。
+# 拒绝时把两条路都说出来——闸要人做的事，入口就得给得出材料。
+config=""
+if [ "${1-}" = "staging" ]; then
+  shift
+  config="fly.staging.toml"
+  [ -f "$config" ] || { echo "bin/deploy: 找不到 $config" >&2; exit 2; }
+  decision="$(sed -n 's/^# STAGING_LOG_DECISION: *//p' "$config" | head -1)"
+  case "$decision" in
+    shared|own) ;;
+    *)
+      echo "bin/deploy staging: 还不能部署——staging 与生产共用不共用同一条日志，这个决定还没落下来。" >&2
+      echo "  共用：staging 指向生产那份数据，两边的事实挤在同一个牌桌上，人得自己分清哪条是哪儿的。" >&2
+      echo "  各自一条：staging 挂自己的卷，互不相干，代价是 staging 上验过的东西在生产那份日志里查不到。" >&2
+      echo "  归 pd（必要时它问 human）。定了之后改 $config 里的 STAGING_LOG_DECISION，并按它补上 [mounts] 与 ATEAM_URL。" >&2
+      exit 2;;
+  esac
+fi
+
 sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   echo "bin/deploy: working tree is dirty; the deployed sha ($sha) will not match what runs" >&2
 fi
+if [ -n "$config" ]; then exec fly deploy --config "$config" --build-arg "GIT_SHA=$sha" "$@"; fi
 exec fly deploy --build-arg "GIT_SHA=$sha" "$@"

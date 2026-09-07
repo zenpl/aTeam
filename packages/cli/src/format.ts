@@ -1,4 +1,4 @@
-import { DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { band, type Band, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -39,6 +39,25 @@ export function event(e: Event, me: string): string {
   return `${t} ${who} ${JSON.stringify(e)}`;
 }
 
+/**
+ * 紧凑记法（t-199）：`30s` / `59m` / `3h` / `2d`。**这里只管怎么写，不管怎么分档**——档位与取整全部来自
+ * core 的 `band`，与牌桌上那三把中文梯子是同一段代码。
+ *
+ * pm 在判据 3 里裁的是「可以两种写法，不许两套算法」：这一份留成拉丁字母、留得密，是因为它给 agent 看，
+ * 一屏要塞下几十行；人看的那一版在 `GET /` 上，说的是「3 分钟前」。**两种写法，一套算法。**
+ *
+ * 这一把原来自带分档，三条都踩在 pd 09:09 的硬规矩上：四舍五入（3599 秒说成 `60m`，把没到的整点说成到了）、
+ * 带小数（`1.5h`）、没有「天」档（400 天说成 `9600.0h`）。它们不是各自的笔误，是**自带分档**这一件事的三个症状。
+ */
+const LETTER: Record<Band["unit"], string> = { second: "s", minute: "m", hour: "h", day: "d" };
+export function compact(ms: number): string | null {
+  // t-200：`band` 对负数答 null（另一侧不是最小的一档）。紧凑记法自己不决定那时说什么——**这一档的写法是
+  // frontend 在 t-199 里定的，不该由我在这儿替它添一个 `-3m` 出来**。所以这里如实往上传，由调用方决定。
+  const b = band(ms);
+  if (b === null) return null;
+  return `${b.n}${LETTER[b.unit]}`;
+}
+
 /** " at a, b" when the board carries the overlap; nothing when the slim board dropped it (t-075). */
 function at(overlap: string[] | undefined): string {
   return overlap?.length ? ` at ${overlap.join(", ")}` : "";
@@ -48,10 +67,10 @@ export function board(b: Board, me: string): string {
   const out: string[] = [];
   const who = roleNamer(b); // t-107: the CLI shows the same names the board does
   const now = Date.parse(b.now);
-  const ago = (iso: string) => {
-    const s = Math.round((now - Date.parse(iso)) / 1000);
-    return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`;
-  };
+  // t-200：这一路的负数只有一个来源——事件的时刻在牌桌的 `now` 前面（拉板与事件之间的时差，或钟不同步）。
+  // **这里的决定是当 0**，与页面那两处 `Math.max(0, …)`（html.ts:166、:672）是同一个决定，不是新加的一档；
+  // 把它写在这儿，是因为 t-200 之后「负数怎么办」必须有人明说，而这一路的答案是这个调用点知道的。
+  const ago = (iso: string) => compact(Math.max(0, now - Date.parse(iso)))!;
 
   out.push(`FOCUS      ${b.focus ? `${JSON.stringify(b.focus.body)}  (${who(b.focus.set_by)}, ${ago(b.focus.at)} ago)` : "—"}`);
 
@@ -287,7 +306,8 @@ export function release(b: Board): string {
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
   const counts = r.counts ?? { pending_deploy: 0, deployed_unverified: 0, unknown: (r.candidates ?? []).length };
-  out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.basis ? `  （${r.basis}）` : ""}`);
+  // t-203：这三个数跟着分母一起印。分母缺一桶时那句话自己会说算不出——一个小了的数比没有数更贵。
+  out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.denominator ? `  ${r.denominator}` : ""}${r.basis ? `  （${r.basis}）` : ""}`);
   if (!r.candidates) { out.push("  （默认板省略了清单：用 ateam release 或 board --full）"); return out.join("\n"); }
   if (!r.candidates.length) { out.push("  没有待上线的任务：仓库验过的都已在生产验过。"); return out.join("\n"); }
   const row = (c: BoardRelease) => {

@@ -109,6 +109,29 @@ describe("t-137 · 心跳停了，和心跳活着但服务端没见你拉", () =
     expect(line).toContain("ateam sync");
   });
 
+  /**
+   * t-200：core 的梯子对负数答 null，**这两个调用点各自决定自己的负数意味着什么**——那正是判负放在一处、
+   * 说法留给调用方的用处。
+   * · `deafNotice`：负数只来自「心跳文件的时刻在本机时钟前面」（钟不同步）。那时「刚刚」不是猜的，心跳确实
+   *   刚跳过，所以这里把它当 0。
+   * · `behindNotice`：`pullIdle` 在源头就挡掉了负数（`s >= 0`），所以那一路根本到不了 null。
+   */
+  it("t-200：钟走到心跳前面时，这一路自己决定说「刚刚」，不是梯子替它猜了一档", () => {
+    const future = JSON.stringify({ pid: 1, at: new Date(Date.now() + 5 * 60_000).toISOString(), cmd: "ateam watch --interval 25s" });
+    // 心跳在未来 5 分钟：watchState 仍判它 stopped 与否由它自己定，这里只要那句话不带一个负的时长
+    const line = deafNotice(watchState(future, new Date()));
+    if (line !== null) {
+      expect(line, "不许出现负数或空档").not.toMatch(/-\d/);
+      expect(line).not.toContain("null");
+    }
+  });
+
+  it("t-200：负的空闲秒数在源头就被挡掉，那一路到不了梯子", () => {
+    expect(pullIdle("-1"), "负数不是一个合法的空闲时长").toBeNull();
+    expect(behindNotice(pullIdle("-1"))).toBeNull();
+    expect(pullIdle("0")).toEqual({ kind: "seconds", s: 0 });
+  });
+
   it("the two are never one verdict: each is computed from its own fact", () => {
     // a live heartbeat says nothing about the cursor, and a fresh cursor says nothing about the heartbeat
     expect(deafNotice(st(beating()))).toBeNull();

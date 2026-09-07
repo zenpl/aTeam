@@ -250,7 +250,11 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
         // t-195（qa 11:08）：这里原来用 `Date.now()`，而整页别处用 `b.now`（上面第 165 行就是）。生产上两者差不到
         // 一秒，看页面永远看不出来；qa 把牌桌的钟拨前 30 分钟才让它露出来——同一张卡，带默认那句说「还有 30 分钟」，
         // 这一句说「还有 59 分钟」，同页差 29 分钟。**一页两个钟**。
-        const dueLine = say ? "" : `<span class="hint">${esc(UI.due(until(Date.parse(i.ack_by_again ?? i.ack_by) - now)))}</span>`;
+        // t-200：期限已经过去时 until 答 null（见 core 的 otherSideOfNow）。**这里的决定是「不印」**——
+        // 一张没有默认的卡过期了该对人说什么，是一句新话，归 pd（人可见的字 11:17 起冻结）。少印一句不会说错，
+        // 而这一句原来印的是「还有不到 1 分钟」，那是过期四小时之后说的假话。
+        const left = until(Date.parse(i.ack_by_again ?? i.ack_by) - now);
+        const dueLine = say || left === null ? "" : `<span class="hint">${esc(UI.due(left))}</span>`;
         out.push(form("/decide", "actions", id, `${buttons}${say ? `<span class="hint${i.says_default!.state === "stuck" ? " stuck" : ""}">${esc(say)}</span>` : dueLine}`));
       } else if (kind === "do" && missingRole(i)) {
         // UC-S7: the server's own 「<角色> 已经缺了 N 分钟…起一个 <角色>？」 card (t-043 decision B). 起好了 acks just this one;
@@ -731,6 +735,8 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     const moving = units.filter((u) => !u.held_by.length && u.brings > 0), stuck = units.filter((u) => u.held_by.length);
     // t-078's third state: with no containment fact the board cannot place these, so the page says why instead of a number.
     if (units.some((u) => u.brings_unknown)) out.push(`<p class="quiet">${esc(UI.waitingUnknown(b.release.basis || ""))}</p>`);
+    // t-203：那几个数的分母。整句来自 core（release.denominator），这里只放它，不新造一句人可见的话。
+    if (b.release.denominator) out.push(`<p class="quiet">${esc(b.release.denominator)}</p>`);
     if (stuck.length) out.push(`<ul class="plain stuck">${stuck.map(line).join("")}</ul>`);
     if (moving.length) {
       out.push(`<p class="meta">${UI.releaseBrings}</p>`);

@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -32,6 +32,8 @@ export interface BoardTask {
   evidence?: string;
   /** The sha in the evidence, if any: what release and the seam check need without the text (t-070). */
   evidence_sha?: string;
+  /** t-209：这一轮的起点 sha（`done` 记下的 claim 起点）。缺席 = 这件没记过，它的产出区间不可知。 */
+  base_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
   shows?: string;
   verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
@@ -86,7 +88,17 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   if (st.default_missed) return { state: "missed", line: DEFAULT_LINES.missed(i.default) };
   if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
   // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
-  return { state: "waiting", line: DEFAULT_LINES.waiting(until(Date.parse(i.ack_by) - now.getTime()), i.default) };
+  //
+  // t-200：**期限已经过去时，这里不再说「不点的话…到期」。** 这是 qa 12:31 那张卡的落点：它 08:12 就到期了，
+  // 却还停在 waiting（一次误 ack 把它弄成了异常态，根在 t-193），于是这一句拿着一个负数去问梯子，梯子答
+  // 「还有不到 1 分钟」——过期四小时说还有不到一分钟。
+  //
+  // 现在梯子答 null（见 otherSideOfNow），**由这里决定说什么**。我没有新写一句：`stuck` 那句「过期了，默认
+  // 还没生效。」是 pd 早就定过的，而它此刻说的正是真的——期限过了、默认没生效。这不是替 pd 写字，是把它已经
+  // 写好的那一句用在它本来就该用的地方；deaf 那种「要不要另说一句新话」的问题不在这里。
+  const left = until(Date.parse(i.ack_by) - now.getTime());
+  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  return { state: "waiting", line: DEFAULT_LINES.waiting(left, i.default) };
 }
 
 /**
@@ -100,10 +112,65 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
  * 合并之前这段逻辑在仓库里有四份（core 这里、页面的 UI.ago、命令行的 howLong、下面 sayReading 里那句只会说分钟的），
  * 99% 的时刻里至少两份说法不同。pd 09:09：重复的不只是句子，还有把数变成句子的那段逻辑。
  */
-export function ago(ms: number): string {
-  return Math.floor(ms / 1000) < 60 ? AGO_JUST_NOW : `${span(ms)}前`;
+export function ago(ms: number): string | null {
+  const b = band(ms);
+  if (b === null) return null;          // t-200：另一侧，见 band
+  return b.unit === "second" ? AGO_JUST_NOW : `${span(ms)}前`;
 }
 export const AGO_JUST_NOW = "刚刚";
+
+/**
+ * 分档与取整本身，从三把梯子里拿出来单独放着（t-199）。
+ *
+ * 到这一件之前，「把毫秒算成第几档、那一档是几」这段逻辑在 `span`、`until`、`ago` 里各写了一遍——**三处写法一致，
+ * 靠的是三次都写对，不是靠结构**。而第四处（`cli/format.ts` 那个紧凑记法）就没写对：它四舍五入、带小数、
+ * 没有「天」档，于是 3599 秒被说成 `60m`——一个还没到的整点被说成已经到了，正是 pd 09:09 第一条硬规矩要挡的。
+ *
+ * pm 在 t-199 判据 3 里的裁定：**可以两种写法，不许两套算法**。所以这里分开的是「算」与「写」：这个函数只回答
+ * 「第几档、那一档是几」，一个字都不说；说法留给调用方——中文由下面三把梯子说，紧凑记法（`30s`/`59m`，给 agent 看的）
+ * 由 `cli/format.ts` 说。想让两种记法在某个时刻各说各话，得先把这个函数改坏。
+ *
+ * 取整只在这里做一次，一律向下。**`second` 那一档带着秒数**：中文用不上它（时长没有「30 秒」这一说，
+ * pd 定的是「不到 1 分钟」），紧凑记法要用——它给 agent 判断新旧，一秒和五十秒是两回事。
+ *
+ * ---
+ *
+ * **t-200：负数在这里判，而且只在这里判。**
+ *
+ * t-199 把这一行留给了 t-200，原话是「分档搬到一处之后，它只剩这一个地方要改」——就是这里。
+ *
+ * 三把梯子原本都只定义了非负的那一半，而另一半没人定义——**它不报错，它回答**：任何负数都掉进最小的那一档，
+ * 于是 `until(-4小时)` 说「还有不到 1 分钟」、`span(负)` 说「不到 1 分钟」、`ago(负)` 说「刚刚」。
+ * qa 12:31 那张卡是真样本：08:12 就到期了，页面说它「还有不到 1 分钟到期」——过期四小时。
+ *
+ * pd 09:17 那条规矩说的正是这件事：一个句框如果只有某几档填得进去，那不是那一档特殊，是句框错了。
+ * frontend 12:33 把它用在「刚刚」上时说全了另一半：**梯子只定义了非负的那一半，另一半没人定义。**
+ *
+ * **这里只判「在现在的哪一侧」，不说那一侧该说什么话。** 负数在各个调用方那里的含义不一样——对 `until` 是
+ * 「已经过去了」，对 `ago`／`span` 是「一个未来的时刻被当成过去问」，对紧凑记法又是另一回事——所以那句话该由
+ * **调用方**说，它才知道自己在问什么。这里答 `null`，绝不猜一档。判负因此与分档同处一地：改它一处，四个调用方
+ * 一起改。
+ *
+ * **「已经过去」那句新话归 pd**（判据 2，人可见的字 11:17 起冻结），所以此刻没有任何一个调用方在新写一句：
+ * 它们要么用现成的、pd 早已定过的那一句，要么就不印这一句。各自的理由写在各自的调用点上。
+ *
+ * 判据 3 也在这里说一次：**不许用「正常流程拿不到负数」结案。** 这次显形是因为一次误 ack 把卡弄成了异常态，
+ * 而异常态恰恰是梯子该说实话的时候——一个只在顺境里正确的说法，等于把「不会发生」当成了保证。
+ */
+export type Band = { unit: "second" | "minute" | "hour" | "day"; n: number };
+export function band(ms: number): Band | null {
+  if (otherSideOfNow(ms)) return null;
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return { unit: "second", n: sec };
+  if (sec < 3600) return { unit: "minute", n: Math.floor(sec / 60) };
+  if (sec < 86400) return { unit: "hour", n: Math.floor(sec / 3600) };
+  return { unit: "day", n: Math.floor(sec / 86400) };
+}
+
+/** t-200：`band` 判负时问的就是这一句。单独拿出来是为了它能被直接指着看、被直接测。 */
+export function otherSideOfNow(ms: number): boolean {
+  return ms < 0;
+}
 
 /**
  * 同一道梯子的另一半：**一段时长**说成几个字，不带「前」。
@@ -115,12 +182,14 @@ export const AGO_JUST_NOW = "刚刚";
  * 所以这里不是「再写一个格式化函数」，而是**把梯子本身单独拿出来，`ago` 也调它**：两种句框共用同一段分档与取整，
  * 想让它们说法不一致，得先把这个函数改坏。不到一分钟的时长说「不到 1 分钟」——时长没有「刚刚」这一说。
  */
-export function span(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return SPAN_UNDER_A_MINUTE;
-  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天`;
+export function span(ms: number): string | null {
+  const b = band(ms);
+  if (b === null) return null;          // t-200：另一侧不是最小的一档，见 band
+  const { unit, n } = b;
+  if (unit === "second") return SPAN_UNDER_A_MINUTE;
+  if (unit === "minute") return `${n} 分钟`;
+  if (unit === "hour") return `${n} 小时`;
+  return `${n} 天`;
 }
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 
@@ -134,12 +203,14 @@ export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
  * 梯子：不到 1 小时「还有 N 分钟」／不到 1 天「还有 N 小时」／更远「N 天后」。取整与不出小数同前两把。
  * 不到一分钟那一档 pd 没定，我按前两把的形状写成「还有不到 1 分钟」，已单独发它过目。
  */
-export function until(ms: number): string {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return UNTIL_UNDER_A_MINUTE;
-  if (sec < 3600) return `还有 ${Math.floor(sec / 60)} 分钟`;
-  if (sec < 86400) return `还有 ${Math.floor(sec / 3600)} 小时`;
-  return `${Math.floor(sec / 86400)} 天后`;
+export function until(ms: number): string | null {
+  const b = band(ms);
+  if (b === null) return null;          // t-200：已经过去了，这把梯子答不了，见 band
+  const { unit, n } = b;
+  if (unit === "second") return UNTIL_UNDER_A_MINUTE;
+  if (unit === "minute") return `还有 ${n} 分钟`;
+  if (unit === "hour") return `还有 ${n} 小时`;
+  return `${n} 天后`;
 }
 export const UNTIL_UNDER_A_MINUTE = "还有不到 1 分钟";
 const agoAt = (at: string, now: Date) => ago(now.getTime() - Date.parse(at));
@@ -320,6 +391,13 @@ export interface Board {
     unknown?: (BoardRelease & { reason: string })[];
     /** t-078: the three counts, on every board. */
     counts: { pending_deploy: number; deployed_unverified: number; unknown: number };
+    /**
+     * t-203 判据 2：这几个数的**分母**——哪三类相加，或者为什么算不出。
+     *
+     * 「还剩多少」原来是从 `contained` 一份名单反推的，而那份名单缺了第三桶（量不出的那些），于是反推出来的数
+     * 偏小，方向还说不准。分母跟着数走，读的人不必再去别处凑。
+     */
+    denominator: string;
     /** t-078: what the split rests on: the containment fact used, or why there is none. */
     basis: string;
   };
@@ -633,6 +711,29 @@ export function missingCard(role: string, status: "missing" | "deaf", awayMin: n
 }
 
 /**
+ * t-210：这张服务卡此刻**照当下状态**该说的那句话；不是这一族的卡，或者算不出来，返回 undefined（照旧显示原文）。
+ *
+ * 只重算 `missingCard` 那一族——它是唯一一句「理由随时间变假」的卡文：说的是某个角色多久没读日志、欠着几条。
+ * 别的卡（给人的提问、外呼地址那张）说的是一件事本身，不随时间变。
+ *
+ * **不新写一个字**：同一个 `missingCard`，只是参数取自现在。数从哪儿来，与服务端发卡时那一处一样——
+ * 离开多久按 `last_pull` 算（从没拉过就没有「离开多久」这回事，那一档 `missingCard` 自己有话说），
+ * 条数优先用「没送到」那个数，没有就用「读到了还没办」的。
+ */
+function restated(s: State, i: Instruction, now: Date, listenWindow: number, b: Board): string | undefined {
+  if (i.actor !== SERVICE_ACTOR) return undefined;
+  const role = missingRoleOf(i.body);
+  if (!role) return undefined;
+  const status = presenceStatus(s, role, now, listenWindow);
+  if (status === "listening") return undefined;      // 这张卡此刻本来就该消失（t-202），不必替它重述
+  const last = s.presence.get(role)?.last_pull;
+  const away = last ? Math.max(1, Math.round((now.getTime() - Date.parse(last)) / 60_000)) : null;
+  const undelivered = b.undelivered.find((u) => u.to === role)?.count;
+  const count = undelivered ?? owedTo(s, role).filter((x) => x.reach === "unread").length;
+  return missingCard(role, status, away, count);
+}
+
+/**
  * The role a service card is about, from its first words; undefined for any other instruction.
  * The older openings stay recognised: cards sent before t-139 are still in the log and still name their role.
  */
@@ -788,7 +889,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
-    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, basis: "" },
+    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
     batches: [],
     said: [],
     disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
@@ -835,8 +936,20 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
+      // t-210：**卡上给人的理由不许是发卡那一刻的快照。**
+      //
+      // 这几张服务卡的正文是 `missingCard(...)` 在发卡时算出来的一句话，之后再没人重述过它。qa 14:26 在生产上
+      // 量到的样子：frontend 那张仍写着「有 6 分钟没读日志了……**它还在写，只是没来读**」，而那个节点已经
+      // 62 分钟没动。**它骗过的不是粗心的读者，是给它写规矩的人**——pm 13:31 把那句话当成对当下的描述，据此落了
+      // 一条错读数（needs_human.false_cards=2），13:42 自己更正为 1。
+      //
+      // 所以这里按**当下状态**重新算一遍那句话。用的是同一个 `missingCard`、同一批参数名——**一个字都没有新写**
+      // （判据 3：冻结之下只让那句话说当下的事）。历史一个字没改：事件里的原文原样躺着，改的只是牌桌此刻显示什么。
+      //
+      // 与 t-202 的分工：那一件管**卡该不该在**（deaf 的不出卡，已在生产验过），这一件只管**卡上的话对不对**。
+      const body = restated(s, i, now, listenWindow, b) ?? i.body;
       b.needs_human.push({
-        kind: instructionKind(i), ...splitTitle(i.body), id: i.id, from: i.actor, body: i.body, summary: `${i.actor}: ${i.body}${ask}`, since: i.at,
+        kind: instructionKind(i), ...splitTitle(body), id: i.id, from: i.actor, body, summary: `${i.actor}: ${body}${ask}`, since: i.at,
         ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st, now),
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
@@ -912,7 +1025,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
       // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
-      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1473,7 +1586,7 @@ export function slimBoard(b: Board): Board {
   const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, basis: b.release.basis };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
   const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
@@ -1522,13 +1635,18 @@ const shortSha = (a: unknown) => String(a).slice(0, 7);
 const sameSha = (a: unknown, b: unknown) => shortSha(a) === shortSha(b);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
-export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; method?: string; at: string } | null {
+export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; method?: string; at: string } | null {
   const id = s.latestReading.get(`production:${DEPLOYED_TASKS_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   if (!r || !r.valid || r.expired) return null;
-  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; method?: unknown };
+  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; method?: unknown };
   if (!v || typeof v !== "object" || typeof v.sha !== "string" || !Array.isArray(v.contained) || !Array.isArray(v.not_contained)) return null;
-  return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String), method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
+  // t-203：第三桶。**`null` 与 `[]` 是两件事**：`null` 说的是这条事实是三桶那条规矩之前写下的，它没说过量不出的
+  // 有哪些（今天生产上那几条就是这样，85 件无声消失）；`[]` 说的是量过了、一件都没有。分母算不算得出来，
+  // 全看这个区别——所以这里不把缺席补成空数组。
+  return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String),
+    unmeasured: Array.isArray(v.unmeasured) ? v.unmeasured.map(String) : null,
+    method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
 }
 
 /**
@@ -1675,9 +1793,16 @@ function splitRelease(s: State, b: Board) {
     if (!c.evidence_sha) { r.unknown.push({ ...c, reason: "证据里没有 sha，无从比对" }); continue; }
     if (fact!.contained.includes(c.task)) r.deployed_unverified.push(c);
     else if (fact!.not_contained.includes(c.task)) r.pending_deploy.push(c);
+    // t-203：**「事实量过它、放不进任何一边」与「事实根本没覆盖它」是两回事**，原来它们共用一句话，
+    // 而那句话说的是后者——于是 85 件被量过、放不下的活，在牌桌上被说成「在它之后才 done」。
+    else if (fact!.unmeasured?.includes(c.task)) r.unknown.push({ ...c, reason: factCannotPlace(c.task, fact!.sha) });
+    // 事实是三桶规矩之前写的：它连「量不出的有哪些」都没说过，所以它答不了这一件——这也不是「在它之后才 done」
+    else if (fact!.unmeasured === null) r.unknown.push({ ...c, reason: factPredatesThirdBucket(c.task, fact!.sha) });
     else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+  // t-203 判据 2：分母跟着数走。事实没写第三桶时说算不出——一个小了的数比没有数更贵。
+  r.denominator = !fact || fact.unmeasured === null ? denominatorUnknown : denominatorIs(fact.contained.length, fact.not_contained.length, fact.unmeasured.length);
   b.batches = batches(s, deployed, why, fact);   // t-129: judged on the same basis, so the two can never disagree
 }
 
