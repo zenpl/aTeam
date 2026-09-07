@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -140,15 +140,7 @@ function tooLong(text: string): { title: string; detail: string } {
 }
 
 /** A blocked reason on the first screen: ids, paths and long shas become 「…」, then clipped (board.md: 60 chars). */
-export function whyLine(reason: string, max = 60): string {
-  const masked = reason
-    .replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…")
-    // a bracket left with nothing but 「…」 and separators goes away entirely (pd review of t-034)
-    .replace(/[（(]\s*(?:…\s*[，,、;；]?\s*)+[)）]/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return clip(masked, max);
-}
+export const whyLine = blockedWhy;
 
 export type Said = Pick<BoardSaid, "id" | "body" | "at"> & Partial<Pick<BoardSaid, "status" | "label" | "links">>;
 
@@ -271,7 +263,12 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     .sort((x, y) => y.at.localeCompare(x.at))[0];
   if (just) {
     const { title } = cardTitle(just.i);
-    const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
+    // t-161 made this read core's DEFER_PREFIX instead of the three characters written out here — pd's words used as
+    // a *predicate*, where a reword would not have shown wrong but judged wrong, in silence.
+    // t-165 then removed the second half of it. core already decides this (board.ts `deferred`) from the same notes
+    // under the same three conditions, so the fallback was a second derivation of one judgment, which is how the page
+    // has been wrong before (t-126). What remains reads core and nothing else.
+    const deferred = !!just.i.deferred;
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
@@ -427,46 +424,15 @@ function inviteLine(url: string): string {
 /** The only script on the page: the copy button. Without it the link is still a selectable readonly box. */
 const COPY_SCRIPT = `<script>document.addEventListener("click",function(e){var b=e.target.closest("button.copy");if(!b||!navigator.clipboard)return;navigator.clipboard.writeText(b.getAttribute("data-copy")).then(function(){b.textContent="${UI.copied}";});});</script>`;
 
-interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
-
-/** The in-flight groups: a count each, and rows. working/blocked are read; the others are dug. */
+/**
+ * t-153: which task lands in which group is core's (`inFlightGroups`), computed once and read by whoever renders.
+ * All this adds is the page's own label for each key — the words stay where the page's words live (i18n).
+ */
 export function inFlightOf(b: Board): { key: string; label: string; total: number; items: FlightItem[] }[] {
-  const g = (k: string): FlightItem[] => (b.in_flight[k]?.all ?? []).map((x) => {
-    const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
-    return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? whyLine(task.blocked_on) : undefined };
-  });
-  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
-  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
-  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
-  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
-  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
-  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
-  // t-152 (pd 07:07): group by what a thing is actually waiting for. 「验过了，等上线」 is exactly the set one push
-  // clears — the same set the standing line counts, because two numbers that mean the same thing must be one number.
-  // A task verified only on staging is waiting for a repo verification, not a deploy, so it belongs with 等验; and
-  // work already running in production that nobody walked there has no lever at all and leaves every surface.
-  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
-  const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
-  const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
-  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
-  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
-  const groups = [
-    { key: "working", label: UI.groups.working, items: sortRecent(b, "working", g("working")) },
-    { key: "blocked", label: UI.groups.blocked, items: sortRecent(b, "blocked", g("blocked")) },
-    { key: "done", label: UI.groups.done, items: [...g("done"), ...awaitingRepo] },
-    { key: "open", label: UI.groups.open, items: g("open") },
-    { key: "failed", label: UI.groups.failed, items: g("failed") },
-    { key: "verifiedElsewhere", label: UI.groups.verifiedElsewhere, items: elsewhere },
-  ];
-  return groups.map((x) => ({ ...x, total: x.items.length }));
+  const label: Record<string, string> = UI.groups;
+  return inFlightGroups(b).map((g) => ({ ...g, label: label[g.key] ?? g.key }));
 }
 
-/** The board's `shown` order (most recently touched first) for the groups the page expands. */
-function sortRecent(b: Board, k: string, items: FlightItem[]): FlightItem[] {
-  const order = new Map((b.in_flight[k]?.all ?? []).slice().sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).map((x, i) => [x.title, i]));
-  return items.slice().sort((x, y) => (order.get(x.title) ?? 0) - (order.get(y.title) ?? 0));
-}
 
 function clip(s: string, n: number): string {
   const chars = [...s];
@@ -484,9 +450,12 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
   const valid = b.readings.filter((r) => r.valid), stale = b.readings.filter((r) => !r.valid);
+  // t-155: what core marks 「说过了」 is not listed in the readings section, so it must not be counted for it either —
+  // a summary that promises more rows than the section holds is the same two-numbers-one-thing we keep removing.
+  const shownValid = valid.filter((r) => !r.said?.said_elsewhere), hiddenValid = valid.length - shownValid.length;
   const why = (r: Board["readings"][number]) => !r.why ? "" : r.why.startsWith("superseded by") ? `${UI.supersededBy} <code>${esc(r.why.slice(14))}</code>` : r.why.startsWith("invalidated by") ? `${UI.invalidatedBy} <code>${esc(r.why.slice(15))}</code>` : UI.expired;
 
-  d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, valid.length))}</span></summary>`);
+  d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, shownValid.length))}</span></summary>`);
 
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
@@ -556,10 +525,25 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   if (closedSeams) d.push(`<p class="meta">${esc(UI.seamsElsewhere(closedSeams))}</p>`);
   d.push(`</section>`);
 
-  d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(valid.length, stale.length))}</span></h3>`);
-  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> <code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} <span class="meta">${esc(who(r.by))}，${t(r.at)}${[why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean).map((x) => ` · ${x}`).join("")}</span></li>`;
+  // t-155 (pd 07:14): a fact shows its sentence, never its raw value. core computes the sentence (t-154's
+  // `said`); the value folds one layer down, where whoever needs the bytes can open it. What core marks
+  // `said_elsewhere` is not repeated here at all — but the count says how many, because a row that vanishes
+  // without a word is the same silence we keep finding.
+  d.push(`<section id="readings"><h3>${UI.readings} <span class="meta">${esc(UI.readingCount(shownValid.length, stale.length))}</span></h3>`);
+  // A degraded sentence (core found no saying for this key) already names who recorded it and how long ago, so the
+  // meta tail must not say either a second time; a declared sentence says neither, and keeps them.
+  const meta = (r: Board["readings"][number]) => {
+    const bits = [r.said && !r.said.declared ? "" : `${esc(who(r.by))}，${t(r.at)}`, why(r), r.assumptions?.length ? `${UI.assumes}：${esc(r.assumptions.join("；"))}` : ""].filter(Boolean);
+    return bits.length ? `<span class="meta">${bits.join(" · ")}</span>` : "";
+  };
+  const raw = (r: Board["readings"][number]) => `<details class="dig"><summary>${UI.rawValue} <code>${esc(r.surface)}:${esc(r.key)}</code></summary><pre class="value">${esc(clip(str(r.value), VALUE_MAX))}</pre></details>`;
+  const readingLine = (r: Board["readings"][number]) => `<li><span class="tag${r.valid ? "" : " stale"}">${r.valid ? UI.valid : UI.stale}</span> ${r.said
+    ? `${esc(r.said.line)} ${meta(r)}${raw(r)}`
+    : `<code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} ${meta(r)}`}</li>`;
   const staleShown = stale.slice().sort((x, y) => y.at.localeCompare(x.at)).slice(0, STALE_SHOWN);
-  d.push(b.readings.length ? `<ul class="plain">${[...valid, ...staleShown].map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const rows = [...shownValid, ...staleShown];
+  d.push(rows.length ? `<ul class="plain">${rows.map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  if (hiddenValid) d.push(`<p class="meta">${esc(UI.saidElsewhere(hiddenValid))}</p>`);
   if (stale.length > staleShown.length) d.push(`<p class="meta">${esc(UI.olderStale(stale.length - staleShown.length))}</p>`);
   d.push(`</section>`);
 
@@ -680,16 +664,29 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
     out.push(`<p class="quiet">${UI.noDeployReading}</p>`);
   }
 
-  // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
-  if (batches.length) {
-    out.push(`<h3>${UI.releaseBatches}</h3><ul class="plain batches">`);
-    for (const x of batches) {
-      const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
-      const why = x.line ? ` <span class="held">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
-      out.push(`<li>${named}${why}</li>`);
-    }
-    out.push(`</ul>`);
-  }
+  // t-169 (pd 08:13): 上线清单说的是「接下来要发生什么」，所以已经上过线的那几批离开它——但不是删掉，它们
+  // 搬到「线上这一版」这一段下面，那里本来就在说这一版带来了什么。谁还在等人推，由 core 的 `pending` 说了算，
+  // 页面不自己去筛状态名（两个渲染方各筛一遍，就是 t-142 那一族）。
+  const row = (x: BoardBatch) => {
+    const named = `<b>${esc(x.name)}</b> <code>${esc(x.sha.slice(0, 7))}</code>`;
+    // pd 03:32 / 05:12: a batch that cannot go out says why in core's own sentence — nothing of ours in front of it.
+    // t-169: 「拦住了」的样子只给还在等人推、而推不出去的那几批。已经上过线的两句是事实、不带动作（pd 08:13、
+    // 08:18），把它们印成拦住的样子，等于用颜色说了一句 core 没说的话。
+    const tone = x.pending ? "held" : "meta";
+    const why = x.line ? ` <span class="${tone}">${esc(x.line)}</span>` : ` <span class="meta">${esc(UI.releaseCanGo)}</span>`;
+    return `<li>${named}${why}</li>`;
+  };
+  const shipped = batches.filter((x) => !x.pending);
+  if (shipped.length) out.push(`<h3>${UI.releaseShipped}</h3><ul class="plain batches">${shipped.map(row).join("")}</ul>`);
+
+  // 装好的几批 — 只剩还在等人推的。一个都没有时说一句 core 的话，不留一片空白（pd 08:18：清单空着时的样子
+  // 也是产品问题）。今天这一支就会被走到：五批全上过线，候选数是 0。
+  // t-176 (pd 08:47): 空着时说什么由 core 决定（哪几种状态、各说哪一句、以及第三种要带的那个数），页面只印。
+  // 这一页是人专门来看上线的，所以空着也要说话：一节凭空消失读起来像我们忘了做。
+  const empty = batchesEmptyLine(batches, unpackedCount(b));
+  const pending = batches.filter((x) => x.pending);
+  out.push(`<h3>${UI.releaseBatches}</h3>`);
+  out.push(pending.length ? `<ul class="plain batches">${pending.map(row).join("")}</ul>` : `<p class="quiet">${esc(empty ?? "")}</p>`);
 
   // 下一次上线 — never a count (the board says that); the units, and what each is waiting on.
   out.push(`<h3>${UI.releaseNext}</h3>`);
@@ -888,6 +885,9 @@ a.btn { text-decoration:none; display:inline-block; }
 .sha, code { font:.85rem var(--mono); background:var(--soft); padding:.1em .4em; border-radius:4px; }
 .ok { color:var(--good); font-weight:500; }
 .more-list summary, .grp summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
+/* t-155: a fact reads as its sentence; the bytes it was measured from are one fold down, for whoever needs them. */
+.dig { display:inline; } .dig summary { cursor:pointer; color:var(--muted); font-size:.8rem; display:inline; }
+.dig pre.value { white-space:pre-wrap; word-break:break-all; margin:.3rem 0 .1rem; padding:.4rem .5rem; background:var(--card,rgba(0,0,0,.04)); border-radius:4px; font-size:.8rem; }
 .more-list { margin-top:.25rem; }
 ul.plain { margin:.25rem 0 0; padding-left:1.1rem; color:var(--muted); font-size:.9rem; }
 ul.plain li { padding:.1rem 0; }

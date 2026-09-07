@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
@@ -479,6 +479,10 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("dev", { kind: "reading", surface: "production", key: "users.count", value: 128, depends_on: ["production:users"] });
       await z.post("dev", { kind: "note", body: "导入了第三批", writes: ["production:users"], task: "t-1" });
       await z.post("qa", { kind: "reading", surface: "production", key: "health", value: "ok", valid_until: new Date(Date.now() - 1000).toISOString() });
+      // t-155 判据 3：夹具补上生产上真实存在的两种结构化读数。这条测试今天没红，只是因为夹具里从来没有这种形状——
+      // 一段 83 个 id 的 JSON 印在人眼前，而「页面上不许有英文」的断言看着它通过了，因为 id 里没有英文单词。
+      await z.post("release", { kind: "reading", surface: "production", key: "deployed.tasks", value: { sha: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", contained: ["t-1", "t-4", "t-5"], not_contained: ["t-3", "t-6"], method: "git-ancestor" }, method: "git merge-base --is-ancestor 逐件测" });
+      await z.post("pm", { kind: "reading", surface: PROJECT_SURFACE, key: "deploy.enabled", value: { branch: "production", by: ["release"] }, method: "human 在日志里许可" });
       await z.post(HUMAN, { kind: "note", body: "human 说：按钮太小" });
 
       for (const html of [await z.authedPage(), await z.page()]) {

@@ -165,6 +165,8 @@ export const UI = {
   releaseNotVerified: (who: string) => `还没验，带不上：${who}`,
   releaseHeldBy: (who: string) => `等 ${who}`,
   releaseBatches: "装好的几批",
+  /** t-169 (pd 08:13)：已经上过线的那几批不占上线清单的位置，它们属于「已经发生了什么」，列在「线上这一版」那一段下。 */
+  releaseShipped: "上过线的几批",
   /** t-129: a batch packed on the head production is actually running has nothing standing in its way. */
   releaseCanGo: "可以推",
   releaseUnitMore: (n: number) => `还有 ${n} 件`,
@@ -196,6 +198,10 @@ export const UI = {
   bothTouch: "都涉及",
   readings: "事实",
   readingCount: (v: number, s: number) => `${v} 条有效，${s} 条失效`,
+  /** t-155: 已在牌桌别处说过的那几条不在这里重复。不显示 ≠ 不存在，所以说一句、不留一个静默的差额。 */
+  saidElsewhere: (n: number) => `另有 ${n} 条牌桌上别处已经说过，这里不重复`,
+  /** t-155: 挖层里那一行的名字——一句话上面，值在下面。 */
+  rawValue: "它记下来的值",
   valid: "有效",
   stale: "失效",
   assumes: "假设",

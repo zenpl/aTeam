@@ -1168,6 +1168,74 @@ export const SLIM_DECIDED = 5;
  * evidence, notes, verifications and history are GET /task/<id>'s. Acked instructions go, except the last few decided.
  * `?full=1` / `--full` return the whole thing.
  */
+/**
+ * t-153: the six in-flight groups — which task lands in which — computed here, once. It used to live in
+ * packages/server/src/html.ts, and the page was the only reader; moving it does not change any membership
+ * (t-153 判据 2 pins that with a real log, before and after).
+ *
+ * Only the grouping moves. The labels stay where the page's own words live, keyed by `key`, and the page renders
+ * the rows: this returns data, no sentence of its own. The one sentence it does carry is a task's own
+ * 「卡在什么上」, and that is `blockedWhy` below — it came along because a page that kept composing it would be
+ * the assembly here and the sentence there (t-126's shape).
+ */
+export interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
+
+/**
+ * The reason a task is blocked, said short and without machinery: ULIDs, shas and paths become 「…」, and a bracket
+ * left holding nothing but 「…」 goes away entirely (pd's review of t-034).
+ */
+export function blockedWhy(reason: string, max = 60): string {
+  const masked = reason
+    .replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…")
+    .replace(/[（(]\s*(?:…\s*[，,、;；]?\s*)+[)）]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const chars = [...masked];
+  return chars.length <= max ? masked : chars.slice(0, max).join("") + "…";
+}
+
+/** The board's `shown` order (most recently touched first) for the groups the page expands. */
+function sortRecent(b: Board, k: string, items: FlightItem[]): FlightItem[] {
+  const order = new Map((b.in_flight[k]?.all ?? []).slice().sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).map((x, i) => [x.title, i]));
+  return items.slice().sort((x, y) => (order.get(x.title) ?? 0) - (order.get(y.title) ?? 0));
+}
+
+export function inFlightGroups(b: Board): { key: string; total: number; items: FlightItem[] }[] {
+  // t-163 (pd 07:56): every group reads the same way — the task's own 「人能看到什么」 if it has one, otherwise the
+  // title we gave it. A person reading this section is asking what is moving right now, and `shows` is that sentence;
+  // the title is our name for the task, the fallback. Never both on one row: one line saying the same thing twice
+  // reads as two things. The tasks written before that rule land on the title branch — plain, and true.
+  const g = (k: string): FlightItem[] => (b.in_flight[k]?.all ?? []).map((x) => {
+    const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
+    return { title: task?.shows ?? x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? blockedWhy(task.blocked_on) : undefined };
+  });
+  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
+  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
+  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
+  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
+  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
+  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
+  // t-152 (pd 07:07): group by what a thing is actually waiting for. 「验过了，等上线」 is exactly the set one push
+  // clears — the same set the standing line counts, because two numbers that mean the same thing must be one number.
+  // A task verified only on staging is waiting for a repo verification, not a deploy, so it belongs with 等验; and
+  // work already running in production that nobody walked there has no lever at all and leaves every surface.
+  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
+  const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
+  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
+  const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
+  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
+  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
+  const groups = [
+    { key: "working", items: sortRecent(b, "working", g("working")) },
+    { key: "blocked", items: sortRecent(b, "blocked", g("blocked")) },
+    { key: "done", items: [...g("done"), ...awaitingRepo] },
+    { key: "open", items: g("open") },
+    { key: "failed", items: g("failed") },
+    { key: "verifiedElsewhere", items: elsewhere },
+  ];
+  return groups.map((x) => ({ ...x, total: x.items.length }));
+}
+
 export function slimBoard(b: Board): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
@@ -1273,8 +1341,18 @@ export const BATCH_LINES = {
    * 会说话的行里像坏了**。不写「已作废」：它没作废，它发生过。
    */
   shipped: () => "这一批上过线，后来被更新的一版盖过。",
-  /** t-167 (pd 08:18)：一批可上线的都没有时，印这句，而不是一片空白。 */
-  none: () => "没有可上线的东西",
+  /**
+   * t-176 (pd 08:47)：这一段空着时说的是**两件独立的事**——批次那边什么样，以及有没有验过了却还没装进批次的。
+   * 所以先说批次，再说没装的，各一句；哪一句出现只看两个数。
+   *
+   * pd 退役了原来那句「没有做完等上线的东西。」：它想同时说这两件事，于是对「装过、都上线了、还有没装的」
+   * 那一种必然说假话——今天生产正是那一种（五批全上过线，7 件已验的一批都没进）。这条是 pd 自己 07:4x 定的
+   * 「一句话不许同时说两件事」的一个实例，而它是我量了生产板才发现的：**空态最容易被想象出来，因为写的时候
+   * 手边没有那个世界**（pd 08:47）。
+   */
+  neverPacked: () => "还没装过批次。",
+  allShipped: () => "装好的批次都上线了。",
+  unpacked: (n: number) => `还有 ${n} 件验过了，没装进任何一批。`,
   stale: (base: string) => `这批是以 ${base.slice(0, 7)} 为底装的，生产已经往前走了；重装一次就能把新验的一起带上。`,
   rollback: (base: string, loses: string[]) =>
     `这批是以 ${base.slice(0, 7)} 为底装的，推它会把 ${loses.join("、")} 从生产上退回去。重装，别推。`,
@@ -1310,6 +1388,25 @@ export function standIns(s: State, now: Date): Board["stand_ins"] {
     ? `人顶了 ${total} 次（${rows.map((r) => `${r.task} ${r.count} 次`).join("、")}）——都是本可以自动、现在由人做的`
     : "人顶了 0 次";
   return { total, since, by_task: rows, summary };
+}
+
+/**
+ * t-176 (pd 08:47)：上线清单空着时说什么。两件独立的事，先说批次、再说没装的，各一句；哪一句出现只看两个数。
+ * 还有批次在等人推时这里返回 null——那一段本来就在列它们。
+ *
+ * 判断与措辞都在这里，渲染方只印：两个渲染方各判一遍状态名，就是 t-142 那一族。
+ */
+export function batchesEmptyLine(batches: BoardBatch[], unpacked: number): string | null {
+  if (batches.some((x) => x.pending)) return null;
+  const said = [batches.length ? BATCH_LINES.allShipped() : BATCH_LINES.neverPacked()];
+  if (unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
+  return said.join("");
+}
+
+/** 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。 */
+export function unpackedCount(b: Board): number {
+  const packed = new Set((b.batches ?? []).flatMap((x) => x.contains));
+  return (b.release?.counts?.pending_deploy ?? 0) === 0 ? 0 : (b.release.pending_deploy ?? []).filter((c) => !packed.has(c.task)).length;
 }
 
 export function batches(s: State, deployed: string | null, why: string | null, fact: ReturnType<typeof deployedTasksFact>): BoardBatch[] {
