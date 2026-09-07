@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport } from "../src/html.js";
 
@@ -1453,6 +1453,55 @@ describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
       expect(card(await v.page({ cookie }))).toBe("");
       const events = JSON.parse(await (await v.api("/log")).text()).events as { kind: string; body?: string }[];
       expect(events.filter((e) => e.kind === "instruction" && e.body === CONTACT_ASK)).toHaveLength(0);
+    } finally { await v.stop(); }
+  });
+});
+
+describe("t-125 · 按钮的标签就是它送出的值", () => {
+  /**
+   * 判据 4. Every button that submits a decision (name="option") must print the very value it sends: one source, so
+   * a reworded label cannot leave the logged value behind. That is exactly how 「记下」/「填写」 drifted — the label
+   * came from i18n and the value from the card, and only one of them was changed.
+   *
+   * Scope is name="option" on purpose: a name="note" button (「先不做」) sends a reason, not a label, and is not a
+   * second copy of anything.
+   */
+  const optionButtons = (html: string) =>
+    [...html.matchAll(/<button[^>]*name="option"[^>]*value="([^"]*)"[^>]*>(.*?)<\/button>/g)]
+      .map(([, value, label]) => ({ value, label: label.replace(/<small>.*?<\/small>/g, "").trim() }));
+
+  it("every decision button on the board prints its own value, across every kind of card", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: soon() });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: "先上哪个？", intent: "ask", options: ["报表", "导出"], default: "导出", ack_by: soon() });
+      await v.post("pd", { kind: "instruction", to: HUMAN, body: "这个项目是什么？说一句。", intent: "ask", options: ["说一句", "不要了"], ack_by: soon() });
+      const html = await v.page({ cookie: await v.cookie() });
+      const buttons = optionButtons(html);
+      expect(buttons.length).toBeGreaterThanOrEqual(6);
+      for (const { value, label } of buttons) expect(label, `button value=${value}`).toBe(value);
+      // and the one that started this: the card carries 记下, so that is what the human reads and what the log gets
+      expect(buttons.map((b) => b.value)).toContain("记下");
+      expect(html).not.toContain('value="填写">记下');
+    } finally { await v.stop(); }
+  });
+
+  it("a card sent before the wording changed still prints and sends its own word", async () => {
+    const v = server();
+    await v.start();
+    try {
+      await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
+      const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK_WAS, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
+      const cookie = await v.cookie();
+      const buttons = optionButtons(await v.page({ cookie }));
+      for (const { value, label } of buttons) expect(label, `button value=${value}`).toBe(value);
+      expect(buttons.map((b) => b.value)).toEqual(expect.arrayContaining(["填写", "先不要"]));
+      // 判据 3: answering it with its own word works, and it is not asked again
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      const after = await v.page({ cookie });
+      expect(after).not.toContain(CONTACT_ASK);
     } finally { await v.stop(); }
   });
 });
