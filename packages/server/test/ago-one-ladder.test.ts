@@ -42,9 +42,10 @@ describe("t-180 · 页面不自带梯子", () => {
     for (const [name, dir] of Object.entries(roots)) {
       for (const f of readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
         scanned++;
+        // 去掉注释之后直接在源码正文里找单位词——不再去「抽出字面量」：模板串里可以嵌模板串，
+        // 按引号配对的写法在嵌套处会错位，而错位的方向是漏报。这几个词在代码里只可能出现在字符串里。
         const src = readFileSync(new URL(f, dir), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-        const lits = [...src.matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((m) => m[1]);
-        const used = UNITS.filter((u) => lits.some((t) => t.includes(u)));
+        const used = UNITS.filter((u) => src.includes(u));
         if (used.length >= 2) hits.push(`${name}/${f}：同时说 ${used.join("、")}`);
       }
     }
