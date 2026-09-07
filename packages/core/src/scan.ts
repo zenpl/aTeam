@@ -66,6 +66,17 @@ export function isSecondHome(path: string): boolean {
  */
 export const SURFACE_NAMES = ["repo", "staging", "production"] as const;
 
+/**
+ * 这个文件算不算「产品源码」：`packages/<任何一个包>/src/` 底下的 .ts，测试与声明文件除外。**与 isSecondHome
+ * 的差别只有一处：core 也算**——表面名散在 core 里和散在别处一样糟。范围同样是走出来的，不是名单：t-185 的账
+ * （手写名单外 16 个文件 158 句，三道闸全绿）今晚已经付过一次，这里不再付第二次。
+ */
+export function isProductSource(path: string): boolean {
+  const p = path.replaceAll("\\", "/");
+  if (!/^packages\/[^/]+\/src\/.+\.ts$/.test(p)) return false;
+  return !/\.(test|spec)\.ts$/.test(p) && !p.endsWith(".d.ts");
+}
+
 const SURFACE_POSITIONS: RegExp[] = [
   // r.surface === "production" / surface !== "repo" / { surface: "production" }
   /\bsurface\s*(?:===|!==|==|:)\s*"(?:repo|staging|production)"/g,

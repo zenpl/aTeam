@@ -7,13 +7,16 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { sourceFiles, bareSurfaceLiterals, SURFACE_GATE_BLIND_SPOTS, SURFACES, HUMAN_SURFACE } from "../src/index.js";
+import { sourceFiles, bareSurfaceLiterals, isProductSource, SECOND_HOMES_ROOT, SURFACE_GATE_BLIND_SPOTS, SURFACES, HUMAN_SURFACE } from "../src/index.js";
 
 const ROOT = join(import.meta.dirname, "../../..");
-const PACKAGES = ["packages/core/src", "packages/cli/src", "packages/server/src"];
 const read = (f: string) => readFileSync(join(ROOT, f), "utf8");
-const scan = () => PACKAGES.flatMap((p) => sourceFiles(join(ROOT, p), p).flatMap((f) =>
-  bareSurfaceLiterals(read(f)).map((h) => `${f}:${h.line}  ${h.text}`)));
+/**
+ * t-185：**范围是走出来的，不是名单。** 从 packages 走到每一个产品源码文件——新加一个文件、新加一个包，它当场
+ * 就在范围里。这里原来写死了三个目录；那正是今晚已经付过账的那个形状。
+ */
+const sources = () => sourceFiles(join(ROOT, SECOND_HOMES_ROOT), SECOND_HOMES_ROOT).filter(isProductSource);
+const scan = () => sources().flatMap((f) => bareSurfaceLiterals(read(f)).map((h) => `${f}:${h.line}  ${h.text}`));
 
 describe("t-213 判据 1、2 · 表面位置上不许有裸的表面名", () => {
   it("产品代码里一处都没有", () => {
@@ -67,9 +70,28 @@ describe("t-213 · HUMAN_SURFACE 不再是摆设", () => {
   });
 
   it("产品代码里真的有人读它——这正是它今天没有的那一条", () => {
-    const readers = PACKAGES.flatMap((p) => sourceFiles(join(ROOT, p), p))
+    const readers = sources()
       .filter((f) => f !== "packages/core/src/events.ts")
       .filter((f) => /\bHUMAN_SURFACE\b/.test(read(f)));
     expect(readers.length, "没有一个产品文件读 HUMAN_SURFACE：那它就还是个摆设").toBeGreaterThan(0);
+  });
+});
+
+describe("t-213 · 闸的范围是走出来的，不是名单", () => {
+  it("走到了每一个包的每一个源码文件，不是写死的三个目录", () => {
+    const files = sources();
+    expect(files.length).toBeGreaterThan(30);
+    for (const pkg of ["core", "cli", "server"]) expect(files.some((f) => f.startsWith(`packages/${pkg}/src/`))).toBe(true);
+    // 测试文件不在范围里：用例里写 "production" 是在造样本，不是在判表面
+    expect(files.some((f) => /\.test\.ts$/.test(f))).toBe(false);
+  });
+
+  it("新加一个包、新加一个文件都当场在范围里（按位置判，不按名字）", () => {
+    expect(isProductSource("packages/一个还不存在的包/src/x.ts")).toBe(true);
+    expect(isProductSource("packages/core/src/deep/nested/y.ts")).toBe(true);
+    expect(isProductSource("packages/core/test/x.test.ts")).toBe(false);
+    expect(isProductSource("packages/core/src/x.test.ts")).toBe(false);
+    expect(isProductSource("packages/core/dist/x.js")).toBe(false);
+    expect(isProductSource("bin/ateam")).toBe(false);
   });
 });
