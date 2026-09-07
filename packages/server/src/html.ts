@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, type FlightItem } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -140,15 +140,7 @@ function tooLong(text: string): { title: string; detail: string } {
 }
 
 /** A blocked reason on the first screen: ids, paths and long shas become 「…」, then clipped (board.md: 60 chars). */
-export function whyLine(reason: string, max = 60): string {
-  const masked = reason
-    .replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…")
-    // a bracket left with nothing but 「…」 and separators goes away entirely (pd review of t-034)
-    .replace(/[（(]\s*(?:…\s*[，,、;；]?\s*)+[)）]/g, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return clip(masked, max);
-}
+export const whyLine = blockedWhy;
 
 export type Said = Pick<BoardSaid, "id" | "body" | "at"> & Partial<Pick<BoardSaid, "status" | "label" | "links">>;
 
@@ -432,46 +424,15 @@ function inviteLine(url: string): string {
 /** The only script on the page: the copy button. Without it the link is still a selectable readonly box. */
 const COPY_SCRIPT = `<script>document.addEventListener("click",function(e){var b=e.target.closest("button.copy");if(!b||!navigator.clipboard)return;navigator.clipboard.writeText(b.getAttribute("data-copy")).then(function(){b.textContent="${UI.copied}";});});</script>`;
 
-interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
-
-/** The in-flight groups: a count each, and rows. working/blocked are read; the others are dug. */
+/**
+ * t-153: which task lands in which group is core's (`inFlightGroups`), computed once and read by whoever renders.
+ * All this adds is the page's own label for each key — the words stay where the page's words live (i18n).
+ */
 export function inFlightOf(b: Board): { key: string; label: string; total: number; items: FlightItem[] }[] {
-  const g = (k: string): FlightItem[] => (b.in_flight[k]?.all ?? []).map((x) => {
-    const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
-    return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? whyLine(task.blocked_on) : undefined };
-  });
-  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
-  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
-  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
-  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
-  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
-  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
-  // t-152 (pd 07:07): group by what a thing is actually waiting for. 「验过了，等上线」 is exactly the set one push
-  // clears — the same set the standing line counts, because two numbers that mean the same thing must be one number.
-  // A task verified only on staging is waiting for a repo verification, not a deploy, so it belongs with 等验; and
-  // work already running in production that nobody walked there has no lever at all and leaves every surface.
-  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
-  const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
-  const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
-  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
-  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
-  const groups = [
-    { key: "working", label: UI.groups.working, items: sortRecent(b, "working", g("working")) },
-    { key: "blocked", label: UI.groups.blocked, items: sortRecent(b, "blocked", g("blocked")) },
-    { key: "done", label: UI.groups.done, items: [...g("done"), ...awaitingRepo] },
-    { key: "open", label: UI.groups.open, items: g("open") },
-    { key: "failed", label: UI.groups.failed, items: g("failed") },
-    { key: "verifiedElsewhere", label: UI.groups.verifiedElsewhere, items: elsewhere },
-  ];
-  return groups.map((x) => ({ ...x, total: x.items.length }));
+  const label: Record<string, string> = UI.groups;
+  return inFlightGroups(b).map((g) => ({ ...g, label: label[g.key] ?? g.key }));
 }
 
-/** The board's `shown` order (most recently touched first) for the groups the page expands. */
-function sortRecent(b: Board, k: string, items: FlightItem[]): FlightItem[] {
-  const order = new Map((b.in_flight[k]?.all ?? []).slice().sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).map((x, i) => [x.title, i]));
-  return items.slice().sort((x, y) => (order.get(x.title) ?? 0) - (order.get(y.title) ?? 0));
-}
 
 function clip(s: string, n: number): string {
   const chars = [...s];

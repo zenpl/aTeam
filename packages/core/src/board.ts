@@ -1143,6 +1143,70 @@ export const SLIM_DECIDED = 5;
  * evidence, notes, verifications and history are GET /task/<id>'s. Acked instructions go, except the last few decided.
  * `?full=1` / `--full` return the whole thing.
  */
+/**
+ * t-153: the six in-flight groups — which task lands in which — computed here, once. It used to live in
+ * packages/server/src/html.ts, and the page was the only reader; moving it does not change any membership
+ * (t-153 判据 2 pins that with a real log, before and after).
+ *
+ * Only the grouping moves. The labels stay where the page's own words live, keyed by `key`, and the page renders
+ * the rows: this returns data, no sentence of its own. The one sentence it does carry is a task's own
+ * 「卡在什么上」, and that is `blockedWhy` below — it came along because a page that kept composing it would be
+ * the assembly here and the sentence there (t-126's shape).
+ */
+export interface FlightItem { title: string; owner?: string; blocked?: boolean; why?: string }
+
+/**
+ * The reason a task is blocked, said short and without machinery: ULIDs, shas and paths become 「…」, and a bracket
+ * left holding nothing but 「…」 goes away entirely (pd's review of t-034).
+ */
+export function blockedWhy(reason: string, max = 60): string {
+  const masked = reason
+    .replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b|\b[0-9a-f]{8,40}\b|[\w.-]+(?:\/[\w.-]+)+/g, "…")
+    .replace(/[（(]\s*(?:…\s*[，,、;；]?\s*)+[)）]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const chars = [...masked];
+  return chars.length <= max ? masked : chars.slice(0, max).join("") + "…";
+}
+
+/** The board's `shown` order (most recently touched first) for the groups the page expands. */
+function sortRecent(b: Board, k: string, items: FlightItem[]): FlightItem[] {
+  const order = new Map((b.in_flight[k]?.all ?? []).slice().sort((x, y) => y.updated_at.localeCompare(x.updated_at) || y.id.localeCompare(x.id)).map((x, i) => [x.title, i]));
+  return items.slice().sort((x, y) => (order.get(x.title) ?? 0) - (order.get(y.title) ?? 0));
+}
+
+export function inFlightGroups(b: Board): { key: string; total: number; items: FlightItem[] }[] {
+  const g = (k: string): FlightItem[] => (b.in_flight[k]?.all ?? []).map((x) => {
+    const task = (b.tasks[k] ?? []).find((tk) => tk.id === x.id);
+    return { title: x.title, owner: x.owner, blocked: k === "blocked", why: k === "blocked" && task?.blocked_on ? blockedWhy(task.blocked_on) : undefined };
+  });
+  // t-152 (pd 06:54): this group used to hold two opposite things under one label. The test is whether a person can
+  // make the number smaller. 「验过了，还没上线」 goes to zero the moment someone pushes, so it is theirs and stays.
+  // 「已上线，只是没在生产走过」 only ever grows and no action of theirs touches it — that one leaves every surface
+  // and lives on our own account (pd 06:53), digested by scenario walks. The split is t-078's, computed once there.
+  // Removing exactly the group with no lever, rather than keeping only pending_deploy: a task verified on staging
+  // but never shipped is still something a person can push, and an "include only" filter would drop it silently.
+  // t-152 (pd 07:07): group by what a thing is actually waiting for. 「验过了，等上线」 is exactly the set one push
+  // clears — the same set the standing line counts, because two numbers that mean the same thing must be one number.
+  // A task verified only on staging is waiting for a repo verification, not a deploy, so it belongs with 等验; and
+  // work already running in production that nobody walked there has no lever at all and leaves every surface.
+  const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
+  const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
+  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes("production"));
+  const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
+  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
+  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
+  const groups = [
+    { key: "working", items: sortRecent(b, "working", g("working")) },
+    { key: "blocked", items: sortRecent(b, "blocked", g("blocked")) },
+    { key: "done", items: [...g("done"), ...awaitingRepo] },
+    { key: "open", items: g("open") },
+    { key: "failed", items: g("failed") },
+    { key: "verifiedElsewhere", items: elsewhere },
+  ];
+  return groups.map((x) => ({ ...x, total: x.items.length }));
+}
+
 export function slimBoard(b: Board): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
