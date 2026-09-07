@@ -151,8 +151,8 @@ function touchesAtDone(task: string, declared: string[], extra: string[], keep: 
   const unnamed: string[] = [];
   for (const f of changed) {
     const syms = changedSymbols(git, base, f);
-    if (syms?.length) symbols.push(...syms);
-    else unnamed.push(f);
+    if (syms?.symbols.length) symbols.push(...syms.symbols);
+    if (!syms?.symbols.length || syms.partial) unnamed.push(f);   // 归不出来，或只归出一部分：这个文件仍按文件级算
   }
   if (!symbols.length && !unnamed.length) return r;
   const touches = [...new Set([...r.touches, ...symbols])];

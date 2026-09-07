@@ -249,19 +249,19 @@ describe("t-183 · 触点带到符号一级", () => {
 
   it("判据 3 正例：只改了某个内部符号的改动被认出来", () => {
     const syms = changedSymbols(git({ committed: hunk(8, ["  return 22;"]) }), "base", FILE);
-    expect(syms).toEqual([`${FILE}#second`]);
+    expect(syms?.symbols).toEqual([`${FILE}#second`]);
+    expect(syms?.partial, "全归到了符号上，没有落在外面的").toBe(false);
   });
 
   it("判据 3 反例：改了人可见句子的，不因为只声明了路径而蒙混过去——它被点到那个符号上", () => {
-    const syms = changedSymbols(git({ committed: hunk(4, ["export const first = 2;"]) }), "base", FILE);
-    expect(syms).toEqual([`${FILE}#first`]);
+    expect(changedSymbols(git({ committed: hunk(4, ["export const first = 2;"]) }), "base", FILE)?.symbols).toEqual([`${FILE}#first`]);
   });
 
   it("`-U0` 把上下文并进 hunk 时，不把上一个函数的尾巴算成改过", () => {
     // 真实形状：`@@ -8,2 +8,3 @@` 里前两行是上下文（空格开头），只有第三行是新加的
     const diff = "@@ -8,2 +8,3 @@\n   return 2;\n }\n+export const 丙 = 3;\n";
     const syms = changedSymbols(git({ committed: diff }), "base", FILE);
-    expect(syms ?? [], "second 一个字都没动，却被报成改过").not.toContain(`${FILE}#second`);
+    expect(syms?.symbols ?? [], "second 一个字都没动，却被报成改过").not.toContain(`${FILE}#second`);
   });
 
   it("只多了空行的符号不算改过", () => {
@@ -277,7 +277,44 @@ describe("t-183 · 触点带到符号一级", () => {
   });
 
   it("工作区里还没提交的改动也算进来", () => {
-    const syms = changedSymbols(git({ committed: "", worktree: hunk(8, ["  return 3;"]) }), "base", FILE);
-    expect(syms).toEqual([`${FILE}#second`]);
+    expect(changedSymbols(git({ committed: "", worktree: hunk(8, ["  return 3;"]) }), "base", FILE)?.symbols).toEqual([`${FILE}#second`]);
+  });
+});
+
+/**
+ * t-183：**归属归不全时要说出来。**
+ *
+ * 这一条是这段量法自己量出来的：我把它写完，用它量本轮自己的改动，`touches.test.ts` 顶层最后一个声明是个
+ * `const`，后面全是 `describe(...)` 调用——不是声明。按「一段声明管到下一段声明之前」算，那个 const 一路吃到
+ * 文件末尾，于是我追加的整个 describe 被算成「改了 ACTUAL」。**它成了自己的第一个误报，被它自己抓到。**
+ *
+ * 改法是按括号配平找结尾。但配平会算不准（正则里的括号、字符串里的括号），而算不准的两个方向不一样：
+ * 吃多了会把没动过的符号说成改过（错报），吃少了会漏掉一部分改动（少报）。所以配平之前先把字符串、正则、
+ * 注释里的括号抹掉；而**归不全的仍然照实说**——归到的符号给出来，同时把这个文件标成没归全，那部分改动
+ * 就不会悄悄消失在符号那一层。少报比错报好，但不说比两者都糟。
+ */
+describe("t-183 · 归属归不全时照实说", () => {
+  const FILE2 = "packages/core/src/y.ts";
+  const SRC2 = [
+    "export const LIST = [",   // 1
+    '  "a",',                  // 2
+    "];",                      // 3
+    "",                        // 4
+    'describe("x", () => {',   // 5
+    '  it("y", () => {});',    // 6
+    "});",                     // 7
+  ].join("\n");
+  const git2 = (diff: string): Git => (args) =>
+    args[0] === "diff" && args.includes("HEAD") && !args.some((x) => x.includes("..")) ? "" : args[0] === "diff" ? diff : SRC2;
+
+  it("改在顶层声明之外（describe 里）：不记到上一个 const 头上", () => {
+    const syms = changedSymbols(git2('@@ -6,0 +6,1 @@\n+  it("z", () => {});\n'), "base", FILE2);
+    expect(syms, "一个符号都归不出来就该退回文件级").toBeNull();
+  });
+
+  it("一部分归得出、一部分落在外面：符号给出来，同时标成没归全", () => {
+    const syms = changedSymbols(git2('@@ -2,0 +2,1 @@\n+  "b",\n@@ -6,0 +7,1 @@\n+  it("z", () => {});\n'), "base", FILE2);
+    expect(syms?.symbols).toEqual([`${FILE2}#LIST`]);
+    expect(syms?.partial, "那部分落在外面的改动会悄悄消失在符号那一层").toBe(true);
   });
 });

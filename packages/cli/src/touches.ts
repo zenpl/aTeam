@@ -151,7 +151,10 @@ export function revise(declared: string[], changed: string[] | null, extra: stri
  * ③ 文件被删掉，或 git 答不上来。
  * 三种都只补路径，不编一个符号名——**编出来的符号名比没有更糟**，t-170 判据 8 就是为它加的。
  */
-export function changedSymbols(git: Git, base: string, file: string): string[] | null {
+/** t-183: 量出来的符号，以及这次归属**全不全**——有改动落在所有顶层声明之外时 `partial` 为真。 */
+export interface Symbols { symbols: string[]; partial: boolean }
+
+export function changedSymbols(git: Git, base: string, file: string): Symbols | null {
   if (!/\.tsx?$/.test(file)) return null;
   const now = git(["show", `HEAD:${file}`]) ?? git(["cat-file", "-p", `HEAD:${file}`]);
   const worktree = git(["diff", "-U0", "HEAD", "--", file]);
@@ -162,19 +165,34 @@ export function changedSymbols(git: Git, base: string, file: string): string[] |
   const decls = [...text.matchAll(/^(?:export\s+)?(?:const|function|class|interface|type|async function)\s+(\w+)/gm)];
   if (!decls.length) return null;
   const lineOf = (idx: number) => text.slice(0, idx).split("\n").length;
-  // 一段声明管到哪儿：到**下一段声明自己那段注释开始之前**，不是到下一行声明。
-  // 这一条是跑出来才发现的：我把这个函数追加在 revise 后面，它自己那段文档注释被算进了 revise 的范围，
-  // 于是「我改了 revise」——而我一个字都没动它。与 frontend 09:27 在 speaking() 里抓到的是同一种错配。
   const lines = text.split("\n");
-  const commentStart = (declLine: number) => {
-    let i = declLine - 1;                                  // 1-based -> 0-based，从声明的上一行往回走
-    while (i > 0 && /^\s*(\*|\/\*|\/\/)/.test(lines[i - 1])) i--;
-    return i + 1;
+  /**
+   * 一段声明**到它自己结束为止**，不是「到下一段声明之前」。
+   *
+   * 这一条也是跑出来才知道的：`touches.test.ts` 顶层最后一个声明是个 `const`，它后面全是 `describe(...)` 调用
+   * ——不是声明。按「到下一段声明之前」算，那个 const 的范围一路吃到文件末尾，于是我追加的一整个 describe
+   * 被算成「改了 ACTUAL」。**它成了这段量法自己的第一个误报，被它自己量出来的那次 done 抓到。**
+   * 所以按括号配平找结尾：函数/类/接口到匹配的 `}`，`const`/`type` 到那一行（或它自己的多行字面量收尾）。
+   * 落在所有声明之外的改动就是落在外面——那时的正确答案是「算不出符号」，不是记到上一个符号头上。
+   */
+  // 数括号之前先把字符串、正则、注释里的括号抹掉——否则 `/(?:,\d+)?/` 这种里面的括号会把配平算歪，
+  // 而算歪的方向是**把后面那个符号吞进前一个**，也就是给一个没动过的符号安上改动。
+  const bare = (line: string) =>
+    line.replace(/\\./g, "").replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''").replace(/`[^`]*`/g, "``")
+        .replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "").replace(/\/(?![*/])(?:[^/\n\\]|\\.)+\/[gimsuy]*/g, "RE");
+  const endOf = (declLine: number) => {
+    let depth = 0, started = false;
+    for (let i = declLine - 1; i < lines.length; i++) {
+      for (const ch of bare(lines[i])) {
+        if (ch === "{" || ch === "[" || ch === "(") { depth++; started = true; }
+        else if (ch === "}" || ch === "]" || ch === ")") depth--;
+      }
+      if (started && depth <= 0) return i + 1;
+      if (!started && /;\s*$/.test(lines[i])) return i + 1;   // 单行的 const/type
+    }
+    return lines.length;
   };
-  const spans = decls.map((m, i) => ({
-    name: m[1], from: lineOf(m.index!),
-    to: i + 1 < decls.length ? commentStart(lineOf(decls[i + 1].index!)) - 1 : lines.length,
-  }));
+  const spans = decls.map((m) => { const from = lineOf(m.index!); return { name: m[1], from, to: endOf(from) }; });
   const out = new Set<string>();
   let outside = false;
   // **走 diff 的正文，只数真正带 `+` 的那些行。**光读 @@ 头是不够的：`-U0` 之下 git 仍会把紧邻的上下文并进
@@ -198,8 +216,11 @@ export function changedSymbols(git: Git, base: string, file: string): string[] |
       line++;                                           // `+` 与上下文行都占新文件的一行
     }
   }
+  // 一个符号都归不出来：这就是判据 2 的「算不出」，退回文件级。
+  // 归出来一部分、还有改动落在所有声明之外：**两件事都说**——把归到的符号给出来，同时把这个文件标成没归全，
+  // 否则那部分改动会悄悄消失在符号那一层。少报比错报好，但**不说**比两者都糟。
   if (!out.size) return null;
-  return outside ? [...out].sort() : [...out].sort();
+  return { symbols: [...out].sort(), partial: outside };
 }
 
 /** 读工作区里的文件；读不到返回 null（被删掉了，或不在这个 checkout 里）。 */
