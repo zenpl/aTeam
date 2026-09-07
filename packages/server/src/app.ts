@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -161,7 +161,9 @@ export function createApp(opts: ServerOptions) {
       const out: unknown[] = [];
       const b = board(state, human, at);
       for (const role of projectRoles(state)) {
-        if (!isMissing(state, role, at)) continue;
+        // t-202：只在「起一个新的」真能解决问题的那一态才起这张卡。上一版的条件是 !isMissing——它只排掉
+        // listening，于是一个还在写、只是没来读日志的节点（deaf）照样被写成「起一个 X？」发到人手上。
+        if (presenceStatus(state, role, at) !== "missing") continue;
         // t-147 (pd 05:40): 「到 ack_by 时仍停在①没读到，才升级成『起一个 X』」. Two changes from before: what counts
         // is owed by the new model (core `owedTo`) rather than `st.overdue`, which after t-147 is only an unanswered
         // card and would have left a quiet role holding three instructions with no card raised at all; and only what
@@ -181,6 +183,8 @@ export function createApp(opts: ServerOptions) {
         // t-139 (pd 05:15): which of pd's three words applies is the *presence* state, not a guess from whether
         // anything is undelivered — those are different questions, and answering the first with the second is how a
         // node that was plainly still talking got called 缺人. A listening role never reaches here at all.
+        // t-202 之后这里恒为 "missing"：上面那道闸只放 missing 过来。参数留着不是摆设——missingCard 的
+        // deaf 那一支要不要退役是 pd 的决定（见 core 里那段说明），在它说话之前谁都不删那句话。
         const status = b.presence.find((p) => p.actor === role)?.status === "deaf" ? "deaf" : "missing";
         // The deadline decides *whether* to raise the card; the number in it is what the sentence claims — 「N 条没送到」
         // — so it counts everything unread, not just the part that has expired. They were the same number until the

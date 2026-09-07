@@ -1072,14 +1072,36 @@ describe("t-047 · listening and speaking are two different things", () => {
     expect(p.since).toBe(c.iso(-min(9)));
   });
 
-  it("the service card about a missing role is judged by listening: a node that keeps emitting without pulling still gets one", async () => {
+  /**
+   * t-202 **推翻了这一条原来的后半句**，写在这里而不是悄悄改掉断言。
+   *
+   * 原来它断言的是：「一个只写不拉的节点照样拿到那张卡」——理由是 t-047 的「写不等于听」。前半句仍然对
+   * （写确实不等于听，`isMissing` 照旧为真），**被推翻的是由它推出的那一步**：既然没在听，就该问人「起一个
+   * 新的吗」。t-137 说过不许把两者合并成一个布尔，而这正是那次合并的下游：`deaf` 是它还活着、还在写，只是
+   * 没来读日志，**起第二个解决不了它**。
+   *
+   * 真实代价（t-202 的样本）：12:46:06 那份牌桌上 dev 6.8 分钟没拉、2.6 分钟前刚交过活，人的首屏却挂着
+   * 「dev 没在听了 13 分钟，起一个 dev？」——人被叫去起一个正在交活的节点。
+   *
+   * 所以这条用例现在钉的是两半：**真失联的照出，deaf 的不出**。它没有变松——`missing` 那一半的断言与原来
+   * 一字不差，只是多了一个原来没有的反例。
+   */
+  it("the card only survives where starting a new one is the remedy: a truly missing role keeps it, a node that is merely deaf does not (t-202)", async () => {
     const store = new MemoryStore();
     const c = clock();
     await emit(store, c, { kind: "reading", actor: "pm", key: "roles", surface: "project", value: ["pm", "dev"] });
     await emit(store, c, { kind: "note", actor: "dev", body: "我在，但没在听" });
     const card = await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, body: "dev 没在听了 5 分钟，1 条指令没送到。起一个 dev？", ack_by: c.iso(min(60)), intent: "do" });
+    // 刚写过东西：deaf，不是失联——卡不该在人的首屏上
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.needs_human.map((n) => n.id)).toEqual([card.id]); // emitting is not listening; the 没在听 wording is recognised too
+    expect(b.presence.find((x) => x.actor === "dev")!.status).toBe("deaf");
+    expect(b.needs_human, "还在写只是没读的节点，人被叫去起第二个").toEqual([]);
+    // 再过一会儿它连写都不写了：这才是「起一个新的」解决得了的那一态，卡照出
+    c.tick(min(11));
+    b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    expect(b.presence.find((x) => x.actor === "dev")!.status).toBe("missing");
+    expect(b.needs_human.map((n) => n.id), "真失联的那一半与原来一字不差").toEqual([card.id]);
+    // 它回来读日志了：卡撤掉，这一半也没变
     await pull(store, "dev", null, c.now());
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.needs_human).toEqual([]);
