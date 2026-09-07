@@ -32,8 +32,12 @@ export const UI = {
   saySomething: "想说一句就说",
   contactSet: (v: string) => `找你用 ${v}`,
   contactNone: "你不在时，我们找不到你。",
-  /** t-126: an address is recorded but this server is too old to say whether anything ever reached it. */
-  contactUnknown: "记下了外呼地址，这台服务说不出有没有真发成功过。",
+  /**
+   * t-126 · pd 02:52: an address is recorded but the running version cannot say whether anything ever reached it.
+   * 「线上这一版」 rather than 「这台服务」: a person should not have to reason about which build they are talking to,
+   * and the words sit directly under the 线上 row where the sha they name is already on screen.
+   */
+  contactUnknown: "记下了外呼地址，线上这一版还看不出有没有真发成功过。",
   contactInvalid: "填一个 https:// 开头的 webhook 地址",
   youJustDid: "你刚点了：",
   notNowWhy: "点了「先不做」，没写原因",

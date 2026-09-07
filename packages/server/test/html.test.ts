@@ -1552,7 +1552,7 @@ describe("t-126 · 灰字说的是「能不能送到」，不是「有没有配�
       // whatever core computed is what the human reads: no second wording to drift from (t-119's lesson)
       expect(line(await v.authedPage())).toBe(b.alert!.line);
       // an older server sends no alert at all: say what is true without it, never the promise
-      expect(contactLine(undefined, "https://hooks.example/team")).toBe("记下了外呼地址，这台服务说不出有没有真发成功过。");
+      expect(contactLine(undefined, "https://hooks.example/team")).toBe("记下了外呼地址，线上这一版还看不出有没有真发成功过。");
       expect(contactLine(undefined, null)).toBe("你不在时，我们找不到你。");
       // 不要了 leaves no address and nothing to promise
       expect(contactLine({ status: "skipped" }, null)).toBe("你不在时，我们找不到你。");
