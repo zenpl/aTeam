@@ -81,7 +81,20 @@ export type SaidStatus = "received" | "requirement" | "task" | "live";
  * (production:deployed.tasks) names what it carries, and a batch names what it contains. That works inside core,
  * which has no git — and it answers the question a person actually asks, "what would I lose", by name.
  */
-export type BatchState = "current" | "stale" | "rollback" | "unknown";
+/**
+ * t-167 (pd 08:13)：一批相对生产站在哪儿。**这是一张按「它此刻在哪」分的表，不是按「它将来会怎样」分的。**
+ *
+ * 原来的四格是 pd 01:39 按后者定的——「还没上线」的三种情形想全了，唯独没有「已经上线了」那一格，而世界一定
+ * 会走到那一格：每一批推上去的那一刻，它的 base 落后一格，它自己就翻成 rollback，于是牌桌开始对**正在生产上
+ * 跑的那一版**说「推它会把 85 件退回去，重装别推」。第 10、11、12、13 批同时在说这句假话。
+ *
+ * 所以补的是格，不是 if。而且要补两格，不是一格：**「就是现在生产上跑的那一版」和「早先上过线、现在被后面
+ * 的批次盖过去了」是两件事**，只补前者的话，第 9、10、11、12 批仍然在说「推它会把 85 件退回去，重装别推」——
+ * 同一句假话，换成对过去说。今晚牌桌上那五行里有四行是这一种。
+ *
+ * 分格的问题是「它此刻在哪」：已经是生产 / 曾经是生产 / 装在生产头上还没推 / 落在生产后面 / 算不出来。
+ */
+export type BatchState = "deployed" | "shipped" | "current" | "stale" | "rollback" | "unknown";
 export interface BoardBatch {
   name: string;
   sha: string;
@@ -93,6 +106,11 @@ export interface BoardBatch {
   loses: string[];
   /** The one sentence for a person, from core so the page and the CLI cannot drift apart (t-118). */
   line: string;
+  /**
+   * t-167：这一批还在等人推吗。已经上过线的（`deployed`/`shipped`）不是候选——上线清单是「接下来要发生什么」，
+   * 它们属于「已经发生了什么」（pd 08:13）。这个判断在 core 一处，渲染方不各自去筛一遍状态名。
+   */
+  pending: boolean;
   at: string;
 }
 
@@ -1282,7 +1300,8 @@ export function deploySource(r: Reading): "pushed" | "checked" | "unknown" {
   return m ? "checked" : "unknown";
 }
 
-const sameSha = (a: unknown, b: unknown) => String(a).slice(0, 7) === String(b).slice(0, 7);
+const shortSha = (a: unknown) => String(a).slice(0, 7);
+const sameSha = (a: unknown, b: unknown) => shortSha(a) === shortSha(b);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
 export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; method?: string; at: string } | null {
@@ -1305,6 +1324,18 @@ export function deployedTasksFact(s: State): { sha: string; contained: string[];
  * to do it.
  */
 export const BATCH_LINES = {
+  /**
+   * t-167：pd 08:13 的字，一个字未改。不带动作，也不写「无需操作」——pd：「无需操作」是在回答一个人没问的问题；
+   * 牌桌上凡是不带动作的句子都必须让人一眼看出不用动，最简单的办法就是不给它动作。
+   */
+  deployed: () => "这一批已经在生产上跑着",
+  /**
+   * t-167 (pd 08:18)：早先上过线、被后面盖过去的那一批。它在历史那一段里被列出来时必须有一句——**沉默在一排
+   * 会说话的行里像坏了**。不写「已作废」：它没作废，它发生过。
+   */
+  shipped: () => "这一批上过线，后来被更新的一版盖过。",
+  /** t-167 (pd 08:18)：一批可上线的都没有时，印这句，而不是一片空白。 */
+  none: () => "没有可上线的东西",
   stale: (base: string) => `这批是以 ${base.slice(0, 7)} 为底装的，生产已经往前走了；重装一次就能把新验的一起带上。`,
   rollback: (base: string, loses: string[]) =>
     `这批是以 ${base.slice(0, 7)} 为底装的，推它会把 ${loses.join("、")} 从生产上退回去。重装，别推。`,
@@ -1344,6 +1375,11 @@ export function standIns(s: State, now: Date): Board["stand_ins"] {
 
 export function batches(s: State, deployed: string | null, why: string | null, fact: ReturnType<typeof deployedTasksFact>): BoardBatch[] {
   const out: BoardBatch[] = [];
+  // 每一个当过生产头的 sha。日志本来就记着它们（production:deployed.sha 的每一条），所以「这一批上过线没有」
+  // 是算出来的，不是谁声明的。
+  const everDeployed = new Set([...s.readings.values()].map((x) => x.reading)
+    .filter((r) => r.surface === "production" && r.key === "deployed.sha" && typeof r.value === "string")
+    .map((r) => shortSha(r.value as string)));
   for (const [key, id] of s.latestReading) {
     if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
     const r = s.readings.get(id);
@@ -1352,7 +1388,14 @@ export function batches(s: State, deployed: string | null, why: string | null, f
     const contains = v.contains.map(String);
     const name = key.slice(`${BATCH_SURFACE}:${BATCH_PREFIX}`.length);
     let state: BatchState, loses: string[] = [], line = "";
-    if (deployed && sameSha(v.base, deployed)) { state = "current"; }
+    // t-167: 「它此刻在哪」，三问分完，没有剩下的情形。顺序不能换：一批推上去之后，它既是生产头、base 又落后
+    // 一格，两个条件同时成立——先问「它是不是就是生产」的那一版才不会把正在跑的东西说成要退回去的东西。
+    if (deployed && sameSha(v.sha, deployed)) { state = "deployed"; line = BATCH_LINES.deployed(); }
+    // 早先上过线的：它不在等谁去推，它已经发生过了。这里不说话——一批推上去之后就该离开「上线清单」（那是
+    // 「接下来要发生什么」），进「线上这一版」那一段（那是「已经发生了什么」，pd 08:13）。渲染方据这个状态搬，
+    // 而不是自己去猜哪些 sha 上过线。这一格要不要一句话，我发给 pd 了；在它定之前不说话，不自拟。
+    else if (everDeployed.has(shortSha(v.sha))) { state = "shipped"; line = BATCH_LINES.shipped(); }
+    else if (deployed && sameSha(v.base, deployed)) { state = "current"; }
     else if (!deployed || why || !fact || !sameSha(fact.sha, deployed)) {
       state = "unknown";
       line = BATCH_LINES.unknown(why ?? "生产没有有效的 production:deployed.sha 事实");
@@ -1361,7 +1404,7 @@ export function batches(s: State, deployed: string | null, why: string | null, f
       state = loses.length ? "rollback" : "stale";
       line = loses.length ? BATCH_LINES.rollback(v.base, loses) : BATCH_LINES.stale(v.base);
     }
-    out.push({ name, sha: v.sha, base: v.base, contains, state, loses, line, at: r.reading.at });
+    out.push({ name, sha: v.sha, base: v.base, contains, state, loses, line, pending: state !== "deployed" && state !== "shipped", at: r.reading.at });
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
