@@ -497,3 +497,51 @@ describe("t-197 · CLI 的可重复参数名单与它的用法对得上", () => 
     }
   });
 });
+
+/**
+ * t-204 · **扫描器按引号配对抽字面量：模板串里嵌一个引号，就从那里开始错位。**
+ *
+ * frontend 13:11 实测出来的：它把 `span` 改成 `` `${n} ${unit === "minute" ? "分钟" : …}` `` 之后，`bin/keysyms`
+ * 当场说 span 不再「说人话」。原因不是它不说了，是那条配引号的正则在嵌套处错位——那一段抽出 7 个片段，
+ * **含汉字的 0 个**，分钟／小时／天三个词全部落在配对之外。
+ *
+ * **于是任何写成「模板里嵌引号」的人可见中文，对这份名单都是隐形的**，而这份名单正是「碰了它就不能说
+ * 『不改变人看到的东西』」的依据。今晚同一族（嵌套模板骗过引号配对）第三次。
+ *
+ * 判据 3 要一正一反，两半都要：只测「不漏」那一半，等于把这道闸再造一次。
+ */
+describe("t-204 · 按词法取字面量，不靠引号配对", () => {
+  const spk = (code: string) => speakingOf({ "x.ts": code });
+
+  it("判据 1、3 正例：模板串里嵌引号、里面是中文——数得进去", () => {
+    // frontend 那一段的形状，原样
+    expect(spk('export const span = (n: number, unit: string) => `${n} ${unit === "minute" ? "分钟" : "小时"}`;')).toEqual(["span"]);
+    // 模板串里嵌模板串，中文在最里层
+    expect(spk('export const deep = (a: boolean) => `${a ? `${"缺人"}` : ""}`;')).toEqual(["deep"]);
+    // 单引号嵌在模板里
+    expect(spk("export const q = (a: boolean) => `${a ? '在听' : ''}`;")).toEqual(["q"]);
+  });
+
+  it("判据 3 反例：同样的形状、里面没有中文——不许数进去", () => {
+    expect(spk('export const span = (n: number, unit: string) => `${n} ${unit === "minute" ? "m" : "h"}`;')).toEqual([]);
+    expect(spk('export const deep = (a: boolean) => `${a ? `${"none"}` : ""}`;')).toEqual([]);
+  });
+
+  it("注释里的中文不算——它写给读代码的人，不渲染给牌桌上那个人", () => {
+    expect(spk('// 这里有中文\nexport const plain = () => "ok";')).toEqual([]);
+    expect(spk('/* 这里也有中文 */\nexport const plain2 = () => "ok";')).toEqual([]);
+  });
+
+  it("正则字面量里的引号不许把后面整份文件吃掉", () => {
+    // 不跳正则，`/["']/g` 里那个引号会被当成字符串开头，从那里往后就再也数不到东西
+    expect(spk('export const esc = (s: string) => s.replace(/["\']/g, "");\nexport const after = () => "还在听";')).toEqual(["after"]);
+  });
+
+  it("判据 1 的旧尺子在同一段代码上确实看不见它——这条是缺陷本身的记录", () => {
+    const code = 'export const span = (n: number, unit: string) => `${n} ${unit === "minute" ? "分钟" : "小时"}`;';
+    // 上一版就是这条正则：从 `${n} ` 后面那个引号开始配对，分钟／小时都落在配对之外
+    const pieces = [...code.matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((x) => x[1]);
+    expect(pieces.some((t) => /[一-龥]/.test(t)), "旧尺子在这段代码上一个中文片段都抽不到").toBe(false);
+    expect(spk(code), "新尺子看得见它").toEqual(["span"]);
+  });
+});

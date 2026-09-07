@@ -176,9 +176,15 @@ describe("t-078 · ateam release measures containment with git and shows three g
     const blindFact = containmentFact(await w.b(), blind)! as unknown as { value: Record<string, unknown> };
     expect(blindFact.value.unmeasured, "第三桶算出来了却没写下去，正是那 85 件无声消失的形状").toEqual(["t-1", "t-2"]);
     expect(blindFact.value).toMatchObject({ contained: [], not_contained: [] });
-    // 比较也比三桶：只有 unmeasured 变了，也要写一条新事实——否则那一桶永远停在旧值
-    const same = { ...blind, unmeasured: ["t-1"] };
-    expect(containmentFact(await w.b(), same), "unmeasured 变了却不写新事实").not.toBeNull();
+    // 比较也比三桶：**只有 unmeasured 变了**，也要写一条新事实——否则那一桶永远停在旧值。
+    //
+    // qa 13:51 证过我上一版这条是空的：它拿刚落的那条（contained ["t-1"]）去比一个 contained 为空的，
+    // 判断在第一桶就分出来了，**永远走不到第三桶那一步**——删掉比较第三桶的那半句，cli 一条都不红。
+    // 所以先把 blind 那条真的落下去，再造一个**只有第三桶不同**的：其余逐字相同，差别只在 unmeasured。
+    await w.emit({ ...(blindFact as unknown as { key: string; value: unknown; surface: string }), actor: "pm" } as never);
+    expect(containmentFact(await w.b(), blind), "逐字相同却又写一条新事实").toBeNull();
+    const onlyThird = { ...blind, unmeasured: ["t-1"] };
+    expect(containmentFact(await w.b(), onlyThird), "只有第三桶变了，却不写新事实——那一桶会永远停在旧值").not.toBeNull();
 
     // another absorb form: not our business to measure
     const other = await world();

@@ -15,7 +15,7 @@
  * 这个模块不碰文件系统：源码由调用方读进来（`Record<文件名, 源码>`），所以测试能拿构造的输入证明它认得对、
  * 也认得出它认不出什么。
  */
-import { SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS } from "./sayings.js";
+import { SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, literals } from "./sayings.js";
 
 const CJK = /[一-龥]/;
 /**
@@ -59,7 +59,11 @@ export function speaking(sources: Record<string, string>, min = SPEAKING_MIN_CHA
     for (let d = 0; d < decls.length; d++) {
       const from = decls[d].index!;
       const to = d + 1 < decls.length ? decls[d + 1].index! : src.length;
-      const strings = [...src.slice(from, to).matchAll(/[`"']((?:[^`"'\\]|\\.)*)[`"']/g)].map((x) => x[1]);
+      // t-204：**按语言词法取字面量，不靠引号配对。** 上一版是一条配引号的正则，模板串里嵌一个引号就从那里
+      // 开始错位：frontend 13:11 实测 `span` 那一段抽出 7 个片段、含汉字的 0 个，于是那几个人可见的词对这份
+      // 名单是隐形的——而这个名单是「碰了它就不能说『不改变人看到的东西』」的依据。词法只有一处（sayings.ts
+      // 的 `literals`），`humanSentences` 与这里共用它。
+      const strings = literals(src.slice(from, to));
       if (strings.some((t) => CJK.test(t) && [...t].length >= min)) out.add(decls[d][1]);   // t-184: 默认门槛是 1，即「有一个汉字就算」
     }
   }
