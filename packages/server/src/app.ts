@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -632,8 +632,13 @@ export function createApp(opts: ServerOptions) {
         // t-147 criterion 6: what this role owes right now, on the way out. It comes off the reduction the server
         // already keeps moving (t-128), so it costs no full read of the log and no second request; and it is computed
         // after `pull` recorded the cursor, so everything in this batch already counts as read.
-        const owed = owedNow(await stateFor(projectId, store), actor);
-        return json(res, 200, { shape: BOARD_SHAPE, ...result, owed }); // t-080: sync checks the shape before reading fields
+        const st = await stateFor(projectId, store);
+        const owed = owedNow(st, actor);
+        // t-211：**每一次 pull 都顺带说一句服务此刻跑的是哪一版、至今上过几次线。** 命令行各人各自 build，
+        // 发车只换服务端，所以「我手上这份是不是上线的那一版」这个问题今晚没有任何一处答得出。两样都从
+        // 已经算好的那份状态里取，不多读一次日志、不多发一次请求——与 owed 同一条路。
+        const deploys = deployHistory(st).map((d) => d.sha);
+        return json(res, 200, { shape: BOARD_SHAPE, ...result, owed, sha, deploys }); // t-080: sync checks the shape before reading fields
       }
 
       if (req.method === "POST" && path === "/events") {
