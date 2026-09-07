@@ -300,6 +300,7 @@ describe("t-171 · 建任务时也要说清它对人有什么影响", () => {
   it("判据 4：不追溯——日志里已有的任务不受影响", async () => {
     const s = new MemoryStore();
     for (const e of [
+      // 这一条是「口径之前」的形状：既没有 shows，也没有那句明写——直接写进日志，不走校验
       { id: "01OLDCREATE00000000000000", at: at(-120).toISOString(), kind: "task", op: "create", actor: "pm", task: "t-旧", title: "口径之前建的", criteria: ["能用"] },
       { id: "01OLDCLAIM000000000000000", at: at(-110).toISOString(), kind: "task", op: "claim", actor: "dev", task: "t-旧", touches: ["x"] },
     ]) await s.appendRaw(e as never);
