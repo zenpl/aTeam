@@ -526,7 +526,18 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 界线在「量没量」上，不在「有没有触点」上（判据 2）：`changed_files` 是 CLI 量出来的事实，只有它明确等于
       // 0 才放行；没带这个字段（老的 CLI、--no-touches、没有 git）一律照旧判，量出 ≥1 个也照旧判。
       // 触点本身一个字不动（判据 3）——沿用 claim 时那份，接缝照样算得出来。**放行的是这道闸，不是那份记录。**
-      const measuredNothing = e.changed_files === 0;
+      // t-208：**放行要两条同时成立——量出 0，而且这一轮没有亲手写触点。**
+      //
+      // t-198 只看了前一条，于是留了一条比它自己拦下的那条更省事的路：`--touches packages/server/src/i18n.ts`
+      // 加上树上一个字没改，`changed_files` 就是 0，闸整个跳过——**人可见的文件是自己写进去的，判定却因此不做了**。
+      // qa 13:42 在真 revise 上跑出来的。
+      //
+      // t-198 判据 3 拦的是「把触点声明为空来换放行」；这一种是反过来的「触点照写，闸照样不看」。**当时只想到了
+      // 前一种换法**，而两种换的是同一样东西：不量一次就把「我没碰人可见的东西」说成已经核过。
+      //
+      // 收紧只落在「这一轮亲手写了触点」这一格上：t-198 判据 1 那种（量出 0、没写 touches，例如一件 reopen 之后
+      // 代码一个字没改的 done）照旧放行，一个字没收。
+      const measuredNothing = e.changed_files === 0 && !e.touches?.length;
       if (e.no_human_impact && !measuredNothing) {
         // t-105 的口径照旧：done 带了 touches 就是事实、取代 claim 时的声明；没带才用声明。用声明去判一件已经
         // 量过的事，会拿一个当事人自己更正过的名单去拦他。

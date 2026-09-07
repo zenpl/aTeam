@@ -435,6 +435,47 @@ describe("t-198 · 零改动的 done 不按陈年触点判", () => {
     expect(declared.message).not.toBe(measured.message);
   });
 
+  /**
+   * t-208 · **零改动放行的另一半，是我在 t-198 那一轮没看见的。**
+   *
+   * t-198 判据 3 拦的是「把触点声明为空来换放行」，而这一种是反过来的：**触点照写，闸照样不看。**
+   * `--touches packages/server/src/i18n.ts` 加上树上一个字没改，`changed_files` 就是 0，整道判定跳过——
+   * 人可见的文件是自己写进去的，判定却因此不做了。qa 13:42 在真 `revise` 上跑出来的。
+   *
+   * 两种换的是同一样东西：**不量一次，就把「我没碰人可见的东西」说成已经核过。** 当时我只想到了前一种。
+   */
+  it("判据 1：写了触点又量出 0，闸照常判——那是拿一份自己写的触点换掉整道判定", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts"], changed_files: 0 }, -10).catch((x) => x as Rejected);
+    expect(err, "树上一个字没改，而人可见的文件是这一轮自己写进去的").toBeInstanceOf(Rejected);
+    expect(err.message).toContain("这件动了人看得到的字");
+    expect(err.message).toContain("packages/server/src/i18n.ts");
+  });
+
+  it("判据 1：符号触点也是亲手写的——同样不放行", async () => {
+    const w = await human();
+    const err = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/server/src/i18n.ts#UI"], changed_files: 0 }, -10).catch((x) => x as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+  });
+
+  it("判据 2：t-198 判据 1 那种一个字没收——量出 0 且没亲手写触点，照旧放行", async () => {
+    const w = await human();
+    const e = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true, changed_files: 0 }, -10);
+    expect(e.kind).toBe("task");
+    // 触点仍是 claim 时那份（t-198 判据 3），这一件没有动它
+    const t = (await st(w.s)).tasks.get("t-1")!;
+    expect(t.touches).toEqual(["packages/server/src/i18n.ts", "packages/server/src/html.ts"]);
+  });
+
+  it("判据 2：写了触点但那几处不是人可见的——量出 0 时照样过得去，收紧只落在该收的那一格", async () => {
+    const w = await human();
+    const e = await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "abc1234", no_human_impact: true,
+      touches: ["packages/core/src/rules.ts"], changed_files: 0 }, -10);
+    expect(e.kind, "这一格闸本来就不该拦：写的触点里没有人可见的东西").toBe("task");
+  });
+
   it("changed_files 是一个非负整数，别的形状当场被形状闸挡住", async () => {
     const w = await human();
     for (const bad of [-1, 1.5, "0"]) {
