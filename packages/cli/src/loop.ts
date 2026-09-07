@@ -1,4 +1,4 @@
-import { DECLINE_PREFIX, type PullResult } from "@ateam/core";
+import { DECLINE_PREFIX, owedSentences, type PullResult } from "@ateam/core";
 import { ClientError } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -74,9 +74,11 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   const r = await client.pull(after, waitMs);
   advance(cursor, r.cursor);
   if (print) for (const line of report(r, me, after)) print(line);
-  // t-147 + t-140: the 「你欠什么」 line that used to be computed here is gone with owedLines — under the new model
-  // what a node owes is the server's `owed` (core's owedNow), sent with every pull. t-140 puts pd 06:23's two
-  // sentences back here reading that field; until then this node says only what report() says.
+  // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
+  // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
+  // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
+  // whole of qa 06:32's failure against the first version of this line.
+  if (print) for (const line of owedSentences(r.owed, new Date())) print(line);
   return r;
 }
 
