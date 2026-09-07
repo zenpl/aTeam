@@ -23,33 +23,45 @@ describe("t-180 · 页面不自带梯子", () => {
   /**
    * pd 09:09 把位置规则扩了一格：重复的不只是句子，还有把数变成句子的那段逻辑。
    *
-   * **第一版这条闸正好漏掉了它要防的那一个**（qa 09:38）：它扫的是「分钟前/小时前/天前/刚刚」这几个**词**，
-   * 而 `packages/cli/src/deaf.ts` 那份只吐「1.3 小时」，「前」由调用方拼上去——按词找和按名字找是同一个毛病，
-   * 同一件东西被拆成两半就找不到了。**闸绿着，第五道梯子就在树里。**
+   * **这条闸被 qa 连着凿了三次，每一次漏的方向都一样：它以为自己在看的地方，比它真正看的地方大。**
+   * ① 09:36：扫的是「分钟前/小时前/天前/刚刚」这几个**词**，而 `cli/deaf.ts` 那份只吐「1.3 小时」，
+   *    「前」由调用方拼——按词找和按名字找是同一个毛病。改成扫**形状**（一个文件同时说两个以上时间单位）。
+   * ② 09:54：`roots` 只有 server 与 cli，**core 自己不在里面**——把完整的第五道梯子写进 `core/src/` 就全绿。
+   * ③ 09:54：`readdirSync` 不进子目录——同一份放进 `cli/src/sub/` 就全绿，`scanned > 8` 也拦不住。
    *
-   * 所以这一版扫的不是词，是**形状**：一段代码里的人可见字面量若同时提到两个以上不同的时间单位
-   * （分钟 / 小时 / 天 / 刚刚），它就是在按量级分档——那正是「把毫秒差变成人话」，只许 core 一处做。
-   * 这条界线是可写下来的，也说得出它看不见什么：
-   * · 抓得住：改了名字的（`howLong`）、只吐半句的（「1.3 小时」）、全新写的一份。
-   * · 抓不住：只用一个单位的（`缺人 ${n} 分钟` 不是梯子，是一句话——它的重复归 t-144）、
-   *   用英文写的、以及把汉字拆开拼起来的。
+   * 所以这一版不再问「core 之外有没有第二道」，改成问**整个仓库里按量级分档的地方是不是恰好那一处**：
+   * 递归走遍每个包的 src，把符合形状的文件列出来，它必须**正好等于** `core/src/board.ts`。
+   * 少了它自己会红（说明梯子被删了或改瞎了），多出任何一个也红——包括多在 core 里的那一个。
+   *
+   * 它仍然看不见的（写在明处，不靠人记得）：只用一个时间单位的（`缺人 ${n} 分钟` 不是梯子，是一句话，
+   * 归 t-144）、用英文写的、以及把汉字拆开拼起来的。
    */
-  it("core 之外没有第二处按量级分档的地方（扫形状，不扫词）", () => {
-    const UNITS = ["分钟", "小时", "天", "刚刚"];
-    const roots = { "packages/server/src": new URL("../src/", import.meta.url), "packages/cli/src": new URL("../../cli/src/", import.meta.url) };
-    const hits: string[] = [];
-    let scanned = 0;
-    for (const [name, dir] of Object.entries(roots)) {
-      for (const f of readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
-        scanned++;
-        // 去掉注释之后直接在源码正文里找单位词——不再去「抽出字面量」：模板串里可以嵌模板串，
-        // 按引号配对的写法在嵌套处会错位，而错位的方向是漏报。这几个词在代码里只可能出现在字符串里。
-        const src = readFileSync(new URL(f, dir), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-        const used = UNITS.filter((u) => src.includes(u));
-        if (used.length >= 2) hits.push(`${name}/${f}：同时说 ${used.join("、")}`);
+  it("整个仓库里按量级分档的地方，恰好是 core 那一处", () => {
+    // 形状是「一个算出来的数，紧跟一个时间单位」——`${…} 分钟`。光看单位词不行：`events.ts` 里有
+    // 「新节点十分钟内…」「有事等你超过半小时」「今天你们手工顶了三次」，那是散文里的时间词，不是分档。
+    // 差别正在那个插值：分档一定要先把毫秒算成一个数，散文不用。
+    const BANDS = [/\}\s*分钟/, /\}\s*小时/, /\}\s*天/];
+    const root = new URL("../../../", import.meta.url);          // 仓库根
+    const walk = (dir: URL, rel: string): string[] => {
+      const out: string[] = [];
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === "dist" || e.name.startsWith(".")) continue;
+        if (e.isDirectory()) out.push(...walk(new URL(`${e.name}/`, dir), `${rel}${e.name}/`));
+        else if (e.name.endsWith(".ts")) out.push(`${rel}${e.name}`);
       }
-    }
-    expect(scanned, "一个文件都没扫到——这条断言此刻什么也没守").toBeGreaterThan(8);
-    expect(hits, `这几处在自己按量级分档，应当调 core 的 ago / span：\n${hits.join("\n")}`).toEqual([]);
+      return out;
+    };
+    const srcs = readdirSync(new URL("packages/", root))
+      .flatMap((pkg) => {
+        const d = new URL(`packages/${pkg}/src/`, root);
+        try { return walk(d, `packages/${pkg}/src/`); } catch { return []; }
+      });
+    const banding = srcs.filter((f) => {
+      const src = readFileSync(new URL(f, root), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      return BANDS.filter((re) => re.test(src)).length >= 2;
+    });
+    expect(srcs.length, "一个文件都没扫到——这条断言此刻什么也没守").toBeGreaterThan(20);
+    expect(srcs, "没走进子目录：这条闸曾经因此漏掉放在 cli/src/sub/ 的一份").toContain("packages/core/src/board.ts");
+    expect(banding, `按量级分档的地方应当只有 core 一处，实际是：\n${banding.join("\n")}`).toEqual(["packages/core/src/board.ts"]);
   });
 });
