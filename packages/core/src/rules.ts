@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
@@ -607,7 +607,8 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
     case "verify": {
       if (e.shows !== undefined && [...e.shows].length > SHOWS_MAX_CHARS) throw new Rejected("verify", `shows is ${[...e.shows].length} chars; one sentence, at most ${SHOWS_MAX_CHARS}`);
       if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
-      if (!e.surface) throw new Rejected("verify", "name the surface you verified on (repo/staging/production/...)");
+      // t-132：这句提示从 SURFACES 生成，不再手写——加一个表面而这句话忘了改，正是手写名单每次的下场。
+      if (!e.surface) throw new Rejected("verify", `name the surface you verified on (${SURFACES.join("/")}/...)`);
       // What stands on this surface right now: the latest verification of this round. A pass that was overturned no
       // longer blocks (t-104 ② presupposes the next pass is possible — by someone else); a standing pass still does.
       const mine = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface);

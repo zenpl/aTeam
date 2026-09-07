@@ -192,6 +192,25 @@ export const ROLES_KEY = "roles";
  */
 export const ROLE_ID_RE = /^[a-z][a-z0-9_-]*$/;
 export const PROJECT_SURFACE = "project";
+
+/**
+ * t-132（S3）：**这个项目认得的那几个表面，按「离人有多远」从近到远排。**
+ *
+ * 表面本身一直是自由字符串，这一条不收紧它——一个项目可以有别的表面，服务端也不该替它规定。这份名单只做两件事：
+ * ① 拒绝话里那句提示从它生成，不再手写（`repo/staging/production/...` 原来是写死在 rules.ts 里的一句，
+ *    加一个表面就会漏——今晚已经有四件活栽在手写名单上）；② 牌桌要排序、要说「在哪几个表面验过」时读同一份。
+ *
+ * **`staging` 之所以要被写下来，不是为了限制，是为了它存在。** 在这之前它只在那句提示里当例子，谁都没在上面验过
+ * 一次；而 t-132 判据 3 记着的那次教训正是这么来的：`repo` 上验的是新形态、生产上跑的是旧形态，**牌桌当时的样子
+ * 没有任何一次验收对应它**。多一个表面就多一次「在哪儿验的」要说清楚，少一句就多一处能说假话的地方。
+ *
+ * **哪个表面算「人真的看得到」仍然只有 production 一个**（t-132 判据 4）：在 staging 上验过不等于生产上验过，
+ * 这条界线由读这份名单的地方各自守着，不因为多了一个表面就松。
+ */
+export const SURFACES = ["repo", "staging", "production"] as const;
+export type Surface = (typeof SURFACES)[number];
+/** t-132 判据 4：人真的看得到的那一个。「验过」只有落在它上面才等于「人那边好了」。 */
+export const HUMAN_SURFACE = "production";
 export const DEFAULT_ROLES = ["pd", "pm", "dev", "frontend", "qa"];
 /** A role with no event or pull for this long is missing (S7). */
 export const PRESENCE_WINDOW_MS = 10 * 60_000;
