@@ -175,7 +175,7 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
   if (left("criteria")) out.push(`criteria   (not in the default board; ateam task show ${t.id} has them)`);
   else if (!t.criteria) out.push("criteria   (not reported by this server; read them with ateam log)");
   else {
-    out.push(`criteria   (by ${who(t.criteria_by)})`);
+    out.push(`criteria   (by ${t.criteria_by ? who(t.criteria_by) : "—"})`);
     if (!t.criteria.length) out.push("  (none)");
     t.criteria.forEach((c, i) => {
       const added = t.criteria_added?.find((a) => a.index === i);
