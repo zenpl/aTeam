@@ -58,7 +58,6 @@ export function report(r: PullResult, me: string, after: string | null): string[
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }
-  if (r.for_me.length) lines.push(`\n${r.for_me.length} instruction(s) for you. Ack each with: ateam ack <id>`);
   return lines;
 }
 

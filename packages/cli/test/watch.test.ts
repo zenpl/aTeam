@@ -53,7 +53,9 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     expect(text).toContain("INSTRUCTION → frontend: t-007 is yours: claim it");
     expect(text).toContain("⇐ FOR YOU, ack it: ateam ack 01C");
     expect(text).toContain("INSTRUCTION → dev: not for frontend");
-    expect(text).toContain("1 instruction(s) for you. Ack each with: ateam ack <id>");
+    // t-140 (pd 06:28): the old summary line taught the habit we are stopping — ack as the answer. Deleted, not
+    // reworded: what a node owes is now said at sync in pd's two sentences, which carry the real ways out.
+    expect(text).not.toContain("Ack each with");
     expect(out[out.length - 1]).toBe("\ninstruction received");
     expect(out.indexOf("\ninstruction received")).toBeGreaterThan(out.findIndex((l) => l.includes("01C")));
     // quiet rounds print nothing
