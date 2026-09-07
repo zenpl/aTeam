@@ -9,7 +9,11 @@ export function event(e: Event, me: string): string {
     case "instruction": {
       // t-147: no ack nag. Reading it is already recorded (your cursor moved); what closes it is doing it, or one
       // line 「不办：<原因>」. Only a card with options still owes an answer.
-      const mark = e.to === me ? (e.options?.length ? "  ⇐ FOR YOU, answer it: ateam decide " + e.id + " <option>" : "  ⇐ FOR YOU") : "";
+      // t-194：不带选项的那种，原来只标一句 ⇐ FOR YOU，**一个 id 都不给**。而 t-193 之后「引用它」是唯一
+      // 算得上办过的凭据——界面不给 id，等于要求一件它自己不提供的东西。这里照带选项那一行的同一个写法给出去。
+      const mark = e.to === me
+        ? (e.options?.length ? "  ⇐ FOR YOU, answer it: ateam decide " + e.id + " <option>" : "  ⇐ FOR YOU, refer to it: --refs " + e.id)
+        : "";
       const ask = e.options?.length ? `  options: ${e.options.join(" | ")}${e.default ? ` (default ${e.default})` : ""}` : "";
       return `${t} ${who} INSTRUCTION → ${e.to}: ${e.body}  [ack by ${hhmm(e.ack_by)}]${ask}${mark}`;
     }

@@ -94,3 +94,35 @@ describe("t-197 · 可重复的参数给几次落几个", () => {
     });
   }
 });
+
+/**
+ * t-194：**sync 打给本人的那几行要带得出指令 id。**
+ *
+ * ack 退役的时候，「怎么引用它」和「催你 ack」是一起被删掉的——于是 t-193 之后新口径要求的东西（引用它才算
+ * 办了），界面不再提供。pm 11:05 攒下 15 条「读过还没动」，每一条都真的动过；两次想用 `--refs` 回话都因为手边
+ * 没有 id 而失败，编出来的 id 被服务当场拒。
+ */
+describe("t-194 · 给本人的行带得出 id，别人的不带", () => {
+  const inst = (to: string, options?: string[]) => ({
+    id: "01M1XVDXXXXXXXXXXXXXXXXXXX", at: new Date().toISOString(), kind: "instruction",
+    actor: "pm", to, body: "去看一眼 CI", ack_by: new Date().toISOString(), ...(options ? { options } : {}),
+  }) as never;
+
+  it("判据 1、3 正例：给我的不带选项那种，打出可以直接抄的引用写法", () => {
+    const line = fmt.event(inst("dev"), "dev");
+    expect(line).toContain("⇐ FOR YOU");
+    expect(line, "标了「给你的」却一个 id 都不给——那正是 t-194 这件事").toContain("--refs 01M1XVDXXXXXXXXXXXXXXXXXXX");
+  });
+
+  it("带选项的那种照旧给它自己的写法，两种都给得出 id", () => {
+    const line = fmt.event(inst("dev", ["A", "B"]), "dev");
+    expect(line).toContain("ateam decide 01M1XVDXXXXXXXXXXXXXXXXXXX <option>");
+  });
+
+  it("判据 3 反例：不是给我的，一个 id 都不打——别把别人的账摊给他看", () => {
+    const line = fmt.event(inst("qa"), "dev");
+    expect(line).not.toContain("FOR YOU");
+    expect(line).not.toContain("--refs");
+    expect(line).not.toContain("01M1XVDXXXXXXXXXXXXXXXXXXX");
+  });
+});

@@ -1238,9 +1238,18 @@ export interface OwedNow {
 export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
   if (!owed) return [];
   const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
-  type Item = { body: string; sent: string };
+  type Item = { body: string; sent: string; instruction: string };
   const oldest = (xs: Item[]) => xs.reduce((a, b) => (a.sent < b.sent ? a : b));
-  const first = (x: Item) => splitTitle(x.body).title || x.body.trim().slice(0, 30);
+  /**
+   * t-194：**这句话里要带得出那条指令的 id。**
+   *
+   * ack 退役的时候，「怎么引用它」和「催你 ack」是一起被删掉的——于是新口径（t-193：引用才算办了）要求的东西，
+   * 界面不再提供。pm 11:05 攒下 15 条「读过还没动」，每一条都真的动过，两次想用 `--refs` 回话都因为手边没有 id
+   * 而失败，编出来的 id 被服务当场拒。**这句话正是他此刻唯一看得到的那一行**，id 只能在这里给。
+   *
+   * 只给他自己的：这份 owed 本来就是 `owedNow(s, me)` 算出来的，别人的账不摊给他看（判据 3）。
+   */
+  const first = (x: Item) => `${splitTitle(x.body).title || x.body.trim().slice(0, 30)}（${x.instruction}）`;
   const out: string[] = [];
   if (owed.unanswered.length) {
     const o = oldest(owed.unanswered);

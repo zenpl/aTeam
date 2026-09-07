@@ -318,3 +318,25 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
     expect(owed.untouched.map((x) => x.instruction)).toEqual([old.id]);
   });
 });
+
+/**
+ * t-194 判据 1、2：**「你读过还没动」那句话里要带得出那条指令的 id。**
+ *
+ * pm 11:05 的实测是这样发生的：他攒下 15 条，每一条都真的动过，但那几条**不在这一批里**——所以事件那几行
+ * 早已滚过去了，此刻他看得到的只有这一句。id 只能在这里给，否则新口径要求的引用他做不到。
+ */
+describe("t-194 · 欠账那句话带得出 id", () => {
+  it("两句话都点出最久那一条的 id，能直接抄进 --refs", async () => {
+    const w = await world();
+    const plain = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "去看一眼 CI", ack_by: at(15).toISOString() }, -60);
+    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["A", "B"], ack_by: at(-10).toISOString() }, -55);
+    await w.s.setCursor({ actor: "dev", last_event_id: card.id, at: at(-50).toISOString() });
+    const mine = owedSentences(owedNow(await st(w.s), "dev"), at(0));
+    expect(mine.find((l) => l.includes("读过还没动"))).toContain(plain.id);
+    const theirs = owedSentences(owedNow(await st(w.s), HUMAN), at(0));
+    expect(theirs.find((l) => l.includes("在等你答"))).toContain(card.id);
+    // 判据 3：各人只看到自己那条的 id
+    expect(mine.join("\n")).not.toContain(card.id);
+    expect(theirs.join("\n")).not.toContain(plain.id);
+  });
+});
