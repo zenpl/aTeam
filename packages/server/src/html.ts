@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, DEFER_PREFIX, seamFiles, REACH_WORDS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -271,7 +271,11 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
     .sort((x, y) => y.at.localeCompare(x.at))[0];
   if (just) {
     const { title } = cardTitle(just.i);
-    const deferred = !!(just.i as { deferred?: unknown }).deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith("先不做"));
+    // t-161: the fallback used to test `startsWith("先不做")` — pd's words, written out here as a *predicate*. A
+    // reworded button would not have shown wrong, it would have judged wrong, in silence. The prefix core owns is
+    // DEFER_PREFIX, and it carries the colon this literal lacked; reading it means a change to pd's wording needs no
+    // change here. core already computes the same thing into `deferred` (board.ts), which is why this is a fallback.
+    const deferred = !!just.i.deferred || s.notes.some((n) => n.actor === human && n.refs?.includes(just.i.id) && n.body.startsWith(DEFER_PREFIX));
     const clicked = deferred ? UI.notNow : cardKind(just.i) === "do" ? UI.didIt : UI.gotIt;
     const what = isMigrationCard(just.i) && just.i.chosen ? `<b>${esc(just.i.chosen.option === MIGRATION_OK ? UI.migrationOk : UI.migrationMissing(patchingRole(b)))}</b>`
       : isContactCard(just.i) && just.i.chosen
