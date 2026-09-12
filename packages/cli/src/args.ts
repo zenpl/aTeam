@@ -1,3 +1,4 @@
+import { BOTH_BODY_AND_FILE } from "@ateam/core";
 export interface Args {
   _: string[];
   flags: Record<string, string | boolean | string[]>;
@@ -17,6 +18,28 @@ const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "n
 //   · refs 少一个 = 一次「我动过」被算成没动——t-193 之后 refs 正是「办了」的唯一凭据。
 // build.test.ts 里现在有一条与 t-173 同形的闸守着这份名单与 main.ts 里 list() 的用法一致，别手工对。
 const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "refs", "touches", "writes", "depends-on", "enum", "no-seam-check-for"]);
+
+/**
+ * t-246：**`--X-file <路径>` 从文件读 `--X` 的值。**
+ *
+ * 今天反引号咬了三个人至少五次，而全队的对策是「每个人记得先写文件、再 `"$(cat …)"`」——
+ * pm 17:2x 把这条规矩广播给全队，**45 分钟后 qa 就在一条生产判决的证据里踩了同一个坑**；
+ * dev 09-07 也立过同一条，只对长 note 执行、短 tell 从没执行。**一条要五个人各自记住的规矩，
+ * 今天量到的失效间隔是 45 分钟。** 所以出路不是再广播一次，是让工具自己收得下这段字。
+ *
+ * 两条都给了就报用法错，不猜哪个算数：**两份正文里挑一份，挑错了是一句没人会核的假话。**
+ */
+export function fromFiles(out: Args, read: (p: string) => string): void {
+  for (const key of Object.keys(out.flags)) {
+    if (!key.endsWith("-file")) continue;
+    const base = key.slice(0, -"-file".length);
+    if (!base) continue;
+    if (out.flags[base] !== undefined) throw new UsageError(BOTH_BODY_AND_FILE(base));
+    const path = String(out.flags[key]);
+    out.flags[base] = read(path);
+    delete out.flags[key];
+  }
+}
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };

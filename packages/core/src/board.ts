@@ -257,6 +257,23 @@ export const UNSEEN_HEAD = (n: number) => `以下 ${n} 行是之前 --quiet 拉�
 export const UNSEEN_DROPPED = (n: number) => `（更早的 ${n} 行攒不下了，已经丢掉；要全量去 ateam log --after <上次读到的 id>）`;
 export const UNSEEN_MAX = 500;
 
+/**
+ * t-246 判据 3：**回执要能证明「我写的那句原样进去了」。**
+ *
+ * 此刻回执只说「这条事件落库了」，**而「命令跑完了」与「我写的那句原样进去了」分不开**（pm 15:18 的 friction）：
+ * 被 shell 吃掉一段的正文，落库之后回执长得一模一样。所以长正文的回执补一行：**从服务返回的那条事件里取**
+ * 字数与首尾各若干字——被吃掉一段的正文，字数与尾巴都对不上。
+ */
+/** t-246：`--X` 与 `--X-file` 都给了时说的那一句。**两份正文里挑一份，挑错了是一句没人会核的假话。** */
+export const BOTH_BODY_AND_FILE = (base: string): string => `--${base} 与 --${base}-file 只能给一个：两份正文，工具不替你挑`;
+
+export const STORED_ECHO = 24;
+export const storedLine = (field: string, text: string): string => {
+  const chars = [...text];
+  const body = chars.length <= STORED_ECHO * 2 ? text : `${chars.slice(0, STORED_ECHO).join("")}…${chars.slice(-STORED_ECHO).join("")}`;
+  return `⤷ 落库 ${chars.length} 字（${field}）：${body.replace(/\n/g, " ")}`;
+};
+
 export const LATE_SHOWN = 3;
 export const DEADLINE_WORDS: string[] = [
   "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",

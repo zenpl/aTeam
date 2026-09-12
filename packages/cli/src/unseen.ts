@@ -14,13 +14,16 @@ import { join } from "node:path";
 
 export const unseenFile = (dir: string, me: string): string => join(dir, ".ateam", `unseen.${me}.jsonl`);
 
-/** 落一批没人看过的行。**永远不让它弄坏那条命令**：心跳失败不该是一次失败的 sync。 */
+/**
+ * 落一批没人看过的行。**写不下去就抛**——qa 22:21 判 fail 指的正是这里：第一版把写失败默默吞了，
+ * 而调用方在它之后才推进游标，于是**磁盘写不进时，`sync --quiet` 退 0、一声不吭，那一批照样消失**。
+ * 这一叠就是 `--quiet` 那一路的「交付」；交付失败不许被当成交付成功——**与游标同一条规矩（t-240）**：
+ * 落成了，才算给出去了。
+ */
 export function stashUnseen(dir: string, me: string, lines: readonly string[]): void {
   if (!lines.length) return;
-  try {
-    mkdirSync(join(dir, ".ateam"), { recursive: true });
-    appendFileSync(unseenFile(dir, me), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-  } catch { /* 记不下就记不下，不拦住心跳 */ }
+  mkdirSync(join(dir, ".ateam"), { recursive: true });
+  appendFileSync(unseenFile(dir, me), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
 }
 
 /** 这个节点此刻攒着多少行没人看过的。坏掉的行跳过——一行读不动不该让整叠都印不出来。 */

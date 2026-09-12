@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
-import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, STORED_ECHO, storedLine, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -51,7 +51,7 @@ say things
                                     [--measured-at <ISO | 10m>]        when the world was measured (10m = ten minutes ago); validity counts from it
   ateam say <正文>                                                   human only: one sentence to the team; the board shows where it went
   ateam focus <body>                                                 the one thing that matters most right now
-  ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
+  ateam note <body | --body-file 路径> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
 tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
@@ -209,6 +209,9 @@ function touchesAtDone(task: string, declared: string[], extra: string[], keep: 
 
 async function main(argv: string[]) {
   const a = parse(argv);
+  // t-246：`--X-file <路径>` 从文件读 `--X`（正文、证据、理由……）。**文件里的字不会再被 shell 解释一遍**，
+  // 这正是今天咬了三个人五次的那件事：反引号、`$`、换行，写进文件就一个字不差。
+  fromFiles(a, (p) => readFileSync(p, "utf8"));
   const [cmd, ...rest] = a._;
   if (!cmd || cmd === "help" || bool(a, "help")) { console.log(HELP); return; }
 
@@ -243,7 +246,25 @@ async function main(argv: string[]) {
   const client = new Client(cfg);
   const emit = async (e: ClientEvent) => {
     const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
-    console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+    const line = `${ev.id}  ${fmt.event(ev, cfg.me)}`;
+    console.log(line);
+    // t-246 判据 3：**长正文再报一行「落库多少字、首尾各若干字」**，而且取的是**服务返回的那条事件**——
+    // 被 shell 吃掉一段的正文，字数与尾巴都对不上。短的不印：那一行本来就把它整句印出来了。
+    for (const field of ["body", "evidence", "resolution", "reason"] as const) {
+      const text = (ev as unknown as Record<string, unknown>)[field];
+      if (typeof text !== "string" || [...text].length <= STORED_ECHO * 2) continue;
+      if (line.includes(text)) break;   // 已经整句在上面了，不说第二遍
+      console.log(storedLine(field, text));
+      break;
+    }
+  };
+  /**
+   * t-246：**正文可以走 `--body-file <路径>`**（经 `fromFiles` 变成 `--body`）。给了它，位置参数上就不该再有
+   * 一份正文——`exact` 会为多出来的那个报用法错，这正是我们要的：**两份正文里挑一份，挑错了是一句没人会核的假话。**
+   */
+  const withBody = (...names: string[]): string[] => {
+    const flag = str(a, "body");
+    return flag === undefined ? exact(rest, ...names, "body") : [...exact(rest, ...names), flag];
   };
 
   /**
@@ -283,13 +304,19 @@ async function main(argv: string[]) {
         }
       }
       const keep: string[] = [];
+      // t-245（qa 22:21 判 fail 之后重做）：**`--quiet` 那一路的「交付」就是这一叠落盘**，所以它必须在推进游标
+      // 之前发生、而且失败要把这条命令掀翻。第一版是「先推进、后写，写失败还默默吞掉」——磁盘写不进时
+      // `sync --quiet` 退 0、一声不吭，那一批照样消失。**我刚在 t-240 修过同一形状的东西，转手又在自己的修法里
+      // 做了一遍**：交付与推进之间有缝，缝里丢的东西不留痕。现在它走的是同一个屏障参数（`flush`）。
       await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0,
-        quiet ? (line) => keep.push(line) : console.log, behind, quiet ? undefined : flushOut);
-      if (quiet && keep.length) {
-        stashUnseen(dir, cfg.me, keep);
-        const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
-        if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
-      }
+        quiet ? (line) => keep.push(line) : console.log, behind,
+        quiet
+          ? async () => {
+              stashUnseen(dir, cfg.me, keep);        // 抛就抛：没落盘就不推进游标，那一批下次还在
+              const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
+              if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
+            }
+          : flushOut);
       await recordCliSha(client, cfg.me, behind.head());
       return;
     }
@@ -392,7 +419,7 @@ async function main(argv: string[]) {
       return;
     }
     case "tell": {
-      const [to, body] = exact(rest, "to", "body");
+      const [to, body] = withBody("to");
       const intent = str(a, "kind") as InstructionIntent | undefined;
       if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
       // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
@@ -428,12 +455,12 @@ async function main(argv: string[]) {
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(from + duration(validFor)).toISOString() : undefined, shape, measured_at: measuredAt });
     }
     case "say": {
-      const [text] = exact(rest, "正文");
+      const [text] = withBody();
       if (cfg.me !== "human") throw new UsageError(`say is the human's: you are ${cfg.me}. Put it in a note instead.`);
       if (text.trim().length > SAID_MAX_CHARS) throw new UsageError(`一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.trim().length}）；不够就再说一句`);
       return emit({ kind: "note", body: `${SAID_PREFIX}${text.trim()}` });
     }
-    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
+    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: withBody()[0] });
     // t-164 判据 4：不必先 claim 就能问「这块地上还有谁」——在决定做不做之前问，正是该问的时候。
     case "touches": {
       if (!rest.length) throw new UsageError("ateam touches <路径…>：说出你打算动的东西，我告诉你此刻还有谁在动它");
@@ -442,7 +469,7 @@ async function main(argv: string[]) {
       else console.log(nobodyElse(rest));
       return;
     }
-    case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
+    case "note": return emit({ kind: "note", body: withBody()[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
       const given = [id, ...more].filter((x): x is string => x !== undefined);

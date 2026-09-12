@@ -88,3 +88,25 @@ describe("t-245 · --quiet 拉到的那一批不再消失", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 30_000);
 });
+
+/**
+ * qa 22:21 判 fail 时用的那具量具，收进用例：**它不注入代码，只让那次写真的失败**（用一个同名目录占住文件名
+ * ⇒ EISDIR，替「磁盘满」）。第一版在这里退 0、一声不吭，游标照走，那一批永久消失——**我刚在 t-240 修过同一
+ * 形状的东西，转手又在自己的修法里做了一遍**：交付与推进之间有缝，缝里丢的东西不留痕。
+ */
+describe("t-245 · 那一叠写不下去时，游标不许动", () => {
+  it("落盘失败 ⇒ 这条命令掀翻、游标一个字没动，下一次照样拿得到那一批", async () => {
+    const dir = checkout();
+    try {
+      mkdirSync(join(dir, ".ateam", "unseen.dev.jsonl"));   // 用目录占住那个文件名：写它必然失败
+      const out = await run(dir, "sync", "--quiet");
+      const cursor = join(dir, ".ateam", "cursor.dev");
+      expect(existsSync(cursor) && readFileSync(cursor, "utf8").trim(), "没落盘就不许推进").toBeFalsy();
+      expect(out, "而且不许一声不吭地成功").not.toContain("nothing new");
+
+      rmSync(join(dir, ".ateam", "unseen.dev.jsonl"), { recursive: true, force: true });
+      const again = await run(dir, "sync");
+      for (const id of IDS) expect(again, "那一批还在").toContain(id);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 40_000);
+});

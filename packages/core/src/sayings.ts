@@ -44,7 +44,9 @@ export const SECOND_HOMES_ROOT = "packages";
 // 搬进 core 的 `waitingUnknownLine`，两边都取那一份。347 → 345。
 // t-231 再搬走 1 句：i18n.ts 那句「等 X」——页面此前用它印 owner，而本件把「等谁」改成按状态算，
 // 那一句连同判断一起进了 core 的 `waitingOnLine`（它还多管一件事：没人在等时说的那一句）。345 → 344。
-export const SECOND_HOME_FROZEN: number = 344;
+// t-246 再搬走 1 句：main.ts 里 `exact(rest, "正文")` 的那个「正文」——`say` 改走 `withBody()` 之后它没了
+// （`--body-file` 那一路要求两条命令共用同一个取正文的地方）。344 → 343。
+export const SECOND_HOME_FROZEN: number = 343;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -55,7 +57,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 21,
-  "packages/cli/src/main.ts": 20,
+  "packages/cli/src/main.ts": 19,
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,
   "packages/server/src/alerts.ts": 11,
