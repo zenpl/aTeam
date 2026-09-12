@@ -59,9 +59,14 @@ describe("t-175 · 一条更正是谁发现的", () => {
     expect(caughtBy(s, first, at)).toBe("别人");
   });
 
-  it("别人写了 note 但没点名那条指令：算不到他头上——「别人此刻在说话」不等于「别人在说他」", async () => {
-    const { s, first, at } = await run(async (w) =>
-      w.emit({ kind: "note", actor: "qa", body: "记一件我自己的事" } as unknown as NewEvent));
+  // 这一条要的是「点名」本身，所以那条 note **必须带 refs、只是指着别处**——一条不带 refs 的 note
+  // 在「有没有 refs」和「refs 里有没有它」两种写法下都为假，于是那样的用例在注入下也绿（我第一版就是这样）。
+  it("别人写了 note、也点了名，但点的是别的事件：算不到他头上——「别人此刻在说话」不等于「别人在说他」", async () => {
+    const { s, first, at } = await run(async (w, f) => {
+      const other = await w.emit({ kind: "note", actor: "qa", body: "另一件事" }) as { id: string };
+      expect(other.id).not.toBe(f.id);
+      return w.emit({ kind: "note", actor: "qa", body: "接着上一条说", refs: [other.id] } as unknown as NewEvent);
+    });
     expect(caughtBy(s, first, at)).toBe("自己");
   });
 
