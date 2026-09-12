@@ -9,7 +9,7 @@
  * 也写进了证据：选②（不再印期限）会把「这件事我要你今天办」这句话从工具里删掉，而队里每天都在用它。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, slimBoard, lateLine, span, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, slimBoard, lateLine, span, LATE_SHOWN, BOARD_BYTES, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-12T12:00:00.000Z");
@@ -75,6 +75,14 @@ describe("t-229 判据 1、4 · 未 ack 且已过期的角色间指令，有一�
     expect(slim.late.count, "数还在").toBe(40);
     expect(slim.late.oldest_s).toBe(3600);
     expect(slim.late.instructions.length, "名单被砍了").toBeLessThan(40);
+    // qa 21:00：**命令行读的正是这一份**，而它原来 keep 0——数看得见、样本一条都看不到。
+    // 真预算（60 KiB）下留得住几条样本，留的是**最久的那一头**：留最新的等于把要看的那几条砍掉。
+    const real = slimBoard(b, BOARD_BYTES);
+    expect(real.late.instructions.length).toBeGreaterThanOrEqual(LATE_SHOWN);
+    expect(real.late.instructions[0].instruction, "留的是最久的那一头").toBe(b.late.instructions[0].instruction);
+    // 而预算小到连样本都装不下时，**上限赢**（t-070 判据 3）：样本也砍，数还在，omitted 照实说。
+    expect(slim.late.instructions.length).toBe(0);
+    expect(slim.late.count).toBe(40);
     expect(slim.omitted.some((o) => o.startsWith("late.instructions")), "砍了什么要自己说").toBe(true);
   });
 });

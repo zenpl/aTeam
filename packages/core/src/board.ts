@@ -418,7 +418,11 @@ export interface Board {
    * 于是每个人都在 `tell` 上写 `--ack-by 15m`，而**那个期限过了之后什么都不会发生**——qa 15:43 实测 80 条
    * 已过期，牌桌报 0。二选一里选的是「让它成为一道闸」：期限照印，但过了就进这个看得见的桶。
    *
-   * 定义（可复算）：`to` 不是人、**没有选项**、没被撤回、**还没 ack**，且 `ack_by` 已经过去。
+   * 定义（可复算）：`to` 不是人、**没有选项**、没被撤回、**还没 ack**，且 `ack_by` 已经过去；
+   * **不含 `ateam` 发的、其所指的任务已经重交或已走完的服务通知**（上面那行 `serviceNoticeStale` 的 `continue`，
+   * 与 `overdue`／`needs_human` 共用同一条）。qa 21:00 照这份定义的前半句复算得 111，实现给的是 104，差的 7 条
+   * 全是这一类——**口径是对的，短的是这份定义**：一条「t-193 验收未过，改完重新 done」而 t-193 早已重交并验过
+   * 的通知，不是活着的欠账；把它算进来，正是本件要修的那个病（把桶灌大到没人再看）。
    * `count` 与 `oldest_s` 不随裁剪走，名单会——「有 80 条」和「是哪 80 条」不是同一个问题。
    *
    * **不是一个数，是两个**（照 t-139 那条：「Never one number」）。我在真日志上量的时候撞见了它：105 条里
@@ -1802,6 +1806,11 @@ interface Cut {
   put(b: Board, v: unknown[]): void;
   keep: number;
   /**
+   * 砍的时候从哪一头留。默认留最近的几条（历史名单都是这样）；`oldest` 留最早的几条——
+   * t-229 的 late 名单按「最久的在前」排，**要看的样本正是最久的那几条**，留最新的等于把要看的那几条砍掉。
+   */
+  from?: "newest" | "oldest";
+  /**
    * 先砍哪一层。**1 是历史**（终态任务、上过线的批次、已解决的接缝、那几张长 id 名单）——这一份少了它们，
    * 下一个 agent 照样干得了活，`GET /task/<id>` 与 `GET /log` 里一条不少。**2 是此刻要用的**（还挂着的指令、
    * 有效的事实）：只有第 1 层砍光了还装不下，才动它们。
@@ -1832,7 +1841,7 @@ const CUTS: Cut[] = [
     keep: 1, tier: 1,
   })),
   // t-229：名单可以砍，`late.count` 与 `late.oldest_s` 砍不掉——被砍掉的是「是哪几条」，不是「有几条」
-  { path: "late.instructions", get: (b) => b.late?.instructions, put: (b, v) => { b.late = { ...b.late, instructions: v as Board["late"]["instructions"] }; }, keep: 0, tier: 1 },
+  { path: "late.instructions", get: (b) => b.late?.instructions, put: (b, v) => { b.late = { ...b.late, instructions: v as Board["late"]["instructions"] }; }, keep: LATE_SHOWN, from: "oldest", tier: 1 },
   { path: "seams", get: (b) => b.seams.filter((x) => !x.open), put: (b, v) => { b.seams = [...b.seams.filter((x) => x.open), ...(v as Board["seams"])]; }, keep: 0, tier: 1 },
   { path: "batches", get: (b) => (b as unknown as { batches?: unknown[] }).batches, put: (b, v) => { (b as unknown as { batches?: unknown[] }).batches = v; }, keep: 1, tier: 1 },
   // 第 2 层：此刻要用的。砍到这里就已经在牺牲「下一个 agent 一进门看得见什么」。
@@ -1853,7 +1862,7 @@ function fitBudget(b: Board, limit: number, refresh: () => void): void {
   for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
     const best = biggest(b, 1);
     if (!best) break;
-    best.cut.put(b, best.list.slice(dropCount(b, limit, best)));
+    best.cut.put(b, kept(best.cut, best.list, best.list.length - dropCount(b, limit, best)));
     refresh();
   }
   if (jsonBytes(b) <= limit) return;
@@ -1868,26 +1877,37 @@ function fitBudget(b: Board, limit: number, refresh: () => void): void {
         if (keep >= cut.keep && used + size > share) break;
         used += size; keep += 1;
       }
-      cut.put(b, list.slice(list.length - Math.max(cut.keep, keep)));
+      cut.put(b, kept(cut, list, Math.max(cut.keep, keep)));
     }
     refresh();
   }
   // `omitted` 自己也随着砍得越多而越长，所以收尾再量一次、小步补砍
   for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
-    const best = biggest(b, 2) ?? biggest(b, 1);
+    // **上限是绝对的**（t-070 判据 3），所以到了这一步，「最少留几条」是偏好不是底线：
+    // 每张名单先按它的 keep 砍，全都到了底还装不下，就连那几条一起砍——
+    // 一份超出上限的回包，比一份少了三条样本的回包更坏。omitted 照实说砍过什么。
+    let floor = true;
+    let best = biggest(b, 2) ?? biggest(b, 1);
+    if (!best) { floor = false; best = biggest(b, 2, false) ?? biggest(b, 1, false); }
     if (!best) return;   // 砍无可砍：**说不出就不假装**，回包照原样出去，omitted 仍然如实说砍过什么
-    best.cut.put(b, best.list.slice(dropCount(b, limit, best)));
+    best.cut.put(b, kept(best.cut, best.list, best.list.length - dropCount(b, limit, best, floor)));
     refresh();
   }
 }
 
+/** 留下 `n` 条：默认留最近的，`from: "oldest"` 留最早的。**留哪一头是那张名单自己的事**，不是砍法的事。 */
+function kept(cut: Cut, list: unknown[], n: number): unknown[] {
+  const take = Math.max(0, Math.min(n, list.length));
+  return cut.from === "oldest" ? list.slice(0, take) : list.slice(list.length - take);
+}
+
 /** 这一层里当下最大的那张可砍名单。 */
-function biggest(b: Board, tier: 1 | 2): { cut: Cut; list: unknown[]; size: number } | null {
+function biggest(b: Board, tier: 1 | 2, floor = true): { cut: Cut; list: unknown[]; size: number } | null {
   let best: { cut: Cut; list: unknown[]; size: number } | null = null;
   for (const cut of CUTS) {
     if (cut.tier !== tier) continue;
     const list = cut.get(b);
-    if (!Array.isArray(list) || list.length <= cut.keep) continue;
+    if (!Array.isArray(list) || list.length <= (floor ? cut.keep : 0)) continue;
     const size = jsonBytes(list);
     if (!best || size > best.size) best = { cut, list, size };
   }
@@ -1895,10 +1915,11 @@ function biggest(b: Board, tier: 1 | 2): { cut: Cut; list: unknown[]; size: numb
 }
 
 /** 砍掉最早的几条：按超出多少估，不按对半砍——对半砍会一路砍过头。 */
-function dropCount(b: Board, limit: number, best: { cut: Cut; list: unknown[]; size: number }): number {
+function dropCount(b: Board, limit: number, best: { cut: Cut; list: unknown[]; size: number }, floor = true): number {
   const over = jsonBytes(b) - limit;
   const per = Math.max(1, best.size / best.list.length);
-  return Math.min(best.list.length - best.cut.keep, Math.max(1, Math.ceil(over / per)));
+  // `floor` false 时连「最少留几条」也砍：上限是绝对的，而这一步只在每张名单都已经砍到它的底之后才走到
+  return Math.min(best.list.length - (floor ? best.cut.keep : 0), Math.max(1, Math.ceil(over / per)));
 }
 
 /**
