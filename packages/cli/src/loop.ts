@@ -25,6 +25,12 @@ export interface WatchOptions {
   signal?: AbortSignal;
   /** Called once per loop turn: the lock file's heartbeat (t-049). */
   heartbeat?: () => void;
+  /**
+   * t-240：**等这一批真的流出去。** 印完不等于交付：写进管道只是排了队，读它的进程慢一点、死了、或者容器
+   * 正在重启时，那几行还在这一头。等它排空之后才推进游标——**这样「被杀在交付之前」是一个真的、可以被撞上的
+   * 状态**，而不是一段微秒级、谁也验不到的窗口。给不出就不等（stdout 是文件或终端时本来就一写即出）。
+   */
+  flush?: () => Promise<void>;
 }
 
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
@@ -87,14 +93,36 @@ export function report(r: PullResult, me: string, after: string | null): string[
 }
 
 /**
- * One protocol step: pull since the cursor, advance the cursor exactly once, print what came in.
- * `print` null keeps it quiet (the cursor still moves; that is the heartbeat).
+ * t-240：**拉一批，不推进游标。** 推进是交付之后的事，所以拉与推进从这里起是两步，调用方自己在交付之后确认。
  */
-export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind): Promise<PullResult> {
+export async function pullBatch(client: Puller, cursor: CursorStore, waitMs: number): Promise<{ after: string | null; r: PullResult }> {
   const after = cursor.read();
-  const r = await client.pull(after, waitMs);
-  advance(cursor, r.cursor);
+  return { after, r: await client.pull(after, waitMs) };
+}
+
+/**
+ * One protocol step: pull since the cursor, print what came in, and only then advance the cursor exactly once.
+ *
+ * t-240：**先交付，后推进。** 这两行原来是反的，而那个顺序里有一道缝：一次「取」与一次「看见」之间进程死掉
+ * （容器重启、watch 被打死），**那一批对这个节点永久消失，而之后每次 sync 都诚实地说「nothing new」——
+ * 它就是没有新的了**。frontend 20:07 真撞上：重启后游标已越过它最后看到的那条，pm 20:12 宣布 t-240 的那条
+ * tell 自己被这道缝吃掉，20:36 才被补读到。
+ *
+ * 同族三处，一并点名（判据 3）：① 本件（游标推进早于交付）；② `advance` 收 `undefined` 就清游标
+ * （t-225，已修已验、未上线）；③ 把 `sync` 倒进 `/dev/null`（pm 15:31 已改它的看守）。
+ * **共同形状：一次「取」与一次「看见」之间有缝，而缝里丢的东西不留痕。**
+ *
+ * 与 t-226（首次拉取的绝对上限）是同一函数上的两条，不是一件事：那条管**一次给太多**，本件管**给了没交到手
+ * 就记成给过了**。两条都在之后，剩下的仍是：一次给多少由 t-226 的上限决定，而无论给多少，没交付就不推进。
+ *
+ * `print` null 是**调用方自己交付**（watch 那一路）或**明写的丢弃**（`--quiet` 的心跳）：前者由调用方在交付
+ * 之后推进，后者是人自己要的，不是悄悄丢的。
+ */
+export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>): Promise<PullResult> {
+  const { after, r } = await pullBatch(client, cursor, waitMs);
   if (print) for (const line of report(r, me, after)) print(line);
+  if (print) await flush?.();
+  advance(cursor, r.cursor);
   // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
   // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
@@ -137,10 +165,11 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
   for (;;) {
     if (opts.signal?.aborted) return last;
     opts.heartbeat?.();
-    const after = cursor.read();
+    let after: string | null;
     let r: PullResult;
     try {
-      r = await sync(client, me, cursor, Math.min(intervalMs, 30_000), null);
+      // t-240：**拉一批，先不推进**；下面印完了再推进。watch 死在这中间，那一批下次还拿得到。
+      ({ after, r } = await pullBatch(client, cursor, Math.min(intervalMs, 30_000)));
     } catch (err) {
       // A transient failure (deploy in progress, network blip) must not end the watch: the cursor is untouched,
       // say what happened, back off, try again. Anything else is ours to fix, so it still exits.
@@ -154,6 +183,8 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
     failures = 0;
     last = r;
     if (r.events.length) for (const line of report(r, me, after)) print(line);
+    if (r.events.length) await opts.flush?.();
+    advance(cursor, r.cursor);            // t-240：交付之后才推进——写出去、而且真的流出去了，这一批才算给出去了
     if (r.for_me.length) {
       print("\ninstruction received");
       if (opts.once) return r;

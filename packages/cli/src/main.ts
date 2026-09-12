@@ -85,6 +85,17 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
 
+/**
+ * t-240：**等 stdout 真的排空。** `console.log` 写进管道只是排队；读它的那一头（Monitor、`| grep`、另一个进程）
+ * 慢一点或者正好死了，那几行还在这一头没出去。游标要等它出去之后才推进，所以这里把「出去了没有」变成一件
+ * 等得到的事。写不满缓冲区时它当场就返回——文件与终端上这一步是免费的。
+ */
+const flushOut = (): Promise<void> =>
+  // 零长度的一次写＋回调＝一道屏障：它排在前面那些行之后，**前面的真的出去了它才回来**。
+  // （第一版写的是 `write("") ? done() : once("drain")`——零长度那次写一律返回 true，于是它当场就回来了，
+  //   管道明明是满的。真路那份用例当场把它照了出来。）
+  new Promise((done) => { process.stdout.write("", () => done()); });
+
 function loadConfig(): Config {
   const file = configFile();
   const f = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Config>) : {};
@@ -255,7 +266,7 @@ async function main(argv: string[]) {
       // t-211：把「本地这棵树是哪一版」交给 sync 判。git 不在、不是检出、答不上来时 realBehind 全给 null，
       // 那一句就一个字都不说——「不知道」不等于「你是最新的」。
       const behind = realBehind();
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log, behind);
+      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log, behind, flushOut);
       await recordCliSha(client, cfg.me, behind.head());
       return;
     }
@@ -271,7 +282,7 @@ async function main(argv: string[]) {
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
       for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
-      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat });
+      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
       release();
       return;
     }
