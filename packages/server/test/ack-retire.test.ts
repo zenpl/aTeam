@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, DECLINE_PREFIX, type EventStore, type LogMark, type OwedNow } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey, ownerCookie } from "./owner.js";
+import { ownerKey, ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
 /** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
 let OWNER = "";
@@ -42,7 +42,7 @@ describe("t-147 判据 6 · 拉取时把「你欠什么」一起给出来", () =
   const soon = () => new Date(Date.now() + 15 * 60_000).toISOString();
 
   beforeAll(async () => {
-    app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
+    app = createApp({ ownerSecret: TEST_OWNER_SECRET, store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
     await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   OWNER = await ownerKey(base, TOKEN);
@@ -110,7 +110,7 @@ describe("t-147 · 升级只发生在期限之后，而且只对「没读到」�
   };
 
   beforeAll(async () => {
-    app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
+    app = createApp({ ownerSecret: TEST_OWNER_SECRET, store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
     await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });

@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { CONTACT_FILL, CONTACT_OPTIONS, MemoryStore, CONTACT_ASK, type Event } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey } from "./owner.js";
+import { ownerKey, TEST_OWNER_SECRET } from "./owner.js";
 
 let app: ReturnType<typeof createApp>;
 let base = "";
@@ -23,7 +23,7 @@ const decide = async (project: string, admin: string, id: string, option: string
 const cards = async (project: string, key: string) => ((await (await api(project, "/board", key)).json()).needs_human as { id: string; body: string; options?: string[] }[]);
 
 beforeAll(async () => {
-  app = createApp({ store: new MemoryStore(), token: "root", human: "human", sha: "abc1234", alertIntervalMs: 0 });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: "root", human: "human", sha: "abc1234", alertIntervalMs: 0 });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
 });

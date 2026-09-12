@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -70,6 +70,11 @@ export interface ServerOptions {
   clockOffsetMs?: number;
   /** t-063: expose POST /_test/clock and POST /_test/run. Off by default; production never sets it. */
   testHooks?: boolean;
+  /**
+   * t-234 判据 9：**把主人的地址发出去要的那段口令**，只放在服务环境里（`ATEAM_OWNER_SECRET`）。
+   * 不设就是这扇门关着——未配置就锁上。它必须不是任何节点手上有的东西：第一个打开主人地址的人永久是主人。
+   */
+  ownerSecret?: string;
   /** The fetch the call-outs use; default the global one (tests inject a fake). */
   fetchImpl?: typeof fetch;
 }
@@ -77,6 +82,7 @@ export interface ServerOptions {
 /** Many projects, each one log and its own keys; the unprefixed address is the default project. Identity is the X-Actor header. */
 export function createApp(opts: ServerOptions) {
   const { token, human } = opts;
+  const ownerSecret = opts.ownerSecret?.trim() || "";
   const sha = opts.sha?.trim() || "unknown";
   const boardPublic = opts.boardPublic ?? true;
   const maxWait = opts.maxWaitMs ?? 30_000;
@@ -422,6 +428,11 @@ export function createApp(opts: ServerOptions) {
       // this is the same address as before, not a new one, and nothing had to be stored in the clear to say it.
       if (path === "/owner-url" && (req.method === "GET" || req.method === "POST")) {
         if (!isAdmin) return json(res, 401, { error: "unauthorized", message: "重新给出牌桌地址需要管理钥匙" });
+        // t-234 判据 9：管理钥匙只是门槛的第一半。**第二半必须是任何节点手上都没有的东西**——
+        // 这一路会「没有就造一把」主人钥匙并交出去，而第一个打开那条地址的人就永久是主人。
+        if (!ownerSecret) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_URL_LOCKED });
+        const given = String(req.headers["x-owner-secret"] ?? "").trim();
+        if (given !== ownerSecret) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_URL_NEEDS_SECRET });
         const { key, record, created } = await registry.ownerKey(projectId, human);
         if (created) await recordEntryForm("issued");   // 钥匙第一次发出的那一刻
         const url_ = `${origin}${base}/?k=${encodeURIComponent(key)}`;

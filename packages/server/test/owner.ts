@@ -8,8 +8,11 @@
  * 这里走的是**生产上同一条路**，不是测试专用的后门：持管理钥匙的节点问 `GET /owner-url` 要回主人的地址
  * （钥匙是推导出来的，所以是同一个地址，不是新发一个），再打开那个地址——主人第一次打开，就是升级完成的那一刻。
  */
-export async function ownerKey(base: string, token: string): Promise<string> {
-  const r = await fetch(`${base}/owner-url`, { headers: { authorization: `Bearer ${token}` } });
+/** t-234 判据 9：发出主人地址要的那段口令，只在服务环境里。用例起的服务都用这一段。 */
+export const TEST_OWNER_SECRET = "ops-only-secret";
+
+export async function ownerKey(base: string, token: string, secret: string = TEST_OWNER_SECRET): Promise<string> {
+  const r = await fetch(`${base}/owner-url`, { headers: { authorization: `Bearer ${token}`, "x-owner-secret": secret } });
   if (!r.ok) throw new Error(`/owner-url ${r.status}: ${await r.text()}`);
   const { board_url: url } = (await r.json()) as { board_url: string };
   const k = new URL(url).searchParams.get("k");
@@ -17,8 +20,8 @@ export async function ownerKey(base: string, token: string): Promise<string> {
   return k;
 }
 
-export async function ownerCookie(base: string, token: string): Promise<string> {
-  const k = await ownerKey(base, token);
+export async function ownerCookie(base: string, token: string, secret: string = TEST_OWNER_SECRET): Promise<string> {
+  const k = await ownerKey(base, token, secret);
   const open = await fetch(`${base}/?k=${encodeURIComponent(k)}`, { redirect: "manual" });
   const set = open.headers.get("set-cookie");
   if (!set) throw new Error(`打开主人地址没有拿到 cookie（${open.status}）`);

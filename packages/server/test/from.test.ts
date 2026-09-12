@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey } from "./owner.js";
+import { ownerKey, TEST_OWNER_SECRET } from "./owner.js";
 
 /**
  * t-234：人说话用他自己那把钥匙。**要在用到的那一刻才去问**：`/owner-url` 会顺手往日志里写一条 `entry.form`
@@ -21,7 +21,7 @@ const post = async (actor: string, body: unknown) => {
 const log = async () => (await (await fetch(`${base}/log`, { headers: { authorization: "Bearer k", "x-actor": "pm", "x-ateam-client": "2" } })).json()).events as { id: string; from?: string }[];
 
 beforeAll(async () => {
-  app = createApp({ store: new MemoryStore(), token: "k", human: "human", sha: "abc1234", alertIntervalMs: 0 });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: "k", human: "human", sha: "abc1234", alertIntervalMs: 0 });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
 });
@@ -119,7 +119,7 @@ describe("t-096 · display names over the API", () => {
 describe("t-098 · over the API, 迁移完成 waits for the human", () => {
   it("is refused with the rule name until the check card is answered 对, then accepted", async () => {
     // its own server: an earlier test in this file already answered a card, and this one is about the state before that
-    const own = createApp({ store: new MemoryStore(), token: "k2", human: "human", sha: "abc1234", alertIntervalMs: 0 });
+    const own = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: "k2", human: "human", sha: "abc1234", alertIntervalMs: 0 });
     await new Promise<void>((r) => own.listen(0, "127.0.0.1", r));
     const at = `http://127.0.0.1:${(own.address() as AddressInfo).port}`;
     const post = async (actor: string, body: unknown) => {

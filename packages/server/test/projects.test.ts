@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey } from "./owner.js";
+import { ownerKey, TEST_OWNER_SECRET } from "./owner.js";
 import { SqliteDb, SqliteStore, SqliteRegistry } from "../src/sqlite-store.js";
 import { MemoryRegistry, hashKey } from "../src/projects.js";
 
@@ -27,7 +27,7 @@ const later = () => new Date(Date.now() + 3_600_000).toISOString();
 
 beforeAll(async () => {
   registry = new MemoryRegistry();
-  app = createApp({ store: new MemoryStore(), token: LEGACY, registry, human: HUMAN, sha: "abc1234" });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: LEGACY, registry, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
 });

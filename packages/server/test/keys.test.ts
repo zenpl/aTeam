@@ -15,13 +15,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, SERVICE_ACTOR } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { TEST_OWNER_SECRET } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
 
 const HUMAN = "human";
 
 function world() {
   const registry = new MemoryRegistry();
-  const app = createApp({ store: new MemoryStore(), token: "ak_shared", human: HUMAN, sha: "abc1234", registry });
+  const app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: "ak_shared", human: HUMAN, sha: "abc1234", registry });
   const ready = new Promise<string>((r) => app.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(app.address() as AddressInfo).port}`)));
   return { registry, app, ready };
 }
@@ -76,13 +77,13 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect(asHuman.status, "qa 17:05 量到的就是这一个 200").toBe(403);
     expect(JSON.stringify(await asHuman.json())).not.toContain("invite_url");
     // 而人进不来这件事有出路，就在那句拒绝话里：持管理钥匙的节点把地址要出来发给他
-    const issued = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared" } })).json() as { board_url: string; say: string; state: string };
+    const issued = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared", "x-owner-secret": TEST_OWNER_SECRET } })).json() as { board_url: string; say: string; state: string };
     expect(issued.state).toBe("issued");
     expect(issued.say).toContain("牌桌在这里：");
     expect(await board("ak_shared")).toMatchObject({ owner_key: { state: "issued" } });
     expect((await post("ak_shared", HUMAN, note("发出去了也还是不能代签"))).status, "「已发未用」也不放行").toBe(403);
     // 要第二次也是同一个地址：钥匙是算出来的，不是存下来的
-    const again = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared" } })).json() as { board_url: string };
+    const again = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared", "x-owner-secret": TEST_OWNER_SECRET } })).json() as { board_url: string };
     expect(again.board_url).toBe(issued.board_url);
     // 人打开了自己的地址
     const opened = await fetch(issued.board_url, { headers: { accept: "text/html" }, redirect: "manual" });

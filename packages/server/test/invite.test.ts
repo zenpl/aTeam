@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../src/app.js";
-import { ownerKey } from "./owner.js";
+import { ownerKey, TEST_OWNER_SECRET } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
 import { CONTACT_ASK } from "@ateam/core";
 
@@ -22,7 +22,7 @@ const code = (inviteUrl: string) => inviteUrl.split("/").pop()!;
 
 beforeAll(async () => {
   registry = new MemoryRegistry();
-  app = createApp({ registry, token: "legacy", human: HUMAN, sha: "abc1234" });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, registry, token: "legacy", human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
 });

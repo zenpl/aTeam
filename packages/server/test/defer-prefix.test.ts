@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { MemoryStore, DEFER_PREFIX, slimBoard, type Board } from "@ateam/core";
 import { UI } from "../src/i18n.js";
 import { createApp } from "../src/app.js";
-import { ownerKey, ownerCookie } from "./owner.js";
+import { ownerKey, ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
 /** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
 let OWNER = "";
@@ -20,7 +20,7 @@ const TOKEN = "secret-token";
 const HUMAN = "human";
 
 function server() {
-  const app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
+  const app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
   let base = "";
   const post = async (actor: string, body: unknown) => {
     const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });

@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, pull, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, type Board, type Event, type State } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey, ownerCookie } from "./owner.js";
+import { ownerKey, ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
 /** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
 let OWNER = "";
@@ -35,7 +35,7 @@ const task = async (id: string, title: string, owner = "dev") => {
 };
 
 beforeAll(async () => {
-  app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234" });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store, token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   OWNER = await ownerKey(base, TOKEN);

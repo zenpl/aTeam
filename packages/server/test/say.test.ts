@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, SAID_PREFIX } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerKey, ownerCookie } from "./owner.js";
+import { ownerKey, ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -21,7 +21,7 @@ const post = (actor: string, body: unknown) =>
   fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
 
 beforeAll(async () => {
-  app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   OWNER = await ownerKey(base, TOKEN);

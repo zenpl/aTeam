@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, append, countRefusals } from "@ateam/core";
 import { createApp } from "../src/app.js";
-import { ownerCookie } from "./owner.js";
+import { ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -22,7 +22,7 @@ const form = (path: string, fields: Record<string, string>) =>
   fetch(`${base}${path}`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", cookie }, body: new URLSearchParams(fields).toString() });
 
 beforeAll(async () => {
-  app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234" });
+  app = createApp({ ownerSecret: TEST_OWNER_SECRET, store, token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   // t-234：按钮是人点的，所以这里拿的是**主人自己那把钥匙**的 cookie，不再借管理钥匙

@@ -16,7 +16,7 @@ import type { AddressInfo } from "node:net";
 import { MemoryStore, type Event } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { MemoryRegistry } from "../src/projects.js";
-import { ownerKeyOf } from "./owner.js";
+import { ownerKeyOf, TEST_OWNER_SECRET } from "./owner.js";
 
 const ADMIN = "ak_shared";
 const HUMAN = "human";
@@ -35,7 +35,7 @@ const button = (key: string, action: string, fields: Record<string, string>) =>
 const count = async () => (await store.read()).events.length;
 
 beforeAll(async () => {
-  app = createApp({ store, token: ADMIN, human: HUMAN, sha: "abc1234", registry, alertIntervalMs: 0 });
+  app = createApp({ store, token: ADMIN, human: HUMAN, sha: "abc1234", registry, alertIntervalMs: 0, ownerSecret: TEST_OWNER_SECRET });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
   OWNER = await ownerKeyOf(registry, "ateam", HUMAN);
@@ -135,5 +135,69 @@ describe("t-234 判据 4 · 加入这条路不许发出一把「人」的钥匙"
     expect(key, "一把都不该有").toBeUndefined();
     // 而这一把若真发了出去，它就是主人：拿它以 human 的名义写东西会成功。所以这里连带核一次反面。
     expect((await join("agent-dev", "dev")).status, "别的角色照常加得进来").toBe(201);
+  });
+});
+
+/**
+ * 判据 8：**我们不是「有一把管理钥匙放在某处」，是每个角色手上拿的就是管理钥匙。** pm 17:1x 量到：
+ * 同一把 token 以 `x-actor: pm` 说话照样拿得到 `invite_url`（`record.role === null`）——于是 `:628` 那道
+ * 专为节点钥匙写的闸对我们一个人也不生效。**只修默认，等于把门锁好而每个人兜里都揣着万能钥匙。**
+ */
+describe("t-234 判据 8 · 换成节点钥匙之后，以别人的身份说话当场被拦", () => {
+  it("**管理钥匙此刻是万能的**：同一把钥匙说自己是 pm、是 dev、是 qa，都过——这就是那句话的样子", async () => {
+    for (const who of ["pm", "dev", "qa"]) expect((await events(ADMIN, who, { kind: "note", body: `我是 ${who}` })).status).toBe(201);
+    const b = await (await fetch(`${base}/board`, { headers: { authorization: `Bearer ${ADMIN}`, "x-actor": "pm" } })).json() as { invite_url?: string };
+    expect(b.invite_url, "以 pm 说话也拿得到只给管理者的字段").toBeTruthy();
+  });
+
+  it("**换成绑定到 pm 的节点钥匙**：以 dev 说话被拦，拒绝话说得出这把钥匙是谁的", async () => {
+    const r = await events(NODE, "dev", { kind: "note", body: "我说我是 dev" });
+    expect(r.status).toBe(403);
+    expect((await r.json() as { message: string }).message).toContain("这把钥匙是 pm 的");
+    expect((await events(NODE, "pm", { kind: "note", body: "我是 pm，这才对" })).status).toBe(201);
+  });
+
+  it("节点钥匙也拿不到只给管理者的字段——换钥匙同时换掉的还有这个", async () => {
+    const b = await (await fetch(`${base}/board`, { headers: { authorization: `Bearer ${NODE}`, "x-actor": "pm" } })).json() as { invite_url?: string };
+    expect(b.invite_url).toBeUndefined();
+  });
+});
+
+/**
+ * 判据 9：**造主人钥匙这件事，不该是任何节点做得了的。** `/owner-url` 原来只要管理钥匙，而每个角色手上
+ * 拿的就是管理钥匙；它会「没有就造一把」并把带钥匙的地址交出来，**而第一个打开它的人就永久是主人**。
+ * 所以此刻任何一个节点能拿走的不是「替他点一次卡」，是整个主人身份。
+ */
+describe("t-234 判据 9 · 发出主人地址，要一样任何节点手上都没有的东西", () => {
+  const freshApp = async (secret?: string) => {
+    const reg = new MemoryRegistry();
+    const a = createApp({ store: new MemoryStore(), token: ADMIN, human: HUMAN, sha: "abc1234", registry: reg, alertIntervalMs: 0, ...(secret ? { ownerSecret: secret } : {}) });
+    await new Promise<void>((r) => a.listen(0, "127.0.0.1", r));
+    return { app: a, reg, at: `http://127.0.0.1:${(a.address() as AddressInfo).port}` };
+  };
+  const ask = (at: string, headers: Record<string, string>) => fetch(`${at}/owner-url`, { headers: { authorization: `Bearer ${ADMIN}`, ...headers } });
+
+  it("**服务没配那段口令 ⇒ 这扇门是关的**，而且那把钥匙一把都没造出来（未配置就锁上）", async () => {
+    const w = await freshApp();
+    try {
+      const r = await ask(w.at, {});
+      expect(r.status).toBe(403);
+      expect((await r.json() as { rule: string; message: string }).rule).toBe("owner-key");
+      expect(await w.reg.ownerKeyRecord("ateam", HUMAN), "被拒的那一次不许顺手把钥匙造出来").toBeNull();
+    } finally { await new Promise<void>((r) => w.app.close(() => r())); }
+  });
+
+  it("**只有管理钥匙不够**：不带口令、带错口令，都拒；钥匙仍然没造出来", async () => {
+    const w = await freshApp("ops-only");
+    try {
+      expect((await ask(w.at, {})).status).toBe(403);
+      expect((await ask(w.at, { "x-owner-secret": "guessed-wrong" })).status).toBe(403);
+      expect(await w.reg.ownerKeyRecord("ateam", HUMAN)).toBeNull();
+      // 带对了才给，而这时钥匙才第一次被登记
+      const ok = await ask(w.at, { "x-owner-secret": "ops-only" });
+      expect(ok.status).toBe(201);
+      expect((await ok.json() as { board_url: string }).board_url).toContain("?k=");
+      expect(await w.reg.ownerKeyRecord("ateam", HUMAN)).not.toBeNull();
+    } finally { await new Promise<void>((r) => w.app.close(() => r())); }
   });
 });

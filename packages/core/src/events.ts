@@ -490,6 +490,8 @@ export const KEY_SYMBOLS = [
   "NO_HUMAN_IMPACT",
   "NO_OUTPUT_PREFIX",
   "NO_SYMBOL_MEANS_UNCLEAR",
+  "OWNER_URL_LOCKED",
+  "OWNER_URL_NEEDS_SECRET",
   "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
@@ -1097,6 +1099,21 @@ export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`
  * 再照它加入一次，拿到的就是一把 role 恰好是主人的钥匙。**判定「是不是他」的依据，可以被别人写。**
  * 这与那道只在 `ownerArrived()` 之后才生效的闸是同一个病，所以在同一件里一起堵上。
  */
+/**
+ * t-234 判据 9：**造主人钥匙这件事，不该是任何节点做得了的。**
+ *
+ * `/owner-url` 原来只要管理钥匙，而我们每个角色手上拿的就是管理钥匙（判据 8）。它会「没有就造一把」并把
+ * 带钥匙的地址返回——**而第一个打开它的人就永久成为主人**。所以此刻任何一个节点能拿走的不是「替他点一次卡」，
+ * 是整个主人身份。
+ *
+ * 所以它改成认一样**任何节点手上都没有的东西**：只放在服务环境里的一段口令。没配这段口令时，这扇门是关的
+ * ——**未配置就锁上**，与判据 1 同一条口径。
+ */
+export const OWNER_URL_LOCKED =
+  "这扇门是关着的：把主人的地址发出去，要一段只放在服务环境里的口令，而这台服务没有配。配上 ATEAM_OWNER_SECRET 再来——它不该是任何一个节点手上有的东西，因为第一个打开那条地址的人就永久是主人了。";
+export const OWNER_URL_NEEDS_SECRET =
+  "把主人的地址发出去，要一段只放在服务环境里的口令，放在 x-owner-secret 里。管理钥匙不够：每个角色手上拿的就是它，而第一个打开那条地址的人就永久是主人了。";
+
 export const joinNotAsHuman = (human: string): string =>
   `${human} 是人自己的身份，不是这个项目的一个角色，加入拿不到它：以他的名义说话，只有他自己那把钥匙做得到，而那把钥匙在牌桌地址里带着。`;
 
