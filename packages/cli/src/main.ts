@@ -18,6 +18,7 @@ import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
+import { runImport, type Written } from "./import.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -72,6 +73,8 @@ tasks
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
 
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
+  ateam import <file>            搬家：把别处的记录写进日志，一行一条 JSON，每条必带 from（它在原处的单号/路径/链接，原样抄来，工具不替你编）
+                                 带着 from 重导一遍不会多出第二份；有一行不合格就一条都不发，改好再跑一次
   ateam log [--after <id>]       raw events
   ateam watch [--interval ${WATCH_INTERVAL}] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
 \n${exitCodeLine}\n`;
@@ -332,6 +335,22 @@ async function main(argv: string[]) {
       exact(rest);
       const { events } = await client.log(str(a, "after") ?? null);
       for (const e of events) console.log(`${e.id}  ${fmt.event(e, cfg.me)}`);
+      return;
+    }
+    /**
+     * t-224：**S9 搬家的那条路。** 平台那一侧 t-088 早就做好了（带 `from` 的事件只写一次），而我们指给客户的
+     * 这支 CLI 一直送不出 `from`——上线至今 7051 条事件里它出现过 0 次。**一条没有人走得通的路，和没有这条路，
+     * 对要搬家的人是同一件事。**
+     *
+     * 一行一条 JSON，`from` 逐字来自被搬的那份记录。**有一行不合格就一条都不发**：半份搬进去之后人要自己
+     * 算「哪几条已经在里面了」，而那正是 `from` 本来替他免掉的活。全改完原样再跑一遍，已经搬过的不会重复。
+     */
+    case "import": {
+      const [file] = exact(rest, "file");
+      // `common(a)` 不加在这里：--refs / --writes 是给「一条命令一件事」用的，搬家一次几百条，
+      // 把同一份 refs 钉在每一条上说的不是真话。每条记录自己带什么就是什么。
+      const code = await runImport(readFileSync(file, "utf8"), (e) => client.emit(e) as Promise<Written>, cfg.me, console.log, console.error);
+      if (code) process.exitCode = code;
       return;
     }
     case "tell": {
