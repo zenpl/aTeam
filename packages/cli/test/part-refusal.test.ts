@@ -137,3 +137,16 @@ describe("t-241 · 记下来的那条，什么时候才该消失", () => {
     }
   });
 });
+
+/**
+ * t-241 的第一条自证：本件上线之后，**它记下的第一条记录就是「解决接缝 +」**——那几件在终端上与账上
+ * 都没有名字。根因是组装那几件时取的是 `e.a`／`e.b`，而 `seamCheck` 造的事件带的是 `tasks: [a, b]`。
+ * **一个永远说不出是哪一件的名字，与没有名字一样。**
+ */
+describe("t-241 · 那几件要叫得出自己是哪一条接缝", () => {
+  it("吸收那几件的名字里有两个任务 id", async () => {
+    const { seamAbsorbName } = await import("../src/seamparts.js");
+    expect(seamAbsorbName({ kind: "task", op: "seam", tasks: ["t-226", "t-070"] })).toBe("解决接缝 t-226+t-070");
+    expect(seamAbsorbName({ kind: "task", op: "seam" }), "说不出就说不出，不给一个空名字").toBe("解决接缝 ?+?");
+  });
+});

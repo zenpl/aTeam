@@ -15,6 +15,7 @@ import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
 import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
+import { seamAbsorbName } from "./seamparts.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -545,7 +546,10 @@ async function main(argv: string[]) {
               // t-074: a fallback is never silent — what could not be verified goes on record next to the done
               ...(check.unverified.length ? [{ what: PART_NAMES.seamFallback(), event: { kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task } as ClientEvent }] : []),
               // t-073: seams this done settles by itself: recorded right after, with the basis
-              ...check.absorbs.map((e) => ({ what: PART_NAMES.seamAbsorb((e as { a?: string }).a ?? "", (e as { b?: string }).b ?? ""), event: e })),
+              // t-241 的第一条自证：这一行原来取的是 `e.a`／`e.b`，而这些事件里根本没有那两个字段（它们带的是
+              // `tasks: [a, b]`）——于是那几件在终端上与账上都叫「解决接缝 +」。**一个永远说不出是哪一件的名字，
+              // 与没有名字一样**；我是用本件自己记下的那条记录（`part: "解决接缝 +"`）发现它的。
+              ...check.absorbs.map((e) => ({ what: seamAbsorbName(e), event: e })),
             ]);
             return;
           }
