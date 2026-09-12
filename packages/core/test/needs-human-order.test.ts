@@ -20,9 +20,9 @@ const REAL: Card[] = [
   card({ id: "01M1VNSX5KDRJ9ACJHH3STX70D", from: SERVICE_ACTOR, kind: "do", body: "pd 从没读过日志，239 条没送到。起一个 pd？", ack_by: "2026-09-07T12:00:00.000Z" }),
   card({ id: "01M1WSJF65FZ86AE7T3RVG4NEH", from: SERVICE_ACTOR, kind: "do", body: "release 从没读过日志，111 条没送到。起一个 release？", ack_by: "2026-09-07T13:00:00.000Z" }),
   card({ id: "01M1XJFRE9EB06FWJS0B23H8EV", from: SERVICE_ACTOR, kind: "do", body: "frontend 从没读过日志，357 条没送到。起一个 frontend？", ack_by: "2026-09-07T14:00:00.000Z" }),
-  card({ id: "01M2BCA5KHKSFXAQ3MCA43AY8F", body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试这条命令", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T07:00:00.000Z" }),
-  card({ id: "01M2BEKGPZ5RPBJDH1GQT1DKTF", body: "**给一个 https 的外呼地址。**", options: ["A 我给一个 https 地址", "B 先不给"], default: "B 先不给", ack_by: "2026-09-13T20:00:00.000Z" }),
-  card({ id: "01M2BSFXXXXXXXXXXXXXXXXXXX", body: "**把这一行粘进去，我们自己的主干就跟上了。**", options: ["A 我粘", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T06:00:00.000Z" }),
+  card({ id: "01M2BCA5KHKSFXAQ3MCA43AY8F", body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试这条命令", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T05:57:46.253Z" }),
+  card({ id: "01M2BEKGPZ5RPBJDH1GQT1DKTF", body: "**给一个 https 的外呼地址。**", options: ["A 我给一个 https 地址", "B 先不给"], default: "B 先不给", ack_by: "2026-09-13T18:37:54.667Z" }),
+  card({ id: "01M2BSFXXXXXXXXXXXXXXXXXXX", body: "**把这一行粘进去，我们自己的主干就跟上了。**", options: ["A 我粘", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T19:50:05.019Z" }),
 ];
 const titles = (cs: Card[]) => cs.map((c) => c.body);
 
@@ -33,8 +33,11 @@ describe("t-236 · 最急的那一张排到最上面", () => {
     expect(titles(before).findIndex((t) => t.includes("试一条命令"))).toBe(3);
 
     const after = needsHumanOrder(REAL);
-    expect(titles(after)[0], "**不答就会替他落一个决定、而且最先到期的那一张在最上面**").toContain("把这一行粘进去");
-    expect(titles(after).slice(0, 3).some((t) => t.includes("试一条命令"))).toBe(true);
+    // qa 22:04 回放同一刻核过这三张的真期限（05:57／18:37／19:50），夹具里的 ack_by 就是它们——
+    // **我第一版散文把这三张的次序写反了**（说成快进那张最先到期），用例名与代码都是对的，走样的只有那段字。
+    expect(titles(after)[0], "**不答就会替他落一个决定、而且最先到期的那一张在最上面**").toContain("试一条命令");
+    expect(titles(after)[1]).toContain("外呼地址");
+    expect(titles(after)[2]).toContain("把这一行粘进去");
     expect(titles(after).slice(3).every((t) => t.includes("从没读过日志")), "别人也做得了的沉到最后").toBe(true);
   });
 
