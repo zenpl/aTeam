@@ -196,6 +196,29 @@ export function span(ms: number): string | null {
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 
 /**
+ * t-229 判据 1：**那个数的那一句话。** 「有多少条」与「最久那条多久了」在一句里，因为分开印时人只会读到前一个——
+ * 80 条里最久那条已经三天，和 80 条全是刚过期，是两种麻烦。
+ */
+export const lateLine = (late: { count: number; acted: number; untouched: number; oldest_s: number | null }): string =>
+  `${late.count} 条角色间指令过了期限还没人 ack${late.oldest_s === null ? "" : `，最久 ${span(late.oldest_s * 1000) ?? SPAN_UNDER_A_MINUTE}`}`
+  + `：${late.untouched} 条没人动过，${late.acted} 条事情办了只差一个 ack`;
+
+/**
+ * t-229 判据 3：**三个数各自覆盖什么，一处写清。**
+ *
+ * 它们此前的差别只活在各处注释里，而其中一条还是过期的（`Board.overdue` 那行注释在 t-147 之后仍写着
+ * 「发给角色、过期没 ack 的」）——于是「角色间的期限过了会怎样」这个问题，照着牌桌数出来的答案是 0。
+ * 印在 `--help` 里：读这三个数的人就是跑这条命令的人。
+ */
+/** 牌桌上那一栏印几条样本：数已经在那一句里，样本只是让人知道先去问谁。最久的在前。 */
+export const LATE_SHOWN = 3;
+export const DEADLINE_WORDS: string[] = [
+  "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
+  "NOBODY HAS ACTED ON（overdue_by_presence）：角色收到之后一直没有动作的那几条，按对方在不在场分三桶。**它不看期限**。",
+  "late：角色间指令，过了 ack_by 还没 ack。期限从 t-229 起是一道看得见的闸，不再是一句印着好看的话。",
+];
+
+/**
  * 第三把梯子：**还有多久**（pd 10:39）。
  *
  * pd 定前两把时漏了它，是我 t-189 拿「不点的话，<绝对时刻>到期」去问「09:09 说绝对时刻只进 title，这里怎么办」
@@ -358,8 +381,31 @@ export interface Board {
   owner_key?: { state: "none" | "issued" | "in_use"; since?: string };
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
   undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
-  /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
+  /**
+   * **带选项的卡，过了期限还没有答案。** 带选项的卡只发得给人（rules.ts），所以这一栏说的全是人正坐在上面的
+   * 那几张。t-147 改的就是这个口径；这行注释在那之后一直还写着「发给角色、过期没 ack 的」——**一句没跟上
+   * 实现的注释，比没有注释更贵**：t-229 的根之一正是有人照它去数角色间的期限，数出 0。
+   *
+   * 三个数各自覆盖什么，一处写清（`DEADLINE_WORDS`，`--help` 里印得出来）：这一栏是**人欠的答案**，
+   * `overdue_by_presence` 是**角色读到了还没动的**（不看期限），`late` 是**角色间过了期限还没 ack 的**。
+   */
   overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
+  /**
+   * t-229：**未 ack 且已过期的角色间指令。**
+   *
+   * 此前这个数一处都没有：`overdue` 只认带选项的卡，`overdue_by_presence` 按在不在场分桶、根本不看期限。
+   * 于是每个人都在 `tell` 上写 `--ack-by 15m`，而**那个期限过了之后什么都不会发生**——qa 15:43 实测 80 条
+   * 已过期，牌桌报 0。二选一里选的是「让它成为一道闸」：期限照印，但过了就进这个看得见的桶。
+   *
+   * 定义（可复算）：`to` 不是人、**没有选项**、没被撤回、**还没 ack**，且 `ack_by` 已经过去。
+   * `count` 与 `oldest_s` 不随裁剪走，名单会——「有 80 条」和「是哪 80 条」不是同一个问题。
+   *
+   * **不是一个数，是两个**（照 t-139 那条：「Never one number」）。我在真日志上量的时候撞见了它：105 条里
+   * 有 33 条**事情已经办了，只差一个 ack**（`acted_by_event` 认得出来），另外 72 条是真没人动。这两种要的
+   * 不是同一件事——一个是补一次回执，一个是这件事还没开始。**混成一个数，读它的人会按最轻的那一种去理解它，
+   * 于是这个桶一样会被忽略**，而那正是本件要修的病。
+   */
+  late: { count: number; acted: number; untouched: number; oldest_s: number | null; instructions: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number; acted: boolean }[] };
   /**
    * t-139 (pd 05:15): overdue instructions split by whether their recipient is there, because the three states cost
    * different things and are fixed different ways. `missing` — nobody is pulling, so nothing arrives and only a person
@@ -948,6 +994,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     needs_human: [],
     undelivered: [],
     overdue: [],
+    late: { count: 0, acted: 0, untouched: 0, oldest_s: null, instructions: [] },
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
     gate_honesty: [],
     instructions: [],
@@ -1030,7 +1077,17 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // count of NEEDS HUMAN: that list says 「你要做的」, this one says 「这件晚了」, and t-139's three states never
     // hold the human, so nothing is counted twice.
     if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
+    // t-229：**角色间的期限，从这里起是一道看得见的闸。** 判的是「谁欠一个 ack」，所以没有选项那一支才算
+    // （带选项的卡欠的是答案，在上面那一栏）；acked 的在更上面就 continue 掉了，withdrawn 同理。
+    if (i.to !== human && !i.options?.length && i.ack_by && Date.parse(i.ack_by) < now.getTime())
+      b.late.instructions.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)), acted: !!st.acted_by_event });
   }
+  // 数与「最久那条多久了」在这里定下来，**裁剪只砍名单、不砍这两个数**（t-070 那条：「有多少」与「是哪些」不是同一个问题）
+  b.late.instructions.sort((a, c) => c.age_s - a.age_s);
+  b.late.count = b.late.instructions.length;
+  b.late.acted = b.late.instructions.filter((x) => x.acted).length;
+  b.late.untouched = b.late.count - b.late.acted;
+  b.late.oldest_s = b.late.instructions[0]?.age_s ?? null;
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
     const r = rs.reading;
@@ -1724,6 +1781,8 @@ const CUTS: Cut[] = [
     put: (b, v) => { b.live = { ...b.live, [k]: v } as Board["live"]; },
     keep: 1, tier: 1,
   })),
+  // t-229：名单可以砍，`late.count` 与 `late.oldest_s` 砍不掉——被砍掉的是「是哪几条」，不是「有几条」
+  { path: "late.instructions", get: (b) => b.late?.instructions, put: (b, v) => { b.late = { ...b.late, instructions: v as Board["late"]["instructions"] }; }, keep: 0, tier: 1 },
   { path: "seams", get: (b) => b.seams.filter((x) => !x.open), put: (b, v) => { b.seams = [...b.seams.filter((x) => x.open), ...(v as Board["seams"])]; }, keep: 0, tier: 1 },
   { path: "batches", get: (b) => (b as unknown as { batches?: unknown[] }).batches, put: (b, v) => { (b as unknown as { batches?: unknown[] }).batches = v; }, keep: 1, tier: 1 },
   // 第 2 层：此刻要用的。砍到这里就已经在牺牲「下一个 agent 一进门看得见什么」。
