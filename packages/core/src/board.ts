@@ -1290,6 +1290,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // The human is not grouped by presence: NEEDS HUMAN is its own list, and 「起一个 human」 is not a thing to say.
   b.gate_honesty = GATES.map((g) => gateHonesty(s, g)).filter((x): x is GateHonesty => x !== null);
+  b.needs_human = needsHumanOrder(b.needs_human);   // t-236：填完之后排一次——此前一处都没排过
   b.overdue_by_presence = overdueByPresence(b, owedTo(s).filter((st) => st.instruction.to !== human).map((st) => ({ instruction: st.instruction.id, to: st.instruction.to })));
   return b;
 }
@@ -1666,6 +1667,38 @@ export function ruleLiveAt(s: State, task: string): string | undefined {
  * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
  * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
  */
+/**
+ * t-236：**人那一页把最急的一张排在最下面。** 它按指令 id 升序，也就是建卡的先后——**与紧急度、与期限、
+ * 与焦点全无关，填完之后没有任何一处重排**（frontend 读数 `repo:needs_human.order`）。pm 18:25 量到的那一页
+ * 自上而下是：起一个 pd？／起一个 release？／换外呼地址（挂了 8 天）／放行快进／**今天那个 P0 排第五**，
+ * 而上面两张是 pm 自己就能做、并且今天已经自己做过两次的事。
+ *
+ * 排序只用牌桌自己拿得到的事实，**不用任何人自报的优先级**（判据 4：否则每个人都会把自己那张写成最急）：
+ * ① **只有他能做**：服务发的「起一个 X？」不算——那件事队里别人也做得了（pm 今天做过两次），它们沉到最后。
+ * ② **沉默会不会替他落一个决定**：带选项又带默认的，到期会以他的名义执行一个选择。**这一类最贵**：
+ *    不答不是「什么都没发生」，而是「替他发生了」。
+ * ③ 同一档里**先到期的在前**（没有期限的排在有期限的之后），最后按 id 稳住顺序——同一档里谁先建谁在前。
+ *
+ * **只有三档，没有第四档。** 我试过把「要他答」排在「要他做一件事」前面，被一条既有用例挡了回来：
+ * 新项目那两张卡（「这个项目是什么？说一句」与外呼地址）pd 定的顺序是前者在先，而那样排会把它们对调。
+ * 收回它是对的——**「问他」比「请他做」更急，是我的直觉，不是牌桌拿得到的事实**（判据 4 不许的正是这个）。
+ *
+ * **这里不新增任何一句人可见的话**：页面照旧一张张印，只是顺序变了。所以本件没有 pd 前置（判据 5 的另一半）。
+ */
+export function needsHumanOrder(cards: Board["needs_human"], service = SERVICE_ACTOR): Board["needs_human"] {
+  const onlyHuman = (c: Board["needs_human"][number]) => !(c.from === service && !!missingRoleOf(c.body));
+  const tier = (c: Board["needs_human"][number]) =>
+    !onlyHuman(c) ? 2                                            // 别人也做得了：最后
+    : c.options?.length && c.default !== undefined ? 0           // 不答＝替他落一个决定
+    : 1;                                                          // 其余：要他答或要他做，牌桌分不出轻重，按期限走
+  const due = (c: Board["needs_human"][number]) => c.ack_by_again ?? c.ack_by ?? "";
+  return [...cards].sort((a, b) =>
+    tier(a) - tier(b)
+    || (due(a) ? 0 : 1) - (due(b) ? 0 : 1)
+    || due(a).localeCompare(due(b))
+    || a.id.localeCompare(b.id));
+}
+
 export function overdueByPresence(b: Board, owed: { instruction: string; to: string }[]): Board["overdue_by_presence"] {
   const state = new Map(b.presence.map((p) => [p.actor, p]));
   const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });
