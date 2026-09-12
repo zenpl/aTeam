@@ -1,5 +1,6 @@
-import type { Event, EventStore } from "./index.js";
-import type { OwedNow } from "./board.js";
+import type { Event, EventStore, Instruction } from "./index.js";
+import { owedTo, type OwedNow } from "./board.js";
+import type { State } from "./reduce.js";
 
 /**
  * t-226：**一次拉取的绝对字节上限。**
@@ -57,9 +58,12 @@ export interface PullResult {
  * read since cursor, record deliveries of instructions to me, advance cursor (heartbeat).
  */
 export function capBytes(all: Event[], limit: number): { events: Event[]; more: boolean } {
-  let used = 0;
+  // t-227 用例逼出来的一处：**量的必须是真正发出去的那串字节**。按元素自身长度求和会漏掉数组的框架——
+  // 两个方括号与每个元素后面的逗号；400 条时那点框架正好把 65,536 的上限顶成 65,619，超了 83 字节。
+  // 一个「差一点点」的上限在这一族里不算小事：它意味着这个数说的不是真话。
+  let used = 2;
   for (const [i, e] of all.entries()) {
-    const size = Buffer.byteLength(JSON.stringify(e), "utf8");
+    const size = Buffer.byteLength(JSON.stringify(e), "utf8") + (i ? 1 : 0);
     // **至少给一条**：一条比上限还大的事件若也被挡住，游标就再也前进不了——那是把「太大」变成「永远拿不到」。
     if (i > 0 && used + size > limit) return { events: all.slice(0, i), more: true };
     used += size;
@@ -91,4 +95,49 @@ export async function pull(store: EventStore, me: string, after: string | null, 
   await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso });
   // 投递只记这一页里真的给了的那些——**记了却没给，就是「已送达」变成假话**，而那恰恰是这道闸要防的
   return { events, for_me, cursor, ...(more ? { more: true } : {}), ...(taken_back_seen?.length ? { taken_back_seen } : {}) };
+}
+
+/**
+ * t-227：**POST 回包上那两样东西的绝对上限。**
+ *
+ * 与 `PULL_BYTES` 同一条口径（写死的数，不是「比现在小」），但小得多，理由是**每一次 POST 都要付这笔钱**：
+ * 拉取是一个节点开工时的一两次，而写事件是它整天都在做的事。64 KiB 装得下几十条指令的正文，
+ * 而一个欠了几百条的节点本来就该去拉一次，不该靠写事件的回包把日志搬过去。
+ *
+ * **不许把首次拉取那 6 MB 的问题搬到每一次 POST 上**（判据 3 的原话）。
+ */
+export const POST_REPLY_BYTES = 65_536;
+
+/**
+ * t-227：**此刻点名给这个人、而它还没读过的那些指令。**
+ *
+ * 「还没读过」是 `reach === "unread"`——游标没越过它，就没有任何证据说它看过（reduce.ts 的 `reach`）。
+ * 这正是「只发不拉」那个节点的盲区：它整天在写事件，而发给它的指令一条都没进过它的眼睛。
+ *
+ * **这里不记投递**：记投递的是拉取那条路。回包是顺带给它看一眼，不是「送到了」——把顺带看一眼记成已送达，
+ * 就是今天数过好几次的那一族（「结果在」不等于「动作发生过」）。所以同一条指令会在它每次 POST 时都出现，
+ * 直到它真的去拉一次或办掉它。
+ */
+export function forPoster(s: State, me: string, limit: number = POST_REPLY_BYTES): { for_me: Instruction[]; more?: boolean } {
+  const unread = owedTo(s, me).filter((st) => st.reach === "unread").map((st) => st.instruction);
+  const { events, more } = capBytes(unread as unknown as Event[], limit);
+  return { for_me: events as unknown as Instruction[], ...(more ? { more: true } : {}) };
+}
+
+/**
+ * t-227 判据 3：`owed` 也要受同一个上限。三个桶按顺序装，装不下的截断并说明——**少给而不自知**是这几天
+ * 数了二十一次的那一族，这里是它的第三个出口（前两个是首次拉取与 POST 的 for_me）。
+ */
+export function capOwed(owed: OwedNow, limit: number = POST_REPLY_BYTES): OwedNow & { more?: boolean } {
+  const out: OwedNow & { more?: boolean } = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  let used = 0;
+  for (const bucket of ["unanswered", "untouched", "legacy_before_acted_rule"] as const) {
+    for (const item of owed[bucket]) {
+      const size = Buffer.byteLength(JSON.stringify(item), "utf8");
+      if (used + size > limit) { out.more = true; return out; }
+      used += size;
+      (out[bucket] as unknown[]).push(item);
+    }
+  }
+  return out;
 }

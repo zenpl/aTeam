@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, forPoster, capOwed, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -678,7 +678,18 @@ export function createApp(opts: ServerOptions) {
           return [x, ...(x.created ? await runFollowUps(store, x.event, human, real()) : []).map((event) => ({ event, created: true }))];
         });
         emitAll([e, ...followed.map((x) => x.event)]);
-        return json(res, created ? 201 : 200, { ...e, created });
+        // t-227：**回包顺带告诉它「此刻有谁点名找你、你欠着什么」。**
+        //
+        // 外部报告 F1 的第二条：mini 00:42 连发 5 条事件，而 be 00:37 发给它的「停掉生产探针」一直是 unread——
+        // **一个正在活跃发帖的节点，对发给自己的 P0 指令一无所知**，因为 POST 的回包里什么都没有。本队五天里
+        // pd 与 release 也各出现过一次「写了但从不拉取」。
+        //
+        // 两样都从服务已经在动的那份状态里取（同 GET 那一路的 owed），不多读一次日志；两样都受 POST_REPLY_BYTES
+        // 限——**拉取是开工时的一两次，写事件是整天都在做的事**，这笔钱每次都要付。
+        const pst = await stateFor(projectId, store);
+        const { for_me, more } = forPoster(pst, actor);
+        const owedForPoster = capOwed(owedNow(pst, actor));
+        return json(res, created ? 201 : 200, { ...e, created, for_me, owed: owedForPoster, ...(more || owedForPoster.more ? { more: true } : {}) });
       }
 
       return json(res, 404, { error: "not found" });
