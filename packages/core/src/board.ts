@@ -238,6 +238,14 @@ export const lateLine = (late: { count: number; acted: number; untouched: number
  */
 export const OWED_LEGACY_HELP = "GET /owed                     你此刻欠什么的全量（含 t-147 之前那一批的逐条）；每次 sync 带的那一份里，那一批只给一个数";
 
+/**
+ * t-242 ②：**那一节的标题问的是「这一版带来了什么」，而它印的是「在生产上验过的那几件」。**
+ * 一版可以带来十件而一件都还没人验，所以标题比名单大一圈——它不是假话，是**说大了**。
+ * 名单不动（那是真信息，而且命令行也在用同一份），改的是标题：让它说出名单是什么。
+ * **措辞是占位的，定稿归 pd（判据 4）。** 上线前必须换掉。
+ */
+export const VERIFIED_ON_THIS_VERSION = `${PD_PLACEHOLDER}这一版里已经在生产上验过的`;
+
 export const LATE_SHOWN = 3;
 export const DEADLINE_WORDS: string[] = [
   "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
@@ -1218,7 +1226,13 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
     const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
     const linked = tasks.filter((t) => t.refs.includes(n.id));
-    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass));
+    // t-242：**「已上线」读的该是「它在生产跑的那一版里」，而不是「有人在生产上验过它」。**
+    // 后者蕴含前者（没上线的东西验不了），所以这一句原来不是假话，但它**报少了**：一件已经在生产上跑、
+    // 还没人验的，这里显示成「已成为任务」——而人问的是「我那句话落地了没有」。
+    // 包含关系来自那条事实（production:deployed.tasks）；它答不出的那几件仍按有没有生产判决算。
+    const shipped = deployedTasksFact(s);
+    const onProd = (t: TaskState) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass) || !!shipped?.contained.includes(t.id);
+    const live = linked.filter(onProd);
     const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
     const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];

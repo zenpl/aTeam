@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerKeyOf } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
@@ -297,7 +297,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     const html = await w.authedPage();
     const now = section(html, "now", "rest");
     expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span>/);
-    expect(now).toMatch(/<details class="more-list"><summary>这一版带来了什么<\/summary><ul class="plain"><li>Cookie flags<\/li><\/ul><\/details>/);
+    expect(now).toContain(`<details class="more-list"><summary>${VERIFIED_ON_THIS_VERSION}</summary><ul class="plain"><li>Cookie flags</li></ul></details>`);
     expect(now).toMatch(/<span class="chip"><b>1<\/b> 在做<\/span><span class="chip warn"><b>1<\/b> 卡住<\/span><span class="chip"><b>1<\/b> 做完了，等验<\/span><span class="chip"><b>1<\/b> 没开始<\/span>/);
     expect(now).toMatch(/<div class="grp"><div class="grp-h">在做<\/div><ul class="tasks"><li><span class="dot"><\/span><span class="ttl">Card page for the human<\/span><span class="who">frontend<\/span><\/li><\/ul><\/div>/);
     expect(now).toMatch(/<div class="grp-h">卡住<\/div><ul class="tasks"><li class="warn"><span class="dot"><\/span><span class="ttl">Env beats config file<\/span><span class="who">dev<\/span><span class="why">premise was wrong, see … and …, waiting for pm to decide whe…<\/span>/);
@@ -307,7 +307,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(now).toContain('<span class="who-chip away" data-role="pd" data-status="missing"><i></i>pd<span class="meta">缺人</span></span>');   // declared, never seen
   });
 
-  it("more than 5 in an expanded group folds into 「还有 N 件」; 你说过的 folds into 「还有 N 句」; earlier versions nest under 这一版带来了什么", async () => {
+  it("more than 5 in an expanded group folds into 「还有 N 件」; 你说过的 folds into 「还有 N 句」; earlier versions nest under 那一节（t-242 之后标题说的是「验过的」）", async () => {
     const v = server();
     await v.start();
     try {
@@ -339,7 +339,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(now).toMatch(/<span class="chip"><b>7<\/b> 在做<\/span>/);
 
       expect(now).toMatch(/<span class="ok">在生产上验过 1 件<\/span>/); // pd 22:47 (B): this version's count only; the 2 earlier are in 更早的
-      expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 2 件<\/summary><ul class="plain"><li>登录修复<\/li><li>导出报表<\/li><\/ul><\/details>/);
+      expect(now).toContain(`<summary>${VERIFIED_ON_THIS_VERSION} <span class="meta">自上一版 aaaaaaa 以来</span></summary><ul class="plain"><li>限流</li></ul><details class="more-list"><summary>更早的 2 件</summary><ul class="plain"><li>登录修复</li><li>导出报表</li></ul></details>`);
 
       const say = section(html, "say", "now");
       expect(say.match(/<li>/g)).toHaveLength(7);
@@ -370,7 +370,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       let now = section(await v.authedPage(), "now", "rest");
       expect(now).not.toContain("在生产上验过"); // pd 22:47 (B): no cumulative count beside the empty state
       expect(now).toMatch(/<code class="sha">bbbbbbb<\/code><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
-      expect(now).not.toContain("这一版带来了什么");
+      expect(now).not.toContain(VERIFIED_ON_THIS_VERSION);
       // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
       const f = server();
       await f.start();
@@ -386,7 +386,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("dev", { kind: "task", op: "done", task: "t-2", evidence: "提交" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-2", surface: "production", pass: true, evidence: "线上看到" });
       now = section(await v.authedPage(), "now", "rest");
-      expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 1 件<\/summary>/);
+      expect(now).toContain(`<summary>${VERIFIED_ON_THIS_VERSION} <span class="meta">自上一版 aaaaaaa 以来</span></summary><ul class="plain"><li>限流</li></ul><details class="more-list"><summary>更早的 1 件</summary>`);
       expect(now).not.toContain("这一版刚上线，还没在生产验过");
     } finally { await v.stop(); }
   });

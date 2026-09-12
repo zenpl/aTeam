@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -364,8 +364,11 @@ function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): str
     ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
     out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
     const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
+    // t-242 ②：标题改成说出这份名单是什么（core 的 `VERIFIED_ON_THIS_VERSION`，措辞待 pd 定稿）。
+    // 名单一个字没动：它是真信息，而且命令行读的也是同一份（`b.live.recent`）。改的是那句**说大了**的标题——
+    // 「这一版带来了什么」比「在生产上验过的那几件」大一圈，而「验过几件」那句话就在上面那一行。
     if (b.live.recent.length) {
-      out.push(`<details class="more-list"><summary>${UI.thisVersion}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
+      out.push(`<details class="more-list"><summary>${esc(VERIFIED_ON_THIS_VERSION)}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
     } else {
       // Nothing verified on production since this sha was deployed: say so in words (t-060), never an empty heading.
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
