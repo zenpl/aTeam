@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -746,6 +746,39 @@ export function createApp(opts: ServerOptions) {
         // t-227 判据 3（重做）：**一个上限，一份预算**——先扣掉事件本身，剩下的由 for_me 与 owed 分。
         const reply = { ...e, created };
         return json(res, created ? 201 : 200, { ...reply, ...postReply(pst, actor, reply) });
+      }
+
+      /**
+       * t-218：**命令行自己抛的那几种拒绝从这里进同一本账。** 那些写入根本没发出去（`decide.ts` 那四条、
+       * 用法错的那几条），所以 t-212 那两个出口一条都看不见——它们只活在各人终端里。各人的命令行把它们记在
+       * 自己机器上，**在下一次通信里捎上来**。
+       *
+       * 三条边界：
+       * · **who 一律是这把钥匙说话的那个人**，不认正文里的 who——补的是自己的账，不是替别人记账。
+       * · **op 必须带 `cli ` 前缀**，否则这一路补上来的记录会混进服务端那一栏，两栏并排数就白排了。
+       * · **记不下就不说记下了**：这个存储没有这本账时回一份空名单，命令行那边就不划掉、下次再捎。
+       *   一个「其实没记下却回了成功」的答复，正是这件任务在修的那个病换个方向再来一次。
+       */
+      if (req.method === "POST" && path === "/refusals") {
+        const body = (await readJson(req)) as { refusals?: unknown };
+        const batch = (Array.isArray(body?.refusals) ? body.refusals : []).slice(0, CLI_REFUSAL_BATCH_MAX);
+        const recorded: string[] = [];
+        // **同一条捎两遍只算一次。** id 是命令行那边给的（它要凭 id 知道划掉哪几条），于是「捎成了没听见回答、
+        // 下一条命令再捎一遍」会把账撑大——而 t-212 已经为一本会虚高的账付过一次账了。sqlite 那本自己会认 id
+        // （INSERT OR IGNORE），**但那是某一个存储的性子，不是这条路的规矩**：在这里认一次，换哪个存储都一样。
+        const known = new Set((await store.refusals?.() ?? []).map((r) => r.id));
+        for (const raw of batch) {
+          const r = (raw ?? {}) as Partial<Refused>;
+          if (typeof r.id !== "string" || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(r.id)) continue;
+          if (typeof r.rule !== "string" || !r.rule.trim()) continue;
+          if (!store.recordRefusal) break;
+          if (known.has(r.id)) { recorded.push(r.id); continue; }   // 记过了就是记下了：让命令行划掉它
+          const at = typeof r.at === "string" && !Number.isNaN(Date.parse(r.at)) ? r.at : now().toISOString();
+          const op = typeof r.op === "string" && isCliRefusal(r.op) ? r.op.slice(0, 60) : cliRefusalOp("?");
+          await store.recordRefusal({ kind: "refused", who: actor, rule: r.rule.trim().slice(0, 60), op, id: r.id, at });
+          recorded.push(r.id);
+        }
+        return json(res, 200, { recorded, counted: Boolean(store.recordRefusal) });
       }
 
       return json(res, 404, { error: "not found" });

@@ -111,3 +111,44 @@ describe("t-212 判据 3 · 数进得了牌桌，但只出数据不出话", () =
     expect(b.refusals).not.toBeNull();
   });
 });
+
+/**
+ * t-218 判据 2：**账要说得出自己是由哪几路凑起来的。**
+ *
+ * 服务端那本账只数得到走到它面前的写入；命令行自己抛的那几种（`decide.ts` 四条、用法错的那几条）写入根本
+ * 没发出去，**于是它们不在账上，而账看起来仍是全的**——这正是今晚那句「一份自称完整的名单，会让人不再去核
+ * 它完不完整」。两栏并排数，是为了让缺的那一类变成一个看得见的数。
+ */
+describe("t-218 · by_origin：哪一路来的，两栏并排数", () => {
+  const r = (id: string, rule: string, op: string | null, who = "dev") => ({ kind: "refused" as const, id, at: "2026-09-12T10:00:00.000Z", who, rule, op });
+
+  it("按 op 上那个前缀分两栏，两栏之和就是总数", async () => {
+    const { countRefusals, cliRefusalOp } = await import("../src/index.js");
+    const c = countRefusals([
+      r("01A", "done", "task:done"),                       // 服务端挡下的
+      r("01B", "shape", "POST /events"),                   // 服务端挡下的
+      r("01C", "decide", cliRefusalOp("decide")),          // 命令行自己抛、事后捎上来的
+      r("01D", "usage", cliRefusalOp("tell")),
+    ]);
+    expect(c.by_origin).toEqual({ server: 2, cli: 2 });
+    expect(c.by_origin.server + c.by_origin.cli).toBe(c.total);
+  });
+
+  it("说不出 op 的那几条算在服务端那一栏，不算 cli——**不许把「说不出」当成「是客户端的」**", async () => {
+    const { countRefusals } = await import("../src/index.js");
+    expect(countRefusals([r("01A", "shape", null)]).by_origin).toEqual({ server: 1, cli: 0 });
+  });
+
+  it("空账两栏都是 0，而 `null` 仍然是「这个存储答不出来」（t-212 那条没变）", async () => {
+    const { countRefusals } = await import("../src/index.js");
+    expect(countRefusals([]).by_origin).toEqual({ server: 0, cli: 0 });
+  });
+
+  it("`cli ` 是唯一判据：前缀之外的写法一律不算客户端那一路", async () => {
+    const { isCliRefusal, cliRefusalOp } = await import("../src/index.js");
+    expect(isCliRefusal(cliRefusalOp("task done"))).toBe(true);
+    expect(isCliRefusal("POST /decide")).toBe(false);
+    expect(isCliRefusal("clip something"), "前缀要连那个空格一起对上").toBe(false);
+    expect(isCliRefusal(null)).toBe(false);
+  });
+});

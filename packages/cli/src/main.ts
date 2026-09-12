@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -14,6 +14,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
+import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
@@ -621,13 +622,38 @@ function sayIfDeaf(argv: string[]): void {
   } catch { /* never let the reminder break the command that carried it */ }
 }
 
+/**
+ * t-218 判据 2：**捎在下一次通信里。** 被拒的那一刻只往本地队列里追一行；这里是「下一次通信」——
+ * 一条跑通的命令末尾，把队里的捎给服务，**服务说记下了哪几条才划掉哪几条**。
+ *
+ * 三条都是有意的：① 捎不上去不吭声也不改退出码（这是顺带说的一句，不是这条命令的活，同 recordCliSha）；
+ * ② 队空就一个请求都不发；③ 服务回 `counted: false`（那个存储没有这本账）时一条都不划——
+ * **「其实没记下却当成记下了」正是这件任务在修的那个病**。
+ */
+async function shipRefusals(): Promise<void> {
+  try {
+    const me = meOf();
+    if (!me) return;
+    const queued = pendingRefusals(process.cwd(), me);
+    if (!queued.length) return;
+    const cfg = loadConfig();
+    const { recorded } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
+    clearRefusals(process.cwd(), me, recorded);
+  } catch { /* 没捎成就还在队里，下一条命令再捎 */ }
+}
+
 const ARGV = process.argv.slice(2);
-main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
+main(ARGV).then(async () => { noteRefusal(ARGV, null); await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure
-  const bye = (code: number, rule?: string) => {
+  const bye = (code: number, rule?: string, local = false) => {
     // quote what a shell would need quoted, so the line can be pasted back verbatim
     const shell = (a: string) => (/[\s"'$`\\]/.test(a) ? `"${a.replace(/(["\\$`])/g, "\\$1")}"` : a);
-    if (rule) noteRefusal(ARGV, { at: new Date().toISOString(), rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    const at = new Date().toISOString();
+    if (rule) noteRefusal(ARGV, { at, rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    // t-218：**只有本地抛的那几种要记进队**。服务端 409 那一路在它那边的唯一出口已经记过了（t-212），
+    // 这里再记一遍就是同一次拒绝数两遍——而「两个数说同一件事」是这份日志里数了一整天的毛病。
+    const me = local && rule ? meOf() : null;
+    if (me) queueRefusal(process.cwd(), me, { at, rule: rule!, op: cliOpOf(ARGV) });
     sayIfRefused(ARGV);
     sayIfDeaf(ARGV);
     process.exit(code);
@@ -653,8 +679,8 @@ main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(A
     return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
   }
   if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage"); }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule, true); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage", true); }
   const what = err instanceof Error ? err.message : String(err);
   console.error(what);
   lastWords(what);

@@ -382,6 +382,27 @@ export interface Refused {
 export const refusedOp = (e: { kind?: unknown; op?: unknown }): string | null =>
   typeof e?.kind === "string" ? (e.kind === "task" && typeof e.op === "string" ? `task:${e.op}` : e.kind) : null;
 
+/**
+ * t-218：**客户端就抛的那几种拒绝，写入根本没发出去**——服务端那本账（t-212）只数得到走到它面前的，
+ * 于是 `packages/cli/src/decide.ts` 那四条这样的，一次都没进过账，只活在各人终端里。
+ *
+ * 它们由各人的命令行记下来、在**下一次通信里捎给服务**；捎上来的记录用 op 上这个前缀说明自己是哪一路来的。
+ * **前缀是唯一的判据**（`isCliRefusal`），不靠谁去维护一份「哪些 op 是客户端的」名单——今晚已经为那种名单
+ * 付过四次账了。
+ */
+export const CLI_REFUSAL_PREFIX = "cli ";
+/** 被拒的是哪种写入，客户端这一路的写法：`cli task done`、`cli decide`。**只有命令词，不含正文，也不含 id。** */
+export const cliRefusalOp = (action: string) => `${CLI_REFUSAL_PREFIX}${action}`;
+export const isCliRefusal = (op: string | null): boolean => typeof op === "string" && op.startsWith(CLI_REFUSAL_PREFIX);
+/**
+ * 待捎的队列满了、只好扔掉几条时记的那条的规则名。**扔掉也进账**：一本会悄悄变小的账，与一本看起来是全集的账
+ * 是同一个病——那条记录的 op 里写着扔了几条，谁都数得出这本账此刻差多少。
+ */
+export const CLI_REFUSAL_OVERFLOW = "cli-queue-overflow";
+/** 一次捎最多这么多条。服务只记这么多，多出来的留在队里、下一次再捎——**没被记下的一条都不许划掉**。 */
+export const CLI_REFUSAL_BATCH_MAX = 200;
+export const cliRefusalDropped = (n: number) => cliRefusalOp(`(dropped ${n})`);
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -389,6 +410,12 @@ export interface RefusalCount {
   by_rule: { rule: string; n: number }[];
   /** 按被拒的人分组，多的在前。 */
   by_who: { who: string; n: number }[];
+  /**
+   * t-218：**哪一路来的。** `server` 是走到服务端被挡下的，`cli` 是各人命令行自己抛、事后捎上来的。
+   * 两个数并排摆着，是为了让「客户端那一类此刻捎上来多少」是一个看得见的数，而不是一个没人想得起来的空白；
+   * **一本不说自己缺哪一类的账，会让人不再去核它完不完整。**
+   */
+  by_origin: { server: number; cli: number };
   /** 最早与最近那一条的时刻，据此说得出「这段时间里」。 */
   first: string | null;
   last: string | null;
@@ -402,8 +429,10 @@ export function countRefusals(rs: readonly Refused[]): RefusalCount {
     return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n || (a.k < b.k ? -1 : 1));
   };
   const ats = rs.map((r) => r.at).sort();
+  const cli = rs.filter((r) => isCliRefusal(r.op)).length;
   return {
     total: rs.length,
+    by_origin: { server: rs.length - cli, cli },
     by_rule: by((r) => r.rule).map(({ k, n }) => ({ rule: k, n })),
     by_who: by((r) => r.who).map(({ k, n }) => ({ who: k, n })),
     first: ats[0] ?? null,

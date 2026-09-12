@@ -1,4 +1,4 @@
-import { BOARD_SHAPE, badResponseLine, type Event, type ClientEvent, type Board, type BoardTask, type PullResult } from "@ateam/core";
+import { BOARD_SHAPE, badResponseLine, type Refused, type Event, type ClientEvent, type Board, type BoardTask, type PullResult } from "@ateam/core";
 
 /** t-080: the server speaks a newer shape than this CLI knows. One sentence, exit 2; never a field error. */
 export class ShapeError extends Error {
@@ -93,4 +93,11 @@ export class Client {
     return res.text();
   }
   log(after: string | null): Promise<{ events: Event[] }> { return this.call("GET", `/log${after ? `?after=${after}` : ""}`); }
+  /**
+   * t-218：**把这台机器上那几条「没发出去就被拒了」的写入捎给服务。** 服务只记得下它认得的那几样
+   * （规则名、谁、哪种写入、什么时候），正文本来就没有。返回它真记下了哪几条 id——**捎成了才划掉**。
+   */
+  reportRefusals(refusals: readonly Refused[]): Promise<{ recorded: string[] }> {
+    return this.call("POST", "/refusals", { refusals });
+  }
 }
