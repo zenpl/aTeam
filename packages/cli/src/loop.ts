@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, morePagesLine, type PullResult } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -80,6 +80,9 @@ export function report(r: PullResult, me: string, after: string | null): string[
   // 「你欠什么」 line at sync while counting something else — this batch, not the standing debt — and two same-meaning
   // numbers from two sources are the shape 07:07 forbids: if they were really the same thing they would be one.
   // What just arrived is already marked instruction by instruction (⇐ FOR YOU); what is owed is said once, at sync.
+  // t-226 判据 3：**截断在这一端也要看得见。** 服务端在 JSON 里说了 `more`，而跑 sync 的人只看得见事件；
+  // 不补这一行，一次被截断的拉取与「就这么多」在终端上一模一样。
+  if (r.more) lines.push(morePagesLine(r.events.length));
   return lines;
 }
 

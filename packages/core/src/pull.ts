@@ -1,8 +1,28 @@
 import type { Event, EventStore } from "./index.js";
 import type { OwedNow } from "./board.js";
 
+/**
+ * t-226：**一次拉取的绝对字节上限。**
+ *
+ * 为什么是一个写死的数，而不是「比现在小一点」：qa 15:34 与我 15:34 同时量同一件事，得到 6,330,848 与
+ * 6,193,295——**差的就是那两分钟里日志长出来的部分**。一条会跟着被测物一起涨的地板不是地板；今天定 6 MB
+ * 的上限，明天就是 7 MB。
+ *
+ * 为什么是 1 MiB：**首次拉取是陌生 agent 的第一条命令**，而外部报告里那支队伍每个节点都是自己手写轮询的
+ * （说明书教的 `ateam watch` 在人家机器上不存在）。1 MiB 是一个手写客户端可以整块读进内存、整块解析、
+ * 出错时还能整块打出来看的大小；今天这条 8,263 条的日志约 7 页拉完，每页一次往返。
+ *
+ * **它不随日志变大而变大，也不随某次测量改小**（判据 6）。要改它，改的是这个常量与它下面这段理由。
+ */
+export const PULL_BYTES = 1_048_576;
+
 export interface PullResult {
   events: Event[];
+  /**
+   * t-226 判据 3：**这一批是被截断的，后面还有。** 截断必须看得见——少给而不自知，正是这几天数了二十一次
+   * 的那一族。续取不必读文档：`cursor` 就是下一次的 `after`，拿着它再拉一次即可。
+   */
+  more?: boolean;
   /** t-064: instructions to `me` taken back in this batch that I had pulled before it: the CLI warns about them. */
   taken_back_seen?: string[];
   /**
@@ -36,8 +56,19 @@ export interface PullResult {
  * The protocol step every agent runs at the start of a turn:
  * read since cursor, record deliveries of instructions to me, advance cursor (heartbeat).
  */
-export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date()): Promise<PullResult> {
-  const events = await store.since(after);
+export function capBytes(all: Event[], limit: number): { events: Event[]; more: boolean } {
+  let used = 0;
+  for (const [i, e] of all.entries()) {
+    const size = Buffer.byteLength(JSON.stringify(e), "utf8");
+    // **至少给一条**：一条比上限还大的事件若也被挡住，游标就再也前进不了——那是把「太大」变成「永远拿不到」。
+    if (i > 0 && used + size > limit) return { events: all.slice(0, i), more: true };
+    used += size;
+  }
+  return { events: all, more: false };
+}
+
+export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date(), limit: number = PULL_BYTES): Promise<PullResult> {
+  const { events, more } = capBytes(await store.since(after), limit);
   const nowIso = now.toISOString();
   const for_me: Event[] = [];
   // an instruction taken back in the same batch was never something to do (t-064); a delivery is still recorded, since it was read
@@ -58,5 +89,6 @@ export async function pull(store: EventStore, me: string, after: string | null, 
     taken_back_seen = earlier.filter((id) => all.some((e) => e.id === id && e.kind === "instruction" && e.to === me));
   }
   await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso });
-  return { events, for_me, cursor, ...(taken_back_seen?.length ? { taken_back_seen } : {}) };
+  // 投递只记这一页里真的给了的那些——**记了却没给，就是「已送达」变成假话**，而那恰恰是这道闸要防的
+  return { events, for_me, cursor, ...(more ? { more: true } : {}), ...(taken_back_seen?.length ? { taken_back_seen } : {}) };
 }

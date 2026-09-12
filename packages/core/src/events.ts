@@ -559,6 +559,7 @@ export const KEY_SYMBOLS = [
   "manual",
   "manualFor",
   "missingCard",
+  "morePagesLine",
   "movedTrace",
   "noOutputSeam",
   "noRealOverlap",
@@ -1035,6 +1036,15 @@ export const rollbackMessage = (sha: string, batch: string) =>
  * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
  * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
  */
+/**
+ * t-226 判据 3 的客户端那一半：**这一批是截断的，后面还有。**
+ *
+ * 服务端已经在响应里说了（`more`），但只说给读 JSON 的人听。跑 `ateam sync` 的人看到的是一屏事件然后没了——
+ * 与「就这么多」长得一模一样。**少给而不自知**是这几天数了二十一次的那一族，它在两端各有一次机会，这是第二次。
+ */
+export const morePagesLine = (n: number) =>
+  `这一批只给了 ${n} 条就到上限了，后面还有——再跑一次 ateam sync 接着拉。`;
+
 /**
  * t-225：**HTTP 说成功、正文却不是 JSON** 时说的那一句。住在 core，与 ROLLBACK_LINES 同一个理由：
  * 新写的代码不该是 SECOND_HOME 那个只减不增的棘轮的第一个例外。
