@@ -135,6 +135,8 @@ export function forPoster(s: State, me: string, limit: number = POST_REPLY_BYTES
  * 剩下多少，才是这两样能用的预算；顺序上先给 `for_me`（点名找你的比「你欠什么」更急），剩下的给 `owed`。
  * 每一处宁可算多一两个字节，也不算少——一个「差一点点」的上限说的不是真话。
  */
+export const OWED_SHARE = 0.25;
+
 export function postReply(s: State, me: string, base: unknown, limit: number = POST_REPLY_BYTES): { for_me: Instruction[]; owed: OwedNow; more?: boolean } {
   const empty: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 };
   const bytes = (x: unknown) => Buffer.byteLength(JSON.stringify(x), "utf8");
@@ -142,10 +144,22 @@ export function postReply(s: State, me: string, base: unknown, limit: number = P
   const frame = bytes({ ...(base as object), for_me: [], owed: empty, more: true });
   const budget = Math.max(0, limit - frame);
   // capBytes 的账里含着那对方括号（它从 2 起算），而框架里已经有了，所以这里把它加回去再传进去。
-  const f = forPoster(s, me, budget + 2);
-  const used = Math.max(0, bytes(f.for_me) - 2);
-  const o = capOwed(owedNow(s, me), Math.max(0, budget - used));
+  //
+  // t-244：**两样东西不能是「谁先填谁占满」。** qa 21:52 在生产真状态下量到：`for_me` 占掉 65,058／65,536
+  // ＝ 99.3%（176 条未读），**活欠账一条都没送出去**——而 t-227 做这件事的全部理由，正是让一个只写不拉的
+  // 节点看见自己欠什么。于是先给「你欠什么」留一份（`OWED_SHARE`），`for_me` 只能用剩下的；
+  // **它没用完的，第二遍再还给 `for_me`**——留一份不是浪费一份。
+  //
+  // 顺序仍然是 `for_me` 优先（点名找你的比「你欠什么」更急），砍也先砍它：**它是可以再拉一次拿到的**
+  // （GET /events 那条路上有同一批），而这一回包是那个节点此刻唯一会看的东西。两半各自截断时各自报 `more`。
+  const reserve = Math.floor(budget * OWED_SHARE);
+  const first = forPoster(s, me, Math.max(0, budget - reserve) + 2);
+  const usedFirst = Math.max(0, bytes(first.for_me) - 2);
+  const o = capOwed(owedNow(s, me), Math.max(0, budget - usedFirst));
   const { more: oMore, ...owed } = o;
+  const usedOwed = bytes(owed);
+  // 第二遍：`owed` 用不掉的份额还给 `for_me`（它多半用不掉——一个欠 3 条的人不需要那 16 KiB）
+  const f = usedOwed < reserve ? forPoster(s, me, Math.max(0, budget - usedOwed) + 2) : first;
   return { for_me: f.for_me, owed: owed as OwedNow, ...(f.more || oMore ? { more: true } : {}) };
 }
 
