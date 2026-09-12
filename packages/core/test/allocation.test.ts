@@ -169,11 +169,49 @@ describe("runtime metrics over the last window", () => {
       const st = await w.state();
       const list = [...st.instructions.values()].map((x) => x.instruction).filter((i) => i.actor === "pd").sort((a, b) => a.at.localeCompare(b.at));
       const c = selfCorrections(st, list).get("pd")!;
-      expect(c).toEqual({ sent: 18, 更正: 3, 更新: 1, 说不好: 1 });
+      // t-175：同一份夹具，三条更正一条不少；变的是它们进了哪一桶。这里从头到尾没有第二个人对 pd 说过话，
+      // 所以三条全是**他自己发现的**——而这正是这道闸从此**故意**不再拦的形状（下一条用例把它写成断言）。
+      expect(c).toEqual({ sent: 18, 自己: 3, 别人: 0, 更新: 1, 说不好: 1 });
+    });
 
-      const ws = runtimeAllocation(st, w.at(), HUMAN);
-      expect(ws.map((x) => x.pattern)).toEqual(["负载陷阱"]);
-      expect(ws[0].evidence).toEqual(["pd 17% 的指令是自己写错后更正的（3/18）；另有 1 条是情况变了才重发的、1 条说不好，都不计入"]);
+    /**
+     * t-175（pd 08:40 ①）：**把一道闸改安静，就要列出它此前真拦下过的形状，逐条重跑。** 本件把门槛的分子从
+     * 「所有更正」换成「别人发现后才更正的」，闸必然变安静——所以这两条用例把上一条夹具的两种走向都钉住：
+     *   · 中间没有别人的事件 → 一条预警都不出（**故意放掉的那一种**：自己当场认错，指标不该惩罚它）；
+     *   · 中间有别人冲着他来的事件 → **照旧拦，一条不少**，只是句子说清了是谁发现的。
+     */
+    it("t-175：同一批更正，别人先说了才改的照旧超标；自己当场收回的一条预警都不出", async () => {
+      const build = async (other: boolean) => {
+        const w = world();
+        const ackBy = () => new Date(w.at().getTime() + min(60)).toISOString();
+        const say = (to: string, body: string, plus?: number) => w.emit({ kind: "instruction", actor: "pd", to, body, ack_by: ackBy() }, plus);
+        for (let i = 0; i < 8; i++) await say("pm", `第 ${i} 件事，各不相同：${"甲乙丙丁戊己庚辛"[i]}`, min(12));
+        for (const second of ["更正：改成寅，我上一条的 sha 写错了", "更正我刚才那条：是 t-2 不是 t-1", "纠正：判据 3 我写反了"]) {
+          await say("pm", "先按这个做", min(12));
+          // 别人冲着他来的那一件：一条发给 pd 的指令。正文与那条更正毫无关系——判据 3 要的就是「不靠正文猜」。
+          if (other) await w.emit({ kind: "instruction", actor: "qa", to: "pd", body: "这条我按不下去，你看一眼", ack_by: ackBy() }, min(1) / 2);
+          await say("pm", second, min(1));
+        }
+        await say("pm", "先按那个做", min(12));
+        await say("pm", "生产已上线 abc1234，这条按新的来", min(1));
+        await say("pm", "再来一件", min(12));
+        await say("pm", "另外那件也麻烦你看一下", min(1));
+        for (let i = 0; i < 18; i++) await w.emit({ kind: "instruction", actor: "qa", to: "dev", body: `修 ${i}`, ack_by: ackBy() }, min(1));
+        const st = await w.state();
+        const list = [...st.instructions.values()].map((x) => x.instruction).filter((i) => i.actor === "pd").sort((a, b) => a.at.localeCompare(b.at));
+        return { c: selfCorrections(st, list).get("pd")!, ws: runtimeAllocation(st, w.at(), HUMAN) };
+      };
+
+      // 此前拦下过的形状，原样重跑：三条更正，别人先说的 → 仍然超标，仍然是那一条预警
+      const caught = await build(true);
+      expect(caught.c).toEqual({ sent: 18, 自己: 0, 别人: 3, 更新: 1, 说不好: 1 });
+      expect(caught.ws.map((x) => x.pattern)).toEqual(["负载陷阱"]);
+      expect(caught.ws[0].evidence).toEqual(["pd 17% 的指令是别人发现后才更正的（3/18）；另有 1 条是情况变了才重发的、1 条说不好，都不计入"]);
+
+      // 故意放掉的那一种：一模一样的三条更正，只是中间没人说过话
+      const mine = await build(false);
+      expect(mine.c).toEqual({ sent: 18, 自己: 3, 别人: 0, 更新: 1, 说不好: 1 });
+      expect(mine.ws).toEqual([]);
     });
 
     it("the four pm really wrote that night are corrections; the ones a looser pattern caught are not", () => {

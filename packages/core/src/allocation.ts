@@ -43,6 +43,45 @@ export function classifyFollowUp(later: string, undo = false): FollowUp {
 }
 
 /**
+ * t-175 (pd 08:40)：**一条更正是谁发现的。** 两桶：作者自己发现并当场收回，或者别人先说了他才改。
+ *
+ * 为什么要拆：pd 08:40 的原话是「指标不该惩罚我们想要的行为」。旧口径把「自己发现自己错了」算进错误率，
+ * 于是一个当场认错的人比一个装作没错的人分数更差——那正好是我们希望他多做的那件事。同一天 pd 还犯过同形的
+ * 一次（把「自报漏验的人」变成唯一不能修正它的人），所以这不是个别措辞问题。
+ *
+ * 判据 3 要的是「用日志里已有的东西判，不靠正文措辞猜」。所以这里**一个字都不读**：只问一句
+ * **「从他发出那条、到他改口那一刻，中间有没有别人冲着他来的事件」**——
+ *   · 别人发给他的一条指令；
+ *   · 别人在这段时间里落的一条验收（pass 或 fail 都算：一次判决就是一次外部说法）；
+ *   · 别人写的、点名引用了那条指令的 note（`refs` 里有它的 id）。
+ * 有 → 「别人」；一条都没有 → 「自己」。
+ *
+ * **这把尺子看不见什么，写在明处**（不写出来的范围等于没范围，今晚已经付过这个代价）：
+ * ① **「事后由证据暴露」**（服务端拒了他、某条用例红了、他自己跑 git 发现对不上）**在日志里不留事件**，
+ *    所以这把尺子把它算成「自己」。方向是安全的——它只会让正面那桶偏大、门槛那桶偏小，**不会**凭空
+ *    制造一次超标；但它确实会把一部分「证据暴露的」记成功劳，这一点不许在报告里被说成「自己发现」。
+ * ② 「别人冲着他来的事件」只认上面三种。别人发给**第三个人**的话、别人写的不点名的 note，这里算不到——
+ *    他也可能是读了那些才改口的，但那要靠猜正文，正是判据 3 禁的那件事。
+ */
+export type Caught = "自己" | "别人";
+
+/** 那三种「别人冲着他来的」事件，取自 State，不读任何正文。窗口是左开右闭的 (a.at, correctedAt]。 */
+export function caughtBy(s: State, a: Instruction, correctedAt: string): Caught {
+  const author = a.actor;
+  const t0 = Date.parse(a.at), t1 = Date.parse(correctedAt);
+  const within = (at: string) => Date.parse(at) > t0 && Date.parse(at) <= t1;
+  for (const st of s.instructions.values()) {
+    const i = st.instruction;
+    if (i.to === author && i.actor !== author && within(i.at)) return "别人";
+  }
+  for (const t of s.tasks.values())
+    for (const v of t.verifications) if (v.by !== author && within(v.at)) return "别人";
+  // 点名那条指令的 note 才算。任何一条带 refs 的 note 都算，等于把「别人此刻在说话」当成「别人在说他」。
+  for (const n of s.notes) if (n.actor !== author && within(n.at) && (n.refs ?? []).includes(a.id)) return "别人";
+  return "自己";
+}
+
+/**
  * t-123 (pd 01:56, criterion 2): one line per pattern per period, the worst one. Four lines at once is four lines
  * nobody reads. `severity` is how far past its own threshold a finding is — dimensionless, so findings measured in
  * percentages, minutes and counts can still be compared to each other.
@@ -200,9 +239,12 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
   }
   for (const [who, c] of selfCorrections(s, list)) {
     if (c.sent < 10) continue;
-    const rate = c.更正 / c.sent;
+    // t-175（pd 08:40）：**门槛只管「别人发现的」那一桶。** 自己当场收回的那一桶不进分子——一个指标如果
+    // 要靠某人少认一次错才变好看，那它衡量的就不是我们想要的东西。
+    const rate = c.别人 / c.sent;
+    const good = c.自己 ? `；他自己发现并当场收回的另有 ${c.自己} 条，不计入门槛` : "";
     const aside = c.更新 || c.说不好 ? `；另有 ${c.更新} 条是情况变了才重发的、${c.说不好} 条说不好，都不计入` : "";
-    if (rate >= 0.15) load.push({ text: `${who} ${pct(c.更正, c.sent)} 的指令是自己写错后更正的（${c.更正}/${c.sent}）${aside}`, severity: rate / 0.15 });
+    if (rate >= 0.15) load.push({ text: `${who} ${pct(c.别人, c.sent)} 的指令是别人发现后才更正的（${c.别人}/${c.sent}）${good}${aside}`, severity: rate / 0.15 });
   }
   const badLoad = worst(load);
   if (badLoad) out.push({ pattern: "负载陷阱", evidence: [badLoad.text], hint: `${badLoad.text}。建议：把它持有的、能改成规则或服务的职责先拿走。` });
@@ -290,19 +332,39 @@ const cannotReach = (a: number, b: number, min: number) => Math.min(a, b) < min 
  * Only 更正 is a quality metric. 更新 (the world moved) is counted and shown beside it so the two are never added up
  * again, and 说不好 is counted and reported as neither: a follow-up nobody can classify is not evidence of anything.
  */
-export function selfCorrections(s: State, list: Instruction[]): Map<string, { sent: number; 更正: number; 更新: number; 说不好: number }> {
-  const undone = new Set<string>();     // taking an instruction back says plainly that it should not have been sent
-  for (const st of s.instructions.values()) if (st.withdrawn) undone.add(st.instruction.id);
-  const out = new Map<string, { sent: number; 更正: number; 更新: number; 说不好: number }>();
+export interface SelfCorrection {
+  sent: number;
+  /**
+   * t-175：**更正拆成两桶。** `自己` 是作者自己发现并当场收回的，`别人` 是别人先说了他才改的。
+   * 两个数**永远分开存**，不留一个合计字段——今晚已经栽过一次：`更正` 与 `更新` 一被加起来，
+   * 一个质量指标和一个「世界变了」就再也分不开了（t-123 那条注释写的就是这件事）。要合计的人自己加。
+   */
+  自己: number;
+  别人: number;
+  更新: number;
+  说不好: number;
+}
+
+export function selfCorrections(s: State, list: Instruction[]): Map<string, SelfCorrection> {
+  const undone = new Map<string, string>();   // taking an instruction back says plainly that it should not have been sent
+  for (const st of s.instructions.values()) if (st.withdrawn) undone.set(st.instruction.id, st.withdrawn.at);
+  const out = new Map<string, SelfCorrection>();
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
-    const c = out.get(a.actor) ?? { sent: 0, 更正: 0, 更新: 0, 说不好: 0 };
+    const c = out.get(a.actor) ?? { sent: 0, 自己: 0, 别人: 0, 更新: 0, 说不好: 0 };
     c.sent++;
     // The link is same author, same recipient, soon after; what kind of follow-up it is comes from what it says.
     // Pairing on similar wording was tried and failed on the real log: a correction rarely repeats what it corrects
     // (「更正我 23:15 那条：冻的是 sha，不是分支」), and the median similarity of these pairs is 0.06.
     const follow = list.slice(i + 1).find((b) => b.actor === a.actor && b.to === a.to && Date.parse(b.at) - Date.parse(a.at) <= TEN_MIN);
-    if (follow || undone.has(a.id)) c[classifyFollowUp(follow?.body ?? "", undone.has(a.id))]++;
+    const back = undone.get(a.id);
+    if (follow || back !== undefined) {
+      const kind = classifyFollowUp(follow?.body ?? "", back !== undefined);
+      // t-175：只有更正才分两桶。「情况变了」与「说不好」本来就不是质量指标，分它们等于给一个不该看的数加一维。
+      // 改口的那一刻用的是真正发生的那件事：撤回用撤回的时刻，否则用那条后续指令的时刻。
+      if (kind === "更正") c[caughtBy(s, a, back ?? follow!.at)]++;
+      else c[kind]++;
+    }
     out.set(a.actor, c);
   }
   return out;
