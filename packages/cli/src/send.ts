@@ -1,8 +1,16 @@
-import { partRefused, EXIT_PARTIAL } from "@ateam/core";
+import { partRefused, partsSkipped, EXIT_PARTIAL } from "@ateam/core";
 import { ClientError } from "./client.js";
 
 /** 一件要发的东西：`what` 是人读的名字（「t-226 done」「解决接缝 t-226+t-070」），`send` 真发它、返回事件 id。 */
-export interface Part<T> { what: string; event: T }
+export interface Part<T> {
+  what: string;
+  event: T;
+  /**
+   * t-232 判据 3：**后面那几件靠这一件**。这一件没成就停下，而且**把「没发」印出来**——
+   * 显式中止，不拿异常当控制流；「不发」与「发了没成」都要看得见。
+   */
+  stopOnFail?: boolean;
+}
 
 /**
  * t-228：**一条命令发多件事时，每一件各自报结果；退出码按整体算。**
@@ -24,7 +32,7 @@ export async function sendAll<T>(
   err: (line: string) => void,
 ): Promise<{ ok: number; bad: number; exit: number }> {
   let ok = 0, bad = 0;
-  for (const it of items) {
+  for (const [i, it] of items.entries()) {
     try {
       // **成功那一件的结果行就是事件行本身**：它已经带着 id 与「发生了什么」（`01M…  task t-226 done — …`、
       // `01M…  seam t-226+t-070 resolved: …`）。再补一行「✓ 某某成功」是同一件事说两遍——而这份日志里
@@ -39,6 +47,11 @@ export async function sendAll<T>(
       out(partRefused(it.what, why));
       err(partRefused(it.what, why));
       bad += 1;
+      if (it.stopOnFail) {
+        const rest = items.length - (i + 1);
+        if (rest > 0) { out(partsSkipped(rest)); err(partsSkipped(rest)); }
+        break;
+      }
     }
   }
   return { ok, bad, exit: bad && ok ? EXIT_PARTIAL : bad ? 2 : 0 };

@@ -8,6 +8,9 @@ import { MemoryStore, append, reduce, board, Rejected, type NewEvent, type Clien
 import { parse, list, str } from "../src/args.js";
 import * as fmt from "../src/format.js";
 import { decide } from "../src/decide.js";
+import { sendAll } from "../src/send.js";
+import { partsSkipped, partRefused, PART_NAMES, EXIT_PARTIAL } from "@ateam/core";
+import { ClientError } from "../src/client.js";
 
 const HUMAN = "human";
 
@@ -77,8 +80,13 @@ describe("t-014 · ateam decide validates before it acks", () => {
 
   it("a good option acks then records the decision; a second decide is rejected and emits nothing", async () => {
     const { store, ask, client, emitted } = await world();
-    const events = await decide(client, ask.id, "B");
-    expect(events.map((e) => e.kind)).toEqual(["ack", "note"]);
+    // t-232：decide 只把两件排好，发是调用方的事——这里走的正是命令行跑的那个公共层
+    const parts = await decide(client, ask.id, "B");
+    const out: string[] = [];
+    const r = await sendAll(parts, async (e) => { const ev = await client.emit(e); return { id: ev.id, line: `${ev.id}  ${ev.kind}` }; }, (l) => out.push(l), () => {});
+    expect(r.exit, "两件都成 ⇒ 0").toBe(0);
+    expect(parts.map((x) => (x.event as { kind: string }).kind)).toEqual(["ack", "note"]);
+    expect(out).toHaveLength(2);
     expect(emitted).toMatchObject([{ kind: "ack", of: ask.id }, { kind: "note", decision: true, decides: { of: ask.id, option: "B" }, body: "decision: auth: A or B? -> B" }]);
     let b = board(reduce(await store.read()), HUMAN);
     expect(b.instructions.find((i) => i.id === ask.id)).toMatchObject({ status: "acked", chosen: { option: "B", by: HUMAN } });
@@ -93,8 +101,57 @@ describe("t-014 · ateam decide validates before it acks", () => {
   it("an instruction already acked by hand is not acked again, only decided", async () => {
     const { store, ask, client, emitted } = await world();
     await append(store, { kind: "ack", actor: HUMAN, of: ask.id }, { human: HUMAN });
-    const events = await decide(client, ask.id, "A");
-    expect(events.map((e) => e.kind)).toEqual(["note"]);
+    const parts = await decide(client, ask.id, "A");
+    expect(parts.map((x) => (x.event as { kind: string }).kind)).toEqual(["note"]);
+    await sendAll(parts, async (e) => { const ev = await client.emit(e); return { id: ev.id, line: ev.id }; }, () => {}, () => {});
     expect(emitted.map((e) => e.kind)).toEqual(["note"]);
+  });
+});
+
+/**
+ * t-232 判据 3：**显式中止，不拿异常当控制流。**
+ *
+ * 「记下决定」靠那次 ack：ack 没落下去还照写决定，牌桌上就成了「他答过了」而没有任何东西证明他看过。
+ * 在这之前这件事是靠 `emit` 抛出来中止的——**而异常中止在终端上没有痕迹**：少了一行，与本来就只有一行
+ * 长得一模一样。现在 ack 带 `stopOnFail`，停下来那一刻自己说一句。
+ */
+describe("t-232 · decide 的两件有先后：ack 没成，决定就不发，而且说出来", () => {
+  async function world() {
+    const store = new MemoryStore();
+    let t = Date.parse("2026-09-06T06:00:00Z");
+    const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
+    return { store, ask, client: { board: async () => board(reduce(await store.read()), HUMAN) } };
+  }
+
+  it("ack 被拒 ⇒ 决定那条一条都没发，终端上说「后面 1 件没发」，退出码 2", async () => {
+    const { ask, client } = await world();
+    const parts = await decide(client, ask.id, "B");
+    const sent: string[] = [];
+    const out: string[] = [], err: string[] = [];
+    const r = await sendAll(parts, async (e) => {
+      const kind = (e as { kind: string }).kind;
+      if (kind === "ack") throw new ClientError(409, { error: "rejected", rule: "ack", message: "already acked" });
+      sent.push(kind);
+      return { id: "01X", line: "01X" };
+    }, (l) => out.push(l), (l) => err.push(l));
+    expect(sent, "决定那条一条都没发").toEqual([]);
+    expect(out[0]).toBe(partRefused(PART_NAMES.decideAck(ask.id), "REJECTED (ack): already acked"));
+    expect(out).toContain(partsSkipped(1));       // **「没发」与「发了没成」都看得见**
+    expect(err).toContain(partsSkipped(1));
+    expect(r.exit, "全没成 ⇒ 2，不是部分成功").toBe(2);
+  });
+
+  it("反过来：决定那条被拒，ack 已经成了 ⇒ 退出码是「部分成功」，不是「全失败」", async () => {
+    const { ask, client } = await world();
+    const parts = await decide(client, ask.id, "B");
+    const out: string[] = [];
+    const r = await sendAll(parts, async (e) => {
+      if ((e as { kind: string }).kind === "note") throw new ClientError(409, { error: "rejected", rule: "note", message: "nope" });
+      return { id: "01A", line: "01A  ack" };
+    }, (l) => out.push(l), () => {});
+    expect(r.exit).toBe(EXIT_PARTIAL);
+    expect(out[0]).toBe("01A  ack");                       // ack 那一件成了，事实留在终端上
+    expect(out.some((l) => l === partsSkipped(1)), "最后一件失败没有「后面」可说").toBe(false);
   });
 });

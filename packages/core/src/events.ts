@@ -584,6 +584,7 @@ export const KEY_SYMBOLS = [
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
+  "partsSkipped",
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
@@ -1086,9 +1087,25 @@ export const PART_NAMES = {
   done: (task: string) => `${task} done`,
   seamFallback: () => "接缝检查退回的说明",
   seamAbsorb: (a: string, b: string) => `解决接缝 ${a}+${b}`,
+  // t-232：verify 那一路也一次发多件——挡不住的接缝各落一条说明、三方比较各落一条、最后才是判决本身。
+  verify: (task: string, pass: boolean) => `${task} ${pass ? "verify --pass" : "verify --fail"}`,
+  seamUnjudgeable: (seam: string) => `接缝 ${seam} 判不了的说明`,
+  seamTruth: (seam: string) => `接缝 ${seam} 按真交集重判`,
+  // t-232：decide 也是两件（先 ack，再落决定），而它们之间有先后：ack 没成，决定就不该写。
+  decideAck: (id: string) => `ack ${id}`,
+  decideNote: (id: string, option: string) => `记下决定 ${id} → ${option}`,
 } as const;
 
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
+
+/**
+ * t-232 判据 3：**中止要说出来，不能靠异常悄悄结束。**
+ *
+ * 一条命令发的几件事里，有的后面那件靠前面那件才成立（`decide` 的「记下决定」靠那次 ack）。前一件没成时
+ * 后面的不发是对的，**而「不发」必须与「发了没成」一样看得见**——否则终端上「少了一行」和「本来就只有一行」
+ * 长得一模一样，正是这几天数了二十多次的那一族。
+ */
+export const partsSkipped = (n: number) => `↷ 后面 ${n} 件没发：它们要前一件先成。`;
 
 /** t-228 判据 3：退出码口径。全成功 0；**部分成功单独一个值，不复用 2**；全失败 2。3 已被「坏响应」占着（t-225）。 */
 /**

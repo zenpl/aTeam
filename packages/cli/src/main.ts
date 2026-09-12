@@ -8,7 +8,8 @@ import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js"
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
+import { seamWarnings, seamCheck, gitCommitsSince, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
+import { verifyParts } from "./verifyparts.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
@@ -237,7 +238,7 @@ async function main(argv: string[]) {
    *
    * 这两行都走 stdout：看它的进程只把 stdout 当事件流（t-225 那一条）。
    */
-  const sendAll = async (items: { what: string; event: ClientEvent }[]): Promise<void> => {
+  const sendAll = async (items: { what: string; event: ClientEvent; stopOnFail?: boolean }[]): Promise<void> => {
     const r = await sendParts(items, async (e) => {
       const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
       return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
@@ -374,8 +375,8 @@ async function main(argv: string[]) {
     }
     case "decide": {
       const [id, option] = exact(rest, "id", "option");
-      const events = await decide({ board: () => client.board(), emit: (e) => client.emit({ ...e, ...common(a) } as ClientEvent) }, id, option);
-      for (const ev of events) console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+      // t-232：两件事，各自报结果；ack 没成就停下并说「后面没发」（decide.ts 给它带了 stopOnFail）
+      await sendAll(await decide({ board: () => client.board() }, id, option));
       return;
     }
     case "reading": {
@@ -478,18 +479,14 @@ async function main(argv: string[]) {
           // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
           // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
           // fail 不走这一段：一条接缝从来只挡 pass，不挡「它坏了」这条消息（t-112）。
-          if (bool(a, "pass") && !bool(a, "no-seam-check")) {
-            const b = await client.board();
-            const un = unjudgeableSeams(b, task, gitCommitsSince());
-            for (const n of un.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
-            for (const e of un.events) await emit(e);
-            // t-182：再按三方比较看一遍——真交集为空的接缝解掉，不空但名单报错的把对的说出来。
-            // 两条各管一半：t-191 管「对方还没写代码」，这一条管「两边都交过活，但名单与真交集对不上」。
-            const truth = seamTruthEvents(seamTruths(b, task, gitChangedSince()), task);
-            for (const n of truth.notes) console.error(n);
-            for (const e of truth.events) await emit(e);
-          }
-          return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
+          const verdict = { kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") } as ClientEvent;
+          // t-232：接缝那几条与判决本身从此走 done 那一路同一个公共层，组装在 verifyparts.ts（用例测的就是它）
+          const need_ = bool(a, "pass") && !bool(a, "no-seam-check");
+          const v = verifyParts(need_ ? await client.board() : ({ seams: [], tasks: {} } as unknown as Board), task, verdict,
+            { commitsSince: gitCommitsSince(), changedSince: gitChangedSince() }, need_);
+          for (const n of v.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
+          await sendAll(v.parts);
+          return;
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": {
