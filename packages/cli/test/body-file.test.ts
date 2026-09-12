@@ -37,6 +37,12 @@ describe("t-246 判据 1 · --X-file 从文件读那一段字", () => {
     try { fromFiles(a, read); } catch (e) { expect((e as Error).message).toBe(BOTH_BODY_AND_FILE("body")); }
   });
 
+  it("文件末尾那个换行不算正文；正文里的换行一个都不动", () => {
+    const a = parse(["note", "--body-file", "/tmp/nl"]);
+    fromFiles(a, () => "第一行\n\n第三行\n\n");
+    expect(a.flags["body"]).toBe("第一行\n\n第三行");
+  });
+
   it("没有 -file 的时候一个字都不动", () => {
     const a = parse(["note", "就在命令行上", "--task", "t-1"]);
     const before = JSON.stringify(a.flags);

@@ -36,7 +36,9 @@ export function fromFiles(out: Args, read: (p: string) => string): void {
     if (!base) continue;
     if (out.flags[base] !== undefined) throw new UsageError(BOTH_BODY_AND_FILE(base));
     const path = String(out.flags[key]);
-    out.flags[base] = read(path);
+    // 文件总是以换行结尾，而那个换行不是正文的一部分——不修掉它，每一条走这条路的正文都会多一个空行。
+    // 只修尾部：正文里的换行是作者写的，一个都不许动。
+    out.flags[base] = read(path).replace(/\s+$/, "");
     delete out.flags[key];
   }
 }
