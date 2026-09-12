@@ -68,6 +68,10 @@ export function machineWords(text: string): string {
 export function waitingLine(b: Board): string {
   const c = b.release?.counts;
   if (!c) return "";
+  // t-221：**这几个数旧了就不给数**。它们是某个人某一刻跑 `ateam release` 用 git 测出来的，之后没有任何东西
+  // 刷新它；只要有一件是它之后才 done 的，它就答不了此刻的问题。这里说的那句是既有的「不知道有多少件在等上线」
+  // ——**尤其不能给 0**：一个陈旧的 0 读起来正好是「都上线了」，而那是这一整件要防的那句假话。
+  if (!b.release.counts_current) return UI.waitingUnknown(b.release.basis || "");
   if (c.pending_deploy > 0) return c.unknown ? `${UI.waitingDeploy(c.pending_deploy).replace(/。$/, "；")}${UI.waitingAlsoUnknown(c.unknown)}` : UI.waitingDeploy(c.pending_deploy);
   if (c.unknown > 0) return UI.waitingUnknown(b.release.basis || "");
   return "";

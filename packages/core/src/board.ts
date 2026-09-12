@@ -411,6 +411,23 @@ export interface Board {
     /** t-078: the three counts, on every board. */
     counts: { pending_deploy: number; deployed_unverified: number; unknown: number };
     /**
+     * t-221：**这几个数是什么时候量的**，取自那条包含事实自己的时刻；没有事实时是 null。
+     * 它此前只活在 `basis` 那一长串里，而人读到的是那个数——pm 的原话：「`basis` 行里印了时刻，那不算」。
+     */
+    counts_at: string | null;
+    /**
+     * t-221：**这几个数此刻还算不算数。**
+     *
+     * 那条包含事实是某个人某一刻跑 `ateam release` 用 git 逐件测出来的，**之后没有任何东西会去刷新它**。
+     * 真样本：15:05:01 量的那份让牌桌从 15:05 一直显示 `pending_deploy = 0`，而 release 17:06 重跑得到 **6 件**
+     * ——**两小时里「没有东西等着上线」是一句会让人放心的假话**。
+     *
+     * **而 0 是这里面最像真话的那个值**（release 17:06 的话）：一个陈旧的数写成 0，读起来正好是「都上线了」。
+     * 所以这条把 t-078 那条老规矩推广一格：**算不出就说原因不给数字；算得出但已经旧了，也不许当成此刻的数给出去。**
+     * 判它旧的依据不是时间，是**它答不答得了此刻的问题**：只要有一个候选是它之后才 done 的，它就答不了。
+     */
+    counts_current: boolean;
+    /**
      * t-203 判据 2：这几个数的**分母**——哪三类相加，或者为什么算不出。
      *
      * 「还剩多少」原来是从 `contained` 一份名单反推的，而那份名单缺了第三桶（量不出的那些），于是反推出来的数
@@ -938,7 +955,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
-    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
+    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, counts_at: null, counts_current: false, denominator: "", basis: "" },
     batches: [],
     said: [],
     disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason, ...(d.agents ? { agents: [...d.agents] } : {}) })).sort(byId((x) => x.of)),
@@ -1642,7 +1659,7 @@ export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, counts_at: b.release.counts_at, counts_current: b.release.counts_current, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
   // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
@@ -1916,15 +1933,22 @@ export function standIns(s: State, now: Date): Board["stand_ins"] {
  *
  * 判断与措辞都在这里，渲染方只印：两个渲染方各判一遍状态名，就是 t-142 那一族。
  */
-export function batchesEmptyLine(batches: BoardBatch[], unpacked: number): string | null {
+/** t-221：`unpacked` 给 `null` 表示「说不出」——那一句就不说，不拿 0 顶替不知道。 */
+export function batchesEmptyLine(batches: BoardBatch[], unpacked: number | null): string | null {
   if (batches.some((x) => x.pending)) return null;
   const said = [batches.length ? BATCH_LINES.allShipped() : BATCH_LINES.neverPacked()];
-  if (unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
+  if (unpacked !== null && unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
   return said.join("");
 }
 
-/** 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。 */
-export function unpackedCount(b: Board): number {
+/**
+ * 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。
+ *
+ * t-221：**同一个病的第二处**。它是从 `counts.pending_deploy` 推出来的，所以那个数旧了它也旧；而它旧了的样子
+ * 同样是 0，同样读起来像「都装好了」。`null` 是「说不出」，调用方据此不说这一句——**不拿 0 顶替不知道**。
+ */
+export function unpackedCount(b: Board): number | null {
+  if (b.release && !b.release.counts_current) return null;
   const packed = new Set((b.batches ?? []).flatMap((x) => x.contains));
   return (b.release?.counts?.pending_deploy ?? 0) === 0 ? 0 : (b.release.pending_deploy ?? []).filter((c) => !packed.has(c.task)).length;
 }
@@ -1978,6 +2002,8 @@ function splitRelease(s: State, b: Board) {
   const fact = deployedTasksFact(s);
   const deployed = r.deployed_sha;
   let why: string | null = null;
+  // t-221：有没有候选是这条事实之后才 done 的——有就说明它答不了此刻的问题
+  let outdated = false;
   if (!deployed) why = "生产没有有效的 production:deployed.sha 事实";
   else if (!fact) why = `没有针对生产 ${deployed.slice(0, 7)} 的包含事实 production:${DEPLOYED_TASKS_KEY}（跑一次 ateam release，它用 git 逐件测并记下来）`;
   else if (!sameSha(fact.sha, deployed)) why = `包含事实是对 ${fact.sha.slice(0, 7)} 测的，生产已是 ${deployed.slice(0, 7)}（重跑 ateam release）`;
@@ -1992,9 +2018,14 @@ function splitRelease(s: State, b: Board) {
     else if (fact!.unmeasured?.includes(c.task)) r.unknown.push({ ...c, reason: factCannotPlace(c.task, fact!.sha) });
     // 事实是三桶规矩之前写的：它连「量不出的有哪些」都没说过，所以它答不了这一件——这也不是「在它之后才 done」
     else if (fact!.unmeasured === null) r.unknown.push({ ...c, reason: factPredatesThirdBucket(c.task, fact!.sha) });
-    else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
+    else { outdated = true; r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` }); }
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+  // t-221：这几个数是那条事实的数，不是此刻的数。**只要有一个候选是它之后才 done 的，它就答不了此刻的问题**——
+  // 那时候这几个数不许被当成现在的答案给出去（尤其 0：一个陈旧的 0 读起来正好是「都上线了」）。
+  r.counts_at = fact?.at ?? null;
+  // 一个候选都没有时，三个 0 就是此刻的答案——没有东西可以被答错，别在那时候说「不知道」
+  r.counts_current = (!why && !outdated) || r.candidates!.length === 0;
   // t-203 判据 2：分母跟着数走。事实没写第三桶时说算不出——一个小了的数比没有数更贵。
   r.denominator = !fact || fact.unmeasured === null ? denominatorUnknown : denominatorIs(fact.contained.length, fact.not_contained.length, fact.unmeasured.length);
   b.batches = batches(s, deployed, why, fact);   // t-129: judged on the same basis, so the two can never disagree

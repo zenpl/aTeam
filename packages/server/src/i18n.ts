@@ -1,4 +1,4 @@
-import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf } from "@ateam/core";
+import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -83,7 +83,8 @@ export const UI = {
   // t-091: what is verified and still waiting for a deploy, so nobody has to send a card per batch
   waitingDeploy: (n: number) => `${n} 件验过了，等一次上线。`,
   waitingAlsoUnknown: (n: number) => `另有 ${n} 件不知道上没上。`,
-  waitingUnknown: (why: string) => `不知道有多少件在等上线：${why}`,
+  /** t-221：搬进 core 了，两处共用一份（这里只是转手，不再是第二个出处）。 */
+  waitingUnknown: waitingUnknownLine,
   // t-095 (S9/M4): the migration check card's result lines; the card itself is worded by the service (t-092)
   migrationOk: "清单对",
   migrationMissing: (who: string | null) => who ? `清单有漏，已让 ${who} 回去补` : "清单有漏",

@@ -610,6 +610,7 @@ export const KEY_SYMBOLS = [
   "validateTask",
   "valueForm",
   "verifierEligibility",
+  "waitingUnknownLine",
   "whoCanVerify",
   "whoElseTouches",
   "wideBaseReason",
@@ -1142,6 +1143,17 @@ export const partsSkipped = (n: number) => `↷ 后面 ${n} 件没发：它们�
  * **这一页与瘦身板是两条路**（t-235 判据 2）：`slimBoard` 只在 `GET /board` 那一处用，人这一页在进程内自己算一份
  * 完整 `board()` 去渲染——所以 `BOARD_BYTES` 对这一页一点用没有，两条路各有各的上限。
  */
+/**
+ * t-221：**「不知道有多少件在等上线」——一句话，一个出处。**
+ *
+ * 它原来在两处各写一份：页面走 `i18n.waitingUnknown`，命令行在 `format.ts` 里自己拼一份。本件要让命令行
+ * 在「这几个数旧了」时也说它，而**往 `format.ts` 再抄一份，就是把同一句话的出处从两处变成三处**——
+ * 那正是 `SECOND_HOME_FROZEN` 那道棘轮在拦的事。所以搬进来：两边都取这一份。
+ *
+ * `why` 是那条包含事实的依据（哪条事实、对哪个 sha、测于何时），由 `board.basis` 算好。
+ */
+export const waitingUnknownLine = (why: string): string => `不知道有多少件在等上线：${why}`;
+
 export const PAGE_BYTES = 196_608;
 
 export const OWNER_URL_LOCKED =

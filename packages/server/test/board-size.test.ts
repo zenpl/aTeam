@@ -57,7 +57,7 @@ describe("t-070 · GET /board is slim by default", () => {
     expect(slimBytes, `瘦身板 ${slimBytes} 字节`).toBeLessThanOrEqual(BOARD_BYTES);
     expect(BOARD_BYTES).toBe(61_440);   // 60 KiB，判据的字面
     // t-203：分母跟着那几个数一起留在瘦身板上——数在、分母不在，正是那几个数被当成全集读的形状
-    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, denominator: full.release.denominator, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
+    expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, counts_at: full.release.counts_at, counts_current: full.release.counts_current, denominator: full.release.denominator, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
     expect(slim.omitted).toEqual(omittedPaths(full, slim)); // computed, not written; the recursive walk itself is proven in core
     expect(slim.omitted).toContain("tasks.done[].criteria");
     expect(full.omitted).toEqual([]);
