@@ -395,6 +395,13 @@ export interface BoardSaid {
 }
 
 export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" };
+/**
+ * t-243：**那句提示里的三个词，从此就是上面那张表里的三个词。**
+ *
+ * 它原来住在 i18n.ts，把三个状态名逐字抄了一遍——**一份转述**：pd 哪天改「已成为需求」，这句提示会留在
+ * 旧词上，而且不会有任何一处红。文字一个字没变，变的是它从哪儿来。
+ */
+export const SAY_HINT = `你说过的会出现在这里，并显示它变成了什么：${["received", "requirement", "task"].map((k) => SAID_LABEL[k as SaidStatus]).join(" → ")}。`;
 
 export interface BoardRelease {
   task: string;

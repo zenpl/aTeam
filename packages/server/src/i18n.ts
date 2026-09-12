@@ -1,4 +1,4 @@
-import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
+import { SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -62,10 +62,11 @@ export const UI = {
   // 说一句
   say: "说",
   sayPlaceholder: "跟团队说一句：想要什么、什么坏了",
-  sayHint: "你说过的会出现在这里，并显示它变成了什么：已收到 → 已成为需求 → 已成为任务。",
+  sayHint: SAY_HINT,   // t-243：三个词就是 core 那张表里的三个词，不再各抄一遍
   said: "你说过的",
   moreSaid: (n: number) => `还有 ${n} 句`,
-  saidStatus: { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" } as Record<string, string>,
+  // t-243：`saidStatus` 那份拷贝删了——页面读的是 core 算好的 `label`，那一支退路一次都走不到，
+  // 而它与 core 那张表逐字相同、可以各走各的。要那几个词就去 core 的 `SAID_LABEL`。
 
   // 现在
   now: "现在",

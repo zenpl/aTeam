@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -154,7 +154,9 @@ export function saidOf(b: Board): Said[] {
 
 export function saidStatus(x: Said): string {
   if (x.label) return x.label;
-  const base = UI.saidStatus[x.status ?? "received"] ?? x.status ?? "";
+  // t-243：退路读 core 那张表（此前是 i18n 里逐字相同的第二份）。**这一支此刻走不到**——core 每一行都算了
+  // `label`——留着它是因为「板是别处给的」这条路存在（旧服务、测试夹具），而走到时它该说的与 core 同一句。
+  const base = SAID_LABEL[(x.status ?? "received") as keyof typeof SAID_LABEL] ?? x.status ?? "";
   const titles = (x.links?.tasks ?? []).map((t) => t.title).filter(Boolean);
   return titles.length && (x.status === "task" || x.status === "live") ? `${base}：${titles.join("、")}` : base;
 }
