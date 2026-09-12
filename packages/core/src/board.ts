@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -1428,9 +1428,33 @@ export interface GateHonesty {
   /** 还没有人判过的。 */
   unjudged: number;
   /** 修法：`project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。 */
-  fix?: { task: string; status: string; verified_on: string[]; in_production: boolean };
+  /**
+   * t-237：**两件事，分开说。** ① 这件的代码在不在生产跑的那一版里（`deployed`，按包含关系算；`null` 是说不出）；
+   * ② 有没有人在生产表面上验过它（`verified_in_production`）。
+   *
+   * 此前只有一个 `in_production`，读的是②、印出来的话却在说①：qa 19:09 在生产上量到，这道闸对人说
+   * 「修法在 t-160，已验（repo），**还没上生产**」——而 t-160 的 `bdbbfd1` 就在生产跑的 `09256fd` 里。
+   * **它已经在跑，缺的只是没人在生产上验过它。**
+   */
+  fix?: { task: string; status: string; verified_on: string[]; deployed: boolean | null; verified_in_production: boolean };
   /** 判据 1 的那一句，core 一处算出，唯一 key。 */
   line: string;
+}
+
+/**
+ * t-237 判据 2：**修法此刻在哪儿，两件事各说一句。** 代码在不在生产跑的那一版里，与有没有人在生产上验过它，
+ * 是两个问题；把前者说成后者，就是 qa 19:09 量到的那句假话。说不出包含关系时**说说不出**，不说「还没上线」。
+ *
+ * **措辞是占位的，定稿归 pd（判据 5）。** 上线前必须换掉。
+ */
+export function fixWhere(fix: NonNullable<GateHonesty["fix"]>): string {
+  const judged = fix.verified_in_production ? "已经有人在生产上验过它"
+    : fix.verified_on.length ? `还没有人在生产上验过它（已验：${fix.verified_on.join("、")}）`
+    : `还没有人在生产上验过它（此刻 ${fix.status}）`;
+  const where = fix.deployed === null ? "说不出它的代码在不在生产跑的那一版里"
+    : fix.deployed ? "代码已经在生产跑的那一版里"
+    : "代码还不在生产跑的那一版里";
+  return `${PD_PLACEHOLDER}${where}，${judged}`;
 }
 
 /** t-149 判据 1 的那一句。措辞待 pd 定稿（我已发给它）；在那之前这是唯一一处出处，改也只改这里。 */
@@ -1439,9 +1463,7 @@ function honestyLine(h: Omit<GateHonesty, "line">): string {
     ? `${h.judged} 条经核对，其中 ${h.false_positives} 条是误报${h.missed ? `、${h.missed} 条还漏报了` : ""}`
     : `${h.judged} 条经核对`;
   const rest = h.unjudged ? `，另有 ${h.unjudged} 条没人判过` : "";
-  const fix = h.fix
-    ? `修法在 ${h.fix.task}，${h.fix.in_production ? "已在生产上" : h.fix.verified_on.length ? `已验（${h.fix.verified_on.join("、")}），还没上生产` : `此刻 ${h.fix.status}`}`
-    : "还没有一件任务认领它的修法";
+  const fix = h.fix ? `修法在 ${h.fix.task}，${fixWhere(h.fix)}` : "还没有一件任务认领它的修法";
   return `这道闸至今报过 ${h.reported} 条，${what}${rest}；${fix}。据它下的结论，先自己核一遍。`;
 }
 
@@ -1452,7 +1474,11 @@ function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
   const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
   if (!rs || !rs.valid || rs.expired || !task) return undefined;
   const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
-  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes(HUMAN_SURFACE) };
+  // 包含关系来自那条事实（`production:deployed.tasks`，qa 今天用 git merge-base --is-ancestor 逐件测出来的那份）。
+  // 事实没有、或者它没覆盖这一件（三桶规矩之前写的、或这件在它之后才 done）⇒ `null`：**说不出，不是「没上线」**。
+  const fact = deployedTasksFact(s);
+  const deployed = !fact ? null : fact.contained.includes(task.id) ? true : fact.not_contained.includes(task.id) ? false : null;
+  return { task: task.id, status: task.status, verified_on, deployed, verified_in_production: verified_on.includes(HUMAN_SURFACE) };
 }
 
 export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
@@ -1460,7 +1486,7 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
   // 只有一句实话和一件修法——修法在生产上验过之后，这句话自己消失，与接缝闸那一档同一个规矩。
   if (gate === "shows") {
     const fix = gateFix(s, gate);
-    if (!fix || fix.in_production) return null;
+    if (!fix || fix.verified_in_production) return null;
     return { gate, reported: 0, judged: 0, false_positives: 0, missed: 0, unjudged: 0, fix, line: SHOWS_GATE_BLIND(fix.task) };
   }
   if (gate !== "seam") return null;   // 其余的闸还没有可被核对的结论
@@ -1477,7 +1503,7 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
   };
   // 判据 2：两个条件都成立才叫「已知缺陷」——有被判过的错，且修法还没在生产上。都不成立就没有这句话。
   const broken = h.false_positives > 0 || h.missed > 0;
-  if (!broken || !h.fix || h.fix.in_production) return null;
+  if (!broken || !h.fix || h.fix.verified_in_production) return null;
   return { ...h, line: honestyLine(h) };
 }
 
@@ -1695,10 +1721,13 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   // work already running in production that nobody walked there has no lever at all and leaves every surface.
   const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
   const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
+  // t-237 判据 3（同族一处）：这里读的是「有没有生产判决」，而它原来叫 notOnProduction——**名字说的是代码在不在
+  // 生产上**。下面分组时真正用的是包含关系（waiting／running 两个集合），所以人看到的分组是对的；改名是把这个
+  // 陷阱拿掉，免得下一个人照着名字去用它。
+  const noProdVerdict = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
   const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
-  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
-  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
+  const elsewhere = noProdVerdict.filter((tk) => waiting.has(tk.id)).map(row);
+  const awaitingRepo = noProdVerdict.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
   const groups = [
     { key: "working", items: sortRecent(b, "working", g("working")) },
     { key: "blocked", items: sortRecent(b, "blocked", g("blocked")) },

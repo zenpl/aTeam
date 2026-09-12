@@ -582,6 +582,7 @@ export const KEY_SYMBOLS = [
   "exitCodeLine",
   "factCannotPlace",
   "factPredatesThirdBucket",
+  "fixWhere",
   "followUps",
   "gateHonesty",
   "honestyLine",
