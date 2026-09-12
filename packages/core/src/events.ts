@@ -995,13 +995,21 @@ export const cannotMeasureHere = (sha: string) =>
  */
 export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null): number | null {
   if (!mine || !deploys?.length) return null;
-  let n = 0;
-  for (const d of deploys) {
-    const got = has(d);
+  // t-211（qa 16:11 在生产上判 fail）：**问错了问题。**
+  //
+  // 旧版数的是「名单里有几条我这棵树没有」，于是名单里任何一条**谁都拿不到**的条目，都会被算成「你落后」：
+  // qa 拿一棵与生产逐字同版的树跑 sync，照样被告知「旧 2 次」，而那 2 条是 09-06 的两笔坏数据（一个不是 sha
+  // 的 `unreported`，一条写错 19 秒后已更正、却被七位前缀去重吃掉的 sha）。**一条永远为真、又永远修不好的
+  // 提醒，比不提醒更坏**——它教人把这一栏整个忽略掉。
+  //
+  // 该问的是：**在我这棵树含着的那一版之后，还上过几次线。** 历史更早处有几条谁都解不出的垃圾，与「我是不是
+  // 落后了」无关。从最新往回找第一条我有的，它之后的那些才是我落后的。
+  for (let i = deploys.length - 1; i >= 0; i--) {
+    const got = has(deploys[i]);
     if (got === null) return null;   // git 答不上来：整句不说，不猜
-    if (!got) n++;
+    if (got) return deploys.length - 1 - i;
   }
-  return n;
+  return deploys.length;             // 一条都不含：那才是真落后全部
 }
 /**
  * 回溯里那一行的整句。它住在 core 而不是 trace.ts，是因为「人可见的话一律进 core」（t-143）：

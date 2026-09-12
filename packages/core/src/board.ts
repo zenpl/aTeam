@@ -1033,7 +1033,10 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
   const deploys = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
@@ -1808,7 +1811,10 @@ export function batches(s: State, deployed: string | null, why: string | null, f
   // 每一个当过生产头的 sha。日志本来就记着它们（production:deployed.sha 的每一条），所以「这一批上过线没有」
   // 是算出来的，不是谁声明的。
   const everDeployed = new Set([...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .map((r) => shortSha(r.value as string)));
   for (const [key, id] of s.latestReading) {
     if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
@@ -1911,7 +1917,10 @@ export function deployHistory(s: State, tz = "UTC"): Deploy[] {
     return p;   // MM-DD
   };
   const readings = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .sort((a, b) => a.id.localeCompare(b.id));
   const out: Deploy[] = [];
   const perDay = new Map<string, number>();

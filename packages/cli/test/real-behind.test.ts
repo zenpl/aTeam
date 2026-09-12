@@ -48,8 +48,27 @@ describe("t-211 · 真 git，不是假的 Behind", () => {
   it("**本地根本没有那个 sha（从不 fetch 的那种树）：算「我没有」，不是说不出**", () => {
     const b = realBehind(root);
     const stranger = "0".repeat(40);                    // 这棵树里不存在的对象
-    expect(b.has(stranger)).toBe(false);                // 不是 null
-    expect(behindDeploys(b.head(), [stranger, ...shas], b.has)).toBe(1);
+    expect(b.has(stranger)).toBe(false);                // 不是 null——这一半没变
+  });
+
+  /**
+   * t-211（qa 16:11 生产判 fail）：**这一条原来断言 1，现在断言 0，而改的是问题不是答案。**
+   *
+   * qa 拿一棵与生产逐字同版的树跑 sync，被告知「旧 2 次」——那 2 条是 09-06 的坏数据（一个不是 sha 的
+   * `unreported`、一条写错 19 秒后已更正却被七位前缀去重吃掉的 sha）。**历史更早处有谁都解不出的垃圾，
+   * 与「我是不是落后了」无关。** 该问的是：我含着的那一版之后，还上过几次线。
+   */
+  it("名单更早处有一条谁都解不出的垃圾，而我含着最新那次 ⇒ 0（不是 1）", () => {
+    const b = realBehind(root);
+    const stranger = "0".repeat(40);
+    expect(behindDeploys(b.head(), [stranger, ...shas], b.has)).toBe(0);
+  });
+
+  it("垃圾在更早处、而我确实落后两次 ⇒ 仍然数得出 2（这道闸没被放宽）", () => {
+    git(root, "checkout", "-q", shas[0]);
+    const b = realBehind(root);
+    expect(behindDeploys(b.head(), ["0".repeat(40), ...shas], b.has)).toBe(2);
+    git(root, "checkout", "-q", "main");
   });
 
   it("不是 git 检出：说不出，整句不说", () => {

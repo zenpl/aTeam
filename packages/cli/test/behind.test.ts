@@ -48,9 +48,16 @@ describe("t-211 · 说不出就闭嘴，不报平安", () => {
   });
 
   it("git 答不上来（has 给 null）：整句不说，不拿「答不上来」当「你没有」", async () => {
-    const flaky: Behind = { head: () => "mine", has: (sha) => (sha === "d2" ? null : true) };
+    // t-211：**null 要落在「从最新往回数」会问到的那一段才拦得住整句**——我含着最新那一版时，
+    // 更早处答不上来与我无关，那种情形的正确答案是 0，不是「说不出」。
+    const flaky: Behind = { head: () => "mine", has: (sha) => (sha === "d3" ? null : true) };
     expect((await run(DEPLOYS, flaky)).join("\n")).not.toContain("比生产旧");
     expect(behindDeploys("mine", DEPLOYS, flaky.has)).toBeNull();
+  });
+
+  it("最新那一版我有、更早处 git 答不上来 ⇒ 0（我没落后，早年的账与我无关）", () => {
+    const partial: Behind = { head: () => "mine", has: (sha) => (sha === "d1" ? null : true) };
+    expect(behindDeploys("mine", DEPLOYS, partial.has)).toBe(0);
   });
 
   it("没人给 behind（老调用方）：sync 照常跑，不崩也不说", async () => {
@@ -99,5 +106,30 @@ describe("t-211 · qa 16:02 找到的两个反过来的结果", () => {
   it("老调用方没有 built：照旧只判上线那一半，不崩", async () => {
     const out = await run(DEPLOYS, { head: () => "mine", has: () => true });
     expect(out.join("\n")).not.toContain("dist");
+  });
+});
+
+/**
+ * t-211 判据 1、5 的反面，按 qa 16:11 在生产上量到的那一幕造：**一棵与生产逐字同版的树，必须一个字都不多说。**
+ *
+ * 那一幕的数据是真的：生产 `live.deploys` 21 条，其中 2 条任何树都拿不到——`unreported`（09-06 qa 写的，
+ * 那时 /health 还没有 sha 字段）与一条写错 19 秒后已更正、却被七位前缀去重吃掉的 sha。旧口径把它们数成
+ * 「你旧 2 次」，**而那 2 次谁也追不上**。
+ */
+describe("t-211 · 与生产同版的树，一个字都不说", () => {
+  const REAL = ["a1", "a2", "a3"];
+  const JUNK = ["unreported", "085624dd"];
+
+  it("名单里混着两条谁都解不出的，而我含着最新那次 ⇒ 0，那句话不出现", async () => {
+    const has = (s: string) => REAL.includes(s);
+    expect(behindDeploys("a3", [JUNK[0], ...REAL.slice(0, 1), JUNK[1], ...REAL.slice(1)], has)).toBe(0);
+    const same: Behind = { head: () => "a3", has };
+    expect((await run([JUNK[0], ...REAL], same)).join("\n"), "与生产同版就闭嘴").not.toContain("比生产旧");
+  });
+
+  it("真落后时照旧说得出来——这道闸不是被关掉了，是问对了问题", async () => {
+    const has = (s: string) => ["a1", "a2"].includes(s);
+    expect(behindDeploys("a2", [JUNK[0], ...REAL], has)).toBe(1);
+    expect((await run([JUNK[0], ...REAL], { head: () => "a2", has })).join("\n")).toContain("比生产旧");
   });
 });
