@@ -565,7 +565,7 @@ export function createApp(opts: ServerOptions) {
           // t-212（pm 16:23）：**这两条从「自己拼一个 409」改成 throw Rejected，走统一出口。** 在两处各补
           // 一次记账等于又一份靠人维护的名单，而这件事的全部教训就是名单会漏（今晚已漂四次）。
           if (!i.options?.includes(option)) throw new Rejected("decide", `"${option}" is not one of: ${(i.options ?? []).join(" | ")}`);
-          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${of} already decided: ${st.chosen.option} by ${st.chosen.by}`);
+          if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${of} already decided: ${st.chosen.option} by ${st.chosen.by}`, { at: st.chosen.at });
           // Inside the write lock, look again: a click that raced another one must not half-apply.
           // t-069: 填写 on the contact card carries the address; it becomes the fact the call-outs read
           const filling = isContactAsk(i.body) && (option === CONTACT_FILL || option === CONTACT_FILL_WAS);   // 老卡带的是旧那个词
@@ -789,7 +789,9 @@ export function createApp(opts: ServerOptions) {
         // t-212（qa 16:32）：从 appendFrom 抛出来的那一条已经在写入路径上记过了，这里跳过——否则走 API
         // 那一路记两次、处理器自己抛的记一次，账是不均匀的虚高。
         if (!err.recorded) await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
-        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message });
+        // t-233 判据 2：**类别跟着这条拒绝一起出门。** 客户端此前只拿得到 rule 与一句话，要分辨「那件事已经
+        // 发生过了」只能去匹配话里的字——而那正是这件任务不许的做法。
+        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message, already: err.already });
       }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
       console.error(err);

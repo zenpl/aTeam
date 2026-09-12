@@ -13,7 +13,7 @@ import { verifyParts } from "./verifyparts.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
-import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
+import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -604,8 +604,12 @@ function sayIfRefused(argv: string[]): void {
     if (!me) return;
     const path = refusalFile(me);
     if (argv.includes("--clear-refused")) { if (existsSync(path)) rmSync(path, { force: true }); console.error("已划掉上一次被拒的写入。"); return; }
-    const line = refusalNotice(readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null), new Date());
+    const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
+    const line = refusalNotice(st, new Date());
     if (line) console.error(line);
+    // t-233：**「已经办好了」那一类说完就划掉。** 它没有「重做一次就会消失」这条出路（再做一次只会再被拒），
+    // 留着就会每一次 sync 都再说一遍同一件不用做的事——一个说不完的提醒，和一个不起作用的期限是同一个病。
+    if (line && clearsAfterNotice(st) && existsSync(path)) rmSync(path, { force: true });
   } catch { /* same */ }
 }
 
@@ -647,11 +651,13 @@ async function shipRefusals(): Promise<void> {
 const ARGV = process.argv.slice(2);
 main(ARGV).then(async () => { noteRefusal(ARGV, null); await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure
-  const bye = (code: number, rule?: string, local = false) => {
+  const bye = (code: number, rule?: string, local = false, already?: { at: string | null }) => {
     // quote what a shell would need quoted, so the line can be pasted back verbatim
     const shell = (a: string) => (/[\s"'$`\\]/.test(a) ? `"${a.replace(/(["\\$`])/g, "\\$1")}"` : a);
     const at = new Date().toISOString();
-    if (rule) noteRefusal(ARGV, { at, rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    // t-233：**类别跟着记下来。** 提醒要分得清「那件事没发生」与「那件事已经发生过了」，而分辨的依据是
+    // 拒绝自己带的那一样东西，不是提醒去猜。
+    if (rule) noteRefusal(ARGV, { at, rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), ...(already ? { already } : {}) });
     // t-218：**只有本地抛的那几种要记进队**。服务端 409 那一路在它那边的唯一出口已经记过了（t-212），
     // 这里再记一遍就是同一次拒绝数两遍——而「两个数说同一件事」是这份日志里数了一整天的毛病。
     const me = local && rule ? meOf() : null;
@@ -678,10 +684,10 @@ main(ARGV).then(async () => { noteRefusal(ARGV, null); await shipRefusals(); say
     const line = err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`;
     console.error(line);
     lastWords(line);
-    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
+    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined, false, err.body.already);
   }
   if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule, true); }
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule, true, err.already); }
   if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage", true); }
   const what = err instanceof Error ? err.message : String(err);
   console.error(what);

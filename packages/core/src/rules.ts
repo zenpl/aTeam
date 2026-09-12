@@ -129,7 +129,17 @@ export class Rejected extends Error {
    * （qa 实测三次真拒绝数出 4）。记号打在拒绝本身上，外层见了就跳过：**两处出口都保住结构，不靠谁维护名单。**
    */
   recorded = false;
-  constructor(public readonly rule: string, message: string) {
+  /**
+   * t-233：**一次拒绝有两种意思，而提醒只印一种。**
+   *
+   * 真样本（qa 16:55）：拒绝话逐字是「already acked at 16:54:51.880Z」，而 t-116 的提醒照旧说「没有落下去」
+   * 并给出「重做：<原命令>」——**那件事其实已经办好了，提醒把它说成没办，还叫人再办一次。**
+   *
+   * 所以类别是**这条拒绝自己带的**（判据 2：不许靠匹配拒绝话的字）：带上 `already` 的，意思是「那件事已经
+   * 发生过了，这一次是多余的」；`at` 是它发生的时刻（说不出就是 null——「说不出」不是「没有」）。
+   * 不带的一律是另一类：**那件事没发生**，照旧提醒、照旧给「重做」。
+   */
+  constructor(public readonly rule: string, message: string, public readonly already?: { at: string | null }) {
     super(`${rule}: ${message}`);
   }
 }
@@ -304,7 +314,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (e.shape.regex === undefined && !e.shape.enum?.length) throw new Rejected("reading", "a shape needs a regex or a non-empty enum");
         if (e.shape.regex !== undefined) try { new RegExp(e.shape.regex); } catch { throw new Rejected("reading", `shape regex ${JSON.stringify(e.shape.regex)} does not compile`); }
         if (declared && !sameShape(declared, e.shape))
-          throw new Rejected("reading", `${e.surface}:${e.key} already has shape ${describeShape(declared)}; a shape is declared once`);
+          throw new Rejected("reading", `${e.surface}:${e.key} already has shape ${describeShape(declared)}; a shape is declared once`, { at: null });
       }
       const shape = e.shape ?? declared;
       if (shape && !matchesShape(shape, e.value))
@@ -343,7 +353,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       // the service may ack what it wrote itself (a missing-role card that is no longer true)
       if (st.instruction.to !== e.actor && e.actor !== human && !(e.actor === SERVICE_ACTOR && st.instruction.actor === SERVICE_ACTOR))
         throw new Rejected("ack", `${e.of} is addressed to ${st.instruction.to}, not ${e.actor}`);
-      if (st.acked_at) throw new Rejected("ack", `${e.of} already acked at ${st.acked_at}`);
+      if (st.acked_at) throw new Rejected("ack", `${e.of} already acked at ${st.acked_at}`, { at: st.acked_at });
       if (st.withdrawn) throw new Rejected("ack", `${e.of} was taken back by ${st.withdrawn.by} (${st.withdrawn.reason}); nothing to ack`);
       return;
     }
@@ -354,7 +364,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!st) throw new Rejected("untell", `${e.of} is not an instruction`);
       if (!e.reason?.trim()) throw new Rejected("untell", "say why (--reason)");
       if (st.instruction.actor !== e.actor && e.actor !== human) throw new Rejected("untell", `${e.of} was sent by ${st.instruction.actor}; only the sender or ${human} can take it back, not ${e.actor}`);
-      if (st.withdrawn) throw new Rejected("untell", `${e.of} was already taken back by ${st.withdrawn.by}`);
+      if (st.withdrawn) throw new Rejected("untell", `${e.of} was already taken back by ${st.withdrawn.by}`, { at: st.withdrawn.at });
       if (st.acked_at) throw new Rejected("untell", `${e.of} was acked by ${st.acked_by} at ${st.acked_at}; what was seen and confirmed cannot be unsaid. Send a new instruction that cancels it`);
       if (st.chosen) throw new Rejected("untell", `${e.of} was decided (${st.chosen.option} by ${st.chosen.by}); a decision is not taken back. Send a new ask`);
       return;
@@ -372,14 +382,14 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.reason?.trim()) throw new Rejected("disown", "说明为什么它不是你做的（--reason）：一条没有理由的署名更正，读的人无从判断该不该信");
       const who = state.actorOf.get(e.of);
       if (!who) throw new Rejected("disown", `找不到 ${e.of} 的署名，没法更正它`);
-      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`);
+      if (state.disowned.has(e.of)) throw new Rejected("disown", `${e.of} 已经更正过了（${state.disowned.get(e.of)!.by}）：更正不做第二次`, { at: state.disowned.get(e.of)!.at });
       // t-216：**被误署成 human 的那一种，本人正好是不在的那个人。** 于是按 t-196 谁都动不了它——今天它真的
       // 卡住了一件事（qa 03:36 误落的那条 ack，16:05 正保护着一张过期的卡）。这里开一条路，但不交给任何单个
       // agent：署着 human 的事件，别的角色可以**声明**它不是 human 发的，两个不同角色各来一次才生效，
       // 而且 human 回来可以对那条声明本身再发一条 disown 把它推翻。
       if (who === human && e.actor !== human) {
         const c = state.contested.get(e.of);
-        if (c?.by.includes(e.actor)) throw new Rejected("disown", `${e.actor} 已经声明过 ${e.of} 了：要生效还差另一个角色，同一个人说两次不算两个人`);
+        if (c?.by.includes(e.actor)) throw new Rejected("disown", `${e.actor} 已经声明过 ${e.of} 了：要生效还差另一个角色，同一个人说两次不算两个人`, { at: c.at });
         return;
       }
       if (who !== e.actor && e.actor !== human)
@@ -414,7 +424,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (t.status !== "verified")
           throw new Rejected("stand-in", `${t.id} 是 ${t.status}，不是 verified：还没验过的东西谈不上「本来可以自动」——顶替记的是「做好了却没上线」的代价，不是「还没做好」的代价`);
         const where = standInBlocker(state, t);
-        if (where) throw new Rejected("stand-in", `${t.id} ${where}：它已经在替你干活了，这一次不是顶替。若你觉得它没生效，那是一件缺陷，请开任务`);
+        if (where) throw new Rejected("stand-in", `${t.id} ${where}：它已经在替你干活了，这一次不是顶替。若你觉得它没生效，那是一件缺陷，请开任务`, { at: null });
       }
       // R1b: a decision on an instruction names one of its options, and only the recipient or the human decides.
       if (e.decides) {
@@ -435,7 +445,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
           throw new Rejected("decide", `${i.id} is addressed to ${i.to}, not ${e.actor}`);
         }
         // a default that took effect at ack_by may still be overridden; a real decision may not
-        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`);
+        if (st.chosen && st.chosen.by !== DEFAULT_DECIDER) throw new Rejected("decide", `${i.id} already decided: ${st.chosen.option} by ${st.chosen.by}`, { at: st.chosen.at });
         if (!e.decision) throw new Rejected("decide", "a choice is a decision; set decision: true");
       }
       return;
@@ -470,7 +480,7 @@ function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_huma
 
 function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
   if (e.op === "create") {
-    if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`);
+    if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`, { at: state.tasks.get(e.task)!.created_at });
     if (!e.title?.trim()) throw new Rejected("task", "title is required");
     if (!e.criteria?.length) throw new Rejected("task", "at least one acceptance criterion is required");
     // t-171 (pd 08:27)：承诺那头也要有闸。一件任务在**被写下来的时候**就该说清它对人有什么影响，而不是等到
@@ -488,8 +498,8 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
     // judgements were made and written as prose before the field existed; without this they could never be recorded,
     // and 「已知缺陷由日志算出」 would quietly mean 「算不出来」. It adds, it never edits: the original resolution's
     // text, author and time stay exactly as they were, and a seam already judged is not judged twice.
-    if (seam.resolution && !(e.verdict || e.missed)) throw new Rejected("seam", `already resolved by ${seam.resolution.by}; only a --verdict on the gate can still be added`);
-    if (seam.resolution?.verdict) throw new Rejected("seam", `the gate was already judged ${seam.resolution.verdict} by ${seam.resolution.judged_by}; a judgement is not made twice`);
+    if (seam.resolution && !(e.verdict || e.missed)) throw new Rejected("seam", `already resolved by ${seam.resolution.by}; only a --verdict on the gate can still be added`, { at: seam.resolution.at });
+    if (seam.resolution?.verdict) throw new Rejected("seam", `the gate was already judged ${seam.resolution.verdict} by ${seam.resolution.judged_by}; a judgement is not made twice`, { at: seam.resolution.judged_at ?? seam.resolution.at });
     if (!e.resolution?.trim()) throw new Rejected("seam", "resolution is required");
     // t-149: the verdict on the gate itself is a declared value, never a word fished out of the prose.
     if (e.verdict !== undefined && !SEAM_VERDICTS.includes(e.verdict)) throw new Rejected("seam", `verdict must be one of ${SEAM_VERDICTS.join(" | ")}, not "${e.verdict}"`);
@@ -694,13 +704,13 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       const standing = mine[mine.length - 1];
       const passer = standing?.pass ? standing.by : undefined;
       if (e.pass) {
-        if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass${PASS_ONLY_GATE}带上你发现了什么（--evidence）`);
+        if (passer !== undefined) throw new Rejected("verify", `${t.id} already passed on ${e.surface} since it was last done; a pass does not override a pass${PASS_ONLY_GATE}带上你发现了什么（--evidence）`, { at: standing.at });
         // t-104 ② (pd 00:12, superseding 23:59): after *any* fail on this surface, the next pass there waits for a new
         // done — whoever would give it. "Someone else passes it instead" is not overturning a fail, it is changing judges.
         // A fail given in error is undone the same way: the owner dones again, saying nothing needed changing and why.
         const failed = mine.find((v) => !v.pass);
         if (failed)
-          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么${PASS_ONLY_GATE}`);
+          throw new Rejected("verify", `${t.id} 这一轮已经在 ${e.surface} 上判过 fail（${failed.by}）；同一表面的下一次 pass 要等一次新的 done，换个人来判不算。原 fail 不成立的话，owner 重发 done，证据写明无需改动及为什么${PASS_ONLY_GATE}`, { at: failed.at });
         if (e.actor === t.owner) throw new Rejected("verify", `the owner cannot pass their own task${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);
         if (criteriaAuthors(t).includes(e.actor) && e.actor !== human)
           throw new Rejected("verify", `whoever wrote the criteria cannot judge them met${whoCanVerify(state, t, e.surface, human)}${PASS_ONLY_GATE}`);

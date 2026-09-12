@@ -19,7 +19,8 @@ export interface Config { url: string; token?: string; me: string }
 export const seen: { pullIdle: string | null } = { pullIdle: null };
 
 export class ClientError extends Error {
-  constructor(public status: number, public body: { error: string; rule?: string; message?: string }) {
+  // t-233：`already` 是服务端给的类别——「那件事已经发生过了」。**类别由拒绝自己带来**，客户端不许去匹配话里的字。
+  constructor(public status: number, public body: { error: string; rule?: string; message?: string; already?: { at: string | null } }) {
     super(body.message ?? body.error);
   }
 }

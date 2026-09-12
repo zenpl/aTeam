@@ -525,6 +525,7 @@ export const KEY_SYMBOLS = [
   "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
+  "PD_PLACEHOLDER",
   "PROMISE_RULE",
   "PUSH_LINES",
   "REACH_RULE",
@@ -554,6 +555,7 @@ export const KEY_SYMBOLS = [
   "ago",
   "alertContact",
   "allocationSummary",
+  "alreadyDoneNotice",
   "alsoHere",
   "applyReading",
   "badResponseLine",
@@ -1127,6 +1129,20 @@ export const PART_NAMES = {
   decideAck: (id: string) => `ack ${id}`,
   decideNote: (id: string, option: string) => `记下决定 ${id} → ${option}`,
 } as const;
+
+/**
+ * t-233 判据 1、3、6：**「那件事已经办好了」那一类的提醒。**
+ *
+ * 与另一类的差别只有两处，而两处都要紧：**不说「没有落下去」**（它落下去了，只是不是这一次），
+ * **不给「重做」**（再做一次只会再被拒一次）。已经发生的时刻印出来——人读完这一句应当能自己确认
+ * 「我不用再做了」，不必去翻日志。
+ *
+ * **措辞是占位的，定稿归 pd（队列第十四件）。** 上线前必须换成定稿；这一条写在任务判据里，也写在这里，
+ * 免得它靠谁记得。
+ */
+export const PD_PLACEHOLDER = "（措辞待定）";
+export const alreadyDoneNotice = (what: string, at: string | null, clearWith: string): string =>
+  `⚠ ${PD_PLACEHOLDER}你那次「${what}」被拒，是因为它${at ? `已经在 ${at} 办好了` : "已经办过了"}——这一次是多余的，**不用重做**。这条提醒说完就划掉；要自己划：${clearWith}`;
 
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
 
