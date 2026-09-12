@@ -187,6 +187,24 @@ describe("t-234 判据 9 · 发出主人地址，要一样任何节点手上都�
     } finally { await new Promise<void>((r) => w.app.close(() => r())); }
   });
 
+  it("判据 12 ②：**「没配口令」与「你没权限」要分得开**——不是一个长得一样的 401", async () => {
+    const locked = await freshApp();
+    const noKey = await freshApp("ops-only");
+    try {
+      const a = await ask(locked.at, {});                                  // 服务没配口令
+      const b = await ask(noKey.at, {});                                   // 配了，但请求没带
+      const c = await fetch(`${noKey.at}/owner-url`);                      // 连管理钥匙都没有
+      expect([a.status, b.status, c.status], "没权限是 401，两种「造不了」是 403").toEqual([403, 403, 401]);
+      const [am, bm] = [(await a.json() as { message: string }).message, (await b.json() as { message: string }).message];
+      expect(am, "「这扇门还没配钥匙」要说出去配什么").toContain("ATEAM_OWNER_SECRET");
+      expect(am, "而且不能与「你该带口令而没带」是同一句").not.toBe(bm);
+      expect(bm).toContain("x-owner-secret");
+    } finally {
+      await new Promise<void>((r) => locked.app.close(() => r()));
+      await new Promise<void>((r) => noKey.app.close(() => r()));
+    }
+  });
+
   it("**只有管理钥匙不够**：不带口令、带错口令，都拒；钥匙仍然没造出来", async () => {
     const w = await freshApp("ops-only");
     try {
