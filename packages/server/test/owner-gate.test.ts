@@ -219,3 +219,39 @@ describe("t-234 判据 9 · 发出主人地址，要一样任何节点手上都�
     } finally { await new Promise<void>((r) => w.app.close(() => r())); }
   });
 });
+
+/**
+ * 判据 4 的**第五扇门**，qa 18:26 在 `0dc69cc` 上量出来的：`POST /token` 拿到钥匙之后**紧接着把 `then` 那个
+ * 动作真的执行了**，而那四个动作 append 时 `actor` 写死是 `human`。原来那道闸问的是「主人到过没有」——
+ * 而 `owner_key = none` 时这个问法永远为假，于是**同一把管理钥匙在 `POST /say` 上被拒、在这一页上被放进来**，
+ * 并以人的名义落下 `ack` 与决策。
+ *
+ * qa 核过：所有把钥匙粘进这一页的用例，用的都是主人自己那把、或另一个项目的管理钥匙（测项目隔离），
+ * **没有一条是「本项目管理钥匙 ＋ `then=` ＋ `owner_key = none`」**——**这条路不是被测过之后放过的，是从来没被问过。**
+ */
+describe("t-234 判据 4 · token 小页面那第五扇门", () => {
+  const post = (at: string, fields: Record<string, string>) =>
+    fetch(`${at}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields) });
+  const humanEvents = async (st: MemoryStore) => (await st.read()).events.filter((e) => e.actor === HUMAN).length;
+
+  it("**管理钥匙经这一页点卡 ⇒ 403，日志里以人名义的事件一条不多**（这一格量出来时是 303 ＋ 两条）", async () => {
+    const st = new MemoryStore();
+    const reg = new MemoryRegistry();
+    const a = createApp({ store: st, token: ADMIN, human: HUMAN, sha: "abc1234", registry: reg, alertIntervalMs: 0, ownerSecret: TEST_OWNER_SECRET });
+    await new Promise<void>((r) => a.listen(0, "127.0.0.1", r));
+    const at = `http://127.0.0.1:${(a.address() as AddressInfo).port}`;
+    try {
+      await fetch(`${at}/events`, { method: "POST", headers: { authorization: `Bearer ${ADMIN}`, "x-actor": "pm", "content-type": "application/json" }, body: JSON.stringify({ kind: "reading", surface: "project", key: "roles", value: ["pm", "dev"] }) });
+      const card = await (await fetch(`${at}/events`, { method: "POST", headers: { authorization: `Bearer ${ADMIN}`, "x-actor": "pm", "content-type": "application/json" }, body: JSON.stringify({ kind: "instruction", to: HUMAN, body: "要不要上线？", options: ["要", "先不要"], ack_by: soon() }) })).json() as Event;
+      const board0 = await (await fetch(`${at}/board`, { headers: { authorization: `Bearer ${ADMIN}`, "x-actor": "pm" } })).json() as { owner_key: { state: string } };
+      expect(board0.owner_key.state, "这就是生产此刻的形态：主人从来没到过").toBe("none");
+      const before = await humanEvents(st);
+      expect((await post(at, { token: ADMIN, then: "/decide", id: card.id, option: "要" })).status, "替他答卡").toBe(403);
+      expect((await post(at, { token: ADMIN, then: "/say", text: "我是人，我用管理钥匙说了一句" })).status, "替他说一句").toBe(403);
+      expect((await post(at, { token: ADMIN, then: "/ack", id: card.id })).status, "替他 ack").toBe(403);
+      expect(await humanEvents(st), "以人的名义一条都没落").toBe(before);
+      // 换钥匙进门本身不受影响：不带 then 的还是进得来（管理者看得见牌桌，只是按不动他的按钮）
+      expect((await post(at, { token: ADMIN })).status).toBe(303);
+    } finally { await new Promise<void>((r) => a.close(() => r())); }
+  });
+});

@@ -386,8 +386,13 @@ export function createApp(opts: ServerOptions) {
        * 没有，一律只认他自己那把钥匙。当初怕的「一步打开会把主人锁在自己的牌桌外」有一条现成的出路，而且
        * pd 00:28 定稿的那句拒绝话里就写着它——`GET /owner-url`（持管理钥匙即可）把主人的地址原样再发一次。
        *
-       * **一处定义，四处使用**（判据 4）：API 的 `x-actor`、牌桌四个按钮、页面上按钮给不给点、以及「他看过了」
-       * 那条游标。少改一处就是把同一道门留一扇后窗——今天已经两次「改了一处、同病第二处没改」。
+       * **五处，而不是四处**（判据 4）：API 的 `x-actor`、牌桌四个按钮、页面上按钮给不给点、「他看过了」那条游标，
+       * **以及 token 小页面上的 `then=`**——它拿到钥匙之后紧接着把那个动作真的执行了，而那四个动作 append 时
+       * `actor` 写死是 `human`。
+       *
+       * **第五处是 qa 18:26 找到的，而这段注释原来写的是「一处定义，四处使用」。** 它漏掉的那一处用的是另一个
+       * 谓词（`ownerArrived()`），所以**按谓词数门，数不出用别的谓词的那扇门**；而这句自称完整的话，让「盘一遍」
+       * 这件事看起来已经做过了。要数的是**所有会以 `human` 落事件的地方**，不是所有用这个谓词的地方。
        */
       const mayActAsHuman = isOwner;
       const authed = () => isAdmin || !!record;
@@ -624,6 +629,17 @@ export function createApp(opts: ServerOptions) {
         const r0 = await registry.lookup(given);
         // t-103: the owner's own key belongs here too — it is the key their address carries, and the one this page asks for.
         if (!r0 || r0.project !== projectId || (r0.role !== null && r0.role !== human)) return html(res, 401, tokenPage(fields, true, base, pasteShape(form.get("token") ?? "")));
+        // t-234（qa 18:26 找到的**第五扇门**）：**这一页也在替人办事。** 它拿到钥匙之后紧接着就把 `then` 那个动作
+        // 真的执行了，而那四个动作 append 时 `actor` 写死是 `human`。原来这里问的是「主人到过没有」——
+        // 而 `owner_key = none` 时那个问法永远为假，于是同一把管理钥匙在 `POST /say` 上被拒、在这一页上被放进来，
+        // 并以人的名义落下 ack 与决策。**这一处不进那份「一处定义四处使用」的名单，正因为它用的是另一个谓词**：
+        // 按谓词数门，数不出用别的谓词的那扇门（qa 18:27 的话）。
+        //
+        // 所以改成与 API、与牌桌按钮同一条规则：**要替他办事，只认他自己那把钥匙**；不问他到过没有。
+        // 换钥匙进门（`then` 为空）照旧——管理钥匙进得来看，只是按不动他的按钮。
+        if (ACTIONS.has(fields.then ?? "") && r0.role !== human) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
+        // t-103 原来那道闸留着（主人到过之后，共享钥匙不再是「人」的入口）——它管的是进门，上面那条管的是办事，
+        // 两条各守一半：只留 t-103 那条，`owner_key = none` 时它永远为假；只留上面那条，主人到场后仍能拿共享钥匙换到 cookie。
         if (r0.role === null && (await ownerArrived())) return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         await registry.markUsed(given, now());
         const secure = proto === "https";
