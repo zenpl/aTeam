@@ -267,6 +267,12 @@ export const UNSEEN_MAX = 500;
 /** t-246：`--X` 与 `--X-file` 都给了时说的那一句。**两份正文里挑一份，挑错了是一句没人会核的假话。** */
 export const BOTH_BODY_AND_FILE = (base: string): string => `--${base} 与 --${base}-file 只能给一个：两份正文，工具不替你挑`;
 
+/**
+ * t-246 判据 1：`--X-file` 那一句。**工具收得下这段字，就不必再要五个人各自记住**——
+ * 今天量到的那条口头规矩的失效间隔是 45 分钟。
+ */
+export const BODY_FILE_HELP = "任何 --X 都可以写成 --X-file <路径>（--body-file、--evidence-file、--reason-file…）：文件里的字原样进去，不会再被 shell 解释一遍（反引号、$、换行都安全）";
+
 export const STORED_ECHO = 24;
 export const storedLine = (field: string, text: string): string => {
   const chars = [...text];
