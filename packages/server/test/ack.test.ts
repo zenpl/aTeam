@@ -5,16 +5,21 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, DEFER_PREFIX } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey, ownerCookie } from "./owner.js";
+
+/** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
+let OWNER = "";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
 let app: ReturnType<typeof createApp>;
 let base = "";
 const auth = { authorization: `Bearer ${TOKEN}` };
-const ack = (fields: Record<string, string>, headers: Record<string, string> = auth) =>
-  fetch(`${base}/ack`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(fields), redirect: "manual" });
+// t-234：/ack 是人点的按钮，默认走主人自己那把钥匙；显式传 headers 的那几处各说各的
+const ack = (fields: Record<string, string>, headers?: Record<string, string>) =>
+  fetch(`${base}/ack`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...(headers ?? { authorization: `Bearer ${OWNER}` }) }, body: new URLSearchParams(fields), redirect: "manual" });
 const post = async (actor: string, body: unknown) =>
-  (await fetch(`${base}/events`, { method: "POST", headers: { ...auth, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  (await fetch(`${base}/events`, { method: "POST", headers: { ...(actor === HUMAN ? { authorization: `Bearer ${OWNER}` } : auth), "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) })).json();
 const boardJson = async () => (await fetch(`${base}/board?full=1`, { headers: { ...auth, "x-actor": "qa" } })).json();
 const later = () => new Date(Date.now() + 3_600_000).toISOString();
 
@@ -22,6 +27,7 @@ beforeAll(async () => {
   app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+  OWNER = await ownerKey(base, TOKEN);
 });
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
 
@@ -50,7 +56,7 @@ describe("t-036 · POST /ack", () => {
   it("with a note: ack then a 'not now' note from the human that refs the instruction and, when named, hangs on the task", async () => {
     await post("pm", { kind: "task", op: "create", task: "t-9", title: "一键部署", criteria: ["按钮"] , no_human_impact: true});
     const i = await post("pm", { kind: "instruction", to: HUMAN, body: "部署 t-9。合并后推到 production", ack_by: later() });
-    const r = await ack({ id: i.id, note: "明天再部署" }, { ...auth, accept: "text/html" });
+    const r = await ack({ id: i.id, note: "明天再部署" }, { authorization: `Bearer ${OWNER}`, accept: "text/html" });
     expect(r.status).toBe(303);
     expect(r.headers.get("location")).toBe("/");
     const b = await boardJson();

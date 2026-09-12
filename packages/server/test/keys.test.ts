@@ -3,9 +3,13 @@
  * the key you hold, not by a line you wrote in a header. The identity that cannot be borrowed is the person's:
  * impersonating them is impersonating the final say.
  *
- * The upgrade ships with the enforcement (pm 23:53, pd 23:53), because getting this wrong locks the project's owner out
- * of their own board and there is no way back in. So: until the owner has opened their address once, the admin key may
- * still speak for them; the first time they arrive, that door closes for good.
+ * t-234（P0）改掉了这里的一半：**当初那个「主人还没到过时管理钥匙可以代他说话」的升级窗口，从来没有关过。**
+ * 本项目五天 `owner_key.state` 一直是 `none`，于是这道闸一次都没开始工作——qa 17:05 拿环境里那把 token 把
+ * `x-actor` 换成 `human`，`GET /board` 回 200 并带着只给管理者的 `invite_url`。**「有一道闸」不等于「这道闸
+ * 此刻是合上的」。** 现在是未配置就锁上：不看主人到过没有，一律只认他自己那把钥匙。
+ *
+ * 当初怕的「一步打开会把主人锁在自己的牌桌外」有一条现成的出路，而且 pd 00:28 定稿的那句拒绝话里就写着它：
+ * `GET /owner-url`（持管理钥匙即可）把主人的地址原样再发一次——钥匙是算出来的，所以是同一个地址。
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
@@ -60,22 +64,40 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect((await post(nodeKey, SERVICE_ACTOR, note("我也是"))).status).toBe(403);
   });
 
-  it("the upgrade: before the owner has arrived the shared key may still speak for them, and the board says so", async () => {
+  it("t-234：**主人还没到过时，共享钥匙也不能代他说话**——未配置就锁上，不是未配置就放行", async () => {
     expect(await board("ak_shared")).toMatchObject({ owner_key: { state: "none" } });   // 没人拿到过地址
-    expect((await post("ak_shared", HUMAN, note("升级前，人还进不来，共享钥匙代签"))).status).toBe(201);
-    // 一个持管理钥匙的节点把地址要出来发给人：状态变成「已发未用」
+    // 这一行在 t-234 之前是 201。那正是 qa 17:05 量到的洞：这道闸要等主人到过才开始工作，而他从没到过。
+    const early = await post("ak_shared", HUMAN, note("主人还没来，我替他说一句"));
+    expect(early.status, "未配置就锁上").toBe(403);
+    expect(early.body.rule).toBe("owner-key");
+    expect(early.body.message).toBe(OWNER_ONLY);
+    // 判据 3：读这一侧同样收紧——只给管理者的 invite_url 不会顺着「我说我是 human」这条路出去
+    const asHuman = await fetch(`${base}/board`, { headers: { authorization: "Bearer ak_shared", "x-actor": HUMAN } });
+    expect(asHuman.status, "qa 17:05 量到的就是这一个 200").toBe(403);
+    expect(JSON.stringify(await asHuman.json())).not.toContain("invite_url");
+    // 而人进不来这件事有出路，就在那句拒绝话里：持管理钥匙的节点把地址要出来发给他
     const issued = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared" } })).json() as { board_url: string; say: string; state: string };
     expect(issued.state).toBe("issued");
     expect(issued.say).toContain("牌桌在这里：");
     expect(await board("ak_shared")).toMatchObject({ owner_key: { state: "issued" } });
-    expect((await post("ak_shared", HUMAN, note("还没打开过，仍然代签得了"))).status).toBe(201);
+    expect((await post("ak_shared", HUMAN, note("发出去了也还是不能代签"))).status, "「已发未用」也不放行").toBe(403);
     // 要第二次也是同一个地址：钥匙是算出来的，不是存下来的
     const again = await (await fetch(`${base}/owner-url`, { headers: { authorization: "Bearer ak_shared" } })).json() as { board_url: string };
     expect(again.board_url).toBe(issued.board_url);
-    // 人打开了自己的地址：升级完成
+    // 人打开了自己的地址
     const opened = await fetch(issued.board_url, { headers: { accept: "text/html" }, redirect: "manual" });
     expect(opened.status).toBe(303);
     expect(await board("ak_shared")).toMatchObject({ owner_key: { state: "in_use" } });
+  });
+
+  it("t-234 判据 4 的第四处：**管理钥匙打开牌桌，不算「他看过了」**", async () => {
+    const p = await fresh("已读项目");
+    const readUpto = async () => ((await (await fetch(`${p.base}/board?full=1`, { headers: { authorization: `Bearer ${p.adminKey}`, "x-actor": "pm" } })).json() as { presence: { actor: string; last_pull: string | null }[] }).presence.find((x) => x.actor === HUMAN)?.last_pull) ?? null;
+    await fetch(`${p.base}/?token=${encodeURIComponent(p.adminKey)}`, { headers: { accept: "text/html" }, redirect: "manual" });
+    expect(await readUpto(), "管理钥匙看一眼，不替他标已读").toBeNull();
+    await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });
+    await fetch(`${p.base}/`, { headers: { accept: "text/html", cookie: `${p.cookie}=${encodeURIComponent(p.ownerKey)}` } });
+    expect(await readUpto(), "他自己打开，才算他看过").not.toBeNull();
   });
 
   it("once the owner has arrived, no other key speaks as them — and the refusal is pd 00:29 的定稿", async () => {
@@ -129,9 +151,9 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     const press = (key: string, action: string, body: Record<string, string>) =>
       // 照浏览器真正发的样子：带 cookie、表单编码、accept: text/html，成功后 303 回牌桌
       fetch(`${p.base}${action}`, { method: "POST", headers: { cookie: `${p.cookie}=${encodeURIComponent(key)}`, "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams(body), redirect: "manual" });
-    // 升级窗口内：管理钥匙还能代点（人还没来过），主人自己的钥匙当然也能
-    expect((await press(p.adminKey, "/say", { text: "升级前，管理钥匙代说" })).status).toBe(303);
-    // 人打开自己的地址，升级完成
+    // t-234：**人还没来过的时候，管理钥匙也按不动**——这一行在 t-234 之前是 303
+    expect((await press(p.adminKey, "/say", { text: "人还没来，我替他说" })).status, "未配置就锁上").toBe(403);
+    // 人打开自己的地址
     await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });
     // 现在：主人自己的钥匙按得动
     expect((await press(p.ownerKey, "/say", { text: "我自己说的" })).status).toBe(303);

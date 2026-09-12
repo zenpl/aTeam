@@ -9,6 +9,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, DECLINE_PREFIX, type EventStore, type LogMark, type OwedNow } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey, ownerCookie } from "./owner.js";
+
+/** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
+let OWNER = "";
 
 const TOKEN = "tok";
 const HUMAN = "human";
@@ -27,12 +31,12 @@ describe("t-147 判据 6 · 拉取时把「你欠什么」一起给出来", () =
   const counter = counting(store);
   let app: ReturnType<typeof createApp>, base = "";
   const post = async (actor: string, body: unknown) => {
-    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
     return { status: r.status, body: await r.json() as { id: string } };
   };
   const sync = async (actor: string, after: string | null) => {
     const q = after ? `?after=${encodeURIComponent(after)}` : "";
-    const r = await fetch(`${base}/events${q}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor } });
+    const r = await fetch(`${base}/events${q}`, { headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor } });
     return await r.json() as { events: unknown[]; cursor: string | null; owed: OwedNow };
   };
   const soon = () => new Date(Date.now() + 15 * 60_000).toISOString();
@@ -41,6 +45,7 @@ describe("t-147 判据 6 · 拉取时把「你欠什么」一起给出来", () =
     app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0 });
     await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+  OWNER = await ownerKey(base, TOKEN);
     await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
   });
   afterAll(() => new Promise<void>((r) => app.close(() => r())));
@@ -96,9 +101,11 @@ describe("t-147 · 升级只发生在期限之后，而且只对「没读到」�
   const store = new MemoryStore();
   let app: ReturnType<typeof createApp>, base = "";
   const post = async (actor: string, body: unknown) =>
-    (await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) })).json() as Promise<{ id: string }>;
+    (await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) })).json() as Promise<{ id: string }>;
   const cards = async () => {
-    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": HUMAN } })).json() as { needs_human: { from: string; body: string }[] };
+    // t-234：牌桌的内容与问的人是谁无关（只有 invite_url 看钥匙），而以 human 的身份读现在要主人自己那把钥匙。
+    // 这里问的是「人的牌桌上有几张卡」，用 pm 的身份问同一份，不必借人的身份。
+    const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "pm" } })).json() as { needs_human: { from: string; body: string }[] };
     return b.needs_human.filter((n) => n.from === "ateam").map((n) => n.body);
   };
 

@@ -5,6 +5,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey } from "./owner.js";
+
+/**
+ * t-234：人说话用他自己那把钥匙。**要在用到的那一刻才去问**：`/owner-url` 会顺手往日志里写一条 `entry.form`
+ * 事实（它该写），而这一份里有几条用例数的正是「日志多了几条」。
+ */
 
 let app: ReturnType<typeof createApp>;
 let base = "";
@@ -85,7 +91,7 @@ describe("t-092 · the check card over the API", () => {
     expect(facts).toBeGreaterThan(0);
     expect(card.options).toEqual(["对", "有漏"]);
     // answering it sends the importer one instruction
-    const r = await fetch(`${base}/decide`, { method: "POST", headers: { authorization: "Bearer k", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
+    const r = await fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${await ownerKey(base, "k")}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
     expect(r.status).toBe(201);
     const events = await log() as unknown as { kind: string; to?: string; body?: string }[];
     const told = events.filter((e) => e.kind === "instruction" && e.to === "pm" && e.body?.startsWith("human 说清单对"));
@@ -130,7 +136,7 @@ describe("t-098 · over the API, 迁移完成 waits for the human", () => {
     const b = await (await fetch(`${base}/board?full=1`, { headers: { authorization: "Bearer k2", "x-actor": "qa", "x-ateam-client": "2" } })).json();
     const card = b.needs_human.find((x: { body: string }) => x.body.startsWith("搬过来了，对吗？"));
     expect((await fact()).status).toBe(409); // a card the human has not answered is not permission
-    await fetch(`${base}/decide`, { method: "POST", headers: { authorization: "Bearer k2", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
+    await fetch(`${at}/decide`, { method: "POST", headers: { authorization: `Bearer ${await ownerKey(at, "k2")}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id: card.id, option: "对" }) });
     expect((await fact()).status).toBe(201);
     await new Promise<void>((r) => own.close(() => r()));
   });

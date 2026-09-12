@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../src/app.js";
+import { ownerKey } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
 import { CONTACT_ASK } from "@ateam/core";
 
@@ -76,7 +77,7 @@ describe("t-042 · POST /invite/<code>/join", () => {
     const other = await newProject("别的");
     expect((await api(other.project, "/board", a.body.node_key, "pm")).status).toBe(403);
     // only the admin sees the invite link on the board
-    expect((await j(await api(p.project, "/board", p.admin_key, "human"))).body.invite_url).toBe(p.invite_url);
+    expect((await j(await api(p.project, "/board", p.admin_key, "pm"))).body.invite_url).toBe(p.invite_url);
     expect(b.invite_url).toBeUndefined();
   });
 
@@ -110,12 +111,12 @@ describe("t-048 · undelivered instructions become the same card, not a second o
     // (pending: qa never pulled). The service card exists because of overdue (t-042); undelivered needs 5 minutes of age.
     const past = new Date(Date.now() - 1000).toISOString();
     await api(p.project, "/events", pm.body.node_key, "pm", { method: "POST", body: JSON.stringify({ kind: "instruction", to: "qa", body: "验一下", ack_by: past }) });
-    let b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    let b = (await j(await api(p.project, "/board", p.admin_key, "pm"))).body;
     expect(b.undelivered).toEqual([]); // too young to count as undelivered
     const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
     expect(cards).toHaveLength(1);
     expect(cards[0].body).toBe("qa 从没读过日志，1 条没送到。起一个 qa？"); // t-139: never pulled, so no duration is invented
-    b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    b = (await j(await api(p.project, "/board", p.admin_key, "pm"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1);
     expect(b.presence.find((x: { actor: string }) => x.actor === "qa")).toMatchObject({ status: "missing", listening: false });
   });
@@ -128,16 +129,16 @@ describe("t-042 · a quiet role with work in its hands becomes a card for the hu
     const past = new Date(Date.now() - 1000).toISOString();
     await api(p.project, "/events", pm.body.node_key, "pm", { method: "POST", body: JSON.stringify({ kind: "instruction", to: "dev", body: "修登录", ack_by: past }) });
     await api(p.project, "/events", pm.body.node_key, "pm", { method: "POST", body: JSON.stringify({ kind: "instruction", to: "dev", body: "修注册", ack_by: past }) });
-    let b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    let b = (await j(await api(p.project, "/board", p.admin_key, "pm"))).body;
     const cards = b.needs_human.filter((n: { from: string }) => n.from === "ateam");
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({ kind: "do", body: "dev 从没读过日志，2 条没送到。起一个 dev？", title: "dev 从没读过日志，2 条没送到" });
-    b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    b = (await j(await api(p.project, "/board", p.admin_key, "pm"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(1); // not twice
     // dev joins and pulls: the role is back, the card is no longer true
     const dev = await join(code(p.invite_url), { agent_id: "dev-1", role: "dev" });
     await api(p.project, "/events?after=", dev.body.node_key, "dev");
-    b = (await j(await api(p.project, "/board", p.admin_key, "human"))).body;
+    b = (await j(await api(p.project, "/board", p.admin_key, "pm"))).body;
     expect(b.needs_human.filter((n: { from: string }) => n.from === "ateam")).toHaveLength(0);
     expect(b.instructions.find((i: { from: string }) => i.from === "ateam").status).not.toBe("acked");
     expect(b.presence.find((x: { actor: string }) => x.actor === "dev")).toMatchObject({ role: "dev", present: true });

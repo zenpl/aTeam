@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryStore } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey } from "./owner.js";
 import { SqliteDb, SqliteStore, SqliteRegistry } from "../src/sqlite-store.js";
 import { MemoryRegistry, hashKey } from "../src/projects.js";
 
@@ -88,9 +89,11 @@ describe("t-041 · isolation", () => {
     expect((await api(`/p/${a.project}/board`, nodeKey, "dev")).status).toBe(200);
     expect((await j(await api(`/p/${a.project}/board`, nodeKey, "pm"))).status).toBe(403);
     expect((await api(`/p/${b.project}/board`, nodeKey, "dev")).status).toBe(403);
-    // a node key does not open the human's buttons; the admin key does
-    expect((await fetch(`${base}/p/${a.project}/say`, { method: "POST", headers: { authorization: `Bearer ${nodeKey}`, "content-type": "application/x-www-form-urlencoded" }, body: "text=hi" })).status).toBe(401);
-    expect((await fetch(`${base}/p/${a.project}/say`, { method: "POST", headers: { authorization: `Bearer ${a.admin_key}`, "content-type": "application/x-www-form-urlencoded" }, body: "text=你好" })).status).toBe(201);
+    // t-234：人的按钮只有人自己那把钥匙按得动——节点钥匙不行，**管理钥匙也不行**（这一行原来是 201）
+    const say = (key: string, text: string) => fetch(`${base}/p/${a.project}/say`, { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ text }) });
+    expect((await say(nodeKey, "hi")).status).toBe(401);
+    expect((await say(a.admin_key, "替他说")).status, "未配置就锁上").toBe(403);
+    expect((await say(await ownerKey(`${base}/p/${a.project}`, a.admin_key), "你好")).status).toBe(201);
   });
 
   it("the board page of a project posts its forms under its own prefix, and ?token= sets a cookie for that project only", async () => {
@@ -98,7 +101,8 @@ describe("t-041 · isolation", () => {
     // anonymous: the board v2 sends every button through the project's token page, carrying the action (t-034)
     const page = await (await fetch(`${base}/p/${a.project}/`, { headers: { accept: "text/html" } })).text();
     expect(page).toContain(`action="/p/${a.project}/token"><input type="hidden" name="then" value="/ack">`);
-    const login = await fetch(`${base}/p/${a.project}/?token=${a.admin_key}`, { redirect: "manual" });
+    const k = await ownerKey(`${base}/p/${a.project}`, a.admin_key);
+    const login = await fetch(`${base}/p/${a.project}/?k=${encodeURIComponent(k)}`, { redirect: "manual" });
     expect(login.status).toBe(303);
     expect(login.headers.get("location")).toBe(`/p/${a.project}/`);
     const cookie = login.headers.get("set-cookie")!;
@@ -107,7 +111,7 @@ describe("t-041 · isolation", () => {
     const inside = await (await fetch(`${base}/p/${a.project}/`, { headers: { accept: "text/html", cookie: cookie.split(";")[0] } })).text();
     expect(inside).toContain(`action="/p/${a.project}/ack"`);
     // the token page of the project validates the project's own admin key, sets its cookie, runs the action, returns under the prefix
-    const gate = await fetch(`${base}/p/${a.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "从项目页说的", token: a.admin_key }).toString() });
+    const gate = await fetch(`${base}/p/${a.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "从项目页说的", token: k }).toString() });
     expect(gate.status).toBe(303);
     expect(gate.headers.get("location")).toBe(`/p/${a.project}/`);
     expect(gate.headers.get("set-cookie")!.startsWith(`ateam_token_${a.project}=`)).toBe(true);

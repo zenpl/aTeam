@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, append, countRefusals } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerCookie } from "./owner.js";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -24,7 +25,8 @@ beforeAll(async () => {
   app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
-  cookie = ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+  // t-234：按钮是人点的，所以这里拿的是**主人自己那把钥匙**的 cookie，不再借管理钥匙
+  cookie = await ownerCookie(base, TOKEN);
   await append(store, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "qa"] }, { human: HUMAN });
   const e = await append(store, { kind: "instruction", actor: "pm", to: HUMAN, body: "选一个", options: ["A", "B"], ack_by: new Date(Date.now() + 3_600_000).toISOString() }, { human: HUMAN });
   card = e.id;

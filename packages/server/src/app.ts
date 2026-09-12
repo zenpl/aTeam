@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -233,7 +233,10 @@ export function createApp(opts: ServerOptions) {
       const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost").split(",")[0].trim();
       const origin = `${proto}://${host}`;
       lastOrigin = origin;
-      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token");
+      // t-234：`k=` 与 `token=` 一样算「要进牌桌」。在此之前只认 `token=`，于是**主人自己那把钥匙的地址**
+      // 用浏览器以外的任何东西打开（curl、一个 agent 替他核一次）都不会换到 cookie，只拿回一份 welcome。
+      // 浏览器带着 accept: text/html 所以人自己感觉不到；而这条路正是判据 7 要说清的「主人怎么确立」。
+      const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token") || url.searchParams.has("k");
 
       if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
 
@@ -313,11 +316,16 @@ export function createApp(opts: ServerOptions) {
             const nodes = await registry.nodes(owner.id);
             const mine = nodes.find((n) => n.agent_id === agentId);
             let role = mine?.role ?? (typeof body.role === "string" ? body.role.trim() : "");
+            // t-234 判据 4：**人的身份不是一个可以加入的角色。** 名单是任何一个节点都写得动的一条事实，
+            // 所以「role 等于 human」这件事不能由名单说了算——否则判定「是不是他」的依据就可以被别人写。
+            if (role === human) return { status: 409, body: { error: "role", rule: "owner-key", message: joinNotAsHuman(human), available: roles.filter((r) => r !== human) } };
             if (role && !roles.includes(role)) return { status: 409, body: { error: "role", message: `${role} 不是这个项目的角色`, available: roles } };
             const first = nodes.length === 0;
             if (!role) {
               // the first node is pm (Q15); after that, the first role nobody present holds
-              role = first && roles.includes("pm") ? "pm" : roles.find((r) => isMissing(state, r, now())) ?? "";
+              // 自动分配也不许分到人身上（判据 4：不许只堵显式指定那一半）
+              const assignable = roles.filter((r) => r !== human);
+              role = first && assignable.includes("pm") ? "pm" : assignable.find((r) => isMissing(state, r, now())) ?? "";
               if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
             }
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
@@ -359,6 +367,23 @@ export function createApp(opts: ServerOptions) {
       if (record && record.project !== projectId) return json(res, 403, { error: "forbidden", message: "这把钥匙属于另一个项目" });
       const isAdmin = !!record && record.role === null;
       const isOwner = !!record && record.role === human;
+      /**
+       * t-234（P0）：**谁可以以主人的身份说话——只有主人自己那把钥匙。**
+       *
+       * 在此之前这是一个「借用窗口」：主人还没到过时，管理钥匙可以代他说话（下面 `ownerArrived` 那段注释写着
+       * 为什么）。**而那个窗口从来没有关过**：本项目五天里 `owner_key.state` 一直是 `none`，主人从没到过，
+       * 于是这道闸一次都没开始工作。qa 17:05 拿环境里的 token 把 `x-actor` 换成 `human`，`GET /board` 回 200、
+       * 带着只给管理者的 `invite_url`——**任何持这把钥匙的节点都能以人的名义点掉他的卡**，而他手上此刻正挂着
+       * 一张带选项的（「放行整合分支快进」）。
+       *
+       * **这是第二十五面：「有一道闸」不等于「这道闸此刻是合上的」。** 所以改成未配置就锁上：不看主人到过
+       * 没有，一律只认他自己那把钥匙。当初怕的「一步打开会把主人锁在自己的牌桌外」有一条现成的出路，而且
+       * pd 00:28 定稿的那句拒绝话里就写着它——`GET /owner-url`（持管理钥匙即可）把主人的地址原样再发一次。
+       *
+       * **一处定义，四处使用**（判据 4）：API 的 `x-actor`、牌桌四个按钮、页面上按钮给不给点、以及「他看过了」
+       * 那条游标。少改一处就是把同一道门留一扇后窗——今天已经两次「改了一处、同病第二处没改」。
+       */
+      const mayActAsHuman = isOwner;
       const authed = () => isAdmin || !!record;
       if (presented && record) await registry.markUsed(presented, now());   // t-103: first use is what flips this project
       /**
@@ -433,7 +458,10 @@ export function createApp(opts: ServerOptions) {
         //
         // **`last_event_id` 要原样带上**：这一行是 upsert，写 null 会把他读到哪儿抹掉，于是发给他的每一条都
         // 变回「还没读到」，t-050 那套「人很久没答」的外呼就会照着一个假前提去叫人。这里只动时间，不动位置。
-        if (isAdmin || isOwner) {
+        // t-234 判据 4 的第四处：**这一行是替他写「他看过了」。** qa 17:07 点名的正是这一半——一个假的「已答」
+        // 很显眼，一个假的「已读」不显眼，它只是让一条本该还挂着的东西安静地消失（它自己 03:36 造过一次）。
+        // 所以这里也只认主人自己那把钥匙：管理钥匙打开牌桌，不算他看过。
+        if (mayActAsHuman) {
           const before = await stateFor(projectId, store);
           await store.setCursor({ actor: human, last_event_id: before.read_upto.get(human) ?? null, at: real().toISOString() });
         }
@@ -442,7 +470,7 @@ export function createApp(opts: ServerOptions) {
         const b = board(state, human, now());
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
-        return html(res, 200, renderBoard(b, state, { sha, canDecide: isAdmin || isOwner, human, base, ask: url.searchParams.get("ask") }));
+        return html(res, 200, renderBoard(b, state, { sha, canDecide: mayActAsHuman, human, base, ask: url.searchParams.get("ask") }));
       }
 
       // t-133: the detail page behind the 线上 row. Same rules as the board and a task page: public unless private.
@@ -554,13 +582,12 @@ export function createApp(opts: ServerOptions) {
 
       /**
        * t-103 (qa 01:05): these four write as `human`, so the same rule governs them as governs POST /events — the page
-       * is not a second door with older locks. The owner's own key presses their own buttons; the shared key may still
-       * do it during the upgrade window, and not one moment after the owner has arrived.
+       * is not a second door with older locks. t-234 closed the upgrade window that used to let the shared key press
+       * them: only the owner's own key does, whether or not they have ever arrived.
        */
-      const mayActAsHuman = async () => isOwner || (isAdmin && !(await ownerArrived()));
       if (req.method === "POST" && ACTIONS.has(path)) {
         const body = await readText(req);
-        if (!(await mayActAsHuman())) {
+        if (!mayActAsHuman) {
           // qa 01:08 ④: a button is always pressable (docs/board.md). Nobody signed in — a cookie that ran out, a page
           // left open — is not a dead end: it is the moment to ask for the address, then do the thing they pressed.
           if (!isAdmin && !isOwner) {
@@ -606,7 +633,9 @@ export function createApp(opts: ServerOptions) {
       // t-103: the service's own identity is never lent out, and the owner's is lent only until they first arrive.
       if (actor === SERVICE_ACTOR && record.role !== SERVICE_ACTOR)
         return json(res, 403, { error: "forbidden", message: `${SERVICE_ACTOR} 是服务自己的身份，任何钥匙都不能以它说话。要服务替你说一句，就让它自己触发（例如发一张卡）` });
-      if (actor === human && !isOwner && await ownerArrived())
+      // t-234：不再问「主人到过没有」。**未配置就锁上**：不是他自己那把钥匙，就不能以他的身份说话——
+      // 读也不行，`invite_url` 这类只给管理者的字段因此也不会顺着这条路出去（判据 3）。
+      if (actor === human && !mayActAsHuman)
         return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
 
       // t-137: the two ways of not listening are not one thing. A node can already tell that its own watch died

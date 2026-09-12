@@ -10,6 +10,10 @@ import type { AddressInfo } from "node:net";
 import { MemoryStore, DEFER_PREFIX, slimBoard, type Board } from "@ateam/core";
 import { UI } from "../src/i18n.js";
 import { createApp } from "../src/app.js";
+import { ownerKey, ownerCookie } from "./owner.js";
+
+/** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
+let OWNER = "";
 import { readFileSync } from "node:fs";
 
 const TOKEN = "secret-token";
@@ -19,14 +23,15 @@ function server() {
   const app = createApp({ store: new MemoryStore(), token: TOKEN, human: HUMAN, sha: "abc1234" });
   let base = "";
   const post = async (actor: string, body: unknown) => {
-    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json() as { id: string };
     if (r.status !== 201) throw new Error(`append ${r.status}: ${JSON.stringify(j)}`);
     return j;
   };
   const page = async () => (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
   const board = async () => await (await fetch(`${base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa" } })).json() as Board;
-  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`; };
+  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+  OWNER = await ownerKey(base, TOKEN); };
   return { post, page, board, start, stop: () => new Promise<void>((r) => app.close(() => r())) };
 }
 

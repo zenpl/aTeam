@@ -564,6 +564,7 @@ export const KEY_SYMBOLS = [
   "injectNoFile",
   "injectNoSite",
   "injectNotGit",
+  "joinNotAsHuman",
   "judgeSeam",
   "lightSeamLine",
   "manual",
@@ -1088,6 +1089,17 @@ export const PART_NAMES = {
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
 
 /** t-228 判据 3：退出码口径。全成功 0；**部分成功单独一个值，不复用 2**；全失败 2。3 已被「坏响应」占着（t-225）。 */
+/**
+ * t-234 判据 4 的第五扇门：**加入这条路不许发出一把「人」的钥匙。**
+ *
+ * 服务判「你是不是主人」，靠的是你那把钥匙的 role 等于 `human`。而加入时分到哪个角色，是照事实
+ * `project:roles` 来的——**那份名单任何一个节点都写得动**。于是：写一条把 `human` 塞进名单的事实，
+ * 再照它加入一次，拿到的就是一把 role 恰好是主人的钥匙。**判定「是不是他」的依据，可以被别人写。**
+ * 这与那道只在 `ownerArrived()` 之后才生效的闸是同一个病，所以在同一件里一起堵上。
+ */
+export const joinNotAsHuman = (human: string): string =>
+  `${human} 是人自己的身份，不是这个项目的一个角色，加入拿不到它：以他的名义说话，只有他自己那把钥匙做得到，而那把钥匙在牌桌地址里带着。`;
+
 export const EXIT_PARTIAL = 4;
 export const exitCodeLine = `退出码：0 全部成功；${EXIT_PARTIAL} 部分成功（前面每一行会说清哪一件成了、哪一件没成）；2 全部失败；3 服务回了一个读不出的正文。`;
 

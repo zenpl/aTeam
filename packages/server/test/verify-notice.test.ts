@@ -6,6 +6,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, pull, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, type Board, type Event, type State } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey, ownerCookie } from "./owner.js";
+
+/** t-234：人说话用他自己那把钥匙；管理钥匙不再代他说话。 */
+let OWNER = "";
 import { followUps } from "@ateam/core";
 
 const TOKEN = "secret-token";
@@ -15,11 +19,11 @@ let app: ReturnType<typeof createApp>;
 let base = "";
 
 const post = async (actor: string, body: unknown) => {
-  const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
   return { status: r.status, body: await r.json() };
 };
 const decide = (id: string, option: string) =>
-  fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id, option }) });
+  fetch(`${base}/decide`, { method: "POST", headers: { authorization: `Bearer ${OWNER}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id, option }) });
 const state = async (now = new Date()) => reduce(await store.read(), now);
 // t-147: a fail notice carries no options, so it is never in `overdue` — what it is, is owed by its owner until
 // somebody acts on it. That pile is `overdue_by_presence`.
@@ -34,6 +38,7 @@ beforeAll(async () => {
   app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234" });
   await new Promise<void>((r) => app.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+  OWNER = await ownerKey(base, TOKEN);
 });
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
 

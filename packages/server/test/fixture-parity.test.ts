@@ -7,6 +7,13 @@ import { describe, it, expect, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, sampleBuilder, board, reduce, type Event } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { MemoryRegistry } from "../src/projects.js";
+
+/**
+ * t-234：人说话用他自己那把钥匙。这里**不走 `/owner-url`**，直接问登记处要——那条 HTTP 路会顺手往日志里
+ * 写一条 `entry.form` 事实（它该写），而本件比的正是「两份日志逐条相同」，多一条就不是同一件事了。
+ */
+let OWNER = "";
 
 const TOKEN = "secret-token";
 const HUMAN = "human";
@@ -18,10 +25,12 @@ describe("t-062 · built log ≡ served log", () => {
     const b = await sampleBuilder({ start: Date.now() - 3 * 3600_000 });
     let t = Date.now();
     const store = new MemoryStore();
-    app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0, clock: () => new Date(t) });
+    const registry = new MemoryRegistry();
+    app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", alertIntervalMs: 0, clock: () => new Date(t), registry });
     await new Promise<void>((r) => app!.listen(0, "127.0.0.1", r));
     const base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
-    const hdr = (actor: string) => ({ authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" });
+    OWNER = (await registry.ownerKey("ateam", HUMAN)).key;
+    const hdr = (actor: string) => ({ authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" });
     const idMap = new Map<string, string>();
     const mapIds = (v: unknown): unknown => JSON.parse(JSON.stringify(v), (_k, x) => (typeof x === "string" && idMap.has(x) ? idMap.get(x) : x));
     const cursors = new Map<string, string | null>();
@@ -57,7 +66,8 @@ describe("t-062 · built log ≡ served log", () => {
     expect(typeof served.invite_url).toBe("string");
     delete served.invite_url;
     // t-103: whether this board has an owner who can speak for themselves lives with the keys, not in the log
-    expect(served.owner_key).toEqual({ state: "none" });
+    // t-234：人自己那把钥匙这一局里确实存在、也确实被用过（人说过话），所以这里是 in_use 而不是 none
+    expect(served.owner_key.state).toBe("in_use");
     delete served.owner_key;
     expect(served).toEqual(built);
     // and the raw logs agree too: deliveries and cursors included

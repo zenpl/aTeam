@@ -7,6 +7,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKeyOf } from "./owner.js";
+import { MemoryRegistry } from "../src/projects.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
 const TOKEN = "secret-token";
@@ -15,10 +17,14 @@ const soon = () => new Date(Date.now() + 3_600_000).toISOString();
 
 function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
   const store = opts.store ?? new MemoryStore();
-  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", ...opts });
+  // t-234：人说话、人点按钮，用的都是他自己那把钥匙——管理钥匙不再代他说话。钥匙从登记处直接要，
+  // 不走 /owner-url：那条路会顺手往日志里写一条 entry.form 事实，而这一份里有几条用例数的正是日志本身。
+  const registry = (opts.registry as MemoryRegistry | undefined) ?? new MemoryRegistry();
+  let OWNER = "";
+  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", ...opts, registry });
   let base = "";
   const post = async (actor: string, body: unknown) => {
-    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
     if (r.status !== 201) throw new Error(`append ${r.status}: ${JSON.stringify(j)}`);
     return j;
@@ -26,15 +32,17 @@ function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
   // t-040: GET / is the board only for a browser (Accept: text/html); anything else gets the newcomer's manual.
   const api = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", accept: "text/html,application/json", ...headers }, redirect: "manual" });
   const page = async (headers: Record<string, string> = {}) => (await fetch(`${base}/`, { headers: { accept: "text/html", ...headers } })).text();
-  const authedPage = () => page({ authorization: `Bearer ${TOKEN}` });
-  const cookie = async () => ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+  /** 「人自己打开牌桌」这件事，用他自己那把钥匙（t-234） */
+  const authedPage = () => page({ authorization: `Bearer ${OWNER}` });
+  const cookie = async () => `${opts.defaultProject ? `ateam_token_${opts.defaultProject}` : "ateam_token"}=${encodeURIComponent(OWNER)}`;
   const form = (path: string, fields: Record<string, string>, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(fields).toString() });
-  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`; };
+  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    OWNER = await ownerKeyOf(registry, opts.defaultProject ?? "ateam", HUMAN); };
   const stop = () => new Promise<void>((r) => app.close(() => r()));
   // t-134: some facts are the service's own and no key may speak as it, so a test that needs one writes it the way the
   // service does — from inside, not over HTTP.
-  return { get base() { return base; }, store, post, api, page, authedPage, cookie, form, start, stop };
+  return { get base() { return base; }, store, post, api, page, authedPage, cookie, form, start, stop, get owner() { return OWNER; } };
 }
 
 /** Visible text above the fold (before the 其余 toggle), tags and style stripped. */
@@ -214,7 +222,8 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(wrongText).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");
     expect(wrong.headers.get("set-cookie")).toBeNull();
 
-    const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: TOKEN });
+    // t-234：token 小页面收的是**人自己那条地址上的钥匙**；管理钥匙进得来牌桌，但按不动他的按钮
+    const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: w.owner });
     expect(right.status).toBe(303);
     expect(right.headers.get("location")).toBe("/");
     const cookie = right.headers.get("set-cookie") ?? "";
@@ -917,7 +926,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: v.owner })).status).toBe(303);
       expect((await v.page({ cookie })).includes("记下了外呼地址，还没真发成功过——不知道你收不收得到。")).toBe(true);
     } finally { await v.stop(); }
   });

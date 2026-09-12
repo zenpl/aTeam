@@ -6,6 +6,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { CONTACT_FILL, CONTACT_OPTIONS, MemoryStore, CONTACT_ASK, type Event } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKey } from "./owner.js";
 
 let app: ReturnType<typeof createApp>;
 let base = "";
@@ -14,8 +15,11 @@ const newProject = async (name: string) => (await j(await fetch(`${base}/project
 const join = async (inviteUrl: string, agent: string) => (await j(await fetch(`${base}/invite/${inviteUrl.split("/").pop()}/join`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: agent }) }))).body;
 const api = (project: string, path: string, key: string, init: RequestInit = {}) =>
   fetch(`${base}/p/${project}${path}`, { ...init, headers: { authorization: `Bearer ${key}`, "x-actor": "pm", "content-type": "application/json", ...(init.headers ?? {}) } });
-const decide = (project: string, admin: string, id: string, option: string, value?: string) =>
-  fetch(`${base}/p/${project}/decide`, { method: "POST", headers: { authorization: `Bearer ${admin}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id, option, ...(value !== undefined ? { value } : {}) }) });
+// t-234：点卡是人点的，所以先用这个项目的管理钥匙问出**它自己的主人钥匙**，再用那把点
+const decide = async (project: string, admin: string, id: string, option: string, value?: string) => {
+  const k = await ownerKey(`${base}/p/${project}`, admin);
+  return fetch(`${base}/p/${project}/decide`, { method: "POST", headers: { authorization: `Bearer ${k}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ id, option, ...(value !== undefined ? { value } : {}) }) });
+};
 const cards = async (project: string, key: string) => ((await (await api(project, "/board", key)).json()).needs_human as { id: string; body: string; options?: string[] }[]);
 
 beforeAll(async () => {
