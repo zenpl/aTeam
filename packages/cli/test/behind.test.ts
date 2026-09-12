@@ -133,3 +133,37 @@ describe("t-211 · 与生产同版的树，一个字都不说", () => {
     expect((await run([JUNK[0], ...REAL], { head: () => "a2", has })).join("\n")).toContain("比生产旧");
   });
 });
+
+/**
+ * t-230 判据 3、4：**服务自报在跑哪一版，胜过名单的尾巴。**
+ *
+ * 名单是从日志里的读数算出来的，而读数写得错（human 09-06 那 19 秒）。一个**形状合法、git 里却不存在**的
+ * sha 落在最新处时，「名单尾巴是个错字」与「我真落后一次」在 `has` 这一个问句下长得一模一样——这正是我
+ * 16:26 在 t-211 上点名、自己当时没修的那处残留。而拉取的回包里本来就带着服务自报的 sha（t-211 加的）。
+ */
+describe("t-230 · 名单尾巴写错时，别把账算到我的树上", () => {
+  const REAL = ["a1", "a2", "a3"];
+  const has = (s: string) => REAL.includes(s);
+
+  it("尾巴是个查无此物的 sha，而我含着服务自报在跑的那一版 ⇒ 0（旧口径会说 1）", () => {
+    const withTypo = [...REAL, "deadbeefdeadbeef"];
+    expect(behindDeploys("a3", withTypo, has), "旧口径：尾巴我没有 ⇒ 1").toBe(1);
+    expect(behindDeploys("a3", withTypo, has, "a3"), "服务说它在跑 a3，而我有 a3 ⇒ 我不落后").toBe(0);
+  });
+
+  it("**与生产逐字同版的树必须被告知「不旧」**——这是这件事的全部意义", () => {
+    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], has, "a3")).toBe(0);
+  });
+
+  it("我真落后时，服务自报的那一版我没有 ⇒ 照旧数得出来（这道闸没被关掉）", () => {
+    expect(behindDeploys("a2", REAL, (s) => ["a1", "a2"].includes(s), "a3")).toBe(1);
+  });
+
+  it("服务没送那个字段（老服务）⇒ 行为一个字不变", () => {
+    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], has, undefined)).toBe(1);
+  });
+
+  it("git 答不上服务那一版 ⇒ 整句不说，不猜", () => {
+    expect(behindDeploys("a3", REAL, (s) => (s === "a3" ? null : true), "a3")).toBeNull();
+  });
+});

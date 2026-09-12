@@ -104,7 +104,7 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // 是唯一会主动告诉人「你手上这份不是上线那一版」的地方。说不出就一个字都不说（behindDeploys 返回 null）：
   // 「不知道」不等于「你是最新的」，报平安比不说话更坏。
   if (print && behind) {
-    const n = behindDeploys(behind.head(), r.deploys, behind.has);
+    const n = behindDeploys(behind.head(), r.deploys, behind.has, r.sha);
     if (n !== null && n > 0) print(cliBehindLine(n));
     // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。

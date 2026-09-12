@@ -50,3 +50,35 @@ describe("t-211 · 什么进得了上线名单", () => {
     expect(history(["DEADBEEF1234", "sha=abc1234", A]).map((d) => d.sha)).toEqual([A]);
   });
 });
+
+/**
+ * t-230 判据 2：**一次更正不许再被当成重复吞掉。**
+ *
+ * 真数据：human 09-06 07:29:48 写下 `085624dd6a…`，**19 秒后自己用「curl /health 原样粘贴」改成
+ * `085624d04c…`**。两者前七位都是 `085624d`，旧规则把后写的那条当成「同一个 sha 又量了一遍」跳过——
+ * **于是牌桌留下了错的那一条、丢掉了对的那一条**，此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。
+ */
+describe("t-230 · 更正取代，重复仍然算一次", () => {
+  const TYPO = "085624dd6a9c" + "0".repeat(28), FIXED = "085624d04c" + "1".repeat(30);
+
+  it("**那一对真数据**：后写的取代先写的，仍然只算一次上线", () => {
+    const out = history([TYPO, FIXED]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sha, "留下的是更正后的那个").toBe(FIXED);
+  });
+
+  it("同一个 sha 的长短两种写法：留更长的那个，也只算一次", () => {
+    const out = history(["085624d", FIXED]);
+    expect(out).toHaveLength(1);
+    expect(out[0].sha).toBe(FIXED);
+  });
+
+  it("更正之后又真上了一次别的：那一次照常是新的一条", () => {
+    const out = history([TYPO, FIXED, A]);
+    expect(out.map((d) => d.sha)).toEqual([FIXED, A]);
+  });
+
+  it("前七位不同的两条照旧是两次上线——这条规则没被放宽", () => {
+    expect(history([A, B]).map((d) => d.sha)).toEqual([A, B]);
+  });
+});

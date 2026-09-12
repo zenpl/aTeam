@@ -1927,7 +1927,20 @@ export function deployHistory(s: State, tz = "UTC"): Deploy[] {
   for (const r of readings) {
     const sha = (r.value as string).trim();
     // The same sha measured again is the same deploy, not a new one (the 7-char rule the board already uses).
-    if (out.length && out[out.length - 1].sha.slice(0, 7) === sha.slice(0, 7)) continue;
+    // t-230 判据 2：**一次更正不许再被当成重复吞掉。**
+    //
+    // 七位前缀规则本意是「同一个 sha 的长短两种写法算一次上线」，而它唯一分不开的情形，恰好是
+    // 「一次错字 + 一次更正」：human 09-06 07:29:48 写下 085624dd6a…，**19 秒后自己用「原样粘贴」改成
+    // 085624d04c…**，两者前七位都是 085624d，于是**牌桌留下了错的那一条、丢掉了对的那一条**，此后每个
+    // 节点每轮都被告知「你旧一次」，而那一次谁也追不上。
+    //
+    // 分法：一方是另一方的前缀 ⇒ 同一个 sha 又量了一遍，留更长（更精确）的那个；前七位同、往后不同 ⇒
+    // **后写的那条是更正**，就地取代前一条，不新增一次上线。
+    const prev = out.length ? out[out.length - 1] : undefined;
+    if (prev && prev.sha.slice(0, 7) === sha.slice(0, 7)) {
+      if (sha.length > prev.sha.length || !(prev.sha.startsWith(sha) || sha.startsWith(prev.sha))) prev.sha = sha;
+      continue;
+    }
     const d = day(r.at);
     const n = (perDay.get(d) ?? 0) + 1;
     perDay.set(d, n);

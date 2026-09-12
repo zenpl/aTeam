@@ -995,8 +995,19 @@ export const cannotMeasureHere = (sha: string) =>
  * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
  * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
  */
-export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null): number | null {
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null, serverSha?: string | null): number | null {
   if (!mine || !deploys?.length) return null;
+  // t-230 判据 3：**服务自报在跑哪一版，胜过名单的尾巴。**
+  //
+  // 名单是从日志里的读数算出来的，而读数可以写错（human 09-06 那 19 秒）。一个形状合法、git 里却不存在的
+  // sha 落在最新处时，「名单尾巴是个错字」与「我真落后一次」在 `has` 这一个问句下长得一模一样。
+  // 而拉取的回包里本来就带着服务自己报的 sha（t-211 加的）——**我含着它，我就是在跑线上那一版**，
+  // 名单尾巴写的是什么都不改变这件事。
+  if (serverSha) {
+    const running = has(serverSha);
+    if (running === null) return null;   // git 答不上来：整句不说
+    if (running) return 0;
+  }
   // t-211（qa 16:11 在生产上判 fail）：**问错了问题。**
   //
   // 旧版数的是「名单里有几条我这棵树没有」，于是名单里任何一条**谁都拿不到**的条目，都会被算成「你落后」：
