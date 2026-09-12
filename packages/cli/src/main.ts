@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
+import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
@@ -73,7 +74,7 @@ any emit accepts --refs <ids> (what you build on; stale readings are rejected) a
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
   ateam log [--after <id>]       raw events
   ateam watch [--interval ${WATCH_INTERVAL}] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
-`;
+\n${exitCodeLine}\n`;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
 
@@ -222,6 +223,23 @@ async function main(argv: string[]) {
   const emit = async (e: ClientEvent) => {
     const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
     console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+  };
+
+  /**
+   * t-228：**一条命令发多件事时，每一件各自报结果。**
+   *
+   * 一件被拒不再把整条命令掀翻：成的印成的（带 id），拒的印拒的（带规则名，并说清**是哪一件**），
+   * 顺序就是发出去的顺序，所以「done 成功」那一行一定在「解决接缝被拒」之前。退出码按整体算：
+   * 全成，0；有成有拒，`EXIT_PARTIAL`（不复用 2，那是「全拒」）；全拒，2。
+   *
+   * 这两行都走 stdout：看它的进程只把 stdout 当事件流（t-225 那一条）。
+   */
+  const sendAll = async (items: { what: string; event: ClientEvent }[]): Promise<void> => {
+    const r = await sendParts(items, async (e) => {
+      const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
+      return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
+    }, console.log, console.error);
+    if (r.exit) process.exitCode = r.exit;
   };
 
   switch (cmd) {
@@ -422,11 +440,15 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
-            // t-074: a fallback is never silent — what could not be verified goes on record next to the done
-            if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
-            // t-073: seams this done settles by itself: recorded right after, with the basis
-            for (const e of check.absorbs) await emit(e);
+            // t-228：这条命令要发三种事件（done、退回说明、解决接缝），从此每一件各自报结果——
+            // 在这之前，后面任何一件被拒都会让「done 已经落库」这个事实在终端上消失。
+            await sendAll([
+              { what: PART_NAMES.done(task), event: { kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) } as ClientEvent },
+              // t-074: a fallback is never silent — what could not be verified goes on record next to the done
+              ...(check.unverified.length ? [{ what: PART_NAMES.seamFallback(), event: { kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task } as ClientEvent }] : []),
+              // t-073: seams this done settles by itself: recorded right after, with the basis
+              ...check.absorbs.map((e) => ({ what: PART_NAMES.seamAbsorb((e as { a?: string }).a ?? "", (e as { b?: string }).b ?? ""), event: e })),
+            ]);
             return;
           }
           return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });

@@ -489,6 +489,7 @@ export const KEY_SYMBOLS = [
   "NO_HUMAN_IMPACT",
   "NO_OUTPUT_PREFIX",
   "NO_SYMBOL_MEANS_UNCLEAR",
+  "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
   "PROMISE_RULE",
@@ -542,6 +543,7 @@ export const KEY_SYMBOLS = [
   "deployHistory",
   "dueDefaults",
   "exampleLine",
+  "exitCodeLine",
   "factCannotPlace",
   "factPredatesThirdBucket",
   "followUps",
@@ -1044,6 +1046,32 @@ export const rollbackMessage = (sha: string, batch: string) =>
  * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
  * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
  */
+/**
+ * t-228：**一条命令发多件事时，每一件各自报结果。**
+ *
+ * 真样本是 dev 15:45 那一次：`task done` 已经落库成功，而它随后自动发的「解决接缝」被拒，终端上只印出
+ * `REJECTED (seam)` 加退出码 2——**看起来像整条命令失败了**。第一反应是重交，而重交会撞上「done 之上再 done」
+ * 再被拒一次；t-034 那次正是这么走的：两次「失败」，而事实是第一次就成了。
+ *
+ * frontend 15:47 把边界核准了，写在这里免得下一个人读偏：**不是「被拒也可能落库」**——它核过自己三次被拒
+ * 各落 0 条，单件命令拒了就是没写——**是「一条命令发了两件事，退出码只报最后一件」**。
+ *
+ * **只有被拒那一件需要这句话**：成功那一件的结果行就是它自己的事件行（带 id、带发生了什么），
+ * 再补一句「✓ 成功」是同一件事说两遍。
+ */
+/** t-228：`task done` 会发的那几件，各自的名字——人读的那半住 core（同 ROLLBACK_LINES 的理由）。 */
+export const PART_NAMES = {
+  done: (task: string) => `${task} done`,
+  seamFallback: () => "接缝检查退回的说明",
+  seamAbsorb: (a: string, b: string) => `解决接缝 ${a}+${b}`,
+} as const;
+
+export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
+
+/** t-228 判据 3：退出码口径。全成功 0；**部分成功单独一个值，不复用 2**；全失败 2。3 已被「坏响应」占着（t-225）。 */
+export const EXIT_PARTIAL = 4;
+export const exitCodeLine = `退出码：0 全部成功；${EXIT_PARTIAL} 部分成功（前面每一行会说清哪一件成了、哪一件没成）；2 全部失败；3 服务回了一个读不出的正文。`;
+
 /**
  * t-226 判据 3 的客户端那一半：**这一批是截断的，后面还有。**
  *
