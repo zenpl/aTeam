@@ -1,7 +1,7 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
-import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
+import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
 export interface BoardTask {
@@ -26,6 +26,17 @@ export interface BoardTask {
    */
   claimed_at?: string;
   blocked_on?: string;
+  /**
+   * t-231：**这一件此刻在等谁，按状态算，不按 `owner` 算。**
+   *
+   * 页面此前印的是 owner，于是 qa 16:33 在生产上走那四行时两行是错的：t-094 印「等 qa」——**而规矩不许 qa 验
+   * 自己**，人照着这一页去问，会问到一个被禁止动它的人；t-227 实际在等 qa 却印「等 dev」。等错人与等反了，是
+   * 同一处写法的两种错法。
+   *
+   * 谁能验由 `verifierEligibility` 说了算，**与那道闸读的是同一份判断**；一个合格的人都没有时是 human
+   * （pd 06:26：这种死局归他）。空数组的意思是**没有人在等它**——那时页面照实说，不拿 owner 充数。
+   */
+  waiting_on?: string[];
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
   obsolete?: { by: string; at: string; decision: string; reason?: string };
@@ -194,6 +205,16 @@ export function span(ms: number): string | null {
   return `${n} 天`;
 }
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
+
+/**
+ * t-231：**「等谁」那一句。** 一个人都没有时照实说没人在等它——**不许退回印 owner 充数**，那正是这个缺陷的来历：
+ * 页面拿 owner 当「等谁」，于是它指着一个规矩不许动这件事的人。
+ * 措辞是我写的、pd 没过目（人可见的字 11:17 起冻结）；判断本身不必等谁，说法要 pd 定，我另发了 note。
+ */
+export const NOBODY_WAITING = "没人在等它";
+export const waitingOnLine = (who: readonly string[]): string => (who.length ? `等 ${who.join("、")}` : NOBODY_WAITING);
+// 瘦身板不带 `waiting_on`（页面读的是完整板，在同一个进程里算）。**所以「没带这个字段」与「没人在等」要分得开**
+// （t-077）：拿不到就什么都不说，而不是说一句「没人在等它」——后者是一个我们此刻答不出来的断言。
 
 /**
  * t-229 判据 1：**那个数的那一句话。** 「有多少条」与「最久那条多久了」在一句里，因为分开印时人只会读到前一个——
@@ -1155,7 +1176,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
       // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
-      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, waiting_on: waitingOn(s, t, human), touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1966,6 +1987,52 @@ export const BATCH_LINES = {
  * find these itself (see STOOD_IN_PREFIX) — every one of them is somebody saying so — so this counts declarations,
  * and says as much rather than implying it saw them happen.
  */
+/**
+ * t-231：**这一件在等谁。** 按状态算：
+ * · `done` 等的是**能给它落 pass 的人**（同一份 `verifierEligibility`，闸读的也是它）；一个都没有时等的是
+ *   human——项目里有验收角色时验收不会自动转给他，所以那时他要么亲自判、要么让 pm 再给一个角色，**两条都得他动**。
+ * · `working` / `failed` 等的是 owner：活在他手上，或者要他重来一次。
+ * · 其余（`open`、`blocked`、已经 verified 或终态的）**没有人在等它**——空数组，不拿 owner 充数。
+ */
+export function waitingOn(s: State, t: TaskState, human: string): string[] {
+  if (t.status === "done") {
+    const { eligible } = verifierEligibility(s, t, undefined, human);
+    return eligible.length ? eligible : [human];
+  }
+  if (t.status === "working" || t.status === "failed") return t.owner ? [t.owner] : [];
+  return [];
+}
+
+/**
+ * t-231：**「谁能给这一件落 pass」从此只有一处出处。** 它本来住在 rules.ts（那道闸问它），而牌桌要回答
+ * 「这一件在等谁」问的是同一个问题——搬到这里，是因为 rules.ts 本来就在从这里取 `projectRoles` 与
+ * `roleResponsibilities`，反过来取会绕成一个圈。**闸与页面从此读同一份判断**：页面不会再说一个闸不许动它的人。
+ */
+
+export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
+  const authors = criteriaAuthors(t);
+  const holds = roleResponsibilities(s);
+  const here = surface ? t.verifications.filter((v) => v.round === t.round && v.surface === surface) : [];
+  const standing = here[here.length - 1];
+  const passers = standing?.pass ? new Set([standing.by]) : new Set<string>();
+  const failedHere = here.find((v) => !v.pass); // t-104 ②: one fail closes this surface to every pass until a new done
+  const eligible: string[] = [];
+  const blocked: { role: string; why: string }[] = [];
+  for (const role of projectRoles(s)) {
+    if (role === human) continue;
+    const why: string[] = [];
+    if (!(holds[role] ?? []).includes(VERIFY_RESPONSIBILITY)) why.push(`不持 ${VERIFY_RESPONSIBILITY}`); // t-104: pass 要独立，先要是验收角色
+    if (role === t.owner) why.push("是 owner");                              // the owner cannot pass their own task
+    if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
+    if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // a pass does not override a pass
+    else if (failedHere) why.push(`这一轮 ${surface} 上已有 ${failedHere.by} 的 fail，要等新的 done`); // t-104 ②
+    if (why.length) blocked.push({ role, why: why.join("、") });
+    else eligible.push(role);
+  }
+  return { eligible, blocked };
+}
+
+
 export function standIns(s: State, now: Date): Board["stand_ins"] {
   const since = new Date(now.getTime() - STAND_IN_DAY_MS).toISOString();
   const by = new Map<string, { task: string; title: string; count: number; last_at: string; who: string[] }>();
@@ -2172,7 +2239,7 @@ export interface ReleaseUnit {
   /** Every finished task naming this sha, in the order the board lists them. */
   tasks: { id: string; title: string; shows?: string; owner?: string; status: string; passed: boolean }[];
   /** The members that are not verified on repo: the reason the whole string is not moving. */
-  held_by: { id: string; title: string; shows?: string; owner?: string; status: string }[];
+  held_by: { id: string; title: string; shows?: string; owner?: string; status: string; waiting_on?: string[] }[];
   /**
    * What this unit would actually put into production: members whose code is not there yet (t-078's pending_deploy).
    * Not "verified but not verified on production" — that is deployed_unverified, whose code is already running, and
@@ -2203,7 +2270,7 @@ export function releaseUnits(b: Board): ReleaseUnit[] {
       const at = doneAt.get(t.id);
       if (at && (!u.since || at < u.since)) u.since = at;
       u.tasks.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, passed });
-      if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status });
+      if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, waiting_on: t.waiting_on });
       if (shipped.has(t.id)) u.brings += 1;
       units.set(sha, u);
     }

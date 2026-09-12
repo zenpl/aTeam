@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -780,7 +780,8 @@ export function renderRelease(b: Board, s: State, opts: RenderOptions = {}): str
       const members = u.tasks.map((t) => `${link(t.id)} ${esc(t.shows ?? t.title)}`);
       const head = u.tasks.length > 1 ? `<span class="tag">${UI.releaseTogether}</span> ` : "";
       const waiting = u.held_by.length
-        ? ` <span class="meta held">${esc(UI.releaseNotVerified(u.held_by.map((h) => `${h.id}${h.owner ? ` ${UI.releaseHeldBy(who(h.owner))}` : ""}`).join("、")))}</span>`
+        // t-231：**「等谁」取的是状态算出来的那个答案，不是 owner。** 句子在 core（`waitingOnLine`），这里只印。
+        ? ` <span class="meta held">${esc(UI.releaseNotVerified(u.held_by.map((h) => (h.waiting_on ? `${h.id} ${waitingOnLine(h.waiting_on.map(who))}` : h.id)).join("、")))}</span>`
         : "";
       return `<li>${head}<code>${esc(u.sha.slice(0, 7))}</code> ${members.join("；")}${waiting}</li>`;
     };

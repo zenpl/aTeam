@@ -1,7 +1,7 @@
 import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities, deployedTasksFact } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -16,35 +16,12 @@ export function migrationApproved(s: State): boolean {
  * 排除的角色能落；说「没达标」与自身利益相反，只挡发布不放行，所以对所有人开放，不需要这份名单。候选是项目声明的角色
  * （`project:roles`），human 不在其中：human 什么都能验，把他算进去就永远不会出现「一个都没有」，而那正是最该说清楚的一种。
  */
-/** t-106: the ids a `project:roles` value declares, whatever shape it is written in. Nothing else is validated here. */
+
 export function declaredRoleIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((x): x is string => typeof x === "string");
   if (typeof value === "string") return value.split(",").map((x) => x.trim()).filter(Boolean);
   if (value && typeof value === "object") return Object.keys(value as object);
   return [];
-}
-
-export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
-  const authors = criteriaAuthors(t);
-  const holds = roleResponsibilities(s);
-  const here = surface ? t.verifications.filter((v) => v.round === t.round && v.surface === surface) : [];
-  const standing = here[here.length - 1];
-  const passers = standing?.pass ? new Set([standing.by]) : new Set<string>();
-  const failedHere = here.find((v) => !v.pass); // t-104 ②: one fail closes this surface to every pass until a new done
-  const eligible: string[] = [];
-  const blocked: { role: string; why: string }[] = [];
-  for (const role of projectRoles(s)) {
-    if (role === human) continue;
-    const why: string[] = [];
-    if (!(holds[role] ?? []).includes(VERIFY_RESPONSIBILITY)) why.push(`不持 ${VERIFY_RESPONSIBILITY}`); // t-104: pass 要独立，先要是验收角色
-    if (role === t.owner) why.push("是 owner");                              // the owner cannot pass their own task
-    if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
-    if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // a pass does not override a pass
-    else if (failedHere) why.push(`这一轮 ${surface} 上已有 ${failedHere.by} 的 fail，要等新的 done`); // t-104 ②
-    if (why.length) blocked.push({ role, why: why.join("、") });
-    else eligible.push(role);
-  }
-  return { eligible, blocked };
 }
 
 /**

@@ -165,7 +165,6 @@ export const UI = {
    * sentence, with nothing of ours in front of it.
    */
   releaseNotVerified: (who: string) => `还没验，带不上：${who}`,
-  releaseHeldBy: (who: string) => `等 ${who}`,
   releaseBatches: "装好的几批",
   /** t-169 (pd 08:13)：已经上过线的那几批不占上线清单的位置，它们属于「已经发生了什么」，列在「线上这一版」那一段下。 */
   releaseShipped: "上过线的几批",

@@ -42,13 +42,15 @@ export const SECOND_HOMES_ROOT = "packages";
 // t-221 再搬走 2 句：「不知道有多少件在等上线：…」原来页面（i18n）与命令行（format.ts）各写一份，
 // 而本件要让命令行在「这几个数旧了」时也说它——**再抄一份就是把一句话的出处从两处变成三处**。
 // 搬进 core 的 `waitingUnknownLine`，两边都取那一份。347 → 345。
-export const SECOND_HOME_FROZEN: number = 345;
+// t-231 再搬走 1 句：i18n.ts 那句「等 X」——页面此前用它印 owner，而本件把「等谁」改成按状态算，
+// 那一句连同判断一起进了 core 的 `waitingOnLine`（它还多管一件事：没人在等时说的那一句）。345 → 344。
+export const SECOND_HOME_FROZEN: number = 344;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
-  "packages/server/src/i18n.ts": 164,
+  "packages/server/src/i18n.ts": 163,
   "packages/cli/src/format.ts": 32,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
