@@ -767,6 +767,8 @@ export const WORDING_AT_FREEZE: readonly string[] = [
   "6553ec0ec6a3",
   "dc925ebfec9f",
   "ed45db69fe60",
+  "4e7a34566749",
+  "f1477fc2cf49",
 ];
 
 /**

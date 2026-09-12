@@ -232,6 +232,12 @@ export const lateLine = (late: { count: number; acted: number; untouched: number
  * 印在 `--help` 里：读这三个数的人就是跑这条命令的人。
  */
 /** 牌桌上那一栏印几条样本：数已经在那一句里，样本只是让人知道先去问谁。最久的在前。 */
+/**
+ * t-239 判据 4：**少给的那一段，说清从哪儿拿得到。** 每次拉取里「t-147 之前那一批」只剩一个数；
+ * 真要那几条本身的，这条路一次给全。印在 `--help` 里，因为那个数就印在 sync 的那一行上。
+ */
+export const OWED_LEGACY_HELP = "GET /owed                     你此刻欠什么的全量（含 t-147 之前那一批的逐条）；每次 sync 带的那一份里，那一批只给一个数";
+
 export const LATE_SHOWN = 3;
 export const DEADLINE_WORDS: string[] = [
   "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
@@ -1544,8 +1550,13 @@ export interface OwedNow {
    * 不可能落进这个桶）。活欠账只从 t-147 上线那一刻起算。
    *
    * 这里只有数据。**这个桶在牌桌上怎么说、说不说，我没自拟**——pm 11:17 起人可见的字冻结，等 pd。
+   *
+   * t-239：**只给这个数，不再每次拉取把那 315 条逐条发出来。** qa 19:41 实测：一次真增量拉取 182,477 字节，
+   * 其中 121,817 字节是这个桶——**一份按定义不会再变的历史，每 25 秒重发一遍**，五个角色合起来约
+   * 131 MB/小时，而且没有任何一个读它的人：`owedSentences` 只说前两个桶，页面一处都没取过它。
+   * 要那 315 条本身的，走 `GET /owed`（那条路把三个桶全量给出，一次，要的时候才拿）。
    */
-  legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[];
+  legacy_before_acted_rule_count: number;
 }
 
 /**
@@ -1589,7 +1600,16 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
 }
 
 export function owedNow(s: State, to: string): OwedNow {
-  const out: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  const full = owedFull(s, to);
+  return { unanswered: full.unanswered, untouched: full.untouched, legacy_before_acted_rule_count: full.legacy_before_acted_rule.length };
+}
+
+/**
+ * t-239：三个桶的**全量**，只给专门来要它的那条路（`GET /owed`）用。每次拉取带的是 `owedNow`——
+ * 那一份里历史只剩一个数。**两份由同一段代码算出来**，不是两处各数一遍。
+ */
+export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswered"]; untouched: OwedNow["untouched"]; legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[] } {
+  const out = { unanswered: [] as OwedNow["unanswered"], untouched: [] as OwedNow["untouched"], legacy_before_acted_rule: [] as { instruction: string; from: string; body: string; sent: string }[] };
   // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
   // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
   // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**

@@ -37,7 +37,7 @@ beforeAll(async () => {
     const rest = after ? BATCH.filter((e) => e.id > after) : BATCH;
     served += 1;
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ shape: 2, events: rest, for_me: rest, cursor: rest.length ? rest[rest.length - 1].id : after, owed: { unanswered: [], untouched: [], legacy_before_acted_rule: [] }, sha: "abc1234", deploys: [] }));
+    res.end(JSON.stringify({ shape: 2, events: rest, for_me: rest, cursor: rest.length ? rest[rest.length - 1].id : after, owed: { unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 }, sha: "abc1234", deploys: [] }));
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

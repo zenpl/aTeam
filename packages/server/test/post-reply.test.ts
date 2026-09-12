@@ -59,7 +59,7 @@ describe("t-227 判据 1、2 · 只发不拉的节点，从回包里就看得见
     const reply = await post("pm", { kind: "note", body: "我没被点名" });
     expect(Array.isArray(reply.for_me)).toBe(true);
     expect(reply.for_me).toEqual([]);
-    expect(reply.owed).toEqual({ unanswered: [], untouched: [], legacy_before_acted_rule: [] });
+    expect(reply.owed).toEqual({ unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 });
   });
 });
 

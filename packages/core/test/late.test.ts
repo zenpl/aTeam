@@ -80,6 +80,14 @@ describe("t-229 判据 1、4 · 未 ack 且已过期的角色间指令，有一�
     const real = slimBoard(b, BOARD_BYTES);
     expect(real.late.instructions.length).toBeGreaterThanOrEqual(LATE_SHOWN);
     expect(real.late.instructions[0].instruction, "留的是最久的那一头").toBe(b.late.instructions[0].instruction);
+    // qa 21:23 判决里点名的那一处：**「留最久的一头」原来没有任何用例锁着**（它把 keep 改成留最新，整套仍全绿）。
+    // 这一条锁它：砍到只剩 LATE_SHOWN 条时，留下的必须逐条是最久的那几条。
+    const trimmed = slimBoard(b, 20_000);
+    const left = trimmed.late.instructions.length;
+    expect(left, "这个预算下它确实被砍短了").toBeLessThan(b.late.count);
+    expect(left, "但没被砍光").toBeGreaterThan(0);
+    expect(trimmed.late.instructions.map((x) => x.instruction), "留下的逐条是最久的那几条")
+      .toEqual(b.late.instructions.slice(0, left).map((x) => x.instruction));
     // 而预算小到连样本都装不下时，**上限赢**（t-070 判据 3）：样本也砍，数还在，omitted 照实说。
     expect(slim.late.instructions.length).toBe(0);
     expect(slim.late.count).toBe(40);
