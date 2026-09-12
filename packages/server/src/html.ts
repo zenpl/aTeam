@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -17,7 +17,7 @@ export const TITLE_MAX = 30;
 const JUST_MS = 60 * 60_000;
 
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
-export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null }
+export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null; /** t-235：这一页的绝对上限，默认 `PAGE_BYTES`；用例给小一点的数来测「装不下时它怎么办」。 */ limit?: number }
 
 /** The migration check card (t-095): the service's own 「搬过来了，对吗？」, whose numbers it counted itself (t-092). */
 export function isMigrationCard(i: { body: string }): boolean {
@@ -159,7 +159,35 @@ export function surface(s: string): string {
   return UI.surface[s] ?? s;
 }
 
+/**
+ * t-235：**人那一页有一个绝对上限。**
+ *
+ * 此刻实测 272,462 字节，而人真正要看的那一栏「需要你」只占 2%；三大块（任务、指令、事实）占 82.5%，
+ * 都随日志线性长。release 量过的那条曲线说门槛在一万到一万五千条事件之间，而此刻 8,7xx 条——**客户搬家
+ * 那一刻，日志长度是他带来的**（t-224 的导入路已经写完），所以这道上限不是给明天准备的。
+ *
+ * 砍法与 t-070 同一条口径：**先渲染，再量真发出去的那串字节**，装不下就把深层每一栏印得少一点再渲染一遍。
+ * **「需要你」「现在」两栏一个字不动**——那是这一页存在的理由；砍的全在挖层里，而且每一栏都说出少印了几条。
+ */
 export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): string {
+  const limit = opts.limit ?? PAGE_BYTES;
+  const fits = (html: string) => Buffer.byteLength(html, "utf8") <= limit;
+  const full = renderPage(b, s, opts, Infinity);
+  if (fits(full)) return full;
+  // 装不下就二分找「装得下的那个最大的每栏条数」——**一档一档往下砍会砍过头**（t-070 上量到过：
+  // 对半砍把 36 条砍成 18，而 30 条本来装得下）。每一步都真渲染一遍再量，不按行数估。
+  let lo = 1, hi = Math.max(1, ...Object.values(b.tasks).map((x) => x.length), b.instructions.length, b.readings.length);
+  let best = renderPage(b, s, opts, 1);
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const html = renderPage(b, s, opts, mid);
+    if (fits(html)) { best = html; lo = mid + 1; } else hi = mid - 1;
+  }
+  // 每栏一条还装不下时 best 就是那一份：照原样发出去，**不假装它装得下**（同 t-070 的「砍无可砍」）
+  return best;
+}
+
+function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): string {
   const refresh = Math.max(REFRESH_SECONDS, opts.refresh ?? REFRESH_SECONDS);
   const human = opts.human ?? "human";
   const now = Date.parse(b.now);
@@ -383,7 +411,7 @@ export function renderBoard(b: Board, s: State, opts: RenderOptions = {}): strin
 
   // ---------- 其余 ----------
   // The dig layer keeps its times short: the exact stamps are on the task page and in the API (t-065).
-  out.push(renderRest(b, s, human, (iso) => esc(ago(iso)), ago, base, who));
+  out.push(renderRest(b, s, human, (iso) => esc(ago(iso)), ago, base, who, shown));
 
   return page(out.join("\n") + (out.some((x) => x.includes('class="btn copy"')) ? "\n" + COPY_SCRIPT : ""), { now: b.now, refresh, sha: opts.sha });
 }
@@ -463,7 +491,15 @@ function fold(rows: string[], label: (n: number) => string, listClass = "plain")
   return `<details class="more-list"><summary>${esc(label(rows.length))}</summary><ul class="${listClass}">${rows.join("")}</ul></details>`;
 }
 
-function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = "", who: (id: string) => string = (x) => x): string {
+/**
+ * t-235：`shown` 是**深层每一栏最多印几条**。`Infinity` 是「全印」，也就是这一页此前的行为。
+ * 少印的那几条**不是静默消失的**：每一栏后面印一句既有的「还有 N 件」（`UI.moreItems`），
+ * 而那一栏标题上的总数**仍然是真总数**——少给而不自知，是这几天数了三十次的那一族。
+ */
+function renderRest(b: Board, s: State, human: string, t: (iso: string) => string, ago: (iso: string) => string, base = "", who: (id: string) => string = (x) => x, shown = Infinity): string {
+  /** 留最近的几条，并把少印了几条说出来。 */
+  const cut = <T,>(xs: T[]): { vis: T[]; hidden: number } => (xs.length <= shown ? { vis: xs, hidden: 0 } : { vis: xs.slice(xs.length - shown), hidden: xs.length - shown });
+  const moreLine = (n: number) => (n ? `<p class="meta">${esc(UI.moreItems(n))}</p>` : "");
   const d: string[] = [];
   const open = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && i.to !== human && !i.chosen);
   const openSeams = b.seams.filter((x) => x.open);
@@ -498,7 +534,9 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   d.push(`<section id="instructions"><h3>${UI.agentInstructions} <span class="meta">${open.length}</span></h3>`);
   // t-147: 标签是「到哪一步了」，从收件人自己的拉取和事件算出来，不是回执。REACH_WORDS 是 pd 的措辞。
-  d.push(open.length ? `<ul class="plain">${open.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  const openCut = cut(open);
+  d.push(open.length ? `<ul class="plain">${openCut.vis.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  d.push(moreLine(openCut.hidden));
   const decided = b.instructions.filter((i) => i.chosen);
   /**
    * t-189：这一行原来只看 `chosen.by === "default"` 就印「已按默认「X」执行（你仍可改）」——**时间过了就当它发生了**。
@@ -518,8 +556,10 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     const list = b.tasks[status] ?? [];
     if (!list.length) continue;
+    // 标题上的数仍是真总数；少印的那几条由下面那一句说出来
+    const taskCut = cut(list);
     d.push(`<h4>${esc(UI.taskStatus[status] ?? status)} <span class="meta">${list.length}</span></h4><ul class="tasks detail-tasks">`);
-    for (const task of list) {
+    for (const task of taskCut.vis) {
       const st = s.tasks.get(task.id);
       const bits: string[] = [];
       if (task.owner) bits.push(`@${esc(who(task.owner))}`);
@@ -537,6 +577,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
       }
     }
     d.push(`</ul>`);
+    d.push(moreLine(taskCut.hidden));
   }
   d.push(`</section>`);
 
@@ -572,8 +613,10 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
     ? `${esc(r.said.line)} ${meta(r)}${raw(r)}`
     : `<code>${esc(r.surface)}:${esc(r.key)}</code> = ${esc(clip(str(r.value), VALUE_MAX))} ${meta(r)}`}</li>`;
   const staleShown = stale.slice().sort((x, y) => y.at.localeCompare(x.at)).slice(0, STALE_SHOWN);
-  const rows = [...shownValid, ...staleShown];
+  const rowsCut = cut([...shownValid, ...staleShown]);
+  const rows = rowsCut.vis;
   d.push(rows.length ? `<ul class="plain">${rows.map(readingLine).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
+  d.push(moreLine(rowsCut.hidden));
   if (hiddenValid) d.push(`<p class="meta">${esc(UI.saidElsewhere(hiddenValid))}</p>`);
   if (stale.length > staleShown.length) d.push(`<p class="meta">${esc(UI.olderStale(stale.length - staleShown.length))}</p>`);
   d.push(`</section>`);
