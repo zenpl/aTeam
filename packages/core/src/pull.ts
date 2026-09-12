@@ -1,5 +1,5 @@
 import type { Event, EventStore, Instruction } from "./index.js";
-import { owedTo, type OwedNow } from "./board.js";
+import { owedTo, owedNow, type OwedNow } from "./board.js";
 import type { State } from "./reduce.js";
 
 /**
@@ -125,6 +125,31 @@ export function forPoster(s: State, me: string, limit: number = POST_REPLY_BYTES
 }
 
 /**
+ * t-227 判据 3（qa 16:39 判 fail 之后重做）：**量的是整个回包。**
+ *
+ * 第一版把 `for_me` 与 `owed` 各自限到 `POST_REPLY_BYTES`，**两份各自合规、整体两倍**：qa 在生产真状态下
+ * 量到回包 131,135 字节，而那个写死的数是 65,536。**我量了我看得见的那两半，把它报成了整体**——这正是
+ * 这几天数了二十多次的那一族，这次轮到我。
+ *
+ * 所以这里先造一个「两样都空」的完整回包量一遍：事件本身、字段名、括号、逗号，**框架也是字节**。
+ * 剩下多少，才是这两样能用的预算；顺序上先给 `for_me`（点名找你的比「你欠什么」更急），剩下的给 `owed`。
+ * 每一处宁可算多一两个字节，也不算少——一个「差一点点」的上限说的不是真话。
+ */
+export function postReply(s: State, me: string, base: unknown, limit: number = POST_REPLY_BYTES): { for_me: Instruction[]; owed: OwedNow; more?: boolean } {
+  const empty: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  const bytes = (x: unknown) => Buffer.byteLength(JSON.stringify(x), "utf8");
+  // `more: true` 也一起量进去：没截断时这 12 字节是白留的，而白留比超标好。
+  const frame = bytes({ ...(base as object), for_me: [], owed: empty, more: true });
+  const budget = Math.max(0, limit - frame);
+  // capBytes 的账里含着那对方括号（它从 2 起算），而框架里已经有了，所以这里把它加回去再传进去。
+  const f = forPoster(s, me, budget + 2);
+  const used = Math.max(0, bytes(f.for_me) - 2);
+  const o = capOwed(owedNow(s, me), Math.max(0, budget - used));
+  const { more: oMore, ...owed } = o;
+  return { for_me: f.for_me, owed: owed as OwedNow, ...(f.more || oMore ? { more: true } : {}) };
+}
+
+/**
  * t-227 判据 3：`owed` 也要受同一个上限。三个桶按顺序装，装不下的截断并说明——**少给而不自知**是这几天
  * 数了二十一次的那一族，这里是它的第三个出口（前两个是首次拉取与 POST 的 for_me）。
  */
@@ -133,7 +158,9 @@ export function capOwed(owed: OwedNow, limit: number = POST_REPLY_BYTES): OwedNo
   let used = 0;
   for (const bucket of ["unanswered", "untouched", "legacy_before_acted_rule"] as const) {
     for (const item of owed[bucket]) {
-      const size = Buffer.byteLength(JSON.stringify(item), "utf8");
+      // 每一条都按「自己 + 一个逗号」算。每个桶的头一条其实不带逗号，于是最多算多 3 字节——
+      // 宁可算多，也不要一个说不出真话的上限。
+      const size = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
       if (used + size > limit) { out.more = true; return out; }
       used += size;
       (out[bucket] as unknown[]).push(item);

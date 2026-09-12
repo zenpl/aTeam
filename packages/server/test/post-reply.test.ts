@@ -68,6 +68,40 @@ describe("t-227 判据 3 · 回包体积有绝对上限，不许把 6 MB 搬到�
     expect(POST_REPLY_BYTES).toBe(65_536);
   });
 
+  it("**量的是整个回包，不是我看得见的那两半**（qa 16:39 判 fail 的那一条）", async () => {
+    // 第一版把 for_me 与 owed 各自限到 65,536，于是**两份各自合规、整体两倍**：qa 在生产真状态下量到
+    // 131,135 字节。我量了我看得见的那两半，把它报成了整体——这几天数了二十多次的那一族，这次轮到我。
+    for (let i = 0; i < 400; i++) {
+      await append(store, { kind: "instruction", actor: "pm", to: "release", body: `第 ${i} 条 ${"字".repeat(80)}`, ack_by: soon() }, { human: HUMAN });
+    }
+    const r = await fetch(`${base}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-actor": "release", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ kind: "note", body: "我只写不读" }),
+    });
+    const text = await r.text();
+    const whole = Buffer.byteLength(text, "utf8");
+    const reply = JSON.parse(text) as { for_me: Event[]; owed: Record<string, unknown[]>; more?: boolean };
+    // 两半各自合规，正是第一版也满足的那句——留在这里，是为了说明它满足了却仍然超标
+    expect(Buffer.byteLength(JSON.stringify(reply.for_me), "utf8")).toBeLessThanOrEqual(POST_REPLY_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(reply.owed), "utf8")).toBeLessThanOrEqual(POST_REPLY_BYTES);
+    // 而这一句才是判据 3 说的那件事
+    expect(whole, `整个回包 ${whole} 字节`).toBeLessThanOrEqual(POST_REPLY_BYTES);
+    expect(reply.more, "截断必须看得见").toBe(true);
+  });
+
+  it("事件本身先从预算里扣掉——一条长事件挤掉的是 for_me 的份额，不是上限", async () => {
+    const long = "记" .repeat(3_000);
+    const r = await fetch(`${base}/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-actor": "release", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ kind: "note", body: long }),
+    });
+    const text = await r.text();
+    expect(Buffer.byteLength(text, "utf8"), "连同事件正文一起算").toBeLessThanOrEqual(POST_REPLY_BYTES);
+    expect(JSON.parse(text).body, "事件本身一个字不少").toBe(long);
+  });
+
   it("点名给它的指令堆到超限时：截断、说 more，回包不随欠账无限长大", async () => {
     for (let i = 0; i < 400; i++) {
       await append(store, { kind: "instruction", actor: "pm", to: "frontend", body: `第 ${i} 条 ${"字".repeat(80)}`, ack_by: soon() }, { human: HUMAN });
