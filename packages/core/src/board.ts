@@ -258,6 +258,24 @@ export const UNSEEN_DROPPED = (n: number) => `（更早的 ${n} 行攒不下了�
 export const UNSEEN_MAX = 500;
 
 /** t-246 ②：同一个开关给了两次时说的那一句。**两份值里挑一份，工具不替你挑**——后一个静默胜出，挑错了没人会核。 */
+/**
+ * t-247 判据 4：**不认得的开关，说出是哪一个，并说出下一步做什么。**
+ *
+ * 受众是跑命令的 agent，不是人那一页——所以措辞归 dev，不等 pd（pm 17:55 立的那条口径；将来若判定它人可见，
+ * pd 有权事后否掉）。出路给两条：**升级这支命令行**（多半是版本偏斜：仓库里有、你这支还没重编），
+ * 或者**改用在新旧两支上都对的写法**。
+ */
+export const UNKNOWN_FLAG = (name: string): string =>
+  `不认得这个开关：--${name}。一个字都没发。` +
+  `多半是你这支命令行旧了：先 git pull && pnpm build，再 ateam help 看它在不在里面；` +
+  `要在新旧两支上都对，就别用 --X-file，改写成 --X "$(cat 文件)"`;
+
+/**
+ * t-247 判据 3：**「写错名字」与「少写个值」要在同一处出声。** 此前前者静默退 0、后者报一句英文并退 1——
+ * 于是更难发现的那一种反而更安静。两条现在都是用法错（退 2，且明写「一个字都没发」）。
+ */
+export const FLAG_NEEDS_VALUE = (name: string): string => `--${name} 少了值：它后面要跟一个值。一个字都没发`;
+
 export const TWICE_GIVEN = (name: string): string => `--${name} 给了两次：两份值，工具不替你挑。要哪一份就只写哪一份`;
 
 export const BOTH_BODY_AND_FILE = (base: string): string => `--${base} 与 --${base}-file 只能给一个：两份正文，工具不替你挑`;
