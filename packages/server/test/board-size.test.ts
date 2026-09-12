@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { Builder, board, slimBoard, omittedPaths, evidenceSha, type Board } from "@ateam/core";
+import { Builder, board, slimBoard, omittedPaths, evidenceSha, BOARD_BYTES, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
 
 let app: ReturnType<typeof createApp> | undefined;
@@ -45,14 +45,17 @@ async function bigDay() {
 }
 
 describe("t-070 · GET /board is slim by default", () => {
-  it("under a day like today's, the default board is under 12% of the full one, keeps every field the page and CLI use, and ?full=1 is the whole thing", async () => {
+  it("under a day like today's, the default board is under the absolute cap, keeps every field the page and CLI use, and ?full=1 is the whole thing", async () => {
     const b = await bigDay();
     const full = await b.board();
     const fullBytes = Buffer.byteLength(JSON.stringify(full));
     expect(fullBytes).toBeGreaterThan(150 * 1024); // the problem is real in this sample
     const slim = slimBoard(full);
     const slimBytes = Buffer.byteLength(JSON.stringify(slim));
-    expect(slimBytes / fullBytes).toBeLessThan(0.12); // t-070 criterion 3 (pm 21:32): a share of the full board, never an absolute size
+    // t-070 判据 3（pm 17:49 把 21:32 那次「改成比例」的更正作废）：**一个绝对上限，不是一个比例**。
+    // 完整板随日志无限长，无上限的 12% 仍然无上限——那正是它此前在生产上涨到 397KB 而用例全绿的原因。
+    expect(slimBytes, `瘦身板 ${slimBytes} 字节`).toBeLessThanOrEqual(BOARD_BYTES);
+    expect(BOARD_BYTES).toBe(61_440);   // 60 KiB，判据的字面
     // t-203：分母跟着那几个数一起留在瘦身板上——数在、分母不在，正是那几个数被当成全集读的形状
     expect(slim.release).toEqual({ deployed_sha: full.release.deployed_sha, counts: full.release.counts, denominator: full.release.denominator, basis: full.release.basis }); // lists are derived from tasks: the full board has them; absent, not empty (t-077); the counts stay (t-078)
     expect(slim.omitted).toEqual(omittedPaths(full, slim)); // computed, not written; the recursive walk itself is proven in core
@@ -100,7 +103,8 @@ describe("t-070 · GET /board is slim by default", () => {
     expect((await (await get("/task/t-000")).json()).shape).toBe(2);
     expect((await (await get("/events")).json()).shape).toBe(2);
     const served = await (await get("/board")).text();
-    expect(Buffer.byteLength(served) / Buffer.byteLength(JSON.stringify(await (await get("/board?full=1")).json()))).toBeLessThan(0.12);
+    // 量的是服务真发出去的那串字节，不是本地重算的一份
+    expect(Buffer.byteLength(served)).toBeLessThanOrEqual(BOARD_BYTES);
     const servedFull = await (await get("/board?full=1")).json();
     // t-212：服务那份从存储取了拒绝账，本地这份也要取同一本，否则比的是两件不同的东西
     const expected = JSON.parse(JSON.stringify(board(await b.state(new Date(t)), "human", new Date(t), { refusals: await b.store.refusals?.() })));

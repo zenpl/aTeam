@@ -1615,7 +1615,7 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   return groups.map((x) => ({ ...x, total: x.items.length }));
 }
 
-export function slimBoard(b: Board): Board {
+export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
@@ -1648,8 +1648,131 @@ export function slimBoard(b: Board): Board {
   // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
   const live: Board["live"] = { ...b.live, deploys: undefined };
   const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
-  slim.omitted = omittedPaths(b, slim);
+  // **量的必须是真正发出去的那一整份**：`omitted` 自己也占字节，而它恰恰随着砍得越多而越长。
+  // 每砍一刀重算一次——否则预算算的是一份比实际小的东西（t-227 那一族，这次我先想起来了）。
+  fitBudget(slim, limit, () => { slim.omitted = omittedPaths(b, slim); });
   return slim;
+}
+
+/**
+ * t-070 判据 3：**一个写死的绝对上限，不是一个比例。**
+ *
+ * 这件的标题是「board JSON **不随日志无限增长**」，而它此前做到的是**一个常数倍的缩小**：日志从 1,571 条涨到
+ * 8,600 多条，瘦身板从 58.6KB 涨到 **397,640 字节**——判据的字面一直是「小于 60KB」，此刻超它 6.5 倍。
+ * pm 21:32 曾把判据改成「默认板 < 完整板 12%」，17:49 又把那次更正作废，理由是它自己写的：**完整板随日志
+ * 无限长，无上限的 12% 仍然无上限**；而绝对上限之所以难，正因为它逼出一个取舍——日志长到某个程度，
+ * 这份回包里必须有东西不出现，谁先被砍。
+ *
+ * **砍的是给 agent 的那一份，不是人那一页**：`slimBoard` 只在 `GET /board` 那一处用（`app.ts` 里唯一一处），
+ * 而人那一页在进程内自己算一份完整的 `board()` 去渲染。人那一页也在长，那是另一件（t-235）。
+ *
+ * **砍了多少看得见**：`omitted` 会逐条印成 `tasks.verified[207 of 213]`——少给而不自知，正是这几天数了
+ * 二十多次的那一族。
+ */
+export const BOARD_BYTES = 61_440;
+
+/** 一张可以砍短的名单：怎么取、怎么放回、最少留几条、属于哪一层。 */
+interface Cut {
+  path: string;
+  get(b: Board): unknown[] | undefined;
+  put(b: Board, v: unknown[]): void;
+  keep: number;
+  /**
+   * 先砍哪一层。**1 是历史**（终态任务、上过线的批次、已解决的接缝、那几张长 id 名单）——这一份少了它们，
+   * 下一个 agent 照样干得了活，`GET /task/<id>` 与 `GET /log` 里一条不少。**2 是此刻要用的**（还挂着的指令、
+   * 有效的事实）：只有第 1 层砍光了还装不下，才动它们。
+   *
+   * **一条都不砍的**：`needs_human`、`focus`、在途与待办的任务、开着的接缝——那是这一份存在的理由。
+   */
+  tier: 1 | 2;
+}
+
+const CUTS: Cut[] = [
+  ...(["verified", "obsolete", "withdrawn", "done"] as const).map((st): Cut => ({
+    path: `tasks.${st}`,
+    get: (b) => b.tasks[st],
+    put: (b, v) => { b.tasks = { ...b.tasks, [st]: v as Board["tasks"][string] }; },
+    keep: 1, tier: 1,
+  })),
+  ...(["missing", "deaf", "listening"] as const).map((g): Cut => ({
+    // 计数与那句话留着，砍的只是 id 名单——「有 343 条」和「是哪 343 条」不是同一个问题
+    path: `overdue_by_presence.${g}.instructions`,
+    get: (b) => b.overdue_by_presence?.[g]?.instructions,
+    put: (b, v) => { b.overdue_by_presence = { ...b.overdue_by_presence, [g]: { ...b.overdue_by_presence[g], instructions: v as string[] } }; },
+    keep: 0, tier: 1,
+  })),
+  ...(["verified_on_production", "earlier", "recent"] as const).map((k): Cut => ({
+    path: `live.${k}`,
+    get: (b) => (b.live as unknown as Record<string, unknown>)[k] as unknown[] | undefined,
+    put: (b, v) => { b.live = { ...b.live, [k]: v } as Board["live"]; },
+    keep: 1, tier: 1,
+  })),
+  { path: "seams", get: (b) => b.seams.filter((x) => !x.open), put: (b, v) => { b.seams = [...b.seams.filter((x) => x.open), ...(v as Board["seams"])]; }, keep: 0, tier: 1 },
+  { path: "batches", get: (b) => (b as unknown as { batches?: unknown[] }).batches, put: (b, v) => { (b as unknown as { batches?: unknown[] }).batches = v; }, keep: 1, tier: 1 },
+  // 第 2 层：此刻要用的。砍到这里就已经在牺牲「下一个 agent 一进门看得见什么」。
+  { path: "instructions", get: (b) => b.instructions, put: (b, v) => { b.instructions = v as Board["instructions"]; }, keep: 1, tier: 2 },
+  { path: "readings", get: (b) => b.readings, put: (b, v) => { b.readings = v as Board["readings"]; }, keep: 1, tier: 2 },
+];
+
+const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v ?? null), "utf8");
+
+/**
+ * 两层砍法：**第 1 层（历史）先砍光，第 2 层（此刻要用的）按份额平分剩下的预算。**
+ *
+ * 第 2 层不按「谁大砍谁」：那样会把一张名单砍到只剩一条，而另一张一条没动——我实测过一次，`instructions`
+ * 剩 1 条而 `readings` 还有 51 条。**一份只剩一条指令的板，和没有这一份，对下一个进门的 agent 差不多。**
+ */
+function fitBudget(b: Board, limit: number, refresh: () => void): void {
+  refresh();
+  for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
+    const best = biggest(b, 1);
+    if (!best) break;
+    best.cut.put(b, best.list.slice(dropCount(b, limit, best)));
+    refresh();
+  }
+  if (jsonBytes(b) <= limit) return;
+  const lists = CUTS.filter((c) => c.tier === 2).map((cut) => ({ cut, list: cut.get(b) ?? [] })).filter((x) => x.list.length > x.cut.keep);
+  if (lists.length) {
+    const theirs = lists.reduce((n, x) => n + jsonBytes(x.list), 0);
+    const share = Math.max(0, Math.floor((limit - (jsonBytes(b) - theirs)) / lists.length));
+    for (const { cut, list } of lists) {
+      let used = 2, keep = 0;                                   // 数组框架两个方括号；从最近的一条往回留
+      for (let i = list.length - 1; i >= 0; i--) {
+        const size = jsonBytes(list[i]) + (keep ? 1 : 0);
+        if (keep >= cut.keep && used + size > share) break;
+        used += size; keep += 1;
+      }
+      cut.put(b, list.slice(list.length - Math.max(cut.keep, keep)));
+    }
+    refresh();
+  }
+  // `omitted` 自己也随着砍得越多而越长，所以收尾再量一次、小步补砍
+  for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
+    const best = biggest(b, 2) ?? biggest(b, 1);
+    if (!best) return;   // 砍无可砍：**说不出就不假装**，回包照原样出去，omitted 仍然如实说砍过什么
+    best.cut.put(b, best.list.slice(dropCount(b, limit, best)));
+    refresh();
+  }
+}
+
+/** 这一层里当下最大的那张可砍名单。 */
+function biggest(b: Board, tier: 1 | 2): { cut: Cut; list: unknown[]; size: number } | null {
+  let best: { cut: Cut; list: unknown[]; size: number } | null = null;
+  for (const cut of CUTS) {
+    if (cut.tier !== tier) continue;
+    const list = cut.get(b);
+    if (!Array.isArray(list) || list.length <= cut.keep) continue;
+    const size = jsonBytes(list);
+    if (!best || size > best.size) best = { cut, list, size };
+  }
+  return best;
+}
+
+/** 砍掉最早的几条：按超出多少估，不按对半砍——对半砍会一路砍过头。 */
+function dropCount(b: Board, limit: number, best: { cut: Cut; list: unknown[]; size: number }): number {
+  const over = jsonBytes(b) - limit;
+  const per = Math.max(1, best.size / best.list.length);
+  return Math.min(best.list.length - best.cut.keep, Math.max(1, Math.ceil(over / per)));
 }
 
 /**
