@@ -24,6 +24,11 @@ export interface Refusal {
    * 或本地那次 Rejected 上），不是在这里靠匹配拒绝话的字猜出来的——判据 2。
    */
   already?: { at: string | null };
+  /**
+   * t-241：**一次发多件时，被拒的是哪一件。** `what` 仍然是这条命令的动作（划掉那条规矩认的是它），
+   * 而人要看的是「没落下去的是哪一件」——`t-226 done` 成了、`解决接缝 t-226+t-070` 被拒，是两件事。
+   */
+  part?: string;
 }
 
 /** What the record says right now. `clean` covers both "never refused" and "refused, then redone". */
@@ -38,9 +43,10 @@ export function readRefusal(raw: string | null): RefusalState {
   if ([at, rule, cmd, what].some((x) => typeof x !== "string" || !x)) return { kind: "unreadable" };
   if (Number.isNaN(Date.parse(at as string))) return { kind: "unreadable" };
   // t-233：类别读不出来就是「没带类别」，也就是另一类——**记坏了不许被当成「已经办好了」**，那会让人不去重做一件真没落下去的事
+  const part = typeof r.part === "string" && r.part.trim() ? r.part : undefined;
   const at2 = already && typeof already === "object" && !Array.isArray(already) ? (already as { at?: unknown }).at : undefined;
   const done = at2 === null || typeof at2 === "string" ? { at: (at2 ?? null) as string | null } : undefined;
-  return { kind: "open", refusal: { at: at as string, rule: rule as string, cmd: cmd as string, what: what as string, ...(done ? { already: done } : {}) } };
+  return { kind: "open", refusal: { at: at as string, rule: rule as string, cmd: cmd as string, what: what as string, ...(part ? { part } : {}), ...(done ? { already: done } : {}) } };
 }
 
 /**
@@ -66,9 +72,9 @@ export const clearsAfterNotice = (st: RefusalState): boolean => st.kind === "ope
 export function refusalNotice(st: RefusalState, now: Date, clearWith = "ateam sync --clear-refused"): string | null {
   if (st.kind === "clean") return null;
   if (st.kind === "unreadable") return `⚠ 你上一次被拒的写入记坏了，说不出是哪一条。要划掉它：${clearWith}`;
-  const { at, rule, cmd, what, already } = st.refusal;
+  const { at, rule, cmd, what, already, part } = st.refusal;
   // t-233：两类各说各的。**「已经办好了」那一类不说「没有落下去」，也不给「重做」**——真样本是 qa 16:55 那次，
   // 拒绝话逐字写着 already acked at 16:54:51.880Z，而这里照旧叫人重做一遍。句子在 core（措辞待 pd 定稿）。
   if (already) return alreadyDoneNotice(what, already.at, clearWith);
-  return `⚠ 你${howLong(now.getTime() - Date.parse(at))}有一次写入被拒（${rule}）：${what} 没有落下去。重做：${cmd}；确实不做了就划掉：${clearWith}`;
+  return `⚠ 你${howLong(now.getTime() - Date.parse(at))}有一次写入被拒（${rule}）：${part ?? what} 没有落下去。重做：${cmd}；确实不做了就划掉：${clearWith}`;
 }

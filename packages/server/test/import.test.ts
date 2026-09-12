@@ -33,8 +33,9 @@ const SAMPLE = [
 
 const run = async (text: string) => {
   const out: string[] = [], err: string[] = [];
-  const exit = await runImport(text, (e) => client.emit(e) as Promise<Written>, "dev", (l) => out.push(l), (l) => err.push(l));
-  return { exit, out, err };
+  // t-241：runImport 从此还带出「哪几条被拒了」（搬家也是一次发多件），这里只取退出码
+  const { exit, failed } = await runImport(text, (e) => client.emit(e) as Promise<Written>, "dev", (l) => out.push(l), (l) => err.push(l));
+  return { exit, failed, out, err };
 };
 const count = async () => (await store.read()).events.length;
 

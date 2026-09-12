@@ -116,7 +116,7 @@ describe("t-235 判据 4 · 搬进来一批之后，那一页还开得开", () =
       const client = new Client({ url: base, token: "k", me: "pm" });
       const lines = Array.from({ length: 1200 }, (_, i) =>
         JSON.stringify({ kind: "note", body: `旧队伍的第 ${i} 条记录：${"这是一条从别处搬过来的正文".repeat(4)}`, from: `VersaHub/notes/${i}` }));
-      const exit = await runImport(lines.join("\n"), (e) => client.emit(e) as Promise<Written>, "pm", () => {}, () => {});
+      const { exit } = await runImport(lines.join("\n"), (e) => client.emit(e) as Promise<Written>, "pm", () => {}, () => {});
       expect(exit, "一条都不该被拒").toBe(0);
       expect((await store.read()).events.length).toBeGreaterThanOrEqual(1200);
 

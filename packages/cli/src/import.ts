@@ -21,11 +21,11 @@ export async function runImport(
   me: string,
   out: (line: string) => void,
   err: (line: string) => void,
-): Promise<number> {
+): Promise<{ exit: number; failed: { what: string; rule: string; why: string }[] }> {
   const { records, problems } = parseImport(text);
   if (problems.length) {
     for (const l of [IMPORT_NOTHING_WRITTEN, ...problems.map((x) => x.why)]) { out(l); err(l); }
-    return 2;
+    return { exit: 2, failed: [] };
   }
   let written = 0, already = 0;
   const r = await sendAll<ImportRecord>(records.map((rec) => ({ what: rec.from, event: rec })), async (rec) => {
@@ -37,5 +37,7 @@ export async function runImport(
     return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, me)}` };
   }, out, err);
   out(importSummary(written, already));
-  return r.exit;
+  // t-241：**搬家这一路也是「一次发多件」**（一次几百条），被拒的那几条同样要能事后查到。
+  // 这里只把事实带出去，记不记是调用方的事——与 `sendAll` 的其余几个调用方同一条路。
+  return { exit: r.exit, failed: r.failed };
 }

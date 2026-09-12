@@ -30,8 +30,12 @@ export async function sendAll<T>(
   send: (e: T) => Promise<{ id: string; line: string }>,
   out: (line: string) => void,
   err: (line: string) => void,
-): Promise<{ ok: number; bad: number; exit: number }> {
+): Promise<{ ok: number; bad: number; exit: number; failed: { what: string; rule: string; why: string }[] }> {
   let ok = 0, bad = 0;
+  // t-241：**被拒的那几件要报出去，不只是印出来。** 印在终端上只活一秒（t-116 那一条），而这几条命令
+  // 恰好是「一次发多件」的那几条——一件被拒时，本地那本「你上一条被拒了」的账此前一条都不记，
+  // **于是事后查不到**。这里只把事实带出去，记不记、怎么记是调用方的事。
+  const failed: { what: string; rule: string; why: string }[] = [];
   for (const [i, it] of items.entries()) {
     try {
       // **成功那一件的结果行就是事件行本身**：它已经带着 id 与「发生了什么」（`01M…  task t-226 done — …`、
@@ -46,6 +50,7 @@ export async function sendAll<T>(
         : e instanceof Error ? e.message : String(e);
       out(partRefused(it.what, why));
       err(partRefused(it.what, why));
+      failed.push({ what: it.what, rule: e instanceof ClientError && e.status === 409 ? (e.body.rule ?? "rejected") : "error", why });
       bad += 1;
       if (it.stopOnFail) {
         const rest = items.length - (i + 1);
@@ -54,5 +59,5 @@ export async function sendAll<T>(
       }
     }
   }
-  return { ok, bad, exit: bad && ok ? EXIT_PARTIAL : bad ? 2 : 0 };
+  return { ok, bad, exit: bad && ok ? EXIT_PARTIAL : bad ? 2 : 0, failed };
 }

@@ -277,12 +277,27 @@ async function main(argv: string[]) {
    *
    * 这两行都走 stdout：看它的进程只把 stdout 当事件流（t-225 那一条）。
    */
+  /**
+   * t-241：**部件级被拒也进本地那本账。** 记第一件被拒的——一条命令里后面几件多半是被前面那件带倒的，
+   * 记第一件才指得着根。`what` 记的是**这条命令的动作**（划掉那条规矩认的就是它：重做同一条命令成了，
+   * 这条记录才该消失），部件名记在 `part` 里，提醒那一行印它：**没落下去的是哪一件**，不是整条命令。
+   *
+   * 一处就够：`sendAll` 的那几条命令与 `import` 走的是同一个它。
+   */
+  const recordParts = (failed: { what: string; rule: string; why: string }[]): void => {
+    if (!failed.length) return;
+    const f = failed[0];
+    const shell = (x: string) => (/[\s"'$`\\]/.test(x) ? `"${x.replace(/(["\\$`])/g, "\\$1")}"` : x);
+    noteRefusal(ARGV, { at: new Date().toISOString(), rule: f.rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), part: f.what });
+  };
+
   const sendAll = async (items: { what: string; event: ClientEvent; stopOnFail?: boolean }[]): Promise<void> => {
     const r = await sendParts(items, async (e) => {
       const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
       return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
     }, console.log, console.error);
     if (r.exit) process.exitCode = r.exit;
+    recordParts(r.failed);
   };
 
   switch (cmd) {
@@ -415,8 +430,9 @@ async function main(argv: string[]) {
       const [file] = exact(rest, "file");
       // `common(a)` 不加在这里：--refs / --writes 是给「一条命令一件事」用的，搬家一次几百条，
       // 把同一份 refs 钉在每一条上说的不是真话。每条记录自己带什么就是什么。
-      const code = await runImport(readFileSync(file, "utf8"), (e) => client.emit(e) as Promise<Written>, cfg.me, console.log, console.error);
-      if (code) process.exitCode = code;
+      const r = await runImport(readFileSync(file, "utf8"), (e) => client.emit(e) as Promise<Written>, cfg.me, console.log, console.error);
+      if (r.exit) process.exitCode = r.exit;
+      recordParts(r.failed);   // t-241：搬家那一路的被拒也进本地那本账，与其余几条命令同一处
       return;
     }
     case "tell": {
@@ -711,7 +727,13 @@ async function shipRefusals(): Promise<void> {
 }
 
 const ARGV = process.argv.slice(2);
-main(ARGV).then(async () => { noteRefusal(ARGV, null); await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
+main(ARGV).then(async () => {
+  // t-241：**「这条命令成了」才划掉上一条被拒的**。一条一次发多件的命令里有一件被拒时，它照旧走到这里
+  // （被拒不再掀翻整条命令，t-228），于是这一行会把刚刚记下的那条当场划掉——**记了等于没记**。
+  // 退出码是这件事唯一的真凭据：非 0 就是「有东西没落下去」。
+  if (!process.exitCode) noteRefusal(ARGV, null);
+  await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV);
+}).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure
   const bye = (code: number, rule?: string, local = false, already?: { at: string | null }) => {
     // quote what a shell would need quoted, so the line can be pasted back verbatim
