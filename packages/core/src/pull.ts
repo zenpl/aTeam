@@ -152,14 +152,17 @@ export function postReply(s: State, me: string, base: unknown, limit: number = P
   //
   // 顺序仍然是 `for_me` 优先（点名找你的比「你欠什么」更急），砍也先砍它：**它是可以再拉一次拿到的**
   // （GET /events 那条路上有同一批），而这一回包是那个节点此刻唯一会看的东西。两半各自截断时各自报 `more`。
+  //
+  // **第一版这里还有第二遍「用不掉的份额还给 for_me」，我把它删了**（qa 22:15 注入 U 整套全绿，两种局面都
+  // 造不出它起作用的样子）。它走不到，而且是**可证的**：`owed` 是 `for_me` 的超集（没读过的当然也没办），
+  // 所以 `for_me` 一旦被这一份挤到截断，`owed` 至少要装下同样那些条，它一定用满了自己那一份；
+  // 而 `for_me` 没被挤到截断时，还回去也不会多装一条。**一段看起来在做事、其实走不到的代码，
+  // 比没有它更坏**——下一个人会照着它去理解这笔预算怎么分。
   const reserve = Math.floor(budget * OWED_SHARE);
-  const first = forPoster(s, me, Math.max(0, budget - reserve) + 2);
-  const usedFirst = Math.max(0, bytes(first.for_me) - 2);
-  const o = capOwed(owedNow(s, me), Math.max(0, budget - usedFirst));
+  const f = forPoster(s, me, Math.max(0, budget - reserve) + 2);
+  const used = Math.max(0, bytes(f.for_me) - 2);
+  const o = capOwed(owedNow(s, me), Math.max(0, budget - used));
   const { more: oMore, ...owed } = o;
-  const usedOwed = bytes(owed);
-  // 第二遍：`owed` 用不掉的份额还给 `for_me`（它多半用不掉——一个欠 3 条的人不需要那 16 KiB）
-  const f = usedOwed < reserve ? forPoster(s, me, Math.max(0, budget - usedOwed) + 2) : first;
   return { for_me: f.for_me, owed: owed as OwedNow, ...(f.more || oMore ? { more: true } : {}) };
 }
 

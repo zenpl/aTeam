@@ -41,10 +41,15 @@ describe("t-244 · 两样东西各有份额，不是谁先填谁占满", () => {
     expect(reply.more, "两半都被截断了，回包要说出来").toBe(true);
   });
 
-  it("留的那一份用不掉就还回去：欠得少的时候，两样都全给、一条都不砍", async () => {
+  /**
+   * 第一版这里还有第二遍「用不掉的份额还给 for_me」。qa 22:15 注入 U（去掉它）整套全绿，两种局面都造不出
+   * 它起作用的样子——**它是可证走不到的**：`owed` 是 `for_me` 的超集，所以 for_me 一旦被那一份挤到截断，
+   * owed 至少要装下同样那些条、一定用满了自己那一份；没被挤到截断时，还回去也不多装一条。代码已删。
+   */
+  it("欠得少的时候两样都全给、一条都不砍（那一份没被用掉，也不需要「还回去」）", async () => {
     const s = await world(3, 2);
     const reply = postReply(s, "dev", { id: "01X", kind: "note" });
-    expect(reply.for_me, "**留一份不是浪费一份**：活欠账用不掉的份额第二遍还给 for_me").toHaveLength(3);
+    expect(reply.for_me).toHaveLength(3);
     expect(reply.more).toBeUndefined();
   });
 
