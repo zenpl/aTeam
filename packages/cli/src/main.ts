@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { Client, ClientError, ShapeError, seen } from "./client.js";
+import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
@@ -594,13 +594,31 @@ main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(A
     sayIfDeaf(ARGV);
     process.exit(code);
   };
+  // t-225 判据 3：**死因要走 stdout。**
+  //
+  // 看它的进程（Monitor、别人手写的轮询、任何 `cmd | grep`）只把 stdout 当事件流，而这条命令行的每一种失败
+  // 都只写 stderr（frontend 18:34 量的那 238 字节、我 repo:cli.errors_stream 量的四支统一出口）。于是一次
+  // 「200 带坏正文」在看守那儿长成这样：**没有任何输出，只有一个退出码**——与「今天很安静」不可区分。
+  //
+  // 所以退出前在 stdout 上留一行，不取代 stderr 那一行（人盯着终端时两处都看得见，管道只看得见这一处）。
+  const lastWords = (line: string) => console.log(`ateam: ${line}`);
+  if (err instanceof BadResponse) {
+    console.error(err.message);
+    lastWords(err.message);
+    // 游标一个字节没动（advance 只收字符串或 null），退出码不是 1——好让看守分得清「坏响应」和「它自己崩了」
+    return bye(3);
+  }
   if (err instanceof ClientError) {
-    console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
+    const line = err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`;
+    console.error(line);
+    lastWords(line);
     return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
   }
-  if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2, "usage"); }
-  console.error(err instanceof Error ? err.message : err);
+  if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage"); }
+  const what = err instanceof Error ? err.message : String(err);
+  console.error(what);
+  lastWords(what);
   return bye(1);
 });

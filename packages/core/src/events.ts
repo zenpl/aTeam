@@ -522,6 +522,7 @@ export const KEY_SYMBOLS = [
   "allocationSummary",
   "alsoHere",
   "applyReading",
+  "badResponseLine",
   "basisOfTouches",
   "batches",
   "batchesEmptyLine",
@@ -1034,6 +1035,16 @@ export const rollbackMessage = (sha: string, batch: string) =>
  * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
  * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
  */
+/**
+ * t-225：**HTTP 说成功、正文却不是 JSON** 时说的那一句。住在 core，与 ROLLBACK_LINES 同一个理由：
+ * 新写的代码不该是 SECOND_HOME 那个只减不增的棘轮的第一个例外。
+ *
+ * 带上正文开头几十字：网关的错误页、代理的登录页、被截断的 JSON，一眼就分得出是哪一种；空正文也要说出来，
+ * 否则它长得像「服务什么都没说」，而那是另一回事。
+ */
+export const badResponseLine = (status: number, snippet: string) =>
+  `服务返回 ${status}，但正文不是可解析的 JSON：${snippet || "（空正文）"}`;
+
 /** t-223：`--deploy` 与 `--rollback` 都会说的那两句，住在一处（同 mayPush 那四问）。 */
 export const PUSH_LINES = {
   noSuchCommit: (sha: string) => `本地没有提交 ${sha}；先 fetch。`,

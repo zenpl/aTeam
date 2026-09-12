@@ -1,5 +1,5 @@
 import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from "@ateam/core";
-import { ClientError } from "./client.js";
+import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
 /** Where the CLI keeps its read position. The file under .ateam/ in production; memory in tests. */
@@ -32,6 +32,9 @@ const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(reso
 
 /** Network trouble and 5xx are the server's moment, not ours; 4xx, rejections and config errors are ours. */
 export function isTransient(err: unknown): boolean {
+  // t-225：**正文坏掉算服务那一侧的时刻**，和 5xx、断网同一类：网关塞回一张 HTML、代理截断了正文、
+  // 部署中途的空回应——都会自己过去，而且下一轮重试的代价只是一次拉取。杀掉看守才是贵的那一种。
+  if (err instanceof BadResponse) return true;
   if (err instanceof ClientError) return err.status >= 500;
   return err instanceof Error && !(err instanceof SyntaxError);
 }
@@ -42,6 +45,14 @@ export function isTransient(err: unknown): boolean {
  */
 export function advance(cursor: CursorStore, next: string | null): boolean {
   const current = cursor.read();
+  // t-225 判据 2：**先问「这个值合法吗」，再问「它比现在新吗」。**
+  //
+  // 旧版只认识 `null`，而真正打进来的是 `undefined`——一个 200 带着不可解析的正文，被上游造成假 `PullResult`
+  // 之后，`r.cursor` 就是 `undefined`。它走过两道闸：`undefined <= current` 是 false（与 undefined 的比较一律
+  // false），`undefined === null` 也是 false，于是**被当成一个合法的新位置写进了游标文件**，读位置当场归零。
+  // 一个「只往前」的闸，被一个连「位置」都不是的值绕过去了。
+  if (typeof next !== "string" && next !== null) return false;
+  if (next !== null && !next.trim()) return false;
   if (next !== null && current !== null && next <= current) return false;
   if (next === null && current !== null) return false;
   cursor.write(next);
