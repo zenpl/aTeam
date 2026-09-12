@@ -246,6 +246,17 @@ export const OWED_LEGACY_HELP = "GET /owed                     你此刻欠什�
  */
 export const VERIFIED_ON_THIS_VERSION = `${PD_PLACEHOLDER}这一版里已经在生产上验过的`;
 
+/**
+ * t-245 判据 2：**`--quiet` 要出现在 `--help` 里。** 一个会改变「你会不会丢东西」的开关，却不在任何一处
+ * 说明里——**没写在说明里的开关，和不存在的开关，对读说明的人长得一样。**
+ */
+export const QUIET_HELP = "--quiet 只拉不印（心跳）：那一批不会消失，它攒在本地，下一次不带 --quiet 的 sync 先把它印出来";
+/** t-245：这一叠是上几次 `--quiet` 拉到、还没人看过的。说出来它是什么，人才知道自己在读什么。 */
+export const UNSEEN_HEAD = (n: number) => `以下 ${n} 行是之前 --quiet 拉到、还没人看过的：`;
+/** 攒太多时只留最近的，**丢掉多少要说出来**——一叠会悄悄变小的东西，和没有这一叠一样坏。 */
+export const UNSEEN_DROPPED = (n: number) => `（更早的 ${n} 行攒不下了，已经丢掉；要全量去 ateam log --after <上次读到的 id>）`;
+export const UNSEEN_MAX = 500;
+
 export const LATE_SHOWN = 3;
 export const DEADLINE_WORDS: string[] = [
   "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",

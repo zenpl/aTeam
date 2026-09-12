@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -14,6 +14,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
+import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -30,7 +31,8 @@ setup
                                                           precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
 every turn
-  ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
+  ateam sync [--wait 25s] [--quiet]   pull new events since your cursor; instructions for you are marked. --wait long-polls.
+                                 ${QUIET_HELP}
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
@@ -267,7 +269,27 @@ async function main(argv: string[]) {
       // t-211：把「本地这棵树是哪一版」交给 sync 判。git 不在、不是检出、答不上来时 realBehind 全给 null，
       // 那一句就一个字都不说——「不知道」不等于「你是最新的」。
       const behind = realBehind();
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log, behind, flushOut);
+      // t-245：`--quiet` 拉到的那一批**不再消失**：它落进本地那一叠「拉到了、还没人看过的」，
+      // 下一次真去看的时候先印它、再清掉。**交付的定义没变，变的只是这一次交给谁**（这一次交给磁盘）。
+      const quiet = bool(a, "quiet");
+      const dir = process.cwd();
+      if (!quiet) {
+        const waiting = unseenLines(dir, cfg.me);
+        if (waiting.length) {
+          console.log(UNSEEN_HEAD(waiting.length));
+          for (const line of waiting) console.log(line);
+          await flushOut();
+          clearUnseen(dir, cfg.me);        // 印完了才清——与游标同一条规矩（t-240）
+        }
+      }
+      const keep: string[] = [];
+      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0,
+        quiet ? (line) => keep.push(line) : console.log, behind, quiet ? undefined : flushOut);
+      if (quiet && keep.length) {
+        stashUnseen(dir, cfg.me, keep);
+        const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
+        if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
+      }
       await recordCliSha(client, cfg.me, behind.head());
       return;
     }
