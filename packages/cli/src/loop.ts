@@ -122,7 +122,10 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   const { after, r } = await pullBatch(client, cursor, waitMs);
   if (print) for (const line of report(r, me, after)) print(line);
   if (print) await flush?.();
-  advance(cursor, r.cursor);
+  // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——
+  // 那正是 `--quiet` 原来的形状，而它让那一批对这个节点永久消失。命令行那一侧此刻不再走这条路
+  // （`--quiet` 改成把那一批收进本地那一叠），这里把口子也堵上：**下一个写 `sync(..., null)` 的人不会再踩它。**
+  if (print) advance(cursor, r.cursor);
   // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
   // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the

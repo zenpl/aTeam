@@ -89,12 +89,17 @@ describe("t-140 · 欠什么只在 sync 时对本人说", () => {
     expect(text).toContain("有 1 条在等你答");
   });
 
-  it("watch's own rounds say nothing: print is null and the cursor still moves", async () => {
+  /**
+   * t-245：这一条原来断言的是「print 是 null，游标照样往前」——**那正是 `--quiet` 把一批吃掉的形状**。
+   * 它的名字说的是 watch 的轮次，而 watch 自 t-240 起根本不走 `sync`（它自己 pullBatch、印完再推进）。
+   * 现在的契约：**没有人要这一批，就不算交付，游标不动。**
+   */
+  it("没有人看的那一次不算交付：print 是 null 时游标不动（t-245）", async () => {
     const { sync } = await import("../src/loop.js");
     const c = cursor();
     const r = await sync(service(owed()) as never, "frontend", c as never, 0, null);
-    expect(r.owed?.untouched).toHaveLength(2);   // it was there to say
-    expect(c.read()).toBe("c1");                 // the heartbeat still beat
+    expect(r.owed?.untouched).toHaveLength(2);   // 服务照旧说了
+    expect(c.read(), "谁都没看见，就不许记成看过").toBeNull();
   });
 
   it("says nothing when nothing is owed, and nothing when the server is too old to say", async () => {
