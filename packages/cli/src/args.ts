@@ -1,4 +1,4 @@
-import { BOTH_BODY_AND_FILE } from "@ateam/core";
+import { BOTH_BODY_AND_FILE, TWICE_GIVEN } from "@ateam/core";
 export interface Args {
   _: string[];
   flags: Record<string, string | boolean | string[]>;
@@ -58,7 +58,14 @@ export function parse(argv: string[]): Args {
       const arr = (out.flags[name] as string[] | undefined) ?? [];
       arr.push(String(value));
       out.flags[name] = arr;
-    } else out.flags[name] = value;
+    } else {
+      // t-246 ②（qa 22:42）：**同一个 --X 给两次，后一个静默胜出。** 它咬的第一件事就是 `--body-file`：
+      // 两份正文里工具替你挑了一份，而挑错了是一句没人会核的假话。t-197 那条注释早就写过这个形状
+      // （`--refs a --refs b` 后一个静默盖掉前一个），当时的出路是把该重复的加进 REPEATABLE；
+      // **不该重复的那些，此刻一律改成当场报用法错**——两份值里挑一份，工具不替你挑。
+      if (out.flags[name] !== undefined) throw new UsageError(TWICE_GIVEN(name));
+      out.flags[name] = value;
+    }
   }
   return out;
 }

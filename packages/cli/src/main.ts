@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, STORED_ECHO, storedLine, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -247,17 +247,14 @@ async function main(argv: string[]) {
   const client = new Client(cfg);
   const emit = async (e: ClientEvent) => {
     const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
-    const line = `${ev.id}  ${fmt.event(ev, cfg.me)}`;
-    console.log(line);
-    // t-246 判据 3：**长正文再报一行「落库多少字、首尾各若干字」**，而且取的是**服务返回的那条事件**——
-    // 被 shell 吃掉一段的正文，字数与尾巴都对不上。短的不印：那一行本来就把它整句印出来了。
-    for (const field of ["body", "evidence", "resolution", "reason"] as const) {
-      const text = (ev as unknown as Record<string, unknown>)[field];
-      if (typeof text !== "string" || [...text].length <= STORED_ECHO * 2) continue;
-      if (line.includes(text)) break;   // 已经整句在上面了，不说第二遍
-      console.log(storedLine(field, text));
-      break;
-    }
+    // t-246 判据 3：**回执本来就回显落库内容**——这一行印的是服务返回的那条事件，而 `fmt.event` 对
+    // body／evidence／resolution／reason 一个字都不截断（qa 22:42 在真命令上逐条量过）。所以那一句「我写的
+    // 那句原样进去了」，读这一行就能核。我为此加过一行「落库 N 字：首…末」，**它一次都印不出来**（那四个
+    // 字段永远已经整句在上面了），已删——**一段走不到的代码，比没有它更坏**（与 t-244 那次同一条）。
+    //
+    // 更要紧的一句写在这里：**没有任何回执抓得住 shell 吃字**——它发生在命令行看见这段字之前，
+    // 命令行拿到的就是被吃过的那份。抓得住它的是 `--X-file`（判据 1 那一半）。
+    console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
   };
   /**
    * t-246：**正文可以走 `--body-file <路径>`**（经 `fromFiles` 变成 `--body`）。给了它，位置参数上就不该再有

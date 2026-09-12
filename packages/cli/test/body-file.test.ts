@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, fromFiles, UsageError } from "../src/args.js";
-import { storedLine, STORED_ECHO, BOTH_BODY_AND_FILE } from "@ateam/core";
+import { BOTH_BODY_AND_FILE, TWICE_GIVEN } from "@ateam/core";
 
 const read = (p: string) => (p === "/tmp/x" ? "从文件里读出来的一段：`反引号` 与 $变量 都原样" : "");
 
@@ -51,25 +51,32 @@ describe("t-246 判据 1 · --X-file 从文件读那一段字", () => {
   });
 });
 
-describe("t-246 判据 3 · 回执证明它原样进去了", () => {
-  it("长正文：报字数与首尾各若干字——**被吃掉一段的，字数与尾巴都对不上**", () => {
-    const text = `${"一".repeat(STORED_ECHO * 2 + 10)}末尾这几个字`;   // 超过 STORED_ECHO*2 才会被截，短的本来就整句给全
-    const line = storedLine("body", text);
-    expect(line).toContain(`落库 ${[...text].length} 字`);
-    expect(line).toContain("末尾这几个字");
-    expect(line).toContain("…");
-    // 被 shell 吃掉一段之后：两条回执不可能相同
-    const eaten = text.replace("末尾这几个字", "");
-    expect(storedLine("body", eaten)).not.toBe(line);
+/**
+ * 判据 3 的那一半，qa 22:42 量完之后是这样：**回执本来就回显落库内容**——那一行印的是服务返回的事件，
+ * 而 `fmt.event` 对 body／evidence／resolution／reason 一个字都不截断。我加的那行「落库 N 字：首…末」
+ * **一次都印不出来**（永远已经整句在上面），已删。更要紧的是：**没有任何回执抓得住 shell 吃字**，
+ * 它发生在命令行看见这段字之前——抓得住它的是 `--X-file`，也就是上面那几条。
+ */
+
+/**
+ * t-246 ②（qa 22:42 量到）：**同一个 `--X` 给两次，后一个静默胜出。** 它咬的第一件事就是 `--body-file`：
+ * 两份正文里工具替你挑了一份。t-197 那条注释早写过这个形状（`--refs a --refs b` 后一个静默盖掉前一个），
+ * 当时的出路是把该重复的加进 REPEATABLE；**不该重复的那些，现在一律当场报用法错。**
+ */
+describe("t-246 ② · 同一个开关给两次：报错，不静默挑一个", () => {
+  it("--body-file 给两个不同文件 ⇒ 用法错，一个字都没发", () => {
+    expect(() => parse(["note", "--body-file", "/tmp/a", "--body-file", "/tmp/b"])).toThrow(UsageError);
+    try { parse(["note", "--body-file", "/tmp/a", "--body-file", "/tmp/b"]); }
+    catch (e) { expect((e as Error).message).toBe(TWICE_GIVEN("body-file")); }
   });
 
-  it("短的照原样给全，不摆省略号", () => {
-    const line = storedLine("body", "短短一句");
-    expect(line).toContain("短短一句");
-    expect(line).not.toContain("…");
+  it("该重复的照旧重复：--refs、--touches 那几个一个字没变", () => {
+    const a = parse(["task", "done", "t-1", "--refs", "01A", "--refs", "01B", "--touches", "x.ts", "--touches", "y.ts"]);
+    expect(a.flags["refs"]).toEqual(["01A", "01B"]);
+    expect(a.flags["touches"]).toEqual(["x.ts", "y.ts"]);
   });
 
-  it("换行压成空格：回执是一行，不许把终端刷满", () => {
-    expect(storedLine("evidence", `${"甲".repeat(STORED_ECHO)}\n中间\n${"乙".repeat(STORED_ECHO)}`)).not.toContain("\n");
+  it("布尔开关写两遍也是两次：同样报错（省得「写两遍等于没写」这种猜法）", () => {
+    expect(() => parse(["task", "verify", "t-1", "--pass", "--pass"])).toThrow(UsageError);
   });
 });
