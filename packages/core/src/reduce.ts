@@ -277,25 +277,54 @@ export function touchesOverlap(a: string, b: string): boolean {
   return pa.startsWith(pb + "/") || pb.startsWith(pa + "/");
 }
 
-/** The touches of either task that overlap something the other declared. */
+/**
+ * 一条路径的每一个上级目录（不含它自己）：`a/b/c.ts` → `a`、`a/b`。深度是个位数，所以这是常数级的。
+ * 尾部斜杠在 `touchPath` 里已经去掉了，这里不会产出空段。
+ */
+function ancestorsOf(p: string, into: Set<string>): void {
+  for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) into.add(p.slice(0, i));
+}
+
+/**
+ * The touches of either task that overlap something the other declared.
+ *
+ * t-121 (pm 02:43): our own rules push touch counts up — claim wide, revise at done, name symbols. So the pairwise
+ * comparison has to stop being pairwise. Two touches without a directory in play meet exactly when their paths are
+ * equal, which a set answers in one step.
+ *
+ * t-250 ①（qa 01:16 的 profile：`touchesOverlap` 占写入路径自耗时 **41%**，9279 条日志上 **840 万次**调用）：
+ * **有目录在场时它整个退回两两比对**，而「有人声明了一个目录」在这个仓库里是常态（`s.dirTouchers`）。
+ * 于是那一支按「任务数 × 每任务触点数」平方涨——**贵的是这里的实现，不是人多声明了触点**（判据里钉死的
+ * 那条硬约束：不许靠少声明把曲线压下去）。
+ *
+ * 拆开看，`touchesOverlap(x, y)` 只有三种成立方式，每一种都答得出而不必扫对面：
+ *   · 两条路径相等          ⇒ 对面的**路径集合**里有它；
+ *   · 对面包含我（`pb/` 是 `pa` 的前缀）⇒ **我的某一个上级目录**在对面的路径集合里；
+ *   · 我包含对面（`pa/` 是 `pb` 的前缀）⇒ 我这条路径在**对面所有路径的上级集合**里。
+ * 三个集合预先算一遍（各 O(条数 × 路径深度)），之后每条触点只问三次 has。**语义一个字没改**——
+ * 它既不看 `dirLike`、也不看扩展名，与 `touchesOverlap` 的定义逐条对应；那个函数仍然是定义，
+ * 用例里拿它与这里的结果对拍。
+ */
 export function overlapOf(a: string[], b: string[]): string[] {
   const out = new Set<string>();
-  // t-121 (pm 02:43): our own rules push touch counts up — claim wide, revise at done, name symbols. So the pairwise
-  // comparison has to stop being pairwise. Without a directory in play, two touches meet exactly when their paths are
-  // equal, which a set answers in one step instead of a scan. A directory can contain anything, so that case still walks.
-  if (!a.some(dirLike) && !b.some(dirLike)) {
-    const bPaths = new Set(b.map(touchPath));
-    const aPaths = new Set(a.map(touchPath));
-    for (const x of a) if (bPaths.has(touchPath(x))) out.add(x);
-    for (const y of b) if (aPaths.has(touchPath(y))) out.add(y);
-    return [...out];
-  }
-  for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
-  for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
+  const paths = new Set<string>(), anc = new Set<string>();
+  const meets = (side: string[], theirPaths: Set<string>, theirAnc: Set<string>) => {
+    for (const x of side) {
+      const p = touchPath(x);
+      if (theirPaths.has(p) || theirAnc.has(p)) { out.add(x); continue; }
+      for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (theirPaths.has(p.slice(0, i))) { out.add(x); break; }
+    }
+  };
+  for (const y of b) { const p = touchPath(y); paths.add(p); ancestorsOf(p, anc); }
+  meets(a, paths, anc);
+  paths.clear(); anc.clear();
+  for (const x of a) { const p = touchPath(x); paths.add(p); ancestorsOf(p, anc); }
+  meets(b, paths, anc);
   return [...out];
 }
 
-const pathOf = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+/** t-250：与 `touchPath` 逐字同义，本来就是同一个函数的两个名字；现在它们真的是同一个（带记忆的那个）。 */
+const pathOf = (t: string): string => touchPath(t);
 const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) : null);
 
 /**
@@ -311,16 +340,16 @@ export function overlapIsLight(a: string[], b: string[]): boolean {
   const paths = new Set<string>();
   let any = false;
   // t-121: the same set trick — a shared path is what both sides must have named for the question to arise at all.
-  if (!a.some(dirLike) && !b.some(dirLike)) {
-    const bPaths = new Set(b.map(pathOf));
-    for (const x of a) if (bPaths.has(pathOf(x))) { any = true; paths.add(pathOf(x)); }
-  } else {
-    for (const x of a) for (const y of b) {
-      if (!touchesOverlap(x, y)) continue;
-      any = true;
-      if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
-      paths.add(pathOf(x));
-    }
+  // t-250 ①：这里原来分两支，有目录在场时退回两两比对（profile 里 `overlapIsLight` 自耗时 8%）。两支合成一支，
+  // 用与 `overlapOf` 同一套集合：**「重叠但路径不同」只有两种可能**——我这条路径是对面某条的上级（`theirAnc`
+  // 里有它），或者对面某条是我的上级（我的某个上级在 `theirPaths` 里）。任何一种都是「目录包住了另一个」，
+  // 而没有人会给一整个目录声明符号，所以照旧直接判「不轻」。
+  const aPaths = new Set(a.map(pathOf)), bPaths = new Set(b.map(pathOf));
+  const bAnc = new Set<string>(); for (const p of bPaths) ancestorsOf(p, bAnc);
+  for (const p of aPaths) {
+    if (bAnc.has(p)) return false;
+    for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (bPaths.has(p.slice(0, i))) return false;
+    if (bPaths.has(p)) { any = true; paths.add(p); }
   }
   if (!any) return false;
   for (const p of paths) {
@@ -849,7 +878,17 @@ function seamCandidates(s: State, id: string, touches: string[]): Iterable<TaskS
   return out.values();
 }
 
-const touchPath = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+/**
+ * t-250 ①：**这一行是写入路径上被叫得最多的一行**（每一次 `touchesOverlap` 叫两遍，9279 条日志上 840 万次），
+ * 而它每次都重新 split 一遍、再跑一遍正则。**触点字符串是高度重复的**（同一条路径被几十件任务声明），
+ * 所以记住算过的答案。表的大小以日志里出现过的不同触点为界（今天是几千条），随日志长而不随调用次数长。
+ */
+const pathMemo = new Map<string, string>();
+const touchPath = (t: string): string => {
+  let p = pathMemo.get(t);
+  if (p === undefined) pathMemo.set(t, (p = t.split("#")[0].replace(/\/+$/, "")));
+  return p;
+};
 /** A touch that could contain another: no file extension on its last segment ("packages/core/test/", "docs"). */
 const dirLike = (t: string) => !t.includes("#") && !/\.[A-Za-z0-9]+$/.test(touchPath(t));
 
