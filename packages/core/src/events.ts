@@ -595,6 +595,7 @@ export const KEY_SYMBOLS = [
   "factCannotPlace",
   "factPredatesThirdBucket",
   "fixWhere",
+  "followReduction",
   "followUps",
   "gateHonesty",
   "honestyLine",
