@@ -1076,7 +1076,22 @@ export const cannotMeasureHere = (sha: string) =>
  * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
  * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
  */
-export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null, serverSha?: string | null): number | null {
+export interface TreeRelation {
+  /**
+   * 这个 sha 是不是我的祖先（我含不含它）。`null` 是 git 答不上来；
+   * **本地根本没有这个对象算 `false`，不算「说不出」**——t-211 那一条，改了它最该被提醒的节点就再也收不到提醒。
+   */
+  has(sha: string): boolean | null;
+  /**
+   * t-263：**我是不是它的祖先**——也就是它在不在我前头。`null` 是答不出来（本地没有这个对象时就是这样）。
+   *
+   * 这一问是本件的全部。只有 `has` 时，「它在我前头」与「它和我互不包含」长得一模一样，
+   * 而**回滚产物永远落在后一种**：一个树与旧版逐字相同的新提交，谁的功能分支里都没有。
+   */
+  descends(sha: string): boolean | null;
+}
+
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, rel: TreeRelation, serverSha?: string | null): number | null {
   if (!mine || !deploys?.length) return null;
   // t-230 判据 3：**服务自报在跑哪一版，胜过名单的尾巴。**
   //
@@ -1084,11 +1099,20 @@ export function behindDeploys(mine: string | null, deploys: readonly string[] | 
   // sha 落在最新处时，「名单尾巴是个错字」与「我真落后一次」在 `has` 这一个问句下长得一模一样。
   // 而拉取的回包里本来就带着服务自己报的 sha（t-211 加的）——**我含着它，我就是在跑线上那一版**，
   // 名单尾巴写的是什么都不改变这件事。
-  if (serverSha) {
-    const running = has(serverSha);
-    if (running === null) return null;   // git 答不上来：整句不说
-    if (running) return 0;
-  }
+  const tip = serverSha ?? deploys[deploys.length - 1];
+  const mineHasIt = rel.has(tip);
+  if (mineHasIt === null) return null;   // git 答不上来：整句不说
+  if (mineHasIt) return 0;
+  // t-263：**先问关系，再数次数。**
+  //
+  // 真样本：`14:11` 那次回滚把生产退到 `3e50e5b`（树与 `d57acbc` 逐字相同的**新**提交）。它不在任何人的
+  // 功能分支里，于是旧口径对每一个在场的人都说「你旧 1 次，跑 git pull && pnpm build」——**而照做会把
+  // 命令行降到 `t-223` 之前。一条永远为真、照做还变坏的提醒，比不提醒更坏。**
+  //
+  // 三种关系（判据 2）：**它是我的祖先** ⇒ 上面已经答完，不落后；**我是它的祖先** ⇒ 它真在我前头，往下数；
+  // **互不包含** ⇒ 我说不出「你旧了」，整句不说。`null` 是答不出来——那时退回 t-211 的行为（只由 `has` 说了算），
+  // 因为「从不 fetch 的那棵树」正是这一格，而它恰恰最该被提醒。
+  if (rel.descends(tip) === false) return null;
   // t-211（qa 16:11 在生产上判 fail）：**问错了问题。**
   //
   // 旧版数的是「名单里有几条我这棵树没有」，于是名单里任何一条**谁都拿不到**的条目，都会被算成「你落后」：
@@ -1099,7 +1123,7 @@ export function behindDeploys(mine: string | null, deploys: readonly string[] | 
   // 该问的是：**在我这棵树含着的那一版之后，还上过几次线。** 历史更早处有几条谁都解不出的垃圾，与「我是不是
   // 落后了」无关。从最新往回找第一条我有的，它之后的那些才是我落后的。
   for (let i = deploys.length - 1; i >= 0; i--) {
-    const got = has(deploys[i]);
+    const got = rel.has(deploys[i]);
     if (got === null) return null;   // git 答不上来：整句不说，不猜
     if (got) return deploys.length - 1 - i;
   }

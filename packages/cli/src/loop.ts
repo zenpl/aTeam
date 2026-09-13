@@ -135,7 +135,7 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // 是唯一会主动告诉人「你手上这份不是上线那一版」的地方。说不出就一个字都不说（behindDeploys 返回 null）：
   // 「不知道」不等于「你是最新的」，报平安比不说话更坏。
   if (print && behind) {
-    const n = behindDeploys(behind.head(), r.deploys, behind.has, r.sha);
+    const n = behindDeploys(behind.head(), r.deploys, behind, r.sha);
     if (n !== null && n > 0) print(cliBehindLine(n));
     // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
@@ -150,6 +150,11 @@ export interface Behind {
   head(): string | null;
   /** 本地这棵树含不含这个 sha。null 是「git 答不上来」，与 false 分开。 */
   has(sha: string): boolean | null;
+  /**
+   * t-263：**我是不是它的祖先**（它在不在我前头）。null 是答不出来——本地没有这个对象时就是这样。
+   * 只有 `has` 时，「它在我前头」与「互不包含」分不开，而回滚产物永远是后者。
+   */
+  descends(sha: string): boolean | null;
   /** t-211：dist 跟得上源码吗。null 是说不出（没有 dist、读不到时间）。 */
   built?(): boolean | null;
 }

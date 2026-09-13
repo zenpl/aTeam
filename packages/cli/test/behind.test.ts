@@ -10,9 +10,16 @@ import { behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from
 import { sync, type Behind } from "../src/loop.js";
 
 const DEPLOYS = ["d1", "d2", "d3"];
+/**
+ * t-263 把第三个参数从一个函数换成了一对问句（`has` 与 `descends`）。**这一族用例问的都是 `has` 那一半**——
+ * 它们造的世界里「那一版与我是什么关系」本来就答不出来（一棵从不 fetch 的树正是这一格），所以这里
+ * `descends` 一律给 `null`，**而 t-263 对 `null` 的规定就是退回这一族原来的行为**。一个字的断言都没改。
+ */
+const rel = (has: (sha: string) => boolean | null, descends: (sha: string) => boolean | null = () => null) => ({ has, descends });
 const behindWith = (mine: string | null, hasList: string[]): Behind => ({
   head: () => mine,
   has: (sha) => hasList.includes(sha),
+  descends: () => null,
 });
 const puller = (deploys?: string[]) => ({
   pull: async (): Promise<PullResult> => ({ events: [], for_me: [], cursor: null, ...(deploys ? { deploys } : {}) }),
@@ -50,14 +57,14 @@ describe("t-211 · 说不出就闭嘴，不报平安", () => {
   it("git 答不上来（has 给 null）：整句不说，不拿「答不上来」当「你没有」", async () => {
     // t-211：**null 要落在「从最新往回数」会问到的那一段才拦得住整句**——我含着最新那一版时，
     // 更早处答不上来与我无关，那种情形的正确答案是 0，不是「说不出」。
-    const flaky: Behind = { head: () => "mine", has: (sha) => (sha === "d3" ? null : true) };
+    const flaky: Behind = { head: () => "mine", has: (sha) => (sha === "d3" ? null : true), descends: () => null };
     expect((await run(DEPLOYS, flaky)).join("\n")).not.toContain("比生产旧");
-    expect(behindDeploys("mine", DEPLOYS, flaky.has)).toBeNull();
+    expect(behindDeploys("mine", DEPLOYS, rel(flaky.has))).toBeNull();
   });
 
   it("最新那一版我有、更早处 git 答不上来 ⇒ 0（我没落后，早年的账与我无关）", () => {
-    const partial: Behind = { head: () => "mine", has: (sha) => (sha === "d1" ? null : true) };
-    expect(behindDeploys("mine", DEPLOYS, partial.has)).toBe(0);
+    const partial: Behind = { head: () => "mine", has: (sha) => (sha === "d1" ? null : true), descends: () => null };
+    expect(behindDeploys("mine", DEPLOYS, rel(partial.has))).toBe(0);
   });
 
   it("没人给 behind（老调用方）：sync 照常跑，不崩也不说", async () => {
@@ -67,44 +74,44 @@ describe("t-211 · 说不出就闭嘴，不报平安", () => {
 
 describe("t-211 · 数的是上线次数，不是提交数", () => {
   it("本地含前两次上线、缺最后一次 ⇒ 1", () => {
-    expect(behindDeploys("mine", DEPLOYS, (s) => s !== "d3")).toBe(1);
+    expect(behindDeploys("mine", DEPLOYS, rel((s) => s !== "d3"))).toBe(1);
   });
 
   it("一次上线都没有过：说不出（不是 0）", () => {
-    expect(behindDeploys("mine", [], () => true)).toBeNull();
-    expect(behindDeploys("mine", undefined, () => true)).toBeNull();
+    expect(behindDeploys("mine", [], rel(() => true))).toBeNull();
+    expect(behindDeploys("mine", undefined, rel(() => true))).toBeNull();
   });
 });
 
 describe("t-211 · qa 16:02 找到的两个反过来的结果", () => {
   it("**从不 fetch 的那棵树**：本地根本没有上线那个 sha ⇒ 算「我没有」，照样印出来", async () => {
     // 第一版把「本地没有这个对象」当成说不出，于是最该看到提醒的节点一个字都收不到
-    const neverFetched: Behind = { head: () => "mine", has: () => false };
+    const neverFetched: Behind = { head: () => "mine", has: () => false, descends: () => null };
     const out = await run(DEPLOYS, neverFetched);
     expect(out.some((l) => l === cliBehindLine(3))).toBe(true);
   });
 
   it("**只 git pull 不重编**：HEAD 追上了、dist 还是旧的 ⇒ 另一句话说出来", async () => {
-    const pulled: Behind = { head: () => "mine", has: () => true, built: () => false };
+    const pulled: Behind = { head: () => "mine", has: () => true, descends: () => null, built: () => false };
     const out = await run(DEPLOYS, pulled);
     expect(out.join("\n")).not.toContain("比生产旧");     // 按 HEAD 算确实不落后了
     expect(out).toContain(cliStaleBuildLine);            // 但跑着的不是这棵树的代码
   });
 
   it("两样都旧：两句都说，各说各的", async () => {
-    const both: Behind = { head: () => "mine", has: (s) => s === "d1", built: () => false };
+    const both: Behind = { head: () => "mine", has: (s) => s === "d1", descends: () => null, built: () => false };
     const out = await run(DEPLOYS, both);
     expect(out).toContain(cliBehindLine(2));
     expect(out).toContain(cliStaleBuildLine);
   });
 
   it("dist 说不出（没有产物）：不说——「不知道」不等于「你是新的」", async () => {
-    const unknown: Behind = { head: () => "mine", has: () => true, built: () => null };
+    const unknown: Behind = { head: () => "mine", has: () => true, descends: () => null, built: () => null };
     expect((await run(DEPLOYS, unknown)).join("\n")).not.toContain("dist");
   });
 
   it("老调用方没有 built：照旧只判上线那一半，不崩", async () => {
-    const out = await run(DEPLOYS, { head: () => "mine", has: () => true });
+    const out = await run(DEPLOYS, { head: () => "mine", has: () => true, descends: () => null });
     expect(out.join("\n")).not.toContain("dist");
   });
 });
@@ -122,15 +129,15 @@ describe("t-211 · 与生产同版的树，一个字都不说", () => {
 
   it("名单里混着两条谁都解不出的，而我含着最新那次 ⇒ 0，那句话不出现", async () => {
     const has = (s: string) => REAL.includes(s);
-    expect(behindDeploys("a3", [JUNK[0], ...REAL.slice(0, 1), JUNK[1], ...REAL.slice(1)], has)).toBe(0);
-    const same: Behind = { head: () => "a3", has };
+    expect(behindDeploys("a3", [JUNK[0], ...REAL.slice(0, 1), JUNK[1], ...REAL.slice(1)], rel(has))).toBe(0);
+    const same: Behind = { head: () => "a3", has, descends: () => null };
     expect((await run([JUNK[0], ...REAL], same)).join("\n"), "与生产同版就闭嘴").not.toContain("比生产旧");
   });
 
   it("真落后时照旧说得出来——这道闸不是被关掉了，是问对了问题", async () => {
     const has = (s: string) => ["a1", "a2"].includes(s);
-    expect(behindDeploys("a2", [JUNK[0], ...REAL], has)).toBe(1);
-    expect((await run([JUNK[0], ...REAL], { head: () => "a2", has })).join("\n")).toContain("比生产旧");
+    expect(behindDeploys("a2", [JUNK[0], ...REAL], rel(has))).toBe(1);
+    expect((await run([JUNK[0], ...REAL], { head: () => "a2", has, descends: () => null })).join("\n")).toContain("比生产旧");
   });
 });
 
@@ -147,23 +154,23 @@ describe("t-230 · 名单尾巴写错时，别把账算到我的树上", () => {
 
   it("尾巴是个查无此物的 sha，而我含着服务自报在跑的那一版 ⇒ 0（旧口径会说 1）", () => {
     const withTypo = [...REAL, "deadbeefdeadbeef"];
-    expect(behindDeploys("a3", withTypo, has), "旧口径：尾巴我没有 ⇒ 1").toBe(1);
-    expect(behindDeploys("a3", withTypo, has, "a3"), "服务说它在跑 a3，而我有 a3 ⇒ 我不落后").toBe(0);
+    expect(behindDeploys("a3", withTypo, rel(has)), "旧口径：尾巴我没有 ⇒ 1").toBe(1);
+    expect(behindDeploys("a3", withTypo, rel(has), "a3"), "服务说它在跑 a3，而我有 a3 ⇒ 我不落后").toBe(0);
   });
 
   it("**与生产逐字同版的树必须被告知「不旧」**——这是这件事的全部意义", () => {
-    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], has, "a3")).toBe(0);
+    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], rel(has), "a3")).toBe(0);
   });
 
   it("我真落后时，服务自报的那一版我没有 ⇒ 照旧数得出来（这道闸没被关掉）", () => {
-    expect(behindDeploys("a2", REAL, (s) => ["a1", "a2"].includes(s), "a3")).toBe(1);
+    expect(behindDeploys("a2", REAL, rel((s) => ["a1", "a2"].includes(s)), "a3")).toBe(1);
   });
 
   it("服务没送那个字段（老服务）⇒ 行为一个字不变", () => {
-    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], has, undefined)).toBe(1);
+    expect(behindDeploys("a3", [...REAL, "deadbeefdeadbeef"], rel(has), undefined)).toBe(1);
   });
 
   it("git 答不上服务那一版 ⇒ 整句不说，不猜", () => {
-    expect(behindDeploys("a3", REAL, (s) => (s === "a3" ? null : true), "a3")).toBeNull();
+    expect(behindDeploys("a3", REAL, rel((s) => (s === "a3" ? null : true)), "a3")).toBeNull();
   });
 });

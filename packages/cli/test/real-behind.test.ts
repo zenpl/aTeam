@@ -35,13 +35,13 @@ describe("t-211 · 真 git，不是假的 Behind", () => {
   it("头就是最新那次上线：不落后", () => {
     const b = realBehind(root);
     expect(b.head()).toBe(shas[2]);
-    expect(behindDeploys(b.head(), shas, b.has)).toBe(0);
+    expect(behindDeploys(b.head(), shas, b)).toBe(0);
   });
 
   it("退回第一个提交：落后两次，数得出来", () => {
     git(root, "checkout", "-q", shas[0]);
     const b = realBehind(root);
-    expect(behindDeploys(b.head(), shas, b.has)).toBe(2);
+    expect(behindDeploys(b.head(), shas, b)).toBe(2);
     git(root, "checkout", "-q", "main");
   });
 
@@ -61,13 +61,13 @@ describe("t-211 · 真 git，不是假的 Behind", () => {
   it("名单更早处有一条谁都解不出的垃圾，而我含着最新那次 ⇒ 0（不是 1）", () => {
     const b = realBehind(root);
     const stranger = "0".repeat(40);
-    expect(behindDeploys(b.head(), [stranger, ...shas], b.has)).toBe(0);
+    expect(behindDeploys(b.head(), [stranger, ...shas], b)).toBe(0);
   });
 
   it("垃圾在更早处、而我确实落后两次 ⇒ 仍然数得出 2（这道闸没被放宽）", () => {
     git(root, "checkout", "-q", shas[0]);
     const b = realBehind(root);
-    expect(behindDeploys(b.head(), ["0".repeat(40), ...shas], b.has)).toBe(2);
+    expect(behindDeploys(b.head(), ["0".repeat(40), ...shas], b)).toBe(2);
     git(root, "checkout", "-q", "main");
   });
 
@@ -76,7 +76,7 @@ describe("t-211 · 真 git，不是假的 Behind", () => {
     try {
       const b = realBehind(bare);
       expect(b.head()).toBeNull();
-      expect(behindDeploys(b.head(), shas, b.has)).toBeNull();
+      expect(behindDeploys(b.head(), shas, b)).toBeNull();
     } finally { rmSync(bare, { recursive: true, force: true }); }
   });
 });

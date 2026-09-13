@@ -487,7 +487,7 @@ export async function rollback(b: Board, targetArg: string, deps: DeployDeps): P
  * t-211：本地这棵树的版本，给 `sync` 那一句用。**每一步答不上来都给 null**：不是 git 检出、git 不在、
  * 或者那个 sha 本地没有——三种都只说明「说不出」，而 `behindDeploys` 见 null 就整句不说。
  */
-export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null; built(): boolean | null } {
+export function realBehind(cwd = process.cwd()): { head(): string | null; has(sha: string): boolean | null; descends(sha: string): boolean | null; built(): boolean | null } {
   const git = realGit(cwd, undefined);
   return {
     head: () => git.resolve("HEAD"),
@@ -496,6 +496,12 @@ export function realBehind(cwd = process.cwd()): { head(): string | null; has(sh
     // 恰恰一个字都收不到**，而 fetch 过的那棵树印「旧 6 次」。同一个 HEAD、两种答案。
     // 真正的「说不出」只剩两种：不是 git 检出、git 自己出错（isAncestor 给 null）。
     has: (sha) => (git.resolve("HEAD") === null ? null : git.resolve(sha) === null ? false : git.isAncestor(sha, "HEAD")),
+    // t-263：**「它在我前头」要自己问一次，不许从 `has` 的反面推。**
+    //
+    // 本地没有这个对象时，`has` 按 t-211 答 `false`（「我没有它」），而这一问只能答 **null**——
+    // 一棵看不见那个提交的树，说不出它与自己是什么关系。两处答得不一样不是不一致：
+    // **「我没有它」是关于我的，「它在不在我前头」是关于两者的**，后者才是本件要的那一问。
+    descends: (sha) => (git.resolve("HEAD") === null || git.resolve(sha) === null ? null : git.isAncestor("HEAD", sha)),
     built: () => buildIsCurrent(cwd, ["core", "cli", "server"]),
   };
 }
