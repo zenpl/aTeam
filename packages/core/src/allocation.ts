@@ -3,7 +3,7 @@
  * service from the declaration and the log. Soft: nothing here rejects an event. One entry per pattern per period,
  * each with its numbers, so the warnings never become noise (T10).
  */
-import { PM_ACTOR, type Instruction } from "./events.js";
+import { PM_ACTOR, type Instruction, type Note } from "./events.js";
 import { type State } from "./reduce.js";
 import { projectRoles, roleResponsibilities, responsibilityBoundaries } from "./board.js";
 
@@ -46,39 +46,35 @@ export function classifyFollowUp(later: string, undo = false): FollowUp {
  * t-175 (pd 08:40)：**一条更正是谁发现的。** 两桶：作者自己发现并当场收回，或者别人先说了他才改。
  *
  * 为什么要拆：pd 08:40 的原话是「指标不该惩罚我们想要的行为」。旧口径把「自己发现自己错了」算进错误率，
- * 于是一个当场认错的人比一个装作没错的人分数更差——那正好是我们希望他多做的那件事。同一天 pd 还犯过同形的
- * 一次（把「自报漏验的人」变成唯一不能修正它的人），所以这不是个别措辞问题。
+ * 于是一个当场认错的人比一个装作没错的人分数更差——那正好是我们希望他多做的那件事。
  *
- * 判据 3 要的是「用日志里已有的东西判，不靠正文措辞猜」。所以这里**一个字都不读**：只问一句
- * **「从他发出那条、到他改口那一刻，中间有没有别人冲着他来的事件」**——
- *   · 别人发给他的一条指令；
- *   · 别人在这段时间里落的一条验收（pass 或 fail 都算：一次判决就是一次外部说法）；
- *   · 别人写的、点名引用了那条指令的 note（`refs` 里有它的 id）。
- * 有 → 「别人」；一条都没有 → 「自己」。
+ * **尺子按当事人的回执算，不按作者自评，也不按「那会儿有没有人在说话」算**（判据 4，pm 00:06 重写）。
+ * 第一版按后者写过：「从他发出那条到他改口，中间有没有别人冲着他来的事件」。它在真日志上**恒真**——
+ * 09-07 06:40–08:40 别人发给 pm 的指令间隔中位 75 秒、**最大 457 秒，小于 10 分钟的配对窗口**，
+ * 于是对一个枢纽角色这个问题永远答「有」。**一个恒真的判别式不是判别式**，而且它量的是团队有多吵，
+ * 不是他有没有被人提醒。
  *
- * **这把尺子看不见什么，写在明处**（不写出来的范围等于没范围，今晚已经付过这个代价）：
- * ① **「事后由证据暴露」**（服务端拒了他、某条用例红了、他自己跑 git 发现对不上）**在日志里不留事件**，
- *    所以这把尺子把它算成「自己」。方向是安全的——它只会让正面那桶偏大、门槛那桶偏小，**不会**凭空
- *    制造一次超标；但它确实会把一部分「证据暴露的」记成功劳，这一点不许在报告里被说成「自己发现」。
- * ② 「别人冲着他来的事件」只认上面三种。别人发给**第三个人**的话、别人写的不点名的 note，这里算不到——
- *    他也可能是读了那些才改口的，但那要靠猜正文，正是判据 3 禁的那件事。
+ * 现在只问一句、而且只问那条被改的指令本身：**收件人在他改口之前，回过这条没有**（`acked_at`）。
+ * 回过 → 「别人」；没回过 → 「自己」。它因果、可复跑、与别人说话的密度无关。
+ * 真样本：pm 08:34:33 派给 frontend 一件它 08:25 就做完的活，frontend **08:35:13 ack 了那一条**，
+ * pm 08:35:58 才收回——**日志看得见的是当事人先说了**，哪怕 pm 自述「是我没先读记录」。
+ * 内心过程日志看不见，所以这把尺子量的是回执，不是自觉。
+ *
+ * **它看不见什么，写在明处**（下面有断言，不只有这段注释）：
+ * ① **读了、动手了、却没 ack** 的收件人，这里看不见——算成「自己」。方向安全：只会让正面那桶偏大、
+ *    门槛那桶偏小，不会凭空制造一次超标。
+ * ② **「事后由证据暴露」**（服务端拒了他、某条用例红了、他自己跑 git 发现对不上）在日志里不留事件，
+ *    同样算成「自己」。所以报告里不许把这一桶整个说成「他自己发现的」。
  */
 export type Caught = "自己" | "别人";
 
-/** 那三种「别人冲着他来的」事件，取自 State，不读任何正文。窗口是左开右闭的 (a.at, correctedAt]。 */
+/** 那条被改的指令，收件人在 `correctedAt` 之前回过没有。只读 `acked_at`，不读任何正文。 */
 export function caughtBy(s: State, a: Instruction, correctedAt: string): Caught {
-  const author = a.actor;
-  const t0 = Date.parse(a.at), t1 = Date.parse(correctedAt);
-  const within = (at: string) => Date.parse(at) > t0 && Date.parse(at) <= t1;
-  for (const st of s.instructions.values()) {
-    const i = st.instruction;
-    if (i.to === author && i.actor !== author && within(i.at)) return "别人";
-  }
-  for (const t of s.tasks.values())
-    for (const v of t.verifications) if (v.by !== author && within(v.at)) return "别人";
-  // 点名那条指令的 note 才算。任何一条带 refs 的 note 都算，等于把「别人此刻在说话」当成「别人在说他」。
-  for (const n of s.notes) if (n.actor !== author && within(n.at) && (n.refs ?? []).includes(a.id)) return "别人";
-  return "自己";
+  const st = s.instructions.get(a.id);
+  const at = st?.acked_at;
+  // 作者自己 ack 自己那条不算回执——一个人不会因为自己签收就变成被别人发现的。
+  if (!at || st?.acked_by === a.actor) return "自己";
+  return Date.parse(at) <= Date.parse(correctedAt) ? "别人" : "自己";
 }
 
 /**
@@ -237,15 +233,16 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
     const share = n / sent.length;
     if (share > 0.5) load.push({ text: `${who} 收到 ${pct(n, sent.length)} 的指令（${n}/${sent.length}）`, severity: share / 0.5 });
   }
-  for (const [who, c] of selfCorrections(s, list)) {
-    if (c.sent < 10) continue;
-    // t-175（pd 08:40）：**门槛只管「别人发现的」那一桶。** 自己当场收回的那一桶不进分子——一个指标如果
-    // 要靠某人少认一次错才变好看，那它衡量的就不是我们想要的东西。
-    const rate = c.别人 / c.sent;
-    const good = c.自己 ? `；他自己发现并当场收回的另有 ${c.自己} 条，不计入门槛` : "";
-    const aside = c.更新 || c.说不好 ? `；另有 ${c.更新} 条是情况变了才重发的、${c.说不好} 条说不好，都不计入` : "";
-    if (rate >= 0.15) load.push({ text: `${who} ${pct(c.别人, c.sent)} 的指令是别人发现后才更正的（${c.别人}/${c.sent}）${good}${aside}`, severity: rate / 0.15 });
-  }
+  // t-175（pm 00:07）：**自我更正这一半此刻不出现在人看得见的那一行上，整行先不出。**
+  //
+  // 门槛的分子从「所有更正」换成「别人发现后才更正的」，那个百分比的**意思**就变了——句子一字不改就是
+  // 一句假话，而改句子是 pd 的事（我 00:03 已把这一句连同「正面数字该不该和一串『都不计入』并排」交给 pd）。
+  // pm 给的约束是「含义不许变：句子与数都不动，或整行先不出」。**「数不动」要留一个 `更正` 合计字段，
+  // 而那正是本件刚拆掉的东西**（t-123 那条注释写过：两个数一被加起来就再也分不开），所以取「整行先不出」。
+  //
+  // **代价写在明处，不许当成没发生**：这一行此前是会说话的——它在校准夹具上拦下过「三条更正 / 十八条指令」
+  // 那一种，现在不拦了。这不是闸失效，是一个**等 pd 定字的空窗**，t-175 的那一半挂着 blocked on pd。
+  // `selfCorrections` 照旧算两桶（报告读它、用例钉它），缺的只是这一行。pd 定稿后把那一行加回这里。
   const badLoad = worst(load);
   if (badLoad) out.push({ pattern: "负载陷阱", evidence: [badLoad.text], hint: `${badLoad.text}。建议：把它持有的、能改成规则或服务的职责先拿走。` });
 
@@ -333,6 +330,7 @@ const cannotReach = (a: number, b: number, min: number) => Math.min(a, b) < min 
  * again, and 说不好 is counted and reported as neither: a follow-up nobody can classify is not evidence of anything.
  */
 export interface SelfCorrection {
+  /** 这段时间他发出的**指令**数。门槛的分母，只数指令——下面每个数也各自只数一种载体，不混。 */
   sent: number;
   /**
    * t-175：**更正拆成两桶。** `自己` 是作者自己发现并当场收回的，`别人` 是别人先说了他才改的。
@@ -343,15 +341,26 @@ export interface SelfCorrection {
   别人: number;
   更新: number;
   说不好: number;
+  /**
+   * t-175 判据 4 ①（pm 00:06）：**一次更正也可以是一条 note。** 09-07 那六条真样本里四条是 note——
+   * 只数指令的话，这支指标看不见它们中的任何一条。
+   *
+   * 但它们**另算两个数，不并进上面那两个**：上面那两个的分母是 `sent`（指令数），note 不在那个分母里。
+   * 把两种载体加进同一个分子，就是拿一个分子去除一个不覆盖它的分母——**一个有前提的数被存成了没有前提的样子**。
+   * 要一个「他一共自己收回了几次」的正面数字，读的人把 `自己 + note自己` 加起来，并且知道自己加了什么。
+   */
+  note自己: number;
+  note别人: number;
 }
 
-export function selfCorrections(s: State, list: Instruction[]): Map<string, SelfCorrection> {
+export function selfCorrections(s: State, list: Instruction[], notes: Note[] = []): Map<string, SelfCorrection> {
   const undone = new Map<string, string>();   // taking an instruction back says plainly that it should not have been sent
   for (const st of s.instructions.values()) if (st.withdrawn) undone.set(st.instruction.id, st.withdrawn.at);
+  const zero = (): SelfCorrection => ({ sent: 0, 自己: 0, 别人: 0, 更新: 0, 说不好: 0, note自己: 0, note别人: 0 });
   const out = new Map<string, SelfCorrection>();
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
-    const c = out.get(a.actor) ?? { sent: 0, 自己: 0, 别人: 0, 更新: 0, 说不好: 0 };
+    const c = out.get(a.actor) ?? zero();
     c.sent++;
     // The link is same author, same recipient, soon after; what kind of follow-up it is comes from what it says.
     // Pairing on similar wording was tried and failed on the real log: a correction rarely repeats what it corrects
@@ -366,6 +375,15 @@ export function selfCorrections(s: State, list: Instruction[]): Map<string, Self
       else c[kind]++;
     }
     out.set(a.actor, c);
+  }
+  // t-175 判据 4 ①：note 上的那些。一条 note 没有收件人，所以没有回执可读——除非它**点名**了作者自己
+  // 发过的某一条指令（`refs`），那时读那一条的回执。点不出来的，按「没有人签收过」算，落「自己」。
+  for (const n of notes) {
+    if (!CORRECTION_RE.test(n.body)) continue;
+    const c = out.get(n.actor) ?? zero();
+    const named = (n.refs ?? []).map((r: string) => s.instructions.get(r)?.instruction).find((i?: Instruction) => i?.actor === n.actor);
+    c[named && caughtBy(s, named, n.at) === "别人" ? "note别人" : "note自己"]++;
+    out.set(n.actor, c);
   }
   return out;
 }
