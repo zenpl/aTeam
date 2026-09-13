@@ -5,6 +5,7 @@ import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pa
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
+import { LoopLag, sampleLoopLag, queueDelayMs, healthBody } from "./health.js";
 
 /** After the human acks a missing-role card, no new card for that role for this long (pm decision 14:15). */
 export const REMIND_COOLDOWN_MS = 15 * 60_000;
@@ -228,6 +229,8 @@ export function createApp(opts: ServerOptions) {
     return out;
   };
 
+  const loopLag = new LoopLag();
+  const stopLagSampler = sampleLoopLag(loopLag);
   const server = createServer(async (req, res) => {
     // t-212：统一出口（catch 里）要用的两样，声明在 try 之外。
     let whoIsAsking = human;
@@ -244,7 +247,12 @@ export function createApp(opts: ServerOptions) {
       // 浏览器带着 accept: text/html 所以人自己感觉不到；而这条路正是判据 7 要说清的「主人怎么确立」。
       const wantsHtml = String(req.headers.accept ?? "").includes("text/html") || url.searchParams.has("token") || url.searchParams.has("k");
 
-      if (url.pathname === "/health") return json(res, 200, { ok: true, sha });
+      // t-249：**它答 ok 的时候要说出自己答得有多慢。** 此前稳态 0.24s 与最慢 48.13s 的正文逐字相同，
+      // 于是它在任何故障里都会说 ok。`queueDelayMs` 在这次请求上量「等一个事件循环回合要多久」——
+      // 那 48 秒长在那里，不长在处理函数里（根因与不覆盖哪一类都写在 health.ts）。
+      // **HTTP 状态码仍是 200，不是 503**：这一条正是「想知道线上跑的是哪一版」时要读的路，
+      // 卡住的那一刻恰恰最需要读得到 `sha`；坏消息放在 `ok: false` 里，不放在一个让 curl -f 空手而归的码里。
+      if (url.pathname === "/health") return json(res, 200, healthBody(sha, await queueDelayMs(), loopLag.max()));
 
       // t-063: test hooks, only when the environment says so; otherwise these paths are nothing (404 like any unknown path).
       if (url.pathname.startsWith("/_test/")) {
@@ -805,7 +813,7 @@ export function createApp(opts: ServerOptions) {
       return json(res, 500, { error: "internal", message: (err as Error).message });
     }
   });
-  server.on("close", () => { if (timer) clearInterval(timer); });
+  server.on("close", () => { if (timer) clearInterval(timer); stopLagSampler(); });
   return server;
 }
 

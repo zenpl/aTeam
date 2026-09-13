@@ -426,7 +426,9 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       expect((await fetch(`${p.base}/`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/html" } })).status).toBe(200);
     } finally { await p.stop(); }
     const h = await fetch(`${w.base}/health`);
-    expect(await h.json()).toEqual({ ok: true, sha: "abc1234" });
+    // 这一条守的是「不带 token 也读得到、而且答得出是哪一版」；t-249 之后正文还带着耗时与期限，
+    // 所以这里只钉这两样，别顺手把整份正文钉死在一个与本用例无关的形状上。
+    expect(await h.json()).toMatchObject({ ok: true, sha: "abc1234" });
     const b = await (await w.api("/board?full=1")).json();
     expect(Object.keys(b)).toContain("said");
     expect((await fetch(`${w.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(400);
