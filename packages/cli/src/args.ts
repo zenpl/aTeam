@@ -1,3 +1,4 @@
+import { BOTH_BODY_AND_FILE, TWICE_GIVEN, UNKNOWN_FLAG, FLAG_NEEDS_VALUE } from "@ateam/core";
 export interface Args {
   _: string[];
   flags: Record<string, string | boolean | string[]>;
@@ -17,6 +18,48 @@ const BOOLEAN = new Set(["pass", "fail", "decision", "json", "help", "quiet", "n
 //   · refs 少一个 = 一次「我动过」被算成没动——t-193 之后 refs 正是「办了」的唯一凭据。
 // build.test.ts 里现在有一条与 t-173 同形的闸守着这份名单与 main.ts 里 list() 的用法一致，别手工对。
 const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "refs", "touches", "writes", "depends-on", "enum", "no-seam-check-for"]);
+/**
+ * t-247：**带值的那几个开关。第三份名单，也是最后一份没有闸的。**
+ *
+ * 此前解析器**认得一切**：`--完全不存在的开关 值` 照收不误，命令读不到它、于是一个字都不说地退 0。
+ * qa 22:38 那条两千多字的判决就是这么落库的——它跑的那支 CLI 不认得 `--evidence-file`（t-246 刚加的），
+ * **事件照落，evidence 是空的**。而同一支 CLI 上，一个**已知**开关缺值会报「needs a value」：
+ * **两条路不在同一处，于是「写错名字」比「少写个值」更安静。**
+ *
+ * 三份名单合起来就是「这支 CLI 认得的全部」；`--X-file`（t-246）算认得，只要 X 在里面。
+ * build.test.ts 里有一条闸守着这一份与 main.ts 里 `str()` 的用法一致——别手工对。
+ */
+const VALUED = new Set(["ack-by", "after", "anyway", "body", "by", "default", "deploy", "evidence", "interval", "kind", "me", "measured-at", "method", "on", "push", "reason", "resolution", "rollback", "shape", "shows", "start", "step", "supersedes", "surface", "task", "to", "token", "url", "valid-for", "valid-until", "verdict", "wait"]);
+
+/** 这支命令行认得的开关，含 t-246 那一族 `--X-file`。说不认得的时候，指名是哪一个。 */
+export function known(name: string): boolean {
+  const base = name.endsWith("-file") ? name.slice(0, -"-file".length) : name;
+  return BOOLEAN.has(base) || REPEATABLE.has(base) || VALUED.has(base) || BOOLEAN.has(name) || REPEATABLE.has(name) || VALUED.has(name);
+}
+
+/**
+ * t-246：**`--X-file <路径>` 从文件读 `--X` 的值。**
+ *
+ * 今天反引号咬了三个人至少五次，而全队的对策是「每个人记得先写文件、再 `"$(cat …)"`」——
+ * pm 17:2x 把这条规矩广播给全队，**45 分钟后 qa 就在一条生产判决的证据里踩了同一个坑**；
+ * dev 09-07 也立过同一条，只对长 note 执行、短 tell 从没执行。**一条要五个人各自记住的规矩，
+ * 今天量到的失效间隔是 45 分钟。** 所以出路不是再广播一次，是让工具自己收得下这段字。
+ *
+ * 两条都给了就报用法错，不猜哪个算数：**两份正文里挑一份，挑错了是一句没人会核的假话。**
+ */
+export function fromFiles(out: Args, read: (p: string) => string): void {
+  for (const key of Object.keys(out.flags)) {
+    if (!key.endsWith("-file")) continue;
+    const base = key.slice(0, -"-file".length);
+    if (!base) continue;
+    if (out.flags[base] !== undefined) throw new UsageError(BOTH_BODY_AND_FILE(base));
+    const path = String(out.flags[key]);
+    // 文件总是以换行结尾，而那个换行不是正文的一部分——不修掉它，每一条走这条路的正文都会多一个空行。
+    // 只修尾部：正文里的换行是作者写的，一个都不许动。
+    out.flags[base] = read(path).replace(/\s+$/, "");
+    delete out.flags[key];
+  }
+}
 
 export function parse(argv: string[]): Args {
   const out: Args = { _: [], flags: {} };
@@ -25,15 +68,25 @@ export function parse(argv: string[]): Args {
     if (!a.startsWith("--")) { out._.push(a); continue; }
     const eq = a.indexOf("=");
     const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
+    // t-247：**不认得就出声，并指名是哪一个。** 此前它照收不误、命令读不到、一个字不说地退 0——
+    // 而一个拼错的开关与一个不存在的开关长得一样，两者的后果都是「事件落了，那个字段是空的」。
+    if (!known(name)) throw new UsageError(UNKNOWN_FLAG(name));
     let value: string | boolean;
     if (eq > 0) value = a.slice(eq + 1);
     else if (BOOLEAN.has(name)) value = true;
-    else { value = argv[++i]; if (value === undefined) throw new Error(`--${name} needs a value`); }
+    else { value = argv[++i]; if (value === undefined) throw new UsageError(FLAG_NEEDS_VALUE(name)); }
     if (REPEATABLE.has(name)) {
       const arr = (out.flags[name] as string[] | undefined) ?? [];
       arr.push(String(value));
       out.flags[name] = arr;
-    } else out.flags[name] = value;
+    } else {
+      // t-246 ②（qa 22:42）：**同一个 --X 给两次，后一个静默胜出。** 它咬的第一件事就是 `--body-file`：
+      // 两份正文里工具替你挑了一份，而挑错了是一句没人会核的假话。t-197 那条注释早就写过这个形状
+      // （`--refs a --refs b` 后一个静默盖掉前一个），当时的出路是把该重复的加进 REPEATABLE；
+      // **不该重复的那些，此刻一律改成当场报用法错**——两份值里挑一份，工具不替你挑。
+      if (out.flags[name] !== undefined) throw new UsageError(TWICE_GIVEN(name));
+      out.flags[name] = value;
+    }
   }
   return out;
 }

@@ -54,7 +54,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ gate: "seam", reported: 2, judged: 1, false_positives: 1, missed: 0, unjudged: 1 });
-    expect(h.fix).toMatchObject({ task: "t-fix", status: "open", in_production: false });
+    expect(h.fix).toMatchObject({ task: "t-fix", status: "open", verified_in_production: false });
   });
 
   it("修法已在生产上验过：缺陷不再是已知的，那句话自己消失，不用谁去关掉它", async () => {
@@ -64,7 +64,7 @@ describe("t-149 · 判据 2：「已知缺陷」由日志算出，不是手写�
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -8);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -7);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -6);
-    expect(gateHonesty(await st(w.s), "seam")!.fix).toMatchObject({ status: "done", in_production: false });
+    expect(gateHonesty(await st(w.s), "seam")!.fix).toMatchObject({ status: "done", verified_in_production: false });
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-fix", surface: "production", pass: true, evidence: "生产上核过" }, -5);
     expect(gateHonesty(await st(w.s), "seam")).toBeNull();
   });
@@ -84,12 +84,16 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
 
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ reported: 8, judged: 8, false_positives: 7, missed: 1, unjudged: 0 });
-    expect(h.fix).toMatchObject({ task: "t-fix", verified_on: ["repo"], in_production: false });
+    expect(h.fix).toMatchObject({ task: "t-fix", verified_on: ["repo"], verified_in_production: false });
     expect(h.line).toContain("报过 8 条");
     expect(h.line).toContain("7 条是误报");
     expect(h.line).toContain("1 条还漏报了");
     expect(h.line).toContain("修法在 t-fix");
-    expect(h.line).toContain("已验（repo），还没上生产");
+    // t-237：这一行原来断言的正是那句假话——「已验（repo），还没上生产」把「没有生产判决」说成了「代码没上线」。
+    // 此刻这个世界里没有包含关系那条事实，所以正确的说法是「说不出」，而不是「还没上线」。
+    expect(h.line).toContain("说不出它的代码在不在生产跑的那一版里");
+    expect(h.line).toContain("还没有人在生产上验过它（已验：repo）");
+    expect(h.line).not.toContain("还没上生产");
   });
 
   it("没人判过的那些如实说出来，不被算成任何一边", async () => {
@@ -175,7 +179,7 @@ describe("t-170 判据 10 · 认不出的那一类，闸自己说出来", () => 
 
   it("修法还没在生产上：这句实话出现，并指向那件任务", async () => {
     const h = gateHonesty(await st((await withFix()).s), "shows")!;
-    expect(h.fix).toMatchObject({ task: "t-178", in_production: false });
+    expect(h.fix).toMatchObject({ task: "t-178", verified_in_production: false });
     expect(h.line).toContain("认不出「哪句话出现在哪儿变了」");
     expect(h.line).toContain("t-178");
     // pd 09:02：说完「我看不见」要说这时候谁来看——一句只说自己瞎的实话会让读的人停在原地

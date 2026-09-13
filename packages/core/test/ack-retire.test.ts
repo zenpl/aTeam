@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, owedSentences, ruleLiveAt, ACTED_RULE_TASK, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event } from "../src/index.js";
+import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, owedSentences, ruleLiveAt, ACTED_RULE_TASK, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event , owedFull } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -289,7 +289,7 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
     const fresh = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "上线之后的一条", ack_by: at(15).toISOString() }, -10);
     await w.s.setCursor({ actor: "dev", last_event_id: fresh.id, at: at(-5).toISOString() });   // 两条都读到了，都没动
     const owed = owedNow(await st(w.s), "dev");
-    expect(owed.legacy_before_acted_rule.map((x) => x.instruction)).toEqual([old.id]);
+    expect(owedFull(await st(w.s), "dev").legacy_before_acted_rule.map((x) => x.instruction)).toEqual([old.id]);
     expect(owed.untouched.map((x) => x.instruction)).toEqual([fresh.id]);
     const line = owedSentences(owed, at(0)).find((l) => l.includes("读过还没动"))!;
     expect(line, "那句话把历史也数进去了").toContain("有 1 条");
@@ -300,12 +300,12 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
     const w = await world();
     await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
     await batchAt(w, -30, [ACTED_RULE_TASK]);
-    const before = owedNow(await st(w.s), "dev").legacy_before_acted_rule.length;
+    const before = owedNow(await st(w.s), "dev").legacy_before_acted_rule_count;
     const news = [];
     for (let i = 0; i < 3; i++) news.push(await w.put({ kind: "instruction", actor: "pm", to: "dev", body: `新的第 ${i} 条`, ack_by: at(15).toISOString() }, -5));
     await w.s.setCursor({ actor: "dev", last_event_id: news[news.length - 1].id, at: at(-4).toISOString() });
     const after = owedNow(await st(w.s), "dev");
-    expect(after.legacy_before_acted_rule.length, "旁桶又长了：那它就不是历史").toBe(before);
+    expect(after.legacy_before_acted_rule_count, "旁桶又长了：那它就不是历史").toBe(before);
     expect(after.untouched.length, "新的都该进活欠账").toBe(3);
   });
 
@@ -314,7 +314,7 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
     const old = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
     await w.s.setCursor({ actor: "dev", last_event_id: old.id, at: at(-50).toISOString() });
     const owed = owedNow(await st(w.s), "dev");     // 日志里没有那一批
-    expect(owed.legacy_before_acted_rule).toEqual([]);
+    expect(owed.legacy_before_acted_rule_count).toBe(0);
     expect(owed.untouched.map((x) => x.instruction)).toEqual([old.id]);
   });
 });

@@ -28,6 +28,8 @@ const app = createApp({
   registry: new SqliteRegistry(sdb), storeFor: (project) => new SqliteStore(sdb, project),
   defaultProject, token, human, sha, boardPublic,
   publicUrl: process.env.ATEAM_PUBLIC_URL,
+  // t-234 判据 9：发出主人地址要的那段口令，只从环境来；不设就是这扇门关着
+  ownerSecret: process.env.ATEAM_OWNER_SECRET,
   testHooks, clockOffsetMs,
 });
 app.listen(port, () => console.log(`ateam server on :${port} db=${db} default=${defaultProject} human=${human} sha=${sha} board=${boardPublic ? "public" : "token"}`));

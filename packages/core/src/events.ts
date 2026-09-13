@@ -382,6 +382,27 @@ export interface Refused {
 export const refusedOp = (e: { kind?: unknown; op?: unknown }): string | null =>
   typeof e?.kind === "string" ? (e.kind === "task" && typeof e.op === "string" ? `task:${e.op}` : e.kind) : null;
 
+/**
+ * t-218：**客户端就抛的那几种拒绝，写入根本没发出去**——服务端那本账（t-212）只数得到走到它面前的，
+ * 于是 `packages/cli/src/decide.ts` 那四条这样的，一次都没进过账，只活在各人终端里。
+ *
+ * 它们由各人的命令行记下来、在**下一次通信里捎给服务**；捎上来的记录用 op 上这个前缀说明自己是哪一路来的。
+ * **前缀是唯一的判据**（`isCliRefusal`），不靠谁去维护一份「哪些 op 是客户端的」名单——今晚已经为那种名单
+ * 付过四次账了。
+ */
+export const CLI_REFUSAL_PREFIX = "cli ";
+/** 被拒的是哪种写入，客户端这一路的写法：`cli task done`、`cli decide`。**只有命令词，不含正文，也不含 id。** */
+export const cliRefusalOp = (action: string) => `${CLI_REFUSAL_PREFIX}${action}`;
+export const isCliRefusal = (op: string | null): boolean => typeof op === "string" && op.startsWith(CLI_REFUSAL_PREFIX);
+/**
+ * 待捎的队列满了、只好扔掉几条时记的那条的规则名。**扔掉也进账**：一本会悄悄变小的账，与一本看起来是全集的账
+ * 是同一个病——那条记录的 op 里写着扔了几条，谁都数得出这本账此刻差多少。
+ */
+export const CLI_REFUSAL_OVERFLOW = "cli-queue-overflow";
+/** 一次捎最多这么多条。服务只记这么多，多出来的留在队里、下一次再捎——**没被记下的一条都不许划掉**。 */
+export const CLI_REFUSAL_BATCH_MAX = 200;
+export const cliRefusalDropped = (n: number) => cliRefusalOp(`(dropped ${n})`);
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -389,6 +410,12 @@ export interface RefusalCount {
   by_rule: { rule: string; n: number }[];
   /** 按被拒的人分组，多的在前。 */
   by_who: { who: string; n: number }[];
+  /**
+   * t-218：**哪一路来的。** `server` 是走到服务端被挡下的，`cli` 是各人命令行自己抛、事后捎上来的。
+   * 两个数并排摆着，是为了让「客户端那一类此刻捎上来多少」是一个看得见的数，而不是一个没人想得起来的空白；
+   * **一本不说自己缺哪一类的账，会让人不再去核它完不完整。**
+   */
+  by_origin: { server: number; cli: number };
   /** 最早与最近那一条的时刻，据此说得出「这段时间里」。 */
   first: string | null;
   last: string | null;
@@ -402,8 +429,10 @@ export function countRefusals(rs: readonly Refused[]): RefusalCount {
     return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n || (a.k < b.k ? -1 : 1));
   };
   const ats = rs.map((r) => r.at).sort();
+  const cli = rs.filter((r) => isCliRefusal(r.op)).length;
   return {
     total: rs.length,
+    by_origin: { server: rs.length - cli, cli },
     by_rule: by((r) => r.rule).map(({ k, n }) => ({ rule: k, n })),
     by_who: by((r) => r.who).map(({ k, n }) => ({ who: k, n })),
     first: ats[0] ?? null,
@@ -457,6 +486,8 @@ export const KEY_SYMBOLS = [
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
   "BATCH_LINES",
+  "BODY_FILE_HELP",
+  "BOTH_BODY_AND_FILE",
   "CLI_SHA_METHOD",
   "CONTACT_ASK",
   "CONTACT_ASK_WAS",
@@ -464,6 +495,7 @@ export const KEY_SYMBOLS = [
   "CONTACT_FILL_WAS",
   "CONTACT_SKIP",
   "CONTACT_SKIP_WAS",
+  "DEADLINE_WORDS",
   "DECLINE_PREFIX",
   "DEFAULT_APPLIED_PREFIX",
   "DEFAULT_LINES",
@@ -473,8 +505,10 @@ export const KEY_SYMBOLS = [
   "DEPLOY_SOURCE",
   "EMPTY_IS_NOT_NO_IMPACT",
   "FAIL_NOTICE",
+  "FLAG_NEEDS_VALUE",
   "FORWARD_LINK",
   "IMPORT_DONE_PREFIX",
+  "IMPORT_NOTHING_WRITTEN",
   "INJECT_BUILD_BROKE",
   "INJECT_STILL_GREEN",
   "INJECT_USAGE",
@@ -486,13 +520,20 @@ export const KEY_SYMBOLS = [
   "MIGRATION_MISSING",
   "MIGRATION_OK",
   "MIGRATION_PATCH",
+  "NOBODY_WAITING",
   "NO_HUMAN_IMPACT",
   "NO_OUTPUT_PREFIX",
   "NO_SYMBOL_MEANS_UNCLEAR",
+  "OWED_LEGACY_HELP",
+  "OWNER_URL_LOCKED",
+  "OWNER_URL_NEEDS_SECRET",
+  "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
+  "PD_PLACEHOLDER",
   "PROMISE_RULE",
   "PUSH_LINES",
+  "QUIET_HELP",
   "REACH_RULE",
   "REACH_WORDS",
   "READING_SAYINGS",
@@ -502,6 +543,7 @@ export const KEY_SYMBOLS = [
   "ROLLBACK_LINES",
   "SAID_LABEL",
   "SAID_PREFIX",
+  "SAY_HINT",
   "SEAM_SAME_FILE",
   "SEAM_UNDECIDED",
   "SEAM_VERDICT_WORDS",
@@ -513,15 +555,22 @@ export const KEY_SYMBOLS = [
   "STAND_IN_OPTIONS",
   "STOOD_IN_PREFIX",
   "SURFACE_GATE_BLIND_SPOTS",
+  "TWICE_GIVEN",
+  "UNKNOWN_FLAG",
+  "UNSEEN_DROPPED",
+  "UNSEEN_HEAD",
   "UNTIL_UNDER_A_MINUTE",
+  "VERIFIED_ON_THIS_VERSION",
   "VERIFY_ASK",
   "WATCH_LINES",
   "WHOLE_GATE_OFF",
   "ago",
   "alertContact",
   "allocationSummary",
+  "alreadyDoneNotice",
   "alsoHere",
   "applyReading",
+  "badResponseLine",
   "basisOfTouches",
   "batches",
   "batchesEmptyLine",
@@ -530,6 +579,7 @@ export const KEY_SYMBOLS = [
   "cannotMeasureHere",
   "cannotSeeOutput",
   "capabilityKey",
+  "caughtBy",
   "checkShape",
   "classifyFollowUp",
   "cliBehindLine",
@@ -541,23 +591,35 @@ export const KEY_SYMBOLS = [
   "deployHistory",
   "dueDefaults",
   "exampleLine",
+  "exitCodeLine",
   "factCannotPlace",
   "factPredatesThirdBucket",
+  "fixWhere",
   "followUps",
   "gateHonesty",
   "honestyLine",
   "humanImpactPromised",
+  "importAlready",
+  "importMinted",
+  "importNoFrom",
+  "importNoKind",
+  "importNotJson",
+  "importNotObject",
+  "importSummary",
   "inFlightGroups",
   "injectDirty",
   "injectManySites",
   "injectNoFile",
   "injectNoSite",
   "injectNotGit",
+  "joinNotAsHuman",
   "judgeSeam",
+  "lateLine",
   "lightSeamLine",
   "manual",
   "manualFor",
   "missingCard",
+  "morePagesLine",
   "movedTrace",
   "noOutputSeam",
   "noRealOverlap",
@@ -569,6 +631,7 @@ export const KEY_SYMBOLS = [
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
+  "partsSkipped",
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
@@ -578,6 +641,7 @@ export const KEY_SYMBOLS = [
   "saidHops",
   "sayReading",
   "seamWaived",
+  "selfCorrections",
   "shapeFor",
   "slimBoard",
   "span",
@@ -585,6 +649,7 @@ export const KEY_SYMBOLS = [
   "standInBlocker",
   "standIns",
   "staticAllocation",
+  "storedLine",
   "symbolsMeasured",
   "symbolsUnnamed",
   "taskHeading",
@@ -594,6 +659,8 @@ export const KEY_SYMBOLS = [
   "validateTask",
   "valueForm",
   "verifierEligibility",
+  "waitingOnLine",
+  "waitingUnknownLine",
   "whoCanVerify",
   "whoElseTouches",
   "wideBaseReason",
@@ -991,15 +1058,34 @@ export const cannotMeasureHere = (sha: string) =>
  * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
  * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
  */
-export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null): number | null {
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null, serverSha?: string | null): number | null {
   if (!mine || !deploys?.length) return null;
-  let n = 0;
-  for (const d of deploys) {
-    const got = has(d);
-    if (got === null) return null;   // git 答不上来：整句不说，不猜
-    if (!got) n++;
+  // t-230 判据 3：**服务自报在跑哪一版，胜过名单的尾巴。**
+  //
+  // 名单是从日志里的读数算出来的，而读数可以写错（human 09-06 那 19 秒）。一个形状合法、git 里却不存在的
+  // sha 落在最新处时，「名单尾巴是个错字」与「我真落后一次」在 `has` 这一个问句下长得一模一样。
+  // 而拉取的回包里本来就带着服务自己报的 sha（t-211 加的）——**我含着它，我就是在跑线上那一版**，
+  // 名单尾巴写的是什么都不改变这件事。
+  if (serverSha) {
+    const running = has(serverSha);
+    if (running === null) return null;   // git 答不上来：整句不说
+    if (running) return 0;
   }
-  return n;
+  // t-211（qa 16:11 在生产上判 fail）：**问错了问题。**
+  //
+  // 旧版数的是「名单里有几条我这棵树没有」，于是名单里任何一条**谁都拿不到**的条目，都会被算成「你落后」：
+  // qa 拿一棵与生产逐字同版的树跑 sync，照样被告知「旧 2 次」，而那 2 条是 09-06 的两笔坏数据（一个不是 sha
+  // 的 `unreported`，一条写错 19 秒后已更正、却被七位前缀去重吃掉的 sha）。**一条永远为真、又永远修不好的
+  // 提醒，比不提醒更坏**——它教人把这一栏整个忽略掉。
+  //
+  // 该问的是：**在我这棵树含着的那一版之后，还上过几次线。** 历史更早处有几条谁都解不出的垃圾，与「我是不是
+  // 落后了」无关。从最新往回找第一条我有的，它之后的那些才是我落后的。
+  for (let i = deploys.length - 1; i >= 0; i--) {
+    const got = has(deploys[i]);
+    if (got === null) return null;   // git 答不上来：整句不说，不猜
+    if (got) return deploys.length - 1 - i;
+  }
+  return deploys.length;             // 一条都不含：那才是真落后全部
 }
 /**
  * 回溯里那一行的整句。它住在 core 而不是 trace.ts，是因为「人可见的话一律进 core」（t-143）：
@@ -1034,6 +1120,136 @@ export const rollbackMessage = (sha: string, batch: string) =>
  * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
  * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
  */
+/**
+ * t-228：**一条命令发多件事时，每一件各自报结果。**
+ *
+ * 真样本是 dev 15:45 那一次：`task done` 已经落库成功，而它随后自动发的「解决接缝」被拒，终端上只印出
+ * `REJECTED (seam)` 加退出码 2——**看起来像整条命令失败了**。第一反应是重交，而重交会撞上「done 之上再 done」
+ * 再被拒一次；t-034 那次正是这么走的：两次「失败」，而事实是第一次就成了。
+ *
+ * frontend 15:47 把边界核准了，写在这里免得下一个人读偏：**不是「被拒也可能落库」**——它核过自己三次被拒
+ * 各落 0 条，单件命令拒了就是没写——**是「一条命令发了两件事，退出码只报最后一件」**。
+ *
+ * **只有被拒那一件需要这句话**：成功那一件的结果行就是它自己的事件行（带 id、带发生了什么），
+ * 再补一句「✓ 成功」是同一件事说两遍。
+ */
+/** t-228：`task done` 会发的那几件，各自的名字——人读的那半住 core（同 ROLLBACK_LINES 的理由）。 */
+export const PART_NAMES = {
+  done: (task: string) => `${task} done`,
+  seamFallback: () => "接缝检查退回的说明",
+  seamAbsorb: (a: string, b: string) => `解决接缝 ${a}+${b}`,
+  // t-232：verify 那一路也一次发多件——挡不住的接缝各落一条说明、三方比较各落一条、最后才是判决本身。
+  verify: (task: string, pass: boolean) => `${task} ${pass ? "verify --pass" : "verify --fail"}`,
+  seamUnjudgeable: (seam: string) => `接缝 ${seam} 判不了的说明`,
+  seamTruth: (seam: string) => `接缝 ${seam} 按真交集重判`,
+  // t-232：decide 也是两件（先 ack，再落决定），而它们之间有先后：ack 没成，决定就不该写。
+  decideAck: (id: string) => `ack ${id}`,
+  decideNote: (id: string, option: string) => `记下决定 ${id} → ${option}`,
+} as const;
+
+/**
+ * t-233 判据 1、3、6：**「那件事已经办好了」那一类的提醒。**
+ *
+ * 与另一类的差别只有两处，而两处都要紧：**不说「没有落下去」**（它落下去了，只是不是这一次），
+ * **不给「重做」**（再做一次只会再被拒一次）。已经发生的时刻印出来——人读完这一句应当能自己确认
+ * 「我不用再做了」，不必去翻日志。
+ *
+ * **措辞是占位的，定稿归 pd（队列第十四件）。** 上线前必须换成定稿；这一条写在任务判据里，也写在这里，
+ * 免得它靠谁记得。
+ */
+export const PD_PLACEHOLDER = "（措辞待定）";
+export const alreadyDoneNotice = (what: string, at: string | null, clearWith: string): string =>
+  `⚠ ${PD_PLACEHOLDER}你那次「${what}」被拒，是因为它${at ? `已经在 ${at} 办好了` : "已经办过了"}——这一次是多余的，**不用重做**。这条提醒说完就划掉；要自己划：${clearWith}`;
+
+export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
+
+/**
+ * t-232 判据 3：**中止要说出来，不能靠异常悄悄结束。**
+ *
+ * 一条命令发的几件事里，有的后面那件靠前面那件才成立（`decide` 的「记下决定」靠那次 ack）。前一件没成时
+ * 后面的不发是对的，**而「不发」必须与「发了没成」一样看得见**——否则终端上「少了一行」和「本来就只有一行」
+ * 长得一模一样，正是这几天数了二十多次的那一族。
+ */
+export const partsSkipped = (n: number) => `↷ 后面 ${n} 件没发：它们要前一件先成。`;
+
+/** t-228 判据 3：退出码口径。全成功 0；**部分成功单独一个值，不复用 2**；全失败 2。3 已被「坏响应」占着（t-225）。 */
+/**
+ * t-234 判据 4 的第五扇门：**加入这条路不许发出一把「人」的钥匙。**
+ *
+ * 服务判「你是不是主人」，靠的是你那把钥匙的 role 等于 `human`。而加入时分到哪个角色，是照事实
+ * `project:roles` 来的——**那份名单任何一个节点都写得动**。于是：写一条把 `human` 塞进名单的事实，
+ * 再照它加入一次，拿到的就是一把 role 恰好是主人的钥匙。**判定「是不是他」的依据，可以被别人写。**
+ * 这与那道只在 `ownerArrived()` 之后才生效的闸是同一个病，所以在同一件里一起堵上。
+ */
+/**
+ * t-234 判据 9：**造主人钥匙这件事，不该是任何节点做得了的。**
+ *
+ * `/owner-url` 原来只要管理钥匙，而我们每个角色手上拿的就是管理钥匙（判据 8）。它会「没有就造一把」并把
+ * 带钥匙的地址返回——**而第一个打开它的人就永久成为主人**。所以此刻任何一个节点能拿走的不是「替他点一次卡」，
+ * 是整个主人身份。
+ *
+ * 所以它改成认一样**任何节点手上都没有的东西**：只放在服务环境里的一段口令。没配这段口令时，这扇门是关的
+ * ——**未配置就锁上**，与判据 1 同一条口径。
+ */
+/**
+ * t-235：**人那一页的绝对上限。**
+ *
+ * 此刻实测 **272,462 字节**（生产 `09256fd`，匿名 `GET /`，18:51）。它的构成说明了为什么这件要做：
+ * `tasks` 95,814、`instructions` 73,212、`readings` 55,811、`now` 23,991、样式 9,105、`seams` 7,594，
+ * **而人真正要看的那一栏「需要你」只有 5,312——整页的 2%**。三大块合计 82.5%，而它们都随日志线性长。
+ * qa 16:16 量到 226KB，我 18:51 量到 272,462：**两个半小时长了 20%。**
+ *
+ * **为什么是 192 KiB**：release 量过那条曲线，门槛在一万到一万五千条事件之间（1 万约 2.4 秒、1.5 万约 4.5 秒），
+ * 而此刻 8,7xx 条。**上限要在今天就咬住，不能是一个明天才生效的数**——一个「比现在大一点」的上限，与没有上限
+ * 在今天是同一样东西（t-070 那条比例判据就是这么全绿到 397KB 的）。192 KiB 比今天小 30%，逼着深层现在就折起来，
+ * 而「需要你」「现在」两栏一个字不动。
+ *
+ * **这一页与瘦身板是两条路**（t-235 判据 2）：`slimBoard` 只在 `GET /board` 那一处用，人这一页在进程内自己算一份
+ * 完整 `board()` 去渲染——所以 `BOARD_BYTES` 对这一页一点用没有，两条路各有各的上限。
+ */
+/**
+ * t-221：**「不知道有多少件在等上线」——一句话，一个出处。**
+ *
+ * 它原来在两处各写一份：页面走 `i18n.waitingUnknown`，命令行在 `format.ts` 里自己拼一份。本件要让命令行
+ * 在「这几个数旧了」时也说它，而**往 `format.ts` 再抄一份，就是把同一句话的出处从两处变成三处**——
+ * 那正是 `SECOND_HOME_FROZEN` 那道棘轮在拦的事。所以搬进来：两边都取这一份。
+ *
+ * `why` 是那条包含事实的依据（哪条事实、对哪个 sha、测于何时），由 `board.basis` 算好。
+ */
+export const waitingUnknownLine = (why: string): string => `不知道有多少件在等上线：${why}`;
+
+export const PAGE_BYTES = 196_608;
+
+export const OWNER_URL_LOCKED =
+  "这扇门是关着的：把主人的地址发出去，要一段只放在服务环境里的口令，而这台服务没有配。配上 ATEAM_OWNER_SECRET 再来——它不该是任何一个节点手上有的东西，因为第一个打开那条地址的人就永久是主人了。";
+export const OWNER_URL_NEEDS_SECRET =
+  "把主人的地址发出去，要一段只放在服务环境里的口令，放在 x-owner-secret 里。管理钥匙不够：每个角色手上拿的就是它，而第一个打开那条地址的人就永久是主人了。";
+
+export const joinNotAsHuman = (human: string): string =>
+  `${human} 是人自己的身份，不是这个项目的一个角色，加入拿不到它：以他的名义说话，只有他自己那把钥匙做得到，而那把钥匙在牌桌地址里带着。`;
+
+export const EXIT_PARTIAL = 4;
+export const exitCodeLine = `退出码：0 全部成功；${EXIT_PARTIAL} 部分成功（前面每一行会说清哪一件成了、哪一件没成）；2 全部失败；3 服务回了一个读不出的正文。`;
+
+/**
+ * t-226 判据 3 的客户端那一半：**这一批是截断的，后面还有。**
+ *
+ * 服务端已经在响应里说了（`more`），但只说给读 JSON 的人听。跑 `ateam sync` 的人看到的是一屏事件然后没了——
+ * 与「就这么多」长得一模一样。**少给而不自知**是这几天数了二十一次的那一族，它在两端各有一次机会，这是第二次。
+ */
+export const morePagesLine = (n: number) =>
+  `这一批只给了 ${n} 条就到上限了，后面还有——再跑一次 ateam sync 接着拉。`;
+
+/**
+ * t-225：**HTTP 说成功、正文却不是 JSON** 时说的那一句。住在 core，与 ROLLBACK_LINES 同一个理由：
+ * 新写的代码不该是 SECOND_HOME 那个只减不增的棘轮的第一个例外。
+ *
+ * 带上正文开头几十字：网关的错误页、代理的登录页、被截断的 JSON，一眼就分得出是哪一种；空正文也要说出来，
+ * 否则它长得像「服务什么都没说」，而那是另一回事。
+ */
+export const badResponseLine = (status: number, snippet: string) =>
+  `服务返回 ${status}，但正文不是可解析的 JSON：${snippet || "（空正文）"}`;
+
 /** t-223：`--deploy` 与 `--rollback` 都会说的那两句，住在一处（同 mayPush 那四问）。 */
 export const PUSH_LINES = {
   noSuchCommit: (sha: string) => `本地没有提交 ${sha}；先 fetch。`,

@@ -1,5 +1,5 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, type PullResult } from "@ateam/core";
-import { ClientError } from "./client.js";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, morePagesLine, type PullResult } from "@ateam/core";
+import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
 /** Where the CLI keeps its read position. The file under .ateam/ in production; memory in tests. */
@@ -25,6 +25,12 @@ export interface WatchOptions {
   signal?: AbortSignal;
   /** Called once per loop turn: the lock file's heartbeat (t-049). */
   heartbeat?: () => void;
+  /**
+   * t-240：**等这一批真的流出去。** 印完不等于交付：写进管道只是排了队，读它的进程慢一点、死了、或者容器
+   * 正在重启时，那几行还在这一头。等它排空之后才推进游标——**这样「被杀在交付之前」是一个真的、可以被撞上的
+   * 状态**，而不是一段微秒级、谁也验不到的窗口。给不出就不等（stdout 是文件或终端时本来就一写即出）。
+   */
+  flush?: () => Promise<void>;
 }
 
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
@@ -32,6 +38,9 @@ const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(reso
 
 /** Network trouble and 5xx are the server's moment, not ours; 4xx, rejections and config errors are ours. */
 export function isTransient(err: unknown): boolean {
+  // t-225：**正文坏掉算服务那一侧的时刻**，和 5xx、断网同一类：网关塞回一张 HTML、代理截断了正文、
+  // 部署中途的空回应——都会自己过去，而且下一轮重试的代价只是一次拉取。杀掉看守才是贵的那一种。
+  if (err instanceof BadResponse) return true;
   if (err instanceof ClientError) return err.status >= 500;
   return err instanceof Error && !(err instanceof SyntaxError);
 }
@@ -42,6 +51,14 @@ export function isTransient(err: unknown): boolean {
  */
 export function advance(cursor: CursorStore, next: string | null): boolean {
   const current = cursor.read();
+  // t-225 判据 2：**先问「这个值合法吗」，再问「它比现在新吗」。**
+  //
+  // 旧版只认识 `null`，而真正打进来的是 `undefined`——一个 200 带着不可解析的正文，被上游造成假 `PullResult`
+  // 之后，`r.cursor` 就是 `undefined`。它走过两道闸：`undefined <= current` 是 false（与 undefined 的比较一律
+  // false），`undefined === null` 也是 false，于是**被当成一个合法的新位置写进了游标文件**，读位置当场归零。
+  // 一个「只往前」的闸，被一个连「位置」都不是的值绕过去了。
+  if (typeof next !== "string" && next !== null) return false;
+  if (next !== null && !next.trim()) return false;
   if (next !== null && current !== null && next <= current) return false;
   if (next === null && current !== null) return false;
   cursor.write(next);
@@ -69,18 +86,46 @@ export function report(r: PullResult, me: string, after: string | null): string[
   // 「你欠什么」 line at sync while counting something else — this batch, not the standing debt — and two same-meaning
   // numbers from two sources are the shape 07:07 forbids: if they were really the same thing they would be one.
   // What just arrived is already marked instruction by instruction (⇐ FOR YOU); what is owed is said once, at sync.
+  // t-226 判据 3：**截断在这一端也要看得见。** 服务端在 JSON 里说了 `more`，而跑 sync 的人只看得见事件；
+  // 不补这一行，一次被截断的拉取与「就这么多」在终端上一模一样。
+  if (r.more) lines.push(morePagesLine(r.events.length));
   return lines;
 }
 
 /**
- * One protocol step: pull since the cursor, advance the cursor exactly once, print what came in.
- * `print` null keeps it quiet (the cursor still moves; that is the heartbeat).
+ * t-240：**拉一批，不推进游标。** 推进是交付之后的事，所以拉与推进从这里起是两步，调用方自己在交付之后确认。
  */
-export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind): Promise<PullResult> {
+export async function pullBatch(client: Puller, cursor: CursorStore, waitMs: number): Promise<{ after: string | null; r: PullResult }> {
   const after = cursor.read();
-  const r = await client.pull(after, waitMs);
-  advance(cursor, r.cursor);
+  return { after, r: await client.pull(after, waitMs) };
+}
+
+/**
+ * One protocol step: pull since the cursor, print what came in, and only then advance the cursor exactly once.
+ *
+ * t-240：**先交付，后推进。** 这两行原来是反的，而那个顺序里有一道缝：一次「取」与一次「看见」之间进程死掉
+ * （容器重启、watch 被打死），**那一批对这个节点永久消失，而之后每次 sync 都诚实地说「nothing new」——
+ * 它就是没有新的了**。frontend 20:07 真撞上：重启后游标已越过它最后看到的那条，pm 20:12 宣布 t-240 的那条
+ * tell 自己被这道缝吃掉，20:36 才被补读到。
+ *
+ * 同族三处，一并点名（判据 3）：① 本件（游标推进早于交付）；② `advance` 收 `undefined` 就清游标
+ * （t-225，已修已验、未上线）；③ 把 `sync` 倒进 `/dev/null`（pm 15:31 已改它的看守）。
+ * **共同形状：一次「取」与一次「看见」之间有缝，而缝里丢的东西不留痕。**
+ *
+ * 与 t-226（首次拉取的绝对上限）是同一函数上的两条，不是一件事：那条管**一次给太多**，本件管**给了没交到手
+ * 就记成给过了**。两条都在之后，剩下的仍是：一次给多少由 t-226 的上限决定，而无论给多少，没交付就不推进。
+ *
+ * `print` null 是**调用方自己交付**（watch 那一路）或**明写的丢弃**（`--quiet` 的心跳）：前者由调用方在交付
+ * 之后推进，后者是人自己要的，不是悄悄丢的。
+ */
+export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>): Promise<PullResult> {
+  const { after, r } = await pullBatch(client, cursor, waitMs);
   if (print) for (const line of report(r, me, after)) print(line);
+  if (print) await flush?.();
+  // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——
+  // 那正是 `--quiet` 原来的形状，而它让那一批对这个节点永久消失。命令行那一侧此刻不再走这条路
+  // （`--quiet` 改成把那一批收进本地那一叠），这里把口子也堵上：**下一个写 `sync(..., null)` 的人不会再踩它。**
+  if (print) advance(cursor, r.cursor);
   // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
   // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
@@ -90,7 +135,7 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // 是唯一会主动告诉人「你手上这份不是上线那一版」的地方。说不出就一个字都不说（behindDeploys 返回 null）：
   // 「不知道」不等于「你是最新的」，报平安比不说话更坏。
   if (print && behind) {
-    const n = behindDeploys(behind.head(), r.deploys, behind.has);
+    const n = behindDeploys(behind.head(), r.deploys, behind.has, r.sha);
     if (n !== null && n > 0) print(cliBehindLine(n));
     // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
@@ -123,10 +168,11 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
   for (;;) {
     if (opts.signal?.aborted) return last;
     opts.heartbeat?.();
-    const after = cursor.read();
+    let after: string | null;
     let r: PullResult;
     try {
-      r = await sync(client, me, cursor, Math.min(intervalMs, 30_000), null);
+      // t-240：**拉一批，先不推进**；下面印完了再推进。watch 死在这中间，那一批下次还拿得到。
+      ({ after, r } = await pullBatch(client, cursor, Math.min(intervalMs, 30_000)));
     } catch (err) {
       // A transient failure (deploy in progress, network blip) must not end the watch: the cursor is untouched,
       // say what happened, back off, try again. Anything else is ours to fix, so it still exits.
@@ -140,6 +186,8 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
     failures = 0;
     last = r;
     if (r.events.length) for (const line of report(r, me, after)) print(line);
+    if (r.events.length) await opts.flush?.();
+    advance(cursor, r.cursor);            // t-240：交付之后才推进——写出去、而且真的流出去了，这一批才算给出去了
     if (r.for_me.length) {
       print("\ninstruction received");
       if (opts.once) return r;

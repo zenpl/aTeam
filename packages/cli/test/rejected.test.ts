@@ -4,7 +4,7 @@
  * the refusal to the two "it's finished" messages that followed it.
  */
 import { describe, it, expect } from "vitest";
-import { readRefusal, refusalNotice, actionOf, type Refusal } from "../src/rejected.js";
+import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "../src/rejected.js";
 
 const NOW = new Date(Date.parse("2026-09-07T01:20:00Z"));
 const min = (n: number) => n * 60_000;
@@ -58,5 +58,52 @@ describe("t-116 · a refusal is said again on the next turn", () => {
     expect(notice(record(min(3)))!.split("\n")).toHaveLength(1);
     expect(refusalNotice).toHaveLength(2);   // (state, now[, clearWith]) — 没有 store、没有 client
     expect(readRefusal).toHaveLength(1);
+  });
+});
+
+/**
+ * t-233：**一次拒绝有两种意思，而提醒只印一种，还叫人重做。**
+ *
+ * 真样本是 qa 16:55 那次：拒绝话逐字写着「already acked at 16:54:51.880Z」——**那件事其实已经办好了**，
+ * 而这份提醒照旧说「没有落下去」，还给出「重做：<原命令>」。重做一次只会再被拒一次。
+ */
+describe("t-233 · 两类拒绝，提醒各说各的", () => {
+  const done = (over: Partial<Refusal> = {}) => record(min(5), { rule: "ack", cmd: "ateam ack 01M2B", what: "ack 01M2B", already: { at: "2026-09-07T01:14:51.880Z" }, ...over });
+
+  it("「已经办好了」那一类：不说「没有落下去」，不给「重做」，并把它发生的时刻印出来（判据 1、3）", () => {
+    const line = notice(done())!;
+    expect(line).not.toContain("没有落下去");
+    expect(line).not.toContain("重做：");
+    expect(line).not.toContain("ateam ack 01M2B");          // 那条命令不该再出现在这里：再跑一次只会再被拒一次
+    expect(line).toContain("2026-09-07T01:14:51.880Z");
+    expect(line).toContain("不用重做");
+    expect(line).toContain("ateam sync --clear-refused");     // 自己划的办法还在
+  });
+
+  it("说不出时刻时不编一个：说「已经办过了」，其余照旧（缺席与空要分得开）", () => {
+    const line = notice(done({ already: { at: null } }))!;
+    expect(line).toContain("已经办过了");
+    expect(line).not.toMatch(/20\d\d-/);
+    expect(line).not.toContain("重做：");
+  });
+
+  it("另一类一个字没变：照旧说「没有落下去」、照旧给「重做」", () => {
+    const line = notice(record(min(9)))!;
+    expect(line).toContain("没有落下去");
+    expect(line).toContain("重做：");
+  });
+
+  it("类别记坏了就是「没带类别」，按另一类处理——**不许把一件真没落下去的事说成已经办好了**", () => {
+    for (const bad of ['{"at": 5}', '{"when":"x"}', '"已经办了"', "[]", "null"]) {
+      const line = notice(record(min(5), { already: JSON.parse(bad) as never }))!;
+      expect(line, bad).toContain("没有落下去");
+    }
+  });
+
+  it("「已经办好了」那一类说完就划掉：它没有「重做一次就消失」这条出路", () => {
+    expect(clearsAfterNotice(readRefusal(done()))).toBe(true);
+    expect(clearsAfterNotice(readRefusal(record(min(9))))).toBe(false);
+    expect(clearsAfterNotice({ kind: "clean" })).toBe(false);
+    expect(clearsAfterNotice({ kind: "unreadable" })).toBe(false);
   });
 });

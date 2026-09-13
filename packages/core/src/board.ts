@@ -1,7 +1,7 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, type Refused, type RefusalCount } from "./events.js";
+import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
-import { surfaceResults, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
+import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
 
 /** One task as the board shows it, with everything `ateam task show` needs. */
 export interface BoardTask {
@@ -26,6 +26,17 @@ export interface BoardTask {
    */
   claimed_at?: string;
   blocked_on?: string;
+  /**
+   * t-231：**这一件此刻在等谁，按状态算，不按 `owner` 算。**
+   *
+   * 页面此前印的是 owner，于是 qa 16:33 在生产上走那四行时两行是错的：t-094 印「等 qa」——**而规矩不许 qa 验
+   * 自己**，人照着这一页去问，会问到一个被禁止动它的人；t-227 实际在等 qa 却印「等 dev」。等错人与等反了，是
+   * 同一处写法的两种错法。
+   *
+   * 谁能验由 `verifierEligibility` 说了算，**与那道闸读的是同一份判断**；一个合格的人都没有时是 human
+   * （pd 06:26：这种死局归他）。空数组的意思是**没有人在等它**——那时页面照实说，不拿 owner 充数。
+   */
+  waiting_on?: string[];
   withdrawn?: { by: string; at: string; reason: string };
   /** Set once a decision superseded the finished task (t-057). */
   obsolete?: { by: string; at: string; decision: string; reason?: string };
@@ -196,6 +207,100 @@ export function span(ms: number): string | null {
 export const SPAN_UNDER_A_MINUTE = "不到 1 分钟";
 
 /**
+ * t-231：**「等谁」那一句。** 一个人都没有时照实说没人在等它——**不许退回印 owner 充数**，那正是这个缺陷的来历：
+ * 页面拿 owner 当「等谁」，于是它指着一个规矩不许动这件事的人。
+ * 措辞是我写的、pd 没过目（人可见的字 11:17 起冻结）；判断本身不必等谁，说法要 pd 定，我另发了 note。
+ */
+export const NOBODY_WAITING = "没人在等它";
+export const waitingOnLine = (who: readonly string[]): string => (who.length ? `等 ${who.join("、")}` : NOBODY_WAITING);
+// 瘦身板不带 `waiting_on`（页面读的是完整板，在同一个进程里算）。**所以「没带这个字段」与「没人在等」要分得开**
+// （t-077）：拿不到就什么都不说，而不是说一句「没人在等它」——后者是一个我们此刻答不出来的断言。
+
+/**
+ * t-229 判据 1：**那个数的那一句话。** 「有多少条」与「最久那条多久了」在一句里，因为分开印时人只会读到前一个——
+ * 80 条里最久那条已经三天，和 80 条全是刚过期，是两种麻烦。
+ */
+export const lateLine = (late: { count: number; acted: number; untouched: number; oldest_s: number | null }): string =>
+  `${late.count} 条角色间指令过了期限还没人 ack${late.oldest_s === null ? "" : `，最久 ${span(late.oldest_s * 1000) ?? SPAN_UNDER_A_MINUTE}`}`
+  + `：${late.untouched} 条没人动过，${late.acted} 条事情办了只差一个 ack`;
+
+/**
+ * t-229 判据 3：**三个数各自覆盖什么，一处写清。**
+ *
+ * 它们此前的差别只活在各处注释里，而其中一条还是过期的（`Board.overdue` 那行注释在 t-147 之后仍写着
+ * 「发给角色、过期没 ack 的」）——于是「角色间的期限过了会怎样」这个问题，照着牌桌数出来的答案是 0。
+ * 印在 `--help` 里：读这三个数的人就是跑这条命令的人。
+ */
+/** 牌桌上那一栏印几条样本：数已经在那一句里，样本只是让人知道先去问谁。最久的在前。 */
+/**
+ * t-239 判据 4：**少给的那一段，说清从哪儿拿得到。** 每次拉取里「t-147 之前那一批」只剩一个数；
+ * 真要那几条本身的，这条路一次给全。印在 `--help` 里，因为那个数就印在 sync 的那一行上。
+ */
+export const OWED_LEGACY_HELP = "GET /owed                     你此刻欠什么的全量（含 t-147 之前那一批的逐条）；每次 sync 带的那一份里，那一批只给一个数";
+
+/**
+ * t-242 ②：**那一节的标题问的是「这一版带来了什么」，而它印的是「在生产上验过的那几件」。**
+ * 一版可以带来十件而一件都还没人验，所以标题比名单大一圈——它不是假话，是**说大了**。
+ * 名单不动（那是真信息，而且命令行也在用同一份），改的是标题：让它说出名单是什么。
+ * **措辞是占位的，定稿归 pd（判据 4）。** 上线前必须换掉。
+ */
+export const VERIFIED_ON_THIS_VERSION = `${PD_PLACEHOLDER}这一版里已经在生产上验过的`;
+
+/**
+ * t-245 判据 2：**`--quiet` 要出现在 `--help` 里。** 一个会改变「你会不会丢东西」的开关，却不在任何一处
+ * 说明里——**没写在说明里的开关，和不存在的开关，对读说明的人长得一样。**
+ */
+export const QUIET_HELP = "--quiet 只拉不印（心跳）：那一批不会消失，它攒在本地，下一次不带 --quiet 的 sync 先把它印出来";
+/** t-245：这一叠是上几次 `--quiet` 拉到、还没人看过的。说出来它是什么，人才知道自己在读什么。 */
+export const UNSEEN_HEAD = (n: number) => `以下 ${n} 行是之前 --quiet 拉到、还没人看过的：`;
+/** 攒太多时只留最近的，**丢掉多少要说出来**——一叠会悄悄变小的东西，和没有这一叠一样坏。 */
+export const UNSEEN_DROPPED = (n: number) => `（更早的 ${n} 行攒不下了，已经丢掉；要全量去 ateam log --after <上次读到的 id>）`;
+export const UNSEEN_MAX = 500;
+
+/** t-246 ②：同一个开关给了两次时说的那一句。**两份值里挑一份，工具不替你挑**——后一个静默胜出，挑错了没人会核。 */
+/**
+ * t-247 判据 4：**不认得的开关，说出是哪一个，并说出下一步做什么。**
+ *
+ * 受众是跑命令的 agent，不是人那一页——所以措辞归 dev，不等 pd（pm 17:55 立的那条口径；将来若判定它人可见，
+ * pd 有权事后否掉）。出路给两条：**升级这支命令行**（多半是版本偏斜：仓库里有、你这支还没重编），
+ * 或者**改用在新旧两支上都对的写法**。
+ */
+export const UNKNOWN_FLAG = (name: string): string =>
+  `不认得这个开关：--${name}。一个字都没发。` +
+  `多半是你这支命令行旧了：先 git pull && pnpm build，再 ateam help 看它在不在里面；` +
+  `要在新旧两支上都对，就别用 --X-file，改写成 --X "$(cat 文件)"`;
+
+/**
+ * t-247 判据 3：**「写错名字」与「少写个值」要在同一处出声。** 此前前者静默退 0、后者报一句英文并退 1——
+ * 于是更难发现的那一种反而更安静。两条现在都是用法错（退 2，且明写「一个字都没发」）。
+ */
+export const FLAG_NEEDS_VALUE = (name: string): string => `--${name} 少了值：它后面要跟一个值。一个字都没发`;
+
+export const TWICE_GIVEN = (name: string): string => `--${name} 给了两次：两份值，工具不替你挑。要哪一份就只写哪一份`;
+
+export const BOTH_BODY_AND_FILE = (base: string): string => `--${base} 与 --${base}-file 只能给一个：两份正文，工具不替你挑`;
+
+/**
+ * t-246 判据 1：`--X-file` 那一句。**工具收得下这段字，就不必再要五个人各自记住**——
+ * 今天量到的那条口头规矩的失效间隔是 45 分钟。
+ */
+export const BODY_FILE_HELP = "任何 --X 都可以写成 --X-file <路径>（--body-file、--evidence-file、--reason-file…）：文件里的字原样进去，不会再被 shell 解释一遍（反引号、$、换行都安全）";
+
+export const STORED_ECHO = 24;
+export const storedLine = (field: string, text: string): string => {
+  const chars = [...text];
+  const body = chars.length <= STORED_ECHO * 2 ? text : `${chars.slice(0, STORED_ECHO).join("")}…${chars.slice(-STORED_ECHO).join("")}`;
+  return `⤷ 落库 ${chars.length} 字（${field}）：${body.replace(/\n/g, " ")}`;
+};
+
+export const LATE_SHOWN = 3;
+export const DEADLINE_WORDS: string[] = [
+  "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
+  "NOBODY HAS ACTED ON（overdue_by_presence）：角色收到之后一直没有动作的那几条，按对方在不在场分三桶。**它不看期限**。",
+  "late：角色间指令，过了 ack_by 还没 ack。期限从 t-229 起是一道看得见的闸，不再是一句印着好看的话。",
+];
+
+/**
  * 第三把梯子：**还有多久**（pd 10:39）。
  *
  * pd 定前两把时漏了它，是我 t-189 拿「不点的话，<绝对时刻>到期」去问「09:09 说绝对时刻只进 title，这里怎么办」
@@ -290,6 +395,13 @@ export interface BoardSaid {
 }
 
 export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" };
+/**
+ * t-243：**那句提示里的三个词，从此就是上面那张表里的三个词。**
+ *
+ * 它原来住在 i18n.ts，把三个状态名逐字抄了一遍——**一份转述**：pd 哪天改「已成为需求」，这句提示会留在
+ * 旧词上，而且不会有任何一处红。文字一个字没变，变的是它从哪儿来。
+ */
+export const SAY_HINT = `你说过的会出现在这里，并显示它变成了什么：${["received", "requirement", "task"].map((k) => SAID_LABEL[k as SaidStatus]).join(" → ")}。`;
 
 export interface BoardRelease {
   task: string;
@@ -358,8 +470,35 @@ export interface Board {
   owner_key?: { state: "none" | "issued" | "in_use"; since?: string };
   /** Instructions nobody has pulled yet, 5 minutes after they were sent, by recipient: who is not receiving (t-048). */
   undelivered: { to: string; count: number; oldest_sent: string; listening: boolean }[];
-  /** Instructions to non-human actors that are past ack_by and still unacked. The team's problem, not the human's. */
+  /**
+   * **带选项的卡，过了期限还没有答案。** 带选项的卡只发得给人（rules.ts），所以这一栏说的全是人正坐在上面的
+   * 那几张。t-147 改的就是这个口径；这行注释在那之后一直还写着「发给角色、过期没 ack 的」——**一句没跟上
+   * 实现的注释，比没有注释更贵**：t-229 的根之一正是有人照它去数角色间的期限，数出 0。
+   *
+   * 三个数各自覆盖什么，一处写清（`DEADLINE_WORDS`，`--help` 里印得出来）：这一栏是**人欠的答案**，
+   * `overdue_by_presence` 是**角色读到了还没动的**（不看期限），`late` 是**角色间过了期限还没 ack 的**。
+   */
   overdue: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number }[];
+  /**
+   * t-229：**未 ack 且已过期的角色间指令。**
+   *
+   * 此前这个数一处都没有：`overdue` 只认带选项的卡，`overdue_by_presence` 按在不在场分桶、根本不看期限。
+   * 于是每个人都在 `tell` 上写 `--ack-by 15m`，而**那个期限过了之后什么都不会发生**——qa 15:43 实测 80 条
+   * 已过期，牌桌报 0。二选一里选的是「让它成为一道闸」：期限照印，但过了就进这个看得见的桶。
+   *
+   * 定义（可复算）：`to` 不是人、**没有选项**、没被撤回、**还没 ack**，且 `ack_by` 已经过去；
+   * **不含 `ateam` 发的、其所指的任务已经重交或已走完的服务通知**（上面那行 `serviceNoticeStale` 的 `continue`，
+   * 与 `overdue`／`needs_human` 共用同一条）。qa 21:00 照这份定义的前半句复算得 111，实现给的是 104，差的 7 条
+   * 全是这一类——**口径是对的，短的是这份定义**：一条「t-193 验收未过，改完重新 done」而 t-193 早已重交并验过
+   * 的通知，不是活着的欠账；把它算进来，正是本件要修的那个病（把桶灌大到没人再看）。
+   * `count` 与 `oldest_s` 不随裁剪走，名单会——「有 80 条」和「是哪 80 条」不是同一个问题。
+   *
+   * **不是一个数，是两个**（照 t-139 那条：「Never one number」）。我在真日志上量的时候撞见了它：105 条里
+   * 有 33 条**事情已经办了，只差一个 ack**（`acted_by_event` 认得出来），另外 72 条是真没人动。这两种要的
+   * 不是同一件事——一个是补一次回执，一个是这件事还没开始。**混成一个数，读它的人会按最轻的那一种去理解它，
+   * 于是这个桶一样会被忽略**，而那正是本件要修的病。
+   */
+  late: { count: number; acted: number; untouched: number; oldest_s: number | null; instructions: { instruction: string; to: string; from: string; body: string; ack_by: string; age_s: number; acted: boolean }[] };
   /**
    * t-139 (pd 05:15): overdue instructions split by whether their recipient is there, because the three states cost
    * different things and are fixed different ways. `missing` — nobody is pulling, so nothing arrives and only a person
@@ -410,6 +549,23 @@ export interface Board {
     unknown?: (BoardRelease & { reason: string })[];
     /** t-078: the three counts, on every board. */
     counts: { pending_deploy: number; deployed_unverified: number; unknown: number };
+    /**
+     * t-221：**这几个数是什么时候量的**，取自那条包含事实自己的时刻；没有事实时是 null。
+     * 它此前只活在 `basis` 那一长串里，而人读到的是那个数——pm 的原话：「`basis` 行里印了时刻，那不算」。
+     */
+    counts_at: string | null;
+    /**
+     * t-221：**这几个数此刻还算不算数。**
+     *
+     * 那条包含事实是某个人某一刻跑 `ateam release` 用 git 逐件测出来的，**之后没有任何东西会去刷新它**。
+     * 真样本：15:05:01 量的那份让牌桌从 15:05 一直显示 `pending_deploy = 0`，而 release 17:06 重跑得到 **6 件**
+     * ——**两小时里「没有东西等着上线」是一句会让人放心的假话**。
+     *
+     * **而 0 是这里面最像真话的那个值**（release 17:06 的话）：一个陈旧的数写成 0，读起来正好是「都上线了」。
+     * 所以这条把 t-078 那条老规矩推广一格：**算不出就说原因不给数字；算得出但已经旧了，也不许当成此刻的数给出去。**
+     * 判它旧的依据不是时间，是**它答不答得了此刻的问题**：只要有一个候选是它之后才 done 的，它就答不了。
+     */
+    counts_current: boolean;
     /**
      * t-203 判据 2：这几个数的**分母**——哪三类相加，或者为什么算不出。
      *
@@ -931,6 +1087,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     needs_human: [],
     undelivered: [],
     overdue: [],
+    late: { count: 0, acted: 0, untouched: 0, oldest_s: null, instructions: [] },
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
     gate_honesty: [],
     instructions: [],
@@ -938,7 +1095,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     tasks: {},
     in_flight: {},
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
-    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
+    release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, counts_at: null, counts_current: false, denominator: "", basis: "" },
     batches: [],
     said: [],
     disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason, ...(d.agents ? { agents: [...d.agents] } : {}) })).sort(byId((x) => x.of)),
@@ -1013,7 +1170,17 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // count of NEEDS HUMAN: that list says 「你要做的」, this one says 「这件晚了」, and t-139's three states never
     // hold the human, so nothing is counted twice.
     if (status === "overdue") b.overdue.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)) });
+    // t-229：**角色间的期限，从这里起是一道看得见的闸。** 判的是「谁欠一个 ack」，所以没有选项那一支才算
+    // （带选项的卡欠的是答案，在上面那一栏）；acked 的在更上面就 continue 掉了，withdrawn 同理。
+    if (i.to !== human && !i.options?.length && i.ack_by && Date.parse(i.ack_by) < now.getTime())
+      b.late.instructions.push({ instruction: i.id, to: i.to, from: i.actor, body: i.body, ack_by: i.ack_by, age_s: Math.max(0, Math.round((now.getTime() - Date.parse(i.ack_by)) / 1000)), acted: !!st.acted_by_event });
   }
+  // 数与「最久那条多久了」在这里定下来，**裁剪只砍名单、不砍这两个数**（t-070 那条：「有多少」与「是哪些」不是同一个问题）
+  b.late.instructions.sort((a, c) => c.age_s - a.age_s);
+  b.late.count = b.late.instructions.length;
+  b.late.acted = b.late.instructions.filter((x) => x.acted).length;
+  b.late.untouched = b.late.count - b.late.acted;
+  b.late.oldest_s = b.late.instructions[0]?.age_s ?? null;
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
     const r = rs.reading;
@@ -1033,7 +1200,10 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // Deploys, oldest first: the current sha is the latest valid reading; the previous one is the last different value before it.
   const deploys = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .sort(byId((r) => r.id));
   const current = deploys.length && s.readings.get(deploys[deploys.length - 1].id)!.valid && !s.readings.get(deploys[deploys.length - 1].id)!.expired ? deploys[deploys.length - 1] : undefined;
   // shas compare by their first 7 characters: a short and a long form of the same commit are the same deploy (pd, t-026)
@@ -1078,7 +1248,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       id: t.id, title: t.title, label: t.label, from: t.from, status: t.status, criteria: t.criteria, criteria_by: t.criteria_by, criteria_added: t.criteria_added, created_at: t.created_at,
       // t-157 判据 1：对外的答案是**各轮的并集**，不是最后一轮。dev 07:22 实测：t-147 两轮碰了 17 个文件，
       // done 之后记录上只剩 3 个，而它真正与 t-152 相撞的那五个文件全在第一轮里。
-      owner: t.owner, touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
+      owner: t.owner, waiting_on: waitingOn(s, t, human), touches: [...new Set([...t.touched_all, ...t.touches])], claimed_at: t.claimed_at, blocked_on: t.blocked_on, withdrawn: t.withdrawn, obsolete: t.obsolete, evidence: t.evidence, evidence_sha: evidenceSha(t.evidence) ?? undefined, base_sha: t.base_sha, criteria_moved: t.criteria_moved.length ? t.criteria_moved : undefined, shows: t.shows, verifications: t.verifications, history: t.history,
       surfaces: surfaceResults(t), overturned: overturnedOn(t).length ? overturnedOn(t) : undefined,
       verified_on: surfaceResults(t).filter((r) => r.pass).map((r) => r.surface),
       notes: t.notes.map((n) => ({ id: n.id, actor: n.actor, at: n.at, body: n.body, decision: n.decision, label: n.label })),
@@ -1110,7 +1280,13 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     if (n.actor !== human || !n.body.startsWith(SAID_PREFIX)) continue;
     const requirements = s.notes.filter((x) => x.actor === PD_ACTOR && x.decision && x.refs?.includes(n.id)).map((x) => x.id);
     const linked = tasks.filter((t) => t.refs.includes(n.id));
-    const live = linked.filter((t) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass));
+    // t-242：**「已上线」读的该是「它在生产跑的那一版里」，而不是「有人在生产上验过它」。**
+    // 后者蕴含前者（没上线的东西验不了），所以这一句原来不是假话，但它**报少了**：一件已经在生产上跑、
+    // 还没人验的，这里显示成「已成为任务」——而人问的是「我那句话落地了没有」。
+    // 包含关系来自那条事实（production:deployed.tasks）；它答不出的那几件仍按有没有生产判决算。
+    const shipped = deployedTasksFact(s);
+    const onProd = (t: TaskState) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass) || !!shipped?.contained.includes(t.id);
+    const live = linked.filter(onProd);
     const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
     const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
@@ -1168,6 +1344,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
   // The human is not grouped by presence: NEEDS HUMAN is its own list, and 「起一个 human」 is not a thing to say.
   b.gate_honesty = GATES.map((g) => gateHonesty(s, g)).filter((x): x is GateHonesty => x !== null);
+  b.needs_human = needsHumanOrder(b.needs_human);   // t-236：填完之后排一次——此前一处都没排过
   b.overdue_by_presence = overdueByPresence(b, owedTo(s).filter((st) => st.instruction.to !== human).map((st) => ({ instruction: st.instruction.id, to: st.instruction.to })));
   return b;
 }
@@ -1330,9 +1507,33 @@ export interface GateHonesty {
   /** 还没有人判过的。 */
   unjudged: number;
   /** 修法：`project:gate.<闸>.fix` 指的那件任务，以及它此刻走到哪儿。 */
-  fix?: { task: string; status: string; verified_on: string[]; in_production: boolean };
+  /**
+   * t-237：**两件事，分开说。** ① 这件的代码在不在生产跑的那一版里（`deployed`，按包含关系算；`null` 是说不出）；
+   * ② 有没有人在生产表面上验过它（`verified_in_production`）。
+   *
+   * 此前只有一个 `in_production`，读的是②、印出来的话却在说①：qa 19:09 在生产上量到，这道闸对人说
+   * 「修法在 t-160，已验（repo），**还没上生产**」——而 t-160 的 `bdbbfd1` 就在生产跑的 `09256fd` 里。
+   * **它已经在跑，缺的只是没人在生产上验过它。**
+   */
+  fix?: { task: string; status: string; verified_on: string[]; deployed: boolean | null; verified_in_production: boolean };
   /** 判据 1 的那一句，core 一处算出，唯一 key。 */
   line: string;
+}
+
+/**
+ * t-237 判据 2：**修法此刻在哪儿，两件事各说一句。** 代码在不在生产跑的那一版里，与有没有人在生产上验过它，
+ * 是两个问题；把前者说成后者，就是 qa 19:09 量到的那句假话。说不出包含关系时**说说不出**，不说「还没上线」。
+ *
+ * **措辞是占位的，定稿归 pd（判据 5）。** 上线前必须换掉。
+ */
+export function fixWhere(fix: NonNullable<GateHonesty["fix"]>): string {
+  const judged = fix.verified_in_production ? "已经有人在生产上验过它"
+    : fix.verified_on.length ? `还没有人在生产上验过它（已验：${fix.verified_on.join("、")}）`
+    : `还没有人在生产上验过它（此刻 ${fix.status}）`;
+  const where = fix.deployed === null ? "说不出它的代码在不在生产跑的那一版里"
+    : fix.deployed ? "代码已经在生产跑的那一版里"
+    : "代码还不在生产跑的那一版里";
+  return `${PD_PLACEHOLDER}${where}，${judged}`;
 }
 
 /** t-149 判据 1 的那一句。措辞待 pd 定稿（我已发给它）；在那之前这是唯一一处出处，改也只改这里。 */
@@ -1341,9 +1542,7 @@ function honestyLine(h: Omit<GateHonesty, "line">): string {
     ? `${h.judged} 条经核对，其中 ${h.false_positives} 条是误报${h.missed ? `、${h.missed} 条还漏报了` : ""}`
     : `${h.judged} 条经核对`;
   const rest = h.unjudged ? `，另有 ${h.unjudged} 条没人判过` : "";
-  const fix = h.fix
-    ? `修法在 ${h.fix.task}，${h.fix.in_production ? "已在生产上" : h.fix.verified_on.length ? `已验（${h.fix.verified_on.join("、")}），还没上生产` : `此刻 ${h.fix.status}`}`
-    : "还没有一件任务认领它的修法";
+  const fix = h.fix ? `修法在 ${h.fix.task}，${fixWhere(h.fix)}` : "还没有一件任务认领它的修法";
   return `这道闸至今报过 ${h.reported} 条，${what}${rest}；${fix}。据它下的结论，先自己核一遍。`;
 }
 
@@ -1354,7 +1553,11 @@ function gateFix(s: State, gate: Gate): GateHonesty["fix"] {
   const task = typeof rs?.reading.value === "string" ? s.tasks.get(rs.reading.value) : undefined;
   if (!rs || !rs.valid || rs.expired || !task) return undefined;
   const verified_on = task.verifications.filter((v) => v.pass).map((v) => v.surface);
-  return { task: task.id, status: task.status, verified_on, in_production: verified_on.includes(HUMAN_SURFACE) };
+  // 包含关系来自那条事实（`production:deployed.tasks`，qa 今天用 git merge-base --is-ancestor 逐件测出来的那份）。
+  // 事实没有、或者它没覆盖这一件（三桶规矩之前写的、或这件在它之后才 done）⇒ `null`：**说不出，不是「没上线」**。
+  const fact = deployedTasksFact(s);
+  const deployed = !fact ? null : fact.contained.includes(task.id) ? true : fact.not_contained.includes(task.id) ? false : null;
+  return { task: task.id, status: task.status, verified_on, deployed, verified_in_production: verified_on.includes(HUMAN_SURFACE) };
 }
 
 export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
@@ -1362,7 +1565,7 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
   // 只有一句实话和一件修法——修法在生产上验过之后，这句话自己消失，与接缝闸那一档同一个规矩。
   if (gate === "shows") {
     const fix = gateFix(s, gate);
-    if (!fix || fix.in_production) return null;
+    if (!fix || fix.verified_in_production) return null;
     return { gate, reported: 0, judged: 0, false_positives: 0, missed: 0, unjudged: 0, fix, line: SHOWS_GATE_BLIND(fix.task) };
   }
   if (gate !== "seam") return null;   // 其余的闸还没有可被核对的结论
@@ -1379,7 +1582,7 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
   };
   // 判据 2：两个条件都成立才叫「已知缺陷」——有被判过的错，且修法还没在生产上。都不成立就没有这句话。
   const broken = h.false_positives > 0 || h.missed > 0;
-  if (!broken || !h.fix || h.fix.in_production) return null;
+  if (!broken || !h.fix || h.fix.verified_in_production) return null;
   return { ...h, line: honestyLine(h) };
 }
 
@@ -1416,8 +1619,13 @@ export interface OwedNow {
    * 不可能落进这个桶）。活欠账只从 t-147 上线那一刻起算。
    *
    * 这里只有数据。**这个桶在牌桌上怎么说、说不说，我没自拟**——pm 11:17 起人可见的字冻结，等 pd。
+   *
+   * t-239：**只给这个数，不再每次拉取把那 315 条逐条发出来。** qa 19:41 实测：一次真增量拉取 182,477 字节，
+   * 其中 121,817 字节是这个桶——**一份按定义不会再变的历史，每 25 秒重发一遍**，五个角色合起来约
+   * 131 MB/小时，而且没有任何一个读它的人：`owedSentences` 只说前两个桶，页面一处都没取过它。
+   * 要那 315 条本身的，走 `GET /owed`（那条路把三个桶全量给出，一次，要的时候才拿）。
    */
-  legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[];
+  legacy_before_acted_rule_count: number;
 }
 
 /**
@@ -1461,7 +1669,16 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
 }
 
 export function owedNow(s: State, to: string): OwedNow {
-  const out: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule: [] };
+  const full = owedFull(s, to);
+  return { unanswered: full.unanswered, untouched: full.untouched, legacy_before_acted_rule_count: full.legacy_before_acted_rule.length };
+}
+
+/**
+ * t-239：三个桶的**全量**，只给专门来要它的那条路（`GET /owed`）用。每次拉取带的是 `owedNow`——
+ * 那一份里历史只剩一个数。**两份由同一段代码算出来**，不是两处各数一遍。
+ */
+export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswered"]; untouched: OwedNow["untouched"]; legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[] } {
+  const out = { unanswered: [] as OwedNow["unanswered"], untouched: [] as OwedNow["untouched"], legacy_before_acted_rule: [] as { instruction: string; from: string; body: string; sent: string }[] };
   // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
   // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
   // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
@@ -1504,6 +1721,38 @@ export function ruleLiveAt(s: State, task: string): string | undefined {
  * nudge. Tonight release was listening, producing steadily, and sitting on 22 unacked instructions, the oldest 160
  * minutes old — while a genuinely absent role was in the same heap, and the heap said neither thing.
  */
+/**
+ * t-236：**人那一页把最急的一张排在最下面。** 它按指令 id 升序，也就是建卡的先后——**与紧急度、与期限、
+ * 与焦点全无关，填完之后没有任何一处重排**（frontend 读数 `repo:needs_human.order`）。pm 18:25 量到的那一页
+ * 自上而下是：起一个 pd？／起一个 release？／换外呼地址（挂了 8 天）／放行快进／**今天那个 P0 排第五**，
+ * 而上面两张是 pm 自己就能做、并且今天已经自己做过两次的事。
+ *
+ * 排序只用牌桌自己拿得到的事实，**不用任何人自报的优先级**（判据 4：否则每个人都会把自己那张写成最急）：
+ * ① **只有他能做**：服务发的「起一个 X？」不算——那件事队里别人也做得了（pm 今天做过两次），它们沉到最后。
+ * ② **沉默会不会替他落一个决定**：带选项又带默认的，到期会以他的名义执行一个选择。**这一类最贵**：
+ *    不答不是「什么都没发生」，而是「替他发生了」。
+ * ③ 同一档里**先到期的在前**（没有期限的排在有期限的之后），最后按 id 稳住顺序——同一档里谁先建谁在前。
+ *
+ * **只有三档，没有第四档。** 我试过把「要他答」排在「要他做一件事」前面，被一条既有用例挡了回来：
+ * 新项目那两张卡（「这个项目是什么？说一句」与外呼地址）pd 定的顺序是前者在先，而那样排会把它们对调。
+ * 收回它是对的——**「问他」比「请他做」更急，是我的直觉，不是牌桌拿得到的事实**（判据 4 不许的正是这个）。
+ *
+ * **这里不新增任何一句人可见的话**：页面照旧一张张印，只是顺序变了。所以本件没有 pd 前置（判据 5 的另一半）。
+ */
+export function needsHumanOrder(cards: Board["needs_human"], service = SERVICE_ACTOR): Board["needs_human"] {
+  const onlyHuman = (c: Board["needs_human"][number]) => !(c.from === service && !!missingRoleOf(c.body));
+  const tier = (c: Board["needs_human"][number]) =>
+    !onlyHuman(c) ? 2                                            // 别人也做得了：最后
+    : c.options?.length && c.default !== undefined ? 0           // 不答＝替他落一个决定
+    : 1;                                                          // 其余：要他答或要他做，牌桌分不出轻重，按期限走
+  const due = (c: Board["needs_human"][number]) => c.ack_by_again ?? c.ack_by ?? "";
+  return [...cards].sort((a, b) =>
+    tier(a) - tier(b)
+    || (due(a) ? 0 : 1) - (due(b) ? 0 : 1)
+    || due(a).localeCompare(due(b))
+    || a.id.localeCompare(b.id));
+}
+
 export function overdueByPresence(b: Board, owed: { instruction: string; to: string }[]): Board["overdue_by_presence"] {
   const state = new Map(b.presence.map((p) => [p.actor, p]));
   const empty = (): BoardOverdueGroup => ({ roles: [], count: 0, away_s: null, instructions: [], line: "" });
@@ -1597,10 +1846,13 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   // work already running in production that nobody walked there has no lever at all and leaves every surface.
   const running = new Set((b.release.deployed_unverified ?? []).map((c) => c.task));
   const waiting = new Set((b.release.pending_deploy ?? []).map((c) => c.task));
-  const notOnProduction = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
+  // t-237 判据 3（同族一处）：这里读的是「有没有生产判决」，而它原来叫 notOnProduction——**名字说的是代码在不在
+  // 生产上**。下面分组时真正用的是包含关系（waiting／running 两个集合），所以人看到的分组是对的；改名是把这个
+  // 陷阱拿掉，免得下一个人照着名字去用它。
+  const noProdVerdict = (b.tasks.verified ?? []).filter((tk) => !tk.verified_on?.includes(HUMAN_SURFACE));
   const row = (tk: { title: string; shows?: string; owner?: string }) => ({ title: tk.shows ?? tk.title, owner: tk.owner }); // t-056
-  const elsewhere = notOnProduction.filter((tk) => waiting.has(tk.id)).map(row);
-  const awaitingRepo = notOnProduction.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
+  const elsewhere = noProdVerdict.filter((tk) => waiting.has(tk.id)).map(row);
+  const awaitingRepo = noProdVerdict.filter((tk) => !waiting.has(tk.id) && !running.has(tk.id)).map(row);
   const groups = [
     { key: "working", items: sortRecent(b, "working", g("working")) },
     { key: "blocked", items: sortRecent(b, "blocked", g("blocked")) },
@@ -1612,7 +1864,7 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   return groups.map((x) => ({ ...x, total: x.items.length }));
 }
 
-export function slimBoard(b: Board): Board {
+export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
     tasks[status] = list.map((t) => ({
@@ -1639,14 +1891,156 @@ export function slimBoard(b: Board): Board {
   const needs_human = b.needs_human.map(({ detail: _detail, ...c }) => c);
   const in_flight: Board["in_flight"] = Object.fromEntries(Object.entries(b.in_flight).map(([k, g]) => [k, { total: g.total, all: g.all }]));
   // release candidates are derived from the tasks (evidence sha, surfaces) and grow with every finished task: `ateam release` reads the full board
-  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
+  const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, counts_at: b.release.counts_at, counts_current: b.release.counts_current, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
   // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
   const live: Board["live"] = { ...b.live, deploys: undefined };
   const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
-  slim.omitted = omittedPaths(b, slim);
+  // **量的必须是真正发出去的那一整份**：`omitted` 自己也占字节，而它恰恰随着砍得越多而越长。
+  // 每砍一刀重算一次——否则预算算的是一份比实际小的东西（t-227 那一族，这次我先想起来了）。
+  fitBudget(slim, limit, () => { slim.omitted = omittedPaths(b, slim); });
   return slim;
+}
+
+/**
+ * t-070 判据 3：**一个写死的绝对上限，不是一个比例。**
+ *
+ * 这件的标题是「board JSON **不随日志无限增长**」，而它此前做到的是**一个常数倍的缩小**：日志从 1,571 条涨到
+ * 8,600 多条，瘦身板从 58.6KB 涨到 **397,640 字节**——判据的字面一直是「小于 60KB」，此刻超它 6.5 倍。
+ * pm 21:32 曾把判据改成「默认板 < 完整板 12%」，17:49 又把那次更正作废，理由是它自己写的：**完整板随日志
+ * 无限长，无上限的 12% 仍然无上限**；而绝对上限之所以难，正因为它逼出一个取舍——日志长到某个程度，
+ * 这份回包里必须有东西不出现，谁先被砍。
+ *
+ * **砍的是给 agent 的那一份，不是人那一页**：`slimBoard` 只在 `GET /board` 那一处用（`app.ts` 里唯一一处），
+ * 而人那一页在进程内自己算一份完整的 `board()` 去渲染。人那一页也在长，那是另一件（t-235）。
+ *
+ * **砍了多少看得见**：`omitted` 会逐条印成 `tasks.verified[207 of 213]`——少给而不自知，正是这几天数了
+ * 二十多次的那一族。
+ */
+export const BOARD_BYTES = 61_440;
+
+/** 一张可以砍短的名单：怎么取、怎么放回、最少留几条、属于哪一层。 */
+interface Cut {
+  path: string;
+  get(b: Board): unknown[] | undefined;
+  put(b: Board, v: unknown[]): void;
+  keep: number;
+  /**
+   * 砍的时候从哪一头留。默认留最近的几条（历史名单都是这样）；`oldest` 留最早的几条——
+   * t-229 的 late 名单按「最久的在前」排，**要看的样本正是最久的那几条**，留最新的等于把要看的那几条砍掉。
+   */
+  from?: "newest" | "oldest";
+  /**
+   * 先砍哪一层。**1 是历史**（终态任务、上过线的批次、已解决的接缝、那几张长 id 名单）——这一份少了它们，
+   * 下一个 agent 照样干得了活，`GET /task/<id>` 与 `GET /log` 里一条不少。**2 是此刻要用的**（还挂着的指令、
+   * 有效的事实）：只有第 1 层砍光了还装不下，才动它们。
+   *
+   * **一条都不砍的**：`needs_human`、`focus`、在途与待办的任务、开着的接缝——那是这一份存在的理由。
+   */
+  tier: 1 | 2;
+}
+
+const CUTS: Cut[] = [
+  ...(["verified", "obsolete", "withdrawn", "done"] as const).map((st): Cut => ({
+    path: `tasks.${st}`,
+    get: (b) => b.tasks[st],
+    put: (b, v) => { b.tasks = { ...b.tasks, [st]: v as Board["tasks"][string] }; },
+    keep: 1, tier: 1,
+  })),
+  ...(["missing", "deaf", "listening"] as const).map((g): Cut => ({
+    // 计数与那句话留着，砍的只是 id 名单——「有 343 条」和「是哪 343 条」不是同一个问题
+    path: `overdue_by_presence.${g}.instructions`,
+    get: (b) => b.overdue_by_presence?.[g]?.instructions,
+    put: (b, v) => { b.overdue_by_presence = { ...b.overdue_by_presence, [g]: { ...b.overdue_by_presence[g], instructions: v as string[] } }; },
+    keep: 0, tier: 1,
+  })),
+  ...(["verified_on_production", "earlier", "recent"] as const).map((k): Cut => ({
+    path: `live.${k}`,
+    get: (b) => (b.live as unknown as Record<string, unknown>)[k] as unknown[] | undefined,
+    put: (b, v) => { b.live = { ...b.live, [k]: v } as Board["live"]; },
+    keep: 1, tier: 1,
+  })),
+  // t-229：名单可以砍，`late.count` 与 `late.oldest_s` 砍不掉——被砍掉的是「是哪几条」，不是「有几条」
+  { path: "late.instructions", get: (b) => b.late?.instructions, put: (b, v) => { b.late = { ...b.late, instructions: v as Board["late"]["instructions"] }; }, keep: LATE_SHOWN, from: "oldest", tier: 1 },
+  { path: "seams", get: (b) => b.seams.filter((x) => !x.open), put: (b, v) => { b.seams = [...b.seams.filter((x) => x.open), ...(v as Board["seams"])]; }, keep: 0, tier: 1 },
+  { path: "batches", get: (b) => (b as unknown as { batches?: unknown[] }).batches, put: (b, v) => { (b as unknown as { batches?: unknown[] }).batches = v; }, keep: 1, tier: 1 },
+  // 第 2 层：此刻要用的。砍到这里就已经在牺牲「下一个 agent 一进门看得见什么」。
+  { path: "instructions", get: (b) => b.instructions, put: (b, v) => { b.instructions = v as Board["instructions"]; }, keep: 1, tier: 2 },
+  { path: "readings", get: (b) => b.readings, put: (b, v) => { b.readings = v as Board["readings"]; }, keep: 1, tier: 2 },
+];
+
+const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v ?? null), "utf8");
+
+/**
+ * 两层砍法：**第 1 层（历史）先砍光，第 2 层（此刻要用的）按份额平分剩下的预算。**
+ *
+ * 第 2 层不按「谁大砍谁」：那样会把一张名单砍到只剩一条，而另一张一条没动——我实测过一次，`instructions`
+ * 剩 1 条而 `readings` 还有 51 条。**一份只剩一条指令的板，和没有这一份，对下一个进门的 agent 差不多。**
+ */
+function fitBudget(b: Board, limit: number, refresh: () => void): void {
+  refresh();
+  for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
+    const best = biggest(b, 1);
+    if (!best) break;
+    best.cut.put(b, kept(best.cut, best.list, best.list.length - dropCount(b, limit, best)));
+    refresh();
+  }
+  if (jsonBytes(b) <= limit) return;
+  const lists = CUTS.filter((c) => c.tier === 2).map((cut) => ({ cut, list: cut.get(b) ?? [] })).filter((x) => x.list.length > x.cut.keep);
+  if (lists.length) {
+    const theirs = lists.reduce((n, x) => n + jsonBytes(x.list), 0);
+    const share = Math.max(0, Math.floor((limit - (jsonBytes(b) - theirs)) / lists.length));
+    for (const { cut, list } of lists) {
+      let used = 2, keep = 0;                                   // 数组框架两个方括号；从最近的一条往回留
+      for (let i = list.length - 1; i >= 0; i--) {
+        const size = jsonBytes(list[i]) + (keep ? 1 : 0);
+        if (keep >= cut.keep && used + size > share) break;
+        used += size; keep += 1;
+      }
+      cut.put(b, kept(cut, list, Math.max(cut.keep, keep)));
+    }
+    refresh();
+  }
+  // `omitted` 自己也随着砍得越多而越长，所以收尾再量一次、小步补砍
+  for (let round = 0; jsonBytes(b) > limit && round < 200; round++) {
+    // **上限是绝对的**（t-070 判据 3），所以到了这一步，「最少留几条」是偏好不是底线：
+    // 每张名单先按它的 keep 砍，全都到了底还装不下，就连那几条一起砍——
+    // 一份超出上限的回包，比一份少了三条样本的回包更坏。omitted 照实说砍过什么。
+    let floor = true;
+    let best = biggest(b, 2) ?? biggest(b, 1);
+    if (!best) { floor = false; best = biggest(b, 2, false) ?? biggest(b, 1, false); }
+    if (!best) return;   // 砍无可砍：**说不出就不假装**，回包照原样出去，omitted 仍然如实说砍过什么
+    best.cut.put(b, kept(best.cut, best.list, best.list.length - dropCount(b, limit, best, floor)));
+    refresh();
+  }
+}
+
+/** 留下 `n` 条：默认留最近的，`from: "oldest"` 留最早的。**留哪一头是那张名单自己的事**，不是砍法的事。 */
+function kept(cut: Cut, list: unknown[], n: number): unknown[] {
+  const take = Math.max(0, Math.min(n, list.length));
+  return cut.from === "oldest" ? list.slice(0, take) : list.slice(list.length - take);
+}
+
+/** 这一层里当下最大的那张可砍名单。 */
+function biggest(b: Board, tier: 1 | 2, floor = true): { cut: Cut; list: unknown[]; size: number } | null {
+  let best: { cut: Cut; list: unknown[]; size: number } | null = null;
+  for (const cut of CUTS) {
+    if (cut.tier !== tier) continue;
+    const list = cut.get(b);
+    if (!Array.isArray(list) || list.length <= (floor ? cut.keep : 0)) continue;
+    const size = jsonBytes(list);
+    if (!best || size > best.size) best = { cut, list, size };
+  }
+  return best;
+}
+
+/** 砍掉最早的几条：按超出多少估，不按对半砍——对半砍会一路砍过头。 */
+function dropCount(b: Board, limit: number, best: { cut: Cut; list: unknown[]; size: number }, floor = true): number {
+  const over = jsonBytes(b) - limit;
+  const per = Math.max(1, best.size / best.list.length);
+  // `floor` false 时连「最少留几条」也砍：上限是绝对的，而这一步只在每张名单都已经砍到它的底之后才走到
+  return Math.min(best.list.length - (floor ? best.cut.keep : 0), Math.max(1, Math.ceil(over / per)));
 }
 
 /**
@@ -1764,6 +2158,52 @@ export const BATCH_LINES = {
  * find these itself (see STOOD_IN_PREFIX) — every one of them is somebody saying so — so this counts declarations,
  * and says as much rather than implying it saw them happen.
  */
+/**
+ * t-231：**这一件在等谁。** 按状态算：
+ * · `done` 等的是**能给它落 pass 的人**（同一份 `verifierEligibility`，闸读的也是它）；一个都没有时等的是
+ *   human——项目里有验收角色时验收不会自动转给他，所以那时他要么亲自判、要么让 pm 再给一个角色，**两条都得他动**。
+ * · `working` / `failed` 等的是 owner：活在他手上，或者要他重来一次。
+ * · 其余（`open`、`blocked`、已经 verified 或终态的）**没有人在等它**——空数组，不拿 owner 充数。
+ */
+export function waitingOn(s: State, t: TaskState, human: string): string[] {
+  if (t.status === "done") {
+    const { eligible } = verifierEligibility(s, t, undefined, human);
+    return eligible.length ? eligible : [human];
+  }
+  if (t.status === "working" || t.status === "failed") return t.owner ? [t.owner] : [];
+  return [];
+}
+
+/**
+ * t-231：**「谁能给这一件落 pass」从此只有一处出处。** 它本来住在 rules.ts（那道闸问它），而牌桌要回答
+ * 「这一件在等谁」问的是同一个问题——搬到这里，是因为 rules.ts 本来就在从这里取 `projectRoles` 与
+ * `roleResponsibilities`，反过来取会绕成一个圈。**闸与页面从此读同一份判断**：页面不会再说一个闸不许动它的人。
+ */
+
+export function verifierEligibility(s: State, t: TaskState, surface: string | undefined, human: string): { eligible: string[]; blocked: { role: string; why: string }[] } {
+  const authors = criteriaAuthors(t);
+  const holds = roleResponsibilities(s);
+  const here = surface ? t.verifications.filter((v) => v.round === t.round && v.surface === surface) : [];
+  const standing = here[here.length - 1];
+  const passers = standing?.pass ? new Set([standing.by]) : new Set<string>();
+  const failedHere = here.find((v) => !v.pass); // t-104 ②: one fail closes this surface to every pass until a new done
+  const eligible: string[] = [];
+  const blocked: { role: string; why: string }[] = [];
+  for (const role of projectRoles(s)) {
+    if (role === human) continue;
+    const why: string[] = [];
+    if (!(holds[role] ?? []).includes(VERIFY_RESPONSIBILITY)) why.push(`不持 ${VERIFY_RESPONSIBILITY}`); // t-104: pass 要独立，先要是验收角色
+    if (role === t.owner) why.push("是 owner");                              // the owner cannot pass their own task
+    if (authors.includes(role)) why.push("写了判据");                        // whoever wrote the criteria cannot judge them met
+    if (passers.has(role)) why.push(`已在 ${surface} 上判过 pass`);           // a pass does not override a pass
+    else if (failedHere) why.push(`这一轮 ${surface} 上已有 ${failedHere.by} 的 fail，要等新的 done`); // t-104 ②
+    if (why.length) blocked.push({ role, why: why.join("、") });
+    else eligible.push(role);
+  }
+  return { eligible, blocked };
+}
+
+
 export function standIns(s: State, now: Date): Board["stand_ins"] {
   const since = new Date(now.getTime() - STAND_IN_DAY_MS).toISOString();
   const by = new Map<string, { task: string; title: string; count: number; last_at: string; who: string[] }>();
@@ -1790,15 +2230,22 @@ export function standIns(s: State, now: Date): Board["stand_ins"] {
  *
  * 判断与措辞都在这里，渲染方只印：两个渲染方各判一遍状态名，就是 t-142 那一族。
  */
-export function batchesEmptyLine(batches: BoardBatch[], unpacked: number): string | null {
+/** t-221：`unpacked` 给 `null` 表示「说不出」——那一句就不说，不拿 0 顶替不知道。 */
+export function batchesEmptyLine(batches: BoardBatch[], unpacked: number | null): string | null {
   if (batches.some((x) => x.pending)) return null;
   const said = [batches.length ? BATCH_LINES.allShipped() : BATCH_LINES.neverPacked()];
-  if (unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
+  if (unpacked !== null && unpacked > 0) said.push(BATCH_LINES.unpacked(unpacked));
   return said.join("");
 }
 
-/** 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。 */
-export function unpackedCount(b: Board): number {
+/**
+ * 验过了、还在等上线、却没有被装进任何一批的件数——`batchesEmptyLine` 的第二个数。
+ *
+ * t-221：**同一个病的第二处**。它是从 `counts.pending_deploy` 推出来的，所以那个数旧了它也旧；而它旧了的样子
+ * 同样是 0，同样读起来像「都装好了」。`null` 是「说不出」，调用方据此不说这一句——**不拿 0 顶替不知道**。
+ */
+export function unpackedCount(b: Board): number | null {
+  if (b.release && !b.release.counts_current) return null;
   const packed = new Set((b.batches ?? []).flatMap((x) => x.contains));
   return (b.release?.counts?.pending_deploy ?? 0) === 0 ? 0 : (b.release.pending_deploy ?? []).filter((c) => !packed.has(c.task)).length;
 }
@@ -1808,7 +2255,10 @@ export function batches(s: State, deployed: string | null, why: string | null, f
   // 每一个当过生产头的 sha。日志本来就记着它们（production:deployed.sha 的每一条），所以「这一批上过线没有」
   // 是算出来的，不是谁声明的。
   const everDeployed = new Set([...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .map((r) => shortSha(r.value as string)));
   for (const [key, id] of s.latestReading) {
     if (!key.startsWith(`${BATCH_SURFACE}:${BATCH_PREFIX}`)) continue;
@@ -1849,6 +2299,8 @@ function splitRelease(s: State, b: Board) {
   const fact = deployedTasksFact(s);
   const deployed = r.deployed_sha;
   let why: string | null = null;
+  // t-221：有没有候选是这条事实之后才 done 的——有就说明它答不了此刻的问题
+  let outdated = false;
   if (!deployed) why = "生产没有有效的 production:deployed.sha 事实";
   else if (!fact) why = `没有针对生产 ${deployed.slice(0, 7)} 的包含事实 production:${DEPLOYED_TASKS_KEY}（跑一次 ateam release，它用 git 逐件测并记下来）`;
   else if (!sameSha(fact.sha, deployed)) why = `包含事实是对 ${fact.sha.slice(0, 7)} 测的，生产已是 ${deployed.slice(0, 7)}（重跑 ateam release）`;
@@ -1863,9 +2315,14 @@ function splitRelease(s: State, b: Board) {
     else if (fact!.unmeasured?.includes(c.task)) r.unknown.push({ ...c, reason: factCannotPlace(c.task, fact!.sha) });
     // 事实是三桶规矩之前写的：它连「量不出的有哪些」都没说过，所以它答不了这一件——这也不是「在它之后才 done」
     else if (fact!.unmeasured === null) r.unknown.push({ ...c, reason: factPredatesThirdBucket(c.task, fact!.sha) });
-    else r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` });
+    else { outdated = true; r.unknown.push({ ...c, reason: `包含事实没有覆盖 ${c.task}（在它之后才 done；重跑 ateam release）` }); }
   }
   r.counts = { pending_deploy: r.pending_deploy.length, deployed_unverified: r.deployed_unverified.length, unknown: r.unknown.length };
+  // t-221：这几个数是那条事实的数，不是此刻的数。**只要有一个候选是它之后才 done 的，它就答不了此刻的问题**——
+  // 那时候这几个数不许被当成现在的答案给出去（尤其 0：一个陈旧的 0 读起来正好是「都上线了」）。
+  r.counts_at = fact?.at ?? null;
+  // 一个候选都没有时，三个 0 就是此刻的答案——没有东西可以被答错，别在那时候说「不知道」
+  r.counts_current = (!why && !outdated) || r.candidates!.length === 0;
   // t-203 判据 2：分母跟着数走。事实没写第三桶时说算不出——一个小了的数比没有数更贵。
   r.denominator = !fact || fact.unmeasured === null ? denominatorUnknown : denominatorIs(fact.contained.length, fact.not_contained.length, fact.unmeasured.length);
   b.batches = batches(s, deployed, why, fact);   // t-129: judged on the same basis, so the two can never disagree
@@ -1911,14 +2368,30 @@ export function deployHistory(s: State, tz = "UTC"): Deploy[] {
     return p;   // MM-DD
   };
   const readings = [...s.readings.values()].map((x) => x.reading)
-    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string")
+    // t-211：**这一栏后面要交给 git 去问，所以进来之前先问一句「它长得像个 sha 吗」。**
+    // 09-06 那条 `unreported` 是当时对世界的诚实描述（/health 还没有 sha 字段），但它进了一个会被 git 消费的
+    // 字段，于是此后每个节点每轮都被告知「你旧一次」，而那一次谁也追不上。**不是 sha 的值不是一次上线。**
+    .filter((r) => r.surface === HUMAN_SURFACE && r.key === "deployed.sha" && typeof r.value === "string" && /^[0-9a-f]{7,40}$/.test(r.value.trim()))
     .sort((a, b) => a.id.localeCompare(b.id));
   const out: Deploy[] = [];
   const perDay = new Map<string, number>();
   for (const r of readings) {
     const sha = (r.value as string).trim();
     // The same sha measured again is the same deploy, not a new one (the 7-char rule the board already uses).
-    if (out.length && out[out.length - 1].sha.slice(0, 7) === sha.slice(0, 7)) continue;
+    // t-230 判据 2：**一次更正不许再被当成重复吞掉。**
+    //
+    // 七位前缀规则本意是「同一个 sha 的长短两种写法算一次上线」，而它唯一分不开的情形，恰好是
+    // 「一次错字 + 一次更正」：human 09-06 07:29:48 写下 085624dd6a…，**19 秒后自己用「原样粘贴」改成
+    // 085624d04c…**，两者前七位都是 085624d，于是**牌桌留下了错的那一条、丢掉了对的那一条**，此后每个
+    // 节点每轮都被告知「你旧一次」，而那一次谁也追不上。
+    //
+    // 分法：一方是另一方的前缀 ⇒ 同一个 sha 又量了一遍，留更长（更精确）的那个；前七位同、往后不同 ⇒
+    // **后写的那条是更正**，就地取代前一条，不新增一次上线。
+    const prev = out.length ? out[out.length - 1] : undefined;
+    if (prev && prev.sha.slice(0, 7) === sha.slice(0, 7)) {
+      if (sha.length > prev.sha.length || !(prev.sha.startsWith(sha) || sha.startsWith(prev.sha))) prev.sha = sha;
+      continue;
+    }
     const d = day(r.at);
     const n = (perDay.get(d) ?? 0) + 1;
     perDay.set(d, n);
@@ -1937,7 +2410,7 @@ export interface ReleaseUnit {
   /** Every finished task naming this sha, in the order the board lists them. */
   tasks: { id: string; title: string; shows?: string; owner?: string; status: string; passed: boolean }[];
   /** The members that are not verified on repo: the reason the whole string is not moving. */
-  held_by: { id: string; title: string; shows?: string; owner?: string; status: string }[];
+  held_by: { id: string; title: string; shows?: string; owner?: string; status: string; waiting_on?: string[] }[];
   /**
    * What this unit would actually put into production: members whose code is not there yet (t-078's pending_deploy).
    * Not "verified but not verified on production" — that is deployed_unverified, whose code is already running, and
@@ -1968,7 +2441,7 @@ export function releaseUnits(b: Board): ReleaseUnit[] {
       const at = doneAt.get(t.id);
       if (at && (!u.since || at < u.since)) u.since = at;
       u.tasks.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, passed });
-      if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status });
+      if (!passed) u.held_by.push({ id: t.id, title: t.title, shows: t.shows, owner: t.owner, status: t.status, waiting_on: t.waiting_on });
       if (shipped.has(t.id)) u.brings += 1;
       units.set(sha, u);
     }

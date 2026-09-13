@@ -131,6 +131,17 @@ export class SqliteStore implements EventStore {
     return { log: { events, cursors, deliveries }, mark: { event: last?.id ?? null, delivery: newest?.at ?? null }, events: events_total };
   }
 
+  /**
+   * t-249 判据 4：**这里是那 48 秒的根因，写下来免得下一个人重新推一遍（本件不修它）。**
+   *
+   * `node:sqlite` 只有 `DatabaseSync`——`all()` 与 `get()` 是**同步**的，整段查询加 `JSON.parse` 期间
+   * 事件循环停着，这个进程对所有人都不服务。qa 在生产 sha `09256fd` 上复现过：灌进生产那 9279 条事件、
+   * 八条全量 `GET /log` 并发（合计 1634ms 同步活）时，**一行库都不碰的 `/health` 要 1600ms（98%）**，
+   * 静止对照 0.0005s。生产上量到的形态是稳态 0.24s、最慢 **48.13s**（qa 00:14 九次）。
+   *
+   * 所以这不是「偶发慢」，是**日志越长、每一次全量读越久，而那段时间里谁也进不来**。
+   * t-249 只让 `/health` 说得出自己答得有多慢（`health.ts`）；把它变成不堵的那件事还没人认领。
+   */
   async since(after: string | null): Promise<Event[]> {
     const rows = after
       ? this.db.prepare("SELECT json FROM events WHERE project = ? AND id > ? ORDER BY id").all(this.project, after)

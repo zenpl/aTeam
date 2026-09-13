@@ -5,8 +5,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
 import { createApp } from "../src/app.js";
+import { ownerKeyOf } from "./owner.js";
+import { MemoryRegistry } from "../src/projects.js";
 import { REFRESH_SECONDS, esc, waitingLine, renderBoard, renderTask, inlinedTasks, splitTitle, kindOf, cardKind, cardTitle, whyLine, tokenPage, previousSha, missingRole, latestReport, contactLine } from "../src/html.js";
 
 const TOKEN = "secret-token";
@@ -15,10 +17,14 @@ const soon = () => new Date(Date.now() + 3_600_000).toISOString();
 
 function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
   const store = opts.store ?? new MemoryStore();
-  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", ...opts });
+  // t-234：人说话、人点按钮，用的都是他自己那把钥匙——管理钥匙不再代他说话。钥匙从登记处直接要，
+  // 不走 /owner-url：那条路会顺手往日志里写一条 entry.form 事实，而这一份里有几条用例数的正是日志本身。
+  const registry = (opts.registry as MemoryRegistry | undefined) ?? new MemoryRegistry();
+  let OWNER = "";
+  const app = createApp({ store, token: TOKEN, human: HUMAN, sha: "abc1234", ...opts, registry });
   let base = "";
   const post = async (actor: string, body: unknown) => {
-    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`${base}/events`, { method: "POST", headers: { authorization: `Bearer ${actor === HUMAN ? OWNER : TOKEN}`, "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
     if (r.status !== 201) throw new Error(`append ${r.status}: ${JSON.stringify(j)}`);
     return j;
@@ -26,15 +32,17 @@ function server(opts: Partial<Parameters<typeof createApp>[0]> = {}) {
   // t-040: GET / is the board only for a browser (Accept: text/html); anything else gets the newcomer's manual.
   const api = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", accept: "text/html,application/json", ...headers }, redirect: "manual" });
   const page = async (headers: Record<string, string> = {}) => (await fetch(`${base}/`, { headers: { accept: "text/html", ...headers } })).text();
-  const authedPage = () => page({ authorization: `Bearer ${TOKEN}` });
-  const cookie = async () => ((await fetch(`${base}/?token=${TOKEN}`, { redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0];
+  /** 「人自己打开牌桌」这件事，用他自己那把钥匙（t-234） */
+  const authedPage = () => page({ authorization: `Bearer ${OWNER}` });
+  const cookie = async () => `${opts.defaultProject ? `ateam_token_${opts.defaultProject}` : "ateam_token"}=${encodeURIComponent(OWNER)}`;
   const form = (path: string, fields: Record<string, string>, headers: Record<string, string> = {}) =>
     fetch(`${base}${path}`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(fields).toString() });
-  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`; };
+  const start = async () => { await new Promise<void>((r) => app.listen(0, "127.0.0.1", r)); base = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    OWNER = await ownerKeyOf(registry, opts.defaultProject ?? "ateam", HUMAN); };
   const stop = () => new Promise<void>((r) => app.close(() => r()));
   // t-134: some facts are the service's own and no key may speak as it, so a test that needs one writes it the way the
   // service does — from inside, not over HTTP.
-  return { get base() { return base; }, store, post, api, page, authedPage, cookie, form, start, stop };
+  return { get base() { return base; }, store, post, api, page, authedPage, cookie, form, start, stop, get owner() { return OWNER; } };
 }
 
 /** Visible text above the fold (before the 其余 toggle), tags and style stripped. */
@@ -214,7 +222,8 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(wrongText).toContain("<code>https://ateam.fly.dev/p/demo/?k=xxxxxxxx</code>");
     expect(wrong.headers.get("set-cookie")).toBeNull();
 
-    const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: TOKEN });
+    // t-234：token 小页面收的是**人自己那条地址上的钥匙**；管理钥匙进得来牌桌，但按不动他的按钮
+    const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: w.owner });
     expect(right.status).toBe(303);
     expect(right.headers.get("location")).toBe("/");
     const cookie = right.headers.get("set-cookie") ?? "";
@@ -288,7 +297,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     const html = await w.authedPage();
     const now = section(html, "now", "rest");
     expect(now).toMatch(/<code class="sha">ede0f06<\/code> <span class="ok">在生产上验过 1 件<\/span> <span class="meta">· dev 刚刚核对<\/span>/);
-    expect(now).toMatch(/<details class="more-list"><summary>这一版带来了什么<\/summary><ul class="plain"><li>Cookie flags<\/li><\/ul><\/details>/);
+    expect(now).toContain(`<details class="more-list"><summary>${VERIFIED_ON_THIS_VERSION}</summary><ul class="plain"><li>Cookie flags</li></ul></details>`);
     expect(now).toMatch(/<span class="chip"><b>1<\/b> 在做<\/span><span class="chip warn"><b>1<\/b> 卡住<\/span><span class="chip"><b>1<\/b> 做完了，等验<\/span><span class="chip"><b>1<\/b> 没开始<\/span>/);
     expect(now).toMatch(/<div class="grp"><div class="grp-h">在做<\/div><ul class="tasks"><li><span class="dot"><\/span><span class="ttl">Card page for the human<\/span><span class="who">frontend<\/span><\/li><\/ul><\/div>/);
     expect(now).toMatch(/<div class="grp-h">卡住<\/div><ul class="tasks"><li class="warn"><span class="dot"><\/span><span class="ttl">Env beats config file<\/span><span class="who">dev<\/span><span class="why">premise was wrong, see … and …, waiting for pm to decide whe…<\/span>/);
@@ -298,7 +307,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
     expect(now).toContain('<span class="who-chip away" data-role="pd" data-status="missing"><i></i>pd<span class="meta">缺人</span></span>');   // declared, never seen
   });
 
-  it("more than 5 in an expanded group folds into 「还有 N 件」; 你说过的 folds into 「还有 N 句」; earlier versions nest under 这一版带来了什么", async () => {
+  it("more than 5 in an expanded group folds into 「还有 N 件」; 你说过的 folds into 「还有 N 句」; earlier versions nest under 那一节（t-242 之后标题说的是「验过的」）", async () => {
     const v = server();
     await v.start();
     try {
@@ -330,7 +339,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       expect(now).toMatch(/<span class="chip"><b>7<\/b> 在做<\/span>/);
 
       expect(now).toMatch(/<span class="ok">在生产上验过 1 件<\/span>/); // pd 22:47 (B): this version's count only; the 2 earlier are in 更早的
-      expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 2 件<\/summary><ul class="plain"><li>登录修复<\/li><li>导出报表<\/li><\/ul><\/details>/);
+      expect(now).toContain(`<summary>${VERIFIED_ON_THIS_VERSION} <span class="meta">自上一版 aaaaaaa 以来</span></summary><ul class="plain"><li>限流</li></ul><details class="more-list"><summary>更早的 2 件</summary><ul class="plain"><li>登录修复</li><li>导出报表</li></ul></details>`);
 
       const say = section(html, "say", "now");
       expect(say.match(/<li>/g)).toHaveLength(7);
@@ -361,7 +370,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       let now = section(await v.authedPage(), "now", "rest");
       expect(now).not.toContain("在生产上验过"); // pd 22:47 (B): no cumulative count beside the empty state
       expect(now).toMatch(/<code class="sha">bbbbbbb<\/code><\/div>\s*<div class="line"><span class="quiet">这一版刚上线，还没在生产验过<\/span><\/div><details class="more-list"><summary>更早的 1 件<\/summary><ul class="plain"><li>登录修复<\/li><\/ul><\/details>/);
-      expect(now).not.toContain("这一版带来了什么");
+      expect(now).not.toContain(VERIFIED_ON_THIS_VERSION);
       // 2b. first ever deploy, nothing verified anywhere: the same sentence, no 更早
       const f = server();
       await f.start();
@@ -377,7 +386,7 @@ describe("验收 4 · 展开的列表 ≤5 行；指令首句作标题；相对�
       await v.post("dev", { kind: "task", op: "done", task: "t-2", evidence: "提交" , no_human_impact: true});
       await v.post("qa", { kind: "task", op: "verify", task: "t-2", surface: "production", pass: true, evidence: "线上看到" });
       now = section(await v.authedPage(), "now", "rest");
-      expect(now).toMatch(/<summary>这一版带来了什么 <span class="meta">自上一版 aaaaaaa 以来<\/span><\/summary><ul class="plain"><li>限流<\/li><\/ul><details class="more-list"><summary>更早的 1 件<\/summary>/);
+      expect(now).toContain(`<summary>${VERIFIED_ON_THIS_VERSION} <span class="meta">自上一版 aaaaaaa 以来</span></summary><ul class="plain"><li>限流</li></ul><details class="more-list"><summary>更早的 1 件</summary>`);
       expect(now).not.toContain("这一版刚上线，还没在生产验过");
     } finally { await v.stop(); }
   });
@@ -417,7 +426,9 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       expect((await fetch(`${p.base}/`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/html" } })).status).toBe(200);
     } finally { await p.stop(); }
     const h = await fetch(`${w.base}/health`);
-    expect(await h.json()).toEqual({ ok: true, sha: "abc1234" });
+    // 这一条守的是「不带 token 也读得到、而且答得出是哪一版」；t-249 之后正文还带着耗时与期限，
+    // 所以这里只钉这两样，别顺手把整份正文钉死在一个与本用例无关的形状上。
+    expect(await h.json()).toMatchObject({ ok: true, sha: "abc1234" });
     const b = await (await w.api("/board?full=1")).json();
     expect(Object.keys(b)).toContain("said");
     expect((await fetch(`${w.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(400);
@@ -917,7 +928,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: TOKEN })).status).toBe(303);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: v.owner })).status).toBe(303);
       expect((await v.page({ cookie })).includes("记下了外呼地址，还没真发成功过——不知道你收不收得到。")).toBe(true);
     } finally { await v.stop(); }
   });

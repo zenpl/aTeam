@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles } from "@ateam/core";
+import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -92,8 +92,11 @@ export function board(b: Board, me: string): string {
     for (const x of b.batches ?? []) if (x.line) out.push(`           ${x.name} ${x.sha.slice(0, 7)}：${x.line}`);
     // t-091: the same sentence the board shows, from the same counts (t-078); nothing when nothing waits
     const c = b.release?.counts;
-    const waiting = !c ? "" : c.pending_deploy > 0 ? `${c.pending_deploy} 件验过了，等一次上线${c.unknown ? `；另有 ${c.unknown} 件不知道上没上` : ""}。`
-      : c.unknown > 0 ? `不知道有多少件在等上线：${b.release.basis ?? ""}` : "";
+    // t-221：这几个数旧了就不给数，说那句既有的「不知道有多少件在等上线」——**尤其不能给 0**，
+    // 一个陈旧的 0 读起来正好是「都上线了」。
+    const waiting = !c ? "" : !b.release.counts_current ? waitingUnknownLine(b.release.basis ?? "")
+      : c.pending_deploy > 0 ? `${c.pending_deploy} 件验过了，等一次上线${c.unknown ? `；另有 ${c.unknown} 件不知道上没上` : ""}。`
+      : c.unknown > 0 ? waitingUnknownLine(b.release.basis ?? "") : "";
     if (waiting) out.push(`           ${waiting}`);
     out.push(recent.length || earlier ? `${live} · verified there${b.live.since_sha ? ` since ${b.live.since_sha.slice(0, 7)}` : ""}: ${recent.map((t) => t.shows ? `${t.id} ${t.shows}` : t.id).join(", ") || "—"}${earlier}` : live);
   }
@@ -115,6 +118,14 @@ export function board(b: Board, me: string): string {
   if (b.overdue?.length) {
     out.push("", "UNANSWERED (past ack_by, options still open)");
     for (const o of b.overdue) out.push(`  ${who(o.to)} has not answered "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+  }
+
+  // t-229：**角色间那条期限过了之后，从这里起有人说话。** 句子是 core 的（`lateLine`），这里只印；
+  // 名单按「最久的在前」给，印头三条——判据 1 要的是那个数，而三条样本足够让人知道该去问谁。
+  if (b.late?.count) {
+    out.push("", "LATE (role-to-role, past ack_by, not acked)");
+    out.push(`  ${lateLine(b.late)}`);
+    for (const o of b.late.instructions.slice(0, LATE_SHOWN)) out.push(`  ${who(o.from)} → ${who(o.to)}: ${o.body}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
   }
 
   // t-139 + t-147: what nobody has acted on, split by whether the one who owes it is even there. The sentences are
@@ -311,6 +322,11 @@ export function release(b: Board): string {
   const out: string[] = [];
   out.push(`待上线清单  生产当前 sha：${r.deployed_sha ? r.deployed_sha.slice(0, 7) : "未知（没有有效的 production:deployed.sha 事实）"}`);
   const counts = r.counts ?? { pending_deploy: 0, deployed_unverified: 0, unknown: (r.candidates ?? []).length };
+  // t-221：同一条规矩在这一行上——旧了就不印那三个数，印那句「不知道有多少件在等上线」加它的依据
+  if (r.counts && !r.counts_current) {
+    out.push(`  ${waitingUnknownLine(r.basis ?? "")}`);
+    return out.join("\n");
+  }
   // t-203：这三个数跟着分母一起印。分母缺一桶时那句话自己会说算不出——一个小了的数比没有数更贵。
   out.push(`  未上线 ${counts.pending_deploy} 件 · 已上线未在生产验 ${counts.deployed_unverified} 件 · 无法判定 ${counts.unknown} 件${r.denominator ? `  ${r.denominator}` : ""}${r.basis ? `  （${r.basis}）` : ""}`);
   if (!r.candidates) { out.push("  （默认板省略了清单：用 ateam release 或 board --full）"); return out.join("\n"); }

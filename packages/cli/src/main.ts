@@ -1,22 +1,28 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, type Board, type SeamVerdict } from "@ateam/core";
-import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { Client, ClientError, ShapeError, seen } from "./client.js";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
+import { sendAll as sendParts } from "./send.js";
+import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
 import { trace, isSha } from "./trace.js";
-import { seamWarnings, seamCheck, unjudgeableSeams, gitCommitsSince, seamTruths, seamTruthEvents, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
+import { seamWarnings, seamCheck, gitCommitsSince, gitChangedSince, gitIsAncestor, gitHasObject } from "./seamcheck.js";
+import { verifyParts } from "./verifyparts.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
-import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
+import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
+import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
+import { seamAbsorbName } from "./seamparts.js";
+import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
+import { runImport, type Written } from "./import.js";
 
 const HELP = `ateam — the shared log for a team of sessions
 
@@ -26,7 +32,8 @@ setup
                                                           precedence per field: env ATEAM_ME / ATEAM_URL / ATEAM_TOKEN beats the file; the file fills what the env leaves unset
 
 every turn
-  ateam sync [--wait 25s]        pull new events since your cursor; instructions for you are marked. --wait long-polls.
+  ateam sync [--wait 25s] [--quiet]   pull new events since your cursor; instructions for you are marked. --wait long-polls.
+                                 ${QUIET_HELP}
   ateam ack <id>                 acknowledge an instruction addressed to you
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
@@ -45,7 +52,7 @@ say things
                                     [--measured-at <ISO | 10m>]        when the world was measured (10m = ten minutes ago); validity counts from it
   ateam say <正文>                                                   human only: one sentence to the team; the board shows where it went
   ateam focus <body>                                                 the one thing that matters most right now
-  ateam note <body> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
+  ateam note <body | --body-file 路径> [--decision] [--supersedes <id>] [--task <id>]    --task attaches it to a task (task show, board, GET /); "evidence: ..." updates the evidence
 
 tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
@@ -69,13 +76,30 @@ tasks
   ateam touches <路径…>                       此刻还有谁在动这些东西（不必先 claim；只看在途，不算你自己）
 
 any emit accepts --refs <ids> (what you build on; stale readings are rejected) and --writes <surface:key,...> (what you changed).
+${BODY_FILE_HELP}
 
   ateam trace <task-id | sha>    the story of a change: what asked for it, who decided, who judged it where
+  ateam import <file>            搬家：把别处的记录写进日志，一行一条 JSON，每条必带 from（它在原处的单号/路径/链接，原样抄来，工具不替你编）
+                                 带着 from 重导一遍不会多出第二份；有一行不合格就一条都不发，改好再跑一次
   ateam log [--after <id>]       raw events
+  ${OWED_LEGACY_HELP}
   ateam watch [--interval ${WATCH_INTERVAL}] [--once] [--force]   keep listening: prints what arrives and "instruction received" each time; --once exits on the first instruction; one watch per identity per checkout (--force overrides the lock)
-`;
+\n牌桌上那三个与期限有关的数，各自覆盖什么（t-229）：
+  ${DEADLINE_WORDS.join("\n  ")}
+\n${exitCodeLine}\n`;
 
 const configFile = () => join(process.cwd(), ".ateam", "config.json");
+
+/**
+ * t-240：**等 stdout 真的排空。** `console.log` 写进管道只是排队；读它的那一头（Monitor、`| grep`、另一个进程）
+ * 慢一点或者正好死了，那几行还在这一头没出去。游标要等它出去之后才推进，所以这里把「出去了没有」变成一件
+ * 等得到的事。写不满缓冲区时它当场就返回——文件与终端上这一步是免费的。
+ */
+const flushOut = (): Promise<void> =>
+  // 零长度的一次写＋回调＝一道屏障：它排在前面那些行之后，**前面的真的出去了它才回来**。
+  // （第一版写的是 `write("") ? done() : once("drain")`——零长度那次写一律返回 true，于是它当场就回来了，
+  //   管道明明是满的。真路那份用例当场把它照了出来。）
+  new Promise((done) => { process.stdout.write("", () => done()); });
 
 function loadConfig(): Config {
   const file = configFile();
@@ -187,6 +211,9 @@ function touchesAtDone(task: string, declared: string[], extra: string[], keep: 
 
 async function main(argv: string[]) {
   const a = parse(argv);
+  // t-246：`--X-file <路径>` 从文件读 `--X`（正文、证据、理由……）。**文件里的字不会再被 shell 解释一遍**，
+  // 这正是今天咬了三个人五次的那件事：反引号、`$`、换行，写进文件就一个字不差。
+  fromFiles(a, (p) => readFileSync(p, "utf8"));
   const [cmd, ...rest] = a._;
   if (!cmd || cmd === "help" || bool(a, "help")) { console.log(HELP); return; }
 
@@ -221,7 +248,54 @@ async function main(argv: string[]) {
   const client = new Client(cfg);
   const emit = async (e: ClientEvent) => {
     const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
+    // t-246 判据 3：**回执本来就回显落库内容**——这一行印的是服务返回的那条事件，而 `fmt.event` 对
+    // body／evidence／resolution／reason 一个字都不截断（qa 22:42 在真命令上逐条量过）。所以那一句「我写的
+    // 那句原样进去了」，读这一行就能核。我为此加过一行「落库 N 字：首…末」，**它一次都印不出来**（那四个
+    // 字段永远已经整句在上面了），已删——**一段走不到的代码，比没有它更坏**（与 t-244 那次同一条）。
+    //
+    // 更要紧的一句写在这里：**没有任何回执抓得住 shell 吃字**——它发生在命令行看见这段字之前，
+    // 命令行拿到的就是被吃过的那份。抓得住它的是 `--X-file`（判据 1 那一半）。
     console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+  };
+  /**
+   * t-246：**正文可以走 `--body-file <路径>`**（经 `fromFiles` 变成 `--body`）。给了它，位置参数上就不该再有
+   * 一份正文——`exact` 会为多出来的那个报用法错，这正是我们要的：**两份正文里挑一份，挑错了是一句没人会核的假话。**
+   */
+  const withBody = (...names: string[]): string[] => {
+    const flag = str(a, "body");
+    return flag === undefined ? exact(rest, ...names, "body") : [...exact(rest, ...names), flag];
+  };
+
+  /**
+   * t-228：**一条命令发多件事时，每一件各自报结果。**
+   *
+   * 一件被拒不再把整条命令掀翻：成的印成的（带 id），拒的印拒的（带规则名，并说清**是哪一件**），
+   * 顺序就是发出去的顺序，所以「done 成功」那一行一定在「解决接缝被拒」之前。退出码按整体算：
+   * 全成，0；有成有拒，`EXIT_PARTIAL`（不复用 2，那是「全拒」）；全拒，2。
+   *
+   * 这两行都走 stdout：看它的进程只把 stdout 当事件流（t-225 那一条）。
+   */
+  /**
+   * t-241：**部件级被拒也进本地那本账。** 记第一件被拒的——一条命令里后面几件多半是被前面那件带倒的，
+   * 记第一件才指得着根。`what` 记的是**这条命令的动作**（划掉那条规矩认的就是它：重做同一条命令成了，
+   * 这条记录才该消失），部件名记在 `part` 里，提醒那一行印它：**没落下去的是哪一件**，不是整条命令。
+   *
+   * 一处就够：`sendAll` 的那几条命令与 `import` 走的是同一个它。
+   */
+  const recordParts = (failed: { what: string; rule: string; why: string }[]): void => {
+    if (!failed.length) return;
+    const f = failed[0];
+    const shell = (x: string) => (/[\s"'$`\\]/.test(x) ? `"${x.replace(/(["\\$`])/g, "\\$1")}"` : x);
+    noteRefusal(ARGV, { at: new Date().toISOString(), rule: f.rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), part: f.what });
+  };
+
+  const sendAll = async (items: { what: string; event: ClientEvent; stopOnFail?: boolean }[]): Promise<void> => {
+    const r = await sendParts(items, async (e) => {
+      const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
+      return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
+    }, console.log, console.error);
+    if (r.exit) process.exitCode = r.exit;
+    recordParts(r.failed);
   };
 
   switch (cmd) {
@@ -230,7 +304,33 @@ async function main(argv: string[]) {
       // t-211：把「本地这棵树是哪一版」交给 sync 判。git 不在、不是检出、答不上来时 realBehind 全给 null，
       // 那一句就一个字都不说——「不知道」不等于「你是最新的」。
       const behind = realBehind();
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0, bool(a, "quiet") ? null : console.log, behind);
+      // t-245：`--quiet` 拉到的那一批**不再消失**：它落进本地那一叠「拉到了、还没人看过的」，
+      // 下一次真去看的时候先印它、再清掉。**交付的定义没变，变的只是这一次交给谁**（这一次交给磁盘）。
+      const quiet = bool(a, "quiet");
+      const dir = process.cwd();
+      if (!quiet) {
+        const waiting = unseenLines(dir, cfg.me);
+        if (waiting.length) {
+          console.log(UNSEEN_HEAD(waiting.length));
+          for (const line of waiting) console.log(line);
+          await flushOut();
+          clearUnseen(dir, cfg.me);        // 印完了才清——与游标同一条规矩（t-240）
+        }
+      }
+      const keep: string[] = [];
+      // t-245（qa 22:21 判 fail 之后重做）：**`--quiet` 那一路的「交付」就是这一叠落盘**，所以它必须在推进游标
+      // 之前发生、而且失败要把这条命令掀翻。第一版是「先推进、后写，写失败还默默吞掉」——磁盘写不进时
+      // `sync --quiet` 退 0、一声不吭，那一批照样消失。**我刚在 t-240 修过同一形状的东西，转手又在自己的修法里
+      // 做了一遍**：交付与推进之间有缝，缝里丢的东西不留痕。现在它走的是同一个屏障参数（`flush`）。
+      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0,
+        quiet ? (line) => keep.push(line) : console.log, behind,
+        quiet
+          ? async () => {
+              stashUnseen(dir, cfg.me, keep);        // 抛就抛：没落盘就不推进游标，那一批下次还在
+              const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
+              if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
+            }
+          : flushOut);
       await recordCliSha(client, cfg.me, behind.head());
       return;
     }
@@ -246,7 +346,7 @@ async function main(argv: string[]) {
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
       for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
-      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat });
+      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
       release();
       return;
     }
@@ -316,8 +416,25 @@ async function main(argv: string[]) {
       for (const e of events) console.log(`${e.id}  ${fmt.event(e, cfg.me)}`);
       return;
     }
+    /**
+     * t-224：**S9 搬家的那条路。** 平台那一侧 t-088 早就做好了（带 `from` 的事件只写一次），而我们指给客户的
+     * 这支 CLI 一直送不出 `from`——上线至今 7051 条事件里它出现过 0 次。**一条没有人走得通的路，和没有这条路，
+     * 对要搬家的人是同一件事。**
+     *
+     * 一行一条 JSON，`from` 逐字来自被搬的那份记录。**有一行不合格就一条都不发**：半份搬进去之后人要自己
+     * 算「哪几条已经在里面了」，而那正是 `from` 本来替他免掉的活。全改完原样再跑一遍，已经搬过的不会重复。
+     */
+    case "import": {
+      const [file] = exact(rest, "file");
+      // `common(a)` 不加在这里：--refs / --writes 是给「一条命令一件事」用的，搬家一次几百条，
+      // 把同一份 refs 钉在每一条上说的不是真话。每条记录自己带什么就是什么。
+      const r = await runImport(readFileSync(file, "utf8"), (e) => client.emit(e) as Promise<Written>, cfg.me, console.log, console.error);
+      if (r.exit) process.exitCode = r.exit;
+      recordParts(r.failed);   // t-241：搬家那一路的被拒也进本地那本账，与其余几条命令同一处
+      return;
+    }
     case "tell": {
-      const [to, body] = exact(rest, "to", "body");
+      const [to, body] = withBody("to");
       const intent = str(a, "kind") as InstructionIntent | undefined;
       if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
       // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
@@ -337,8 +454,8 @@ async function main(argv: string[]) {
     }
     case "decide": {
       const [id, option] = exact(rest, "id", "option");
-      const events = await decide({ board: () => client.board(), emit: (e) => client.emit({ ...e, ...common(a) } as ClientEvent) }, id, option);
-      for (const ev of events) console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+      // t-232：两件事，各自报结果；ack 没成就停下并说「后面没发」（decide.ts 给它带了 stopOnFail）
+      await sendAll(await decide({ board: () => client.board() }, id, option));
       return;
     }
     case "reading": {
@@ -353,12 +470,12 @@ async function main(argv: string[]) {
         depends_on: list(a, "depends-on"), valid_until: validFor ? new Date(from + duration(validFor)).toISOString() : undefined, shape, measured_at: measuredAt });
     }
     case "say": {
-      const [text] = exact(rest, "正文");
+      const [text] = withBody();
       if (cfg.me !== "human") throw new UsageError(`say is the human's: you are ${cfg.me}. Put it in a note instead.`);
       if (text.trim().length > SAID_MAX_CHARS) throw new UsageError(`一句话最多 ${SAID_MAX_CHARS} 字（现在 ${text.trim().length}）；不够就再说一句`);
       return emit({ kind: "note", body: `${SAID_PREFIX}${text.trim()}` });
     }
-    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: exact(rest, "body")[0] });
+    case "focus": return emit({ kind: "reading", key: "focus", surface: "team", value: withBody()[0] });
     // t-164 判据 4：不必先 claim 就能问「这块地上还有谁」——在决定做不做之前问，正是该问的时候。
     case "touches": {
       if (!rest.length) throw new UsageError("ateam touches <路径…>：说出你打算动的东西，我告诉你此刻还有谁在动它");
@@ -367,7 +484,7 @@ async function main(argv: string[]) {
       else console.log(nobodyElse(rest));
       return;
     }
-    case "note": return emit({ kind: "note", body: exact(rest, "body")[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
+    case "note": return emit({ kind: "note", body: withBody()[0], decision: bool(a, "decision") || undefined, supersedes: str(a, "supersedes"), task: str(a, "task") });
     case "task": {
       const [op, id, ...more] = rest;
       const given = [id, ...more].filter((x): x is string => x !== undefined);
@@ -422,11 +539,18 @@ async function main(argv: string[]) {
             if (check.errors.length) throw new UsageError(check.errors.join("\n"));
             for (const u of check.unverified) console.error(`警告：${u}`);
             for (const w of seamWarnings(b, task, evidence, gitIsAncestor())) console.error(`警告：${w}`);
-            await emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
-            // t-074: a fallback is never silent — what could not be verified goes on record next to the done
-            if (check.unverified.length) await emit({ kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task });
-            // t-073: seams this done settles by itself: recorded right after, with the basis
-            for (const e of check.absorbs) await emit(e);
+            // t-228：这条命令要发三种事件（done、退回说明、解决接缝），从此每一件各自报结果——
+            // 在这之前，后面任何一件被拒都会让「done 已经落库」这个事实在终端上消失。
+            await sendAll([
+              { what: PART_NAMES.done(task), event: { kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) } as ClientEvent },
+              // t-074: a fallback is never silent — what could not be verified goes on record next to the done
+              ...(check.unverified.length ? [{ what: PART_NAMES.seamFallback(), event: { kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task } as ClientEvent }] : []),
+              // t-073: seams this done settles by itself: recorded right after, with the basis
+              // t-241 的第一条自证：这一行原来取的是 `e.a`／`e.b`，而这些事件里根本没有那两个字段（它们带的是
+              // `tasks: [a, b]`）——于是那几件在终端上与账上都叫「解决接缝 +」。**一个永远说不出是哪一件的名字，
+              // 与没有名字一样**；我是用本件自己记下的那条记录（`part: "解决接缝 +"`）发现它的。
+              ...check.absorbs.map((e) => ({ what: seamAbsorbName(e), event: e })),
+            ]);
             return;
           }
           return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
@@ -437,18 +561,14 @@ async function main(argv: string[]) {
           // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
           // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
           // fail 不走这一段：一条接缝从来只挡 pass，不挡「它坏了」这条消息（t-112）。
-          if (bool(a, "pass") && !bool(a, "no-seam-check")) {
-            const b = await client.board();
-            const un = unjudgeableSeams(b, task, gitCommitsSince());
-            for (const n of un.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
-            for (const e of un.events) await emit(e);
-            // t-182：再按三方比较看一遍——真交集为空的接缝解掉，不空但名单报错的把对的说出来。
-            // 两条各管一半：t-191 管「对方还没写代码」，这一条管「两边都交过活，但名单与真交集对不上」。
-            const truth = seamTruthEvents(seamTruths(b, task, gitChangedSince()), task);
-            for (const n of truth.notes) console.error(n);
-            for (const e of truth.events) await emit(e);
-          }
-          return emit({ kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") });
+          const verdict = { kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") } as ClientEvent;
+          // t-232：接缝那几条与判决本身从此走 done 那一路同一个公共层，组装在 verifyparts.ts（用例测的就是它）
+          const need_ = bool(a, "pass") && !bool(a, "no-seam-check");
+          const v = verifyParts(need_ ? await client.board() : ({ seams: [], tasks: {} } as unknown as Board), task, verdict,
+            { commitsSince: gitCommitsSince(), changedSince: gitChangedSince() }, need_);
+          for (const n of v.notes) console.error(n);   // 整句（含「警告：」）来自 core：这里不新造一句人可见的话
+          await sendAll(v.parts);
+          return;
         }
         case "block": return emit({ kind: "task", op, task: need(id, "<id>"), on: str(a, "on") ?? "" });
         case "unblock": {
@@ -563,8 +683,12 @@ function sayIfRefused(argv: string[]): void {
     if (!me) return;
     const path = refusalFile(me);
     if (argv.includes("--clear-refused")) { if (existsSync(path)) rmSync(path, { force: true }); console.error("已划掉上一次被拒的写入。"); return; }
-    const line = refusalNotice(readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null), new Date());
+    const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
+    const line = refusalNotice(st, new Date());
     if (line) console.error(line);
+    // t-233：**「已经办好了」那一类说完就划掉。** 它没有「重做一次就会消失」这条出路（再做一次只会再被拒），
+    // 留着就会每一次 sync 都再说一遍同一件不用做的事——一个说不完的提醒，和一个不起作用的期限是同一个病。
+    if (line && clearsAfterNotice(st) && existsSync(path)) rmSync(path, { force: true });
   } catch { /* same */ }
 }
 
@@ -583,24 +707,75 @@ function sayIfDeaf(argv: string[]): void {
   } catch { /* never let the reminder break the command that carried it */ }
 }
 
+/**
+ * t-218 判据 2：**捎在下一次通信里。** 被拒的那一刻只往本地队列里追一行；这里是「下一次通信」——
+ * 一条跑通的命令末尾，把队里的捎给服务，**服务说记下了哪几条才划掉哪几条**。
+ *
+ * 三条都是有意的：① 捎不上去不吭声也不改退出码（这是顺带说的一句，不是这条命令的活，同 recordCliSha）；
+ * ② 队空就一个请求都不发；③ 服务回 `counted: false`（那个存储没有这本账）时一条都不划——
+ * **「其实没记下却当成记下了」正是这件任务在修的那个病**。
+ */
+async function shipRefusals(): Promise<void> {
+  try {
+    const me = meOf();
+    if (!me) return;
+    const queued = pendingRefusals(process.cwd(), me);
+    if (!queued.length) return;
+    const cfg = loadConfig();
+    const { recorded } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
+    clearRefusals(process.cwd(), me, recorded);
+  } catch { /* 没捎成就还在队里，下一条命令再捎 */ }
+}
+
 const ARGV = process.argv.slice(2);
-main(ARGV).then(() => { noteRefusal(ARGV, null); sayIfRefused(ARGV); sayIfDeaf(ARGV); }).catch((err) => {
+main(ARGV).then(async () => {
+  // t-241：**「这条命令成了」才划掉上一条被拒的**。一条一次发多件的命令里有一件被拒时，它照旧走到这里
+  // （被拒不再掀翻整条命令，t-228），于是这一行会把刚刚记下的那条当场划掉——**记了等于没记**。
+  // 退出码是这件事唯一的真凭据：非 0 就是「有东西没落下去」。
+  if (!process.exitCode) noteRefusal(ARGV, null);
+  await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV);
+}).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure
-  const bye = (code: number, rule?: string) => {
+  const bye = (code: number, rule?: string, local = false, already?: { at: string | null }) => {
     // quote what a shell would need quoted, so the line can be pasted back verbatim
     const shell = (a: string) => (/[\s"'$`\\]/.test(a) ? `"${a.replace(/(["\\$`])/g, "\\$1")}"` : a);
-    if (rule) noteRefusal(ARGV, { at: new Date().toISOString(), rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV) });
+    const at = new Date().toISOString();
+    // t-233：**类别跟着记下来。** 提醒要分得清「那件事没发生」与「那件事已经发生过了」，而分辨的依据是
+    // 拒绝自己带的那一样东西，不是提醒去猜。
+    if (rule) noteRefusal(ARGV, { at, rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), ...(already ? { already } : {}) });
+    // t-218：**只有本地抛的那几种要记进队**。服务端 409 那一路在它那边的唯一出口已经记过了（t-212），
+    // 这里再记一遍就是同一次拒绝数两遍——而「两个数说同一件事」是这份日志里数了一整天的毛病。
+    const me = local && rule ? meOf() : null;
+    if (me) queueRefusal(process.cwd(), me, { at, rule: rule!, op: cliOpOf(ARGV) });
     sayIfRefused(ARGV);
     sayIfDeaf(ARGV);
     process.exit(code);
   };
-  if (err instanceof ClientError) {
-    console.error(err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`);
-    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined);
+  // t-225 判据 3：**死因要走 stdout。**
+  //
+  // 看它的进程（Monitor、别人手写的轮询、任何 `cmd | grep`）只把 stdout 当事件流，而这条命令行的每一种失败
+  // 都只写 stderr（frontend 18:34 量的那 238 字节、我 repo:cli.errors_stream 量的四支统一出口）。于是一次
+  // 「200 带坏正文」在看守那儿长成这样：**没有任何输出，只有一个退出码**——与「今天很安静」不可区分。
+  //
+  // 所以退出前在 stdout 上留一行，不取代 stderr 那一行（人盯着终端时两处都看得见，管道只看得见这一处）。
+  const lastWords = (line: string) => console.log(`ateam: ${line}`);
+  if (err instanceof BadResponse) {
+    console.error(err.message);
+    lastWords(err.message);
+    // 游标一个字节没动（advance 只收字符串或 null），退出码不是 1——好让看守分得清「坏响应」和「它自己崩了」
+    return bye(3);
   }
-  if (err instanceof ShapeError) { console.error(err.message); return bye(2); } // t-080: a newer server, said plainly
-  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule); }
-  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); return bye(2, "usage"); }
-  console.error(err instanceof Error ? err.message : err);
+  if (err instanceof ClientError) {
+    const line = err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`;
+    console.error(line);
+    lastWords(line);
+    return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined, false, err.body.already);
+  }
+  if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
+  if (err instanceof Rejected) { console.error(`REJECTED (${err.rule}): ${err.message}`); lastWords(`REJECTED (${err.rule}): ${err.message}`); return bye(2, err.rule, true, err.already); }
+  if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage", true); }
+  const what = err instanceof Error ? err.message : String(err);
+  console.error(what);
+  lastWords(what);
   return bye(1);
 });

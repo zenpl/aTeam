@@ -363,3 +363,41 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     expect(p.reasons.join("\n")).not.toContain("不属于任何一件任务");
   });
 });
+
+/**
+ * t-232 判据 3：**`release` 这一路仍然靠 `emit` 抛出来中止，而我不改它——这一条把「为什么不改」锁在用例里。**
+ *
+ * `deploy` 在**推之前**先写一条「越过未验收推生产：…理由：…」。那条写不进去还接着推，就是**推了生产而日志里
+ * 没有任何东西说它被越过过**——这正是「中止」在这里是对的那一半：与 `verify` 那几条顺带说明不同，它是前置条件。
+ * 改成 t-232 的公共层（报了继续）会把它变成「报一声然后照推」，代价方向正好反了。
+ *
+ * 所以留着，而留着就要有东西锁住它：**中止之后不会继续发，也不会推。**
+ */
+describe("t-232 · 推之前那条记录写不进去，就不推（显式留下的一处中止）", () => {
+  it("越过未验收那条 note 被拒 ⇒ 整条命令中止，git 一次都没推，deployed.sha 一个字没落", async () => {
+    const w = await world();
+    await w.ship("t-1", A);
+    await w.ship("t-2", B, false);                    // done 未验收：要 --anyway 才推得动
+    const git = fakeGit();
+    const after: string[] = [];
+    const deps = {
+      ...w.deps(git),
+      anyway: "生产挂了，先推",
+      note: async () => { throw new Error("REJECTED (note): 服务不收"); },
+      reading: async (key: string) => { after.push(key); },
+    };
+    await expect(deploy(await w.b(), C, deps)).rejects.toThrow("REJECTED (note)");
+    expect(git.pushes, "**没推**——这才是这处中止存在的理由").toEqual([]);
+    expect(after, "推之后那条 deployed.sha 也没落").toEqual([]);
+  });
+
+  it("对照：那条 note 写得进去时，照常推，并落下 deployed.sha", async () => {
+    const w = await world();
+    await w.ship("t-1", A);
+    await w.ship("t-2", B, false);
+    const git = fakeGit();
+    expect(await deploy(await w.b(), C, { ...w.deps(git), anyway: "生产挂了，先推" })).toBe("pushed");
+    expect(git.pushes).toHaveLength(1);
+    expect((await w.b()).live.deployed_sha).toBe(C);
+  });
+});

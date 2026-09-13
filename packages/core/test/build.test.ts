@@ -193,6 +193,36 @@ describe("t-173 · CLI 的开关名单与它的用法对得上", () => {
     expect(missing, `这些开关是死的（--x 报 needs a value，--x true 也设不上）：${missing.join("、")}`).toEqual([]);
   });
 
+  /**
+   * t-247：**第三份名单（VALUED）也要有闸。** 前两份（BOOLEAN、REPEATABLE）漏一个，那个开关是死的；
+   * 这一份漏一个，后果更重：从 t-247 起解析器**不认得就报错**，所以漏一个 = 一个真开关被判成未知，
+   * 而它此前的症状是反过来的（认得一切 ⇒ 拼错也静默）。两个方向都由这条闸盯着。
+   */
+  it("str() 读到的每一个开关都在三份名单之一里（t-247）", () => {
+    const main = read("../../cli/src/main.ts");
+    const args = read("../../cli/src/args.ts");
+    const set = (name: string) => new Set([...(args.match(new RegExp(`const ${name} = new Set\\(\\[([^\\]]*)\\]\\)`))?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+    const declared = new Set([...set("BOOLEAN"), ...set("REPEATABLE"), ...set("VALUED")]);
+    const used = [...new Set([...main.matchAll(/str\(\s*a\s*,\s*"([^"]+)"\s*\)/g)].map((m) => m[1]))].sort();
+    expect(used.length).toBeGreaterThan(10);
+    const missing = used.filter((x) => !declared.has(x));
+    expect(missing, `这些开关会被判成「不认得」，而它们是真的：${missing.join("、")}`).toEqual([]);
+  });
+
+  it("判据 2：help 里点名的那些开关，一个都不被判成未知（t-247）", async () => {
+    const { known } = await import("../../cli/src/args.js");
+    const named = ["ack-by", "surface", "method", "assumes", "depends-on", "touches", "evidence", "criteria", "shows",
+      "option", "default", "decision", "supersedes", "refs", "task", "full", "json", "quiet", "no-seam-check",
+      "anyway", "internal-only", "no-human-impact", "no-touches"];
+    const rejected = named.filter((f) => !known(f));
+    expect(rejected, `这些是 help 里列着的真开关，却被判成不认得：${rejected.join("、")}`).toEqual([]);
+    // t-246 那一族：只要 X 是真开关，--X-file 也认得
+    expect(known("evidence-file")).toBe(true);
+    expect(known("body-file")).toBe(true);
+    expect(known("完全不存在的开关"), "而不存在的就是不存在").toBe(false);
+    expect(known("nope-file")).toBe(false);
+  });
+
   it("今天漏掉的那三个现在真的在里面", () => {
     const args = read("../../cli/src/args.ts");
     for (const flag of ["no-human-impact", "missed", "clear-refused"]) expect(args).toContain(`"${flag}"`);

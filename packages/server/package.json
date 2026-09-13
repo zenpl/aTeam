@@ -10,6 +10,11 @@
     "dev": "tsx src/main.ts",
     "test": "vitest run"
   },
-  "dependencies": { "@ateam/core": "workspace:*" },
-  "devDependencies": { "@types/node": "^22.0.0" }
+  "dependencies": {
+    "@ateam/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@ateam/cli": "workspace:*"
+  }
 }

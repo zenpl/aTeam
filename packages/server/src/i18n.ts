@@ -1,4 +1,4 @@
-import { SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf } from "@ateam/core";
+import { SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -62,10 +62,11 @@ export const UI = {
   // 说一句
   say: "说",
   sayPlaceholder: "跟团队说一句：想要什么、什么坏了",
-  sayHint: "你说过的会出现在这里，并显示它变成了什么：已收到 → 已成为需求 → 已成为任务。",
+  sayHint: SAY_HINT,   // t-243：三个词就是 core 那张表里的三个词，不再各抄一遍
   said: "你说过的",
   moreSaid: (n: number) => `还有 ${n} 句`,
-  saidStatus: { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" } as Record<string, string>,
+  // t-243：`saidStatus` 那份拷贝删了——页面读的是 core 算好的 `label`，那一支退路一次都走不到，
+  // 而它与 core 那张表逐字相同、可以各走各的。要那几个词就去 core 的 `SAID_LABEL`。
 
   // 现在
   now: "现在",
@@ -83,7 +84,8 @@ export const UI = {
   // t-091: what is verified and still waiting for a deploy, so nobody has to send a card per batch
   waitingDeploy: (n: number) => `${n} 件验过了，等一次上线。`,
   waitingAlsoUnknown: (n: number) => `另有 ${n} 件不知道上没上。`,
-  waitingUnknown: (why: string) => `不知道有多少件在等上线：${why}`,
+  /** t-221：搬进 core 了，两处共用一份（这里只是转手，不再是第二个出处）。 */
+  waitingUnknown: waitingUnknownLine,
   // t-095 (S9/M4): the migration check card's result lines; the card itself is worded by the service (t-092)
   migrationOk: "清单对",
   migrationMissing: (who: string | null) => who ? `清单有漏，已让 ${who} 回去补` : "清单有漏",
@@ -164,7 +166,6 @@ export const UI = {
    * sentence, with nothing of ours in front of it.
    */
   releaseNotVerified: (who: string) => `还没验，带不上：${who}`,
-  releaseHeldBy: (who: string) => `等 ${who}`,
   releaseBatches: "装好的几批",
   /** t-169 (pd 08:13)：已经上过线的那几批不占上线清单的位置，它们属于「已经发生了什么」，列在「线上这一版」那一段下。 */
   releaseShipped: "上过线的几批",

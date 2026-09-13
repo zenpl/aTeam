@@ -71,7 +71,11 @@ describe("t-133 · 上线详情页", () => {
       const html = await v.page();
       expect(html).toContain("必须一起上的几件");
       expect(html).toContain("还没验，带不上：t-3");
-      expect(html).toContain("等 dev");            // the owner of the member that has not passed
+      // t-231：**「等谁」按状态算，不按 owner 算。** t-3 是 dev 做的、pm 写的判据、此刻 done——在等的是能给它
+      // 落 pass 的人（qa），不是 dev。这一行原来断言的正是那个缺陷：qa 16:33 在生产上走那四行时，一行等错了人、
+      // 一行等反了，而这条用例把等反了的那一种写成了期望。
+      expect(html).toContain("等 qa");
+      expect(html).not.toContain("等 dev");
       expect(html).toContain("这次能带上");
       // a unit whose members all passed is not described as held
       const moving = html.slice(html.indexOf("这次能带上"));

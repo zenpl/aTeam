@@ -169,11 +169,42 @@ describe("runtime metrics over the last window", () => {
       const st = await w.state();
       const list = [...st.instructions.values()].map((x) => x.instruction).filter((i) => i.actor === "pd").sort((a, b) => a.at.localeCompare(b.at));
       const c = selfCorrections(st, list).get("pd")!;
-      expect(c).toEqual({ sent: 18, 更正: 3, 更新: 1, 说不好: 1 });
+      // t-175：同一份夹具，三条更正一条不少；变的是它们进了哪一桶。这里没有一条被收件人签收过，
+      // 所以三条全是**他自己发现的**。
+      expect(c).toEqual({ sent: 18, 自己: 3, 别人: 0, 更新: 1, 说不好: 1, note自己: 0, note别人: 0 });
+    });
 
+    /**
+     * t-175（pd 08:40 ①：**把一道闸改安静，就要列出它此前真拦下过的形状逐条重跑**）。本件让那一行**整行先不出**
+     * ——门槛的分子换了意思，句子一字不改就是假话，而改句子是 pd 的事（pm 00:07：「句子与数都不动，或整行先不出」）。
+     *
+     * **所以代价在这里写成断言，不写在注释里**：此前这一行在这份夹具上是会说话的（「pd 17% 的指令是自己写错后
+     * 更正的（3/18）」），现在一条预警都不出。这不是闸失效，是一个**等 pd 定字的空窗**，t-175 那一半挂着
+     * blocked on pd。两桶照旧算得出来——缺的只是这一行。pd 定稿后把这条断言连同那一行一起改回来。
+     */
+    it("t-175：拆桶之后自我更正那一行整行先不出，而两桶照旧算得出来（等 pd 定字）", async () => {
+      const w = world();
+      const ackBy = () => new Date(w.at().getTime() + min(60)).toISOString();
+      const say = (to: string, body: string, plus?: number) => w.emit({ kind: "instruction", actor: "pd", to, body, ack_by: ackBy() }, plus);
+      for (let i = 0; i < 8; i++) await say("pm", `第 ${i} 件事，各不相同：${"甲乙丙丁戊己庚辛"[i]}`, min(12));
+      for (const second of ["更正：改成寅，我上一条的 sha 写错了", "更正我刚才那条：是 t-2 不是 t-1", "纠正：判据 3 我写反了"]) {
+        const first = await say("pm", "先按这个做", min(12)) as { id: string };
+        await w.emit({ kind: "ack", of: first.id, actor: "pm" } as unknown as NewEvent, min(1) / 2);   // 收件人签收了 → 「别人」
+        await say("pm", second, min(1));
+      }
+      await say("pm", "先按那个做", min(12));
+      await say("pm", "生产已上线 abc1234，这条按新的来", min(1));
+      await say("pm", "再来一件", min(12));
+      await say("pm", "另外那件也麻烦你看一下", min(1));
+      for (let i = 0; i < 18; i++) await w.emit({ kind: "instruction", actor: "qa", to: "dev", body: `修 ${i}`, ack_by: ackBy() }, min(1));
+
+      const st = await w.state();
+      const list = [...st.instructions.values()].map((x) => x.instruction).filter((i) => i.actor === "pd").sort((a, b) => a.at.localeCompare(b.at));
+      // 三条都被签收过 → 三条全进「别人」，按旧口径这正是 17%、正是此前拦下过的那一种
+      expect(selfCorrections(st, list, st.notes).get("pd")!).toMatchObject({ sent: 18, 自己: 0, 别人: 3, 更新: 1, 说不好: 1 });
+      // 而那一行此刻不出现——这是本件故意的空窗，不是闸失效
       const ws = runtimeAllocation(st, w.at(), HUMAN);
-      expect(ws.map((x) => x.pattern)).toEqual(["负载陷阱"]);
-      expect(ws[0].evidence).toEqual(["pd 17% 的指令是自己写错后更正的（3/18）；另有 1 条是情况变了才重发的、1 条说不好，都不计入"]);
+      expect(ws.flatMap((x) => x.evidence).filter((e) => e.includes("更正"))).toEqual([]);
     });
 
     it("the four pm really wrote that night are corrections; the ones a looser pattern caught are not", () => {
