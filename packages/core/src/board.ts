@@ -1369,6 +1369,52 @@ export function owedTo(s: State, to?: string): InstructionState[] {
 }
 
 /**
+ * t-251 ①：**「日志看不出有人回应、但在那件任务的记录上证得出它其实办了」的那些指令。**
+ *
+ * 为什么它存在：dev 02:36 量到，2854 条指令里 2163 条（76%）日志里找不到任何回应，而其中 862 条（40%）
+ * 在被点名的那件任务上留下了动作——**办了，只是那条 note 没 `refs` 它**。pm 两次清掉这种「读过没动」，两次
+ * 都是同一个根。`board.ts` 上面那段注释里还记着更早的一次：pm 11:05 攒下 15 条，**每一条都真的动过**。
+ *
+ * **它是一个测量，不是一个判决，所以它哪儿都不接**（t-251 判据 ②）：
+ * `owedTo` 一个字不改、牌桌那个数一个字不改。理由是 dev 02:40 提的那条，pm 照收了——**`owedTo` 同时喂着
+ * 「起一个 X」那张卡，把它收紧会连「真没办的活」一起藏起来**。要不要让人看到的那个数减掉这一批，归 pd：
+ * `reduce.ts` 的 `didAct` 上面写着 t-193（pd）**故意不算**「碰巧排在后面的任务事件」，而这里算的比那条窄
+ * （多一个「指令正文点名了那件任务」），**但窄不等于可以替 pd 改它的决定**。
+ *
+ * **它证得出什么、证不出什么**：
+ * · 证得出的是「收件人在那件任务上动过」，**不是「这一条指令促成的」**——所以它是上界，不是准数。
+ * · 只认**动作**，不认说话：`history`（done／verify／reopen）、`criteria_added`、认领。
+ *   **挂在任务上的 note 一开始也算，被判据 4 那根保险丝当场烧掉了**——pd 全场缺人，它那 247 条一条也不该算得出
+ *   「办了」，而带上 note 之后它是 **90**。pd 的活本来就是写 note，**把「他谈过这件事」读成「他办了这件事」，
+ *   正是这支指标一开始虚高的那个毛病的镜像。** 去掉 note 之后 pd 回到 0。**那根保险丝值这一条注释。**
+ * · `block`／`withdraw`／`obsolete`／`seam` 这几种事件 `TaskState` 里留不下署名与时刻，**这里看不见它们**，
+ *   所以这个数比按原始事件算的那个**偏小**。两个数都写在证据里，不许只报一个。
+ */
+export function lookedDone(s: State, to?: string): InstructionState[] {
+  // 每个人在每件任务的记录上留下过的时刻。任务数 × 轮次，与指令条数无关。
+  const acts = new Map<string, string[]>();
+  const put = (who: string | undefined, task: string, at: string) => {
+    if (!who) return;
+    const k = `${who}|${task}`;
+    const xs = acts.get(k);
+    if (xs) xs.push(at); else acts.set(k, [at]);
+  };
+  for (const t of s.tasks.values()) {
+    for (const h of t.history) put(h.by, t.id, h.at);
+    for (const c of t.criteria_added) put(c.by, t.id, c.at);
+    if (t.claimed_at) put(t.owner, t.id, t.claimed_at);
+  }
+  return [...s.instructions.values()].filter((st) => {
+    const i = st.instruction;
+    if (s.acted.has(i.id) || st.withdrawn || st.chosen) return false;
+    if (to !== undefined && i.to !== to) return false;
+    const named = new Set(i.body?.match(/\bt-\d+\b/g) ?? []);
+    for (const task of named) if ((acts.get(`${i.to}|${task}`) ?? []).some((at) => at > i.at)) return true;
+    return false;
+  });
+}
+
+/**
  * t-154 (pd 07:14): 牌桌只说一条事实的**一句话**，不印它的值。
  *
  * 今天的洞是这样露出来的：读数那一节把 `surface:key = <值>` 直接印出来，于是 `production:deployed.tasks` 在人
