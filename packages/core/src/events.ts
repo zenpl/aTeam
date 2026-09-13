@@ -1160,6 +1160,9 @@ export const PART_NAMES = {
   verify: (task: string, pass: boolean) => `${task} ${pass ? "verify --pass" : "verify --fail"}`,
   seamUnjudgeable: (seam: string) => `接缝 ${seam} 判不了的说明`,
   seamTruth: (seam: string) => `接缝 ${seam} 按真交集重判`,
+  // t-261：release 那一路也一次发多件，而且**夹在真的 git push 中间**：先记「越过未验收」、推、再记 deployed.sha。
+  releaseReading: (key: string) => `记下 ${key}`,
+  releaseNote: () => "记下这次发车的说明",
   // t-232：decide 也是两件（先 ack，再落决定），而它们之间有先后：ack 没成，决定就不该写。
   decideAck: (id: string) => `ack ${id}`,
   decideNote: (id: string, option: string) => `记下决定 ${id} → ${option}`,

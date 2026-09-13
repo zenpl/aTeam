@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { sendAll as sendParts } from "./send.js";
+import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
@@ -327,6 +327,32 @@ async function main(argv: string[]) {
   };
 
   /**
+   * t-261：`release` 那一路的部件发送器与收尾。两条命令（`--deploy`／`--rollback`）共用，
+   * 免得「怎么算退出码」在两处各写一遍——那正是这份日志里数过一整天的毛病。
+   */
+  /** t-261：两条 release 命令共用这一份「怎么把 key/value 变成事件」。 */
+  const releaseBuild = {
+    reading: (key: string, value: unknown, extra: { surface: string; method?: string; writes?: string[] }) =>
+      ({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent),
+    note: (body: string) => ({ kind: "note", body } as ClientEvent),
+  };
+  const releaseParts = () => partSender<ClientEvent>(async (e) => {
+    const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
+    return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
+  }, console.log, console.error);
+  /**
+   * 发车本身的结果与「那几件落没落下去」是**两件事**，退出码要两样都反映：
+   * 发车被拒／失败 ⇒ 2（这是这条命令的动作没做成）；发车成了而某一件没落下去 ⇒ `partSender` 算出来的那个
+   * （有成有拒是 `EXIT_PARTIAL`）。前者压过后者：动作都没成，先说动作。
+   */
+  const finishRelease = (outcome: string, parts: ReturnType<typeof releaseParts>): void => {
+    const t = parts.tally();
+    if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+    else if (t.exit) process.exitCode = t.exit;
+    recordParts(t.failed);
+  };
+
+  /**
    * t-228：**一条命令发多件事时，每一件各自报结果。**
    *
    * 一件被拒不再把整条命令掀翻：成的印成的（带 id），拒的印拒的（带规则名，并说清**是哪一件**），
@@ -427,13 +453,15 @@ async function main(argv: string[]) {
       const back = str(a, "rollback");
       if (back !== undefined) {
         // t-223：回滚是第二种合法的发车。走的是「反向提交再往前推」，不强推——所以它与 --deploy 共用同一条推送路径。
+        // t-261：这一路一次发多件（成功时 note ＋ reading 连着），而它们**夹在真的 git push 中间**，攒不齐再发。
+        // 所以走 `partSender`：每一件各自报结果，一件被拒不再把整条命令连同已经落下去的那件一起掀翻。
+        const parts = releaseParts();
         const outcome = await rollback(b, back, {
           git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
-          reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
-          note: async (body) => { await emit({ kind: "note", body }); },
+          ...releaseEmitters(parts.one, releaseBuild),
           print: console.log,
         });
-        if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+        finishRelease(outcome, parts);
         return;
       }
       if (target === undefined) {
@@ -453,13 +481,13 @@ async function main(argv: string[]) {
         console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
         return;
       }
+      const parts = releaseParts();   // t-261：同 rollback，每一件各自报结果
       const outcome = await deploy(b, target, {
         git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
-        reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
-        note: async (body) => { await emit({ kind: "note", body }); },
+        ...releaseEmitters(parts.one, releaseBuild),
         print: console.log,
       });
-      if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+      finishRelease(outcome, parts);
       return;
     }
     case "trace": {
