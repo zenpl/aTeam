@@ -639,8 +639,15 @@ function taskDetail(st: TaskState, t: (iso: string) => string, ago: (iso: string
   // t-166：搬走的判据仍然列着（原文不动、历史不改），但要与仍然有效的那几条一眼分得开：加一个 class 让它淡下去，
   // 句尾不写句子（pd 的措辞冻结开着）：淡化加一个记号与承接方的任务 id，判据 2 要的分得开由 CSS 那一半承担。
   d.push(`<ol class="criteria">${st.criteria.map((c, i) => {
+    // t-248：两个下标**基数不同，而且就挨着**，照抄隔壁会整体差一条：
+    // · `criteria_moved.index` 是**1 基**（rules.ts 的拒绝话原文：「moved 要是 {index: <判据序号，从 1 起>…}」）⇒ 配 `i + 1`
+    // · `criteria_added.index` 是**0 基**（reduce.ts 里 `index: t.criteria.length - 1`，就是数组下标）⇒ 配 `i`
+    // 这一格是 06276f8 加的、2c98e55（牌桌 v2 重写）删的，t-025 的生产判决缺的就是它。
     const moved = st.criteria_moved?.find((m) => m.index === i + 1);
-    return `<li${moved ? ' class="moved"' : ""}>${esc(c)}${moved ? ` <span class="meta">${MOVED_MARK} ${esc(moved.to)}</span>` : ""}</li>`;
+    const added = st.criteria_added?.find((a) => a.index === i);
+    const addedMark = added ? ` <span class="meta">+ ${esc(who(added.by))} · ${esc(ago(added.at))}</span>` : "";
+    const movedMark = moved ? ` <span class="meta">${MOVED_MARK} ${esc(moved.to)}</span>` : "";
+    return `<li${moved ? ' class="moved"' : ""}>${esc(c)}${addedMark}${movedMark}</li>`;
   }).join("")}</ol>`);
   if (st.shows) d.push(`<div>${esc(st.shows)}</div>`);
   const evidence = st.evidence && href ? clip(st.evidence, EVIDENCE_MAX) : st.evidence;
