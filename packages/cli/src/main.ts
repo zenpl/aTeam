@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
@@ -107,11 +107,45 @@ function loadConfig(): Config {
   return resolveConfig(f, process.env);
 }
 
-function cursorFile(me: string) { return join(process.cwd(), ".ateam", `cursor.${me}`); }
-function fileCursor(me: string): CursorStore {
+/**
+ * t-254：游标读写这一小块的落盘动作，单拎出来是为了**能在用例里把它打断**。
+ * 默认就是 node 的那几个，没有第二种行为；用例传一个 `renameSync` 会抛的进来，模拟「kill 落在两步之间」。
+ */
+export interface CursorIo {
+  existsSync(p: string): boolean;
+  readFileSync(p: string, enc: "utf8"): string;
+  mkdirSync(p: string, o: { recursive: true }): void;
+  writeFileSync(p: string, data: string): void;
+  renameSync(from: string, to: string): void;
+}
+const nodeIo: CursorIo = { existsSync, readFileSync: (p, e) => readFileSync(p, e), mkdirSync: (p, o) => { mkdirSync(p, o); }, writeFileSync, renameSync };
+
+function cursorFile(me: string, root: string) { return join(root, ".ateam", `cursor.${me}`); }
+export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo): CursorStore {
   return {
-    read() { const f = cursorFile(me); return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null; },
-    write(c) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(cursorFile(me), c ?? ""); },
+    // 空文件仍然读成 null：修之前留下来的那些 0 字节游标还在各人机器上，这一支要认得它们。
+    read() { const f = cursorFile(me, root); return io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null; },
+    /**
+     * t-254：**先写同目录的临时文件，再 rename。**
+     *
+     * 原来是 `writeFileSync(cursorFile, c ?? "")`——两件事都错：
+     * ① `writeFileSync` **先截断再写**，kill 落在两步之间就留下 0 字节；`read()` 把空读成 `null`，
+     *    下一次**从日志第一条重放**。frontend 00:24 量到它咬自己两次，qa 今天又被咬两次，第二次赔进 689 条。
+     * ② `c ?? ""` 把「没有游标可记」写成了一个空文件——**等于主动制造上面那个 0 字节状态**。
+     *
+     * 现在：空的**根本不落盘**（判据 2），有值的走「临时文件 + rename」。rename 在同一个文件系统上是原子的，
+     * 所以任何时刻那个文件要么是旧值要么是新值，**没有半条这种状态**；临时文件用固定名，
+     * 失败时最多留下一个，下一次写会盖掉它，不会越积越多。
+     */
+    write(c) {
+      const v = c?.trim();
+      if (!v) return;
+      const dir = join(root, ".ateam");
+      io.mkdirSync(dir, { recursive: true });
+      const tmp = join(dir, `cursor.${me}.tmp`);
+      io.writeFileSync(tmp, v);
+      io.renameSync(tmp, cursorFile(me, root));
+    },
   };
 }
 
