@@ -88,3 +88,34 @@ describe("t-232 判据 1 · verify 一次发的那几件，各报一行，判决
     expect(v.parts.map((p) => p.what)).toEqual([PART_NAMES.verify("t-a", true)]);
   });
 });
+
+/**
+ * t-260：**判据 2 要的那条用例——但本件没有可修的东西，这一条是钉子，不是补丁。**
+ *
+ * pm 的前提是「每件各自报结果这条只修了 done 那一路」。**量下来前提不成立**：`verify` 早已走
+ * `sendAll(v.parts)`（`main.ts` 那一行是 t-232 加的），`PART_NAMES` 里 `verify`／`seamUnjudgeable`／
+ * `seamTruth` 三个名字也是 t-232 的；`part-refusal.test.ts` 的头注里逐字记着「② t-232（verify 那一路
+ * 没被 t-228 盖住，**已修已验**）」。
+ *
+ * 所以**判据 3（测试先红）在本件做不到**——没有洞可红。这一条留下来是因为它此前没有：
+ * 已有的用例测的是 done 形状的部件，**没有一条用 verify 那一路自己的部件名跑过这一幕**。
+ */
+describe("t-260 · verify 那一路每件各自报结果（钉子：它本来就是对的）", () => {
+  it("主件成、附带那件被拒：两行各一件，退出码是整体的 EXIT_PARTIAL，不是最后一件的", async () => {
+    const out: string[] = [], err: string[] = [];
+    const parts = [
+      { what: PART_NAMES.verify("t-1", true), event: { kind: "task", op: "verify", task: "t-1" } },
+      { what: PART_NAMES.seamUnjudgeable("t-1+t-2"), event: { kind: "note", body: "判不了" } },
+    ];
+    const r = await sendAll(parts, async (e) => {
+      if ((e as { kind: string }).kind === "note") throw new ClientError(409, { error: "rejected", rule: "note", message: "已经说过了" });
+      return { id: "01A", line: "01A  task t-1 verify --pass" };
+    }, (l) => out.push(l), (l) => err.push(l));
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("verify --pass");                       // 成的那件带着它自己的事件行
+    expect(out[1]).toContain(PART_NAMES.seamUnjudgeable("t-1+t-2")); // 拒的那件说得出是哪一件
+    expect(r.exit).toBe(EXIT_PARTIAL);                               // 有成有拒：整体的码，不是 2 也不是 0
+    expect(r.ok).toBe(1);
+    expect(r.bad).toBe(1);
+  });
+});
