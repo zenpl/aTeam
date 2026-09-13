@@ -90,12 +90,31 @@ export function createApp(opts: ServerOptions) {
   const defaultProject = opts.defaultProject ?? "ateam";
   const registry = opts.registry ?? new MemoryRegistry();
   const memory = new Map<string, EventStore>();
-  const storeFor = opts.storeFor ?? ((p: string) => {
+  const makeStore = opts.storeFor ?? ((p: string) => {
     if (p === defaultProject && opts.store) return opts.store;
     let s = memory.get(p);
     if (!s) { s = new MemoryStore(); memory.set(p, s); }
     return s;
   });
+  /**
+   * t-250 ②（pm 00:39 钉死的第一步）：**一个项目一个 store 对象，按 `projectId` 存——读那一路早就是这么做的
+   * （下面 `reading` 那个 Map），照抄过来。**
+   *
+   * 此前 `main.ts` 注入的那支每次调用都 `new SqliteStore(sdb, project)`，于是 core 里写入侧那个
+   * **按 store 对象存的 `WeakMap`（`store.ts:96`）永远落空**：每一条写入都从零折一遍整条日志。
+   * qa 00:38 的对照实测：**同一个 store 对象连写三条 = 494／3／2ms；每次 new 一个 = 435／424／418ms。**
+   * 这一处不改，写入侧的增量折叠形同不存在，而它每一次落空都让整台服务器停住那么久
+   * （`node:sqlite` 的 `DatabaseSync` 是同步的——见 `sqlite-store.ts#since`）。
+   *
+   * 这里只保证**对象身份稳定**，不缓存任何状态：store 自己是无状态的一层壳，真正被复用的是 core 挂在它上面的
+   * 那个 `Reduction`。
+   */
+  const stores = new Map<string, EventStore>();
+  const storeFor = (p: string): EventStore => {
+    let s = stores.get(p);
+    if (!s) stores.set(p, (s = makeStore(p)));
+    return s;
+  };
   const ready = registry.ensure(defaultProject, defaultProject, token);
   // t-063: `real()` stamps records (events, cursors, deadlines); `now()` is what the server believes the time is when it
   // reads the world (overdue, presence, call-outs). They differ only by the test offset, which production cannot set.
