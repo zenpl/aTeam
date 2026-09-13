@@ -507,6 +507,7 @@ export const KEY_SYMBOLS = [
   "FAIL_NOTICE",
   "FLAG_NEEDS_VALUE",
   "FORWARD_LINK",
+  "HANDOVER_ONLY_WHEN_MISSING",
   "IMPORT_DONE_PREFIX",
   "IMPORT_NOTHING_WRITTEN",
   "INJECT_BUILD_BROKE",
@@ -793,6 +794,12 @@ export const WATCH_INTERVAL = "60s";
  *
  * This constant is the one Chinese statement of it, so the manual quotes rather than paraphrases (t-147 判据 5).
  */
+/**
+ * t-253：**接走别人的活，只在他不在的时候。** 这句话是拒绝话与说明书共用的那一句，所以住在 core。
+ * 「不在」的判据是牌桌算得出来的 `presenceStatus === "missing"`，不是谁觉得他不在了。
+ */
+export const HANDOVER_ONLY_WHEN_MISSING = "只有它缺人（牌桌上是 missing）时别人才接得走。要么等它，要么请 pm 裁";
+
 export const REACH_STATES = ["unread", "read", "acted"] as const;
 export type Reach = (typeof REACH_STATES)[number];
 export const REACH_WORDS: Record<Reach, string> = { unread: "还没读到", read: "读到了，还没动", acted: "办了" };

@@ -1,7 +1,7 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -428,7 +428,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       return;
 
     case "task":
-      return validateTask(state, e, human);
+      return validateTask(state, e, human, now);
   }
 }
 
@@ -455,7 +455,7 @@ function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_huma
     throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。${EMPTY_IS_NOT_NO_IMPACT}`);
 }
 
-function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
+function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string, now: Date): void {
   if (e.op === "create") {
     if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`, { at: state.tasks.get(e.task)!.created_at });
     if (!e.title?.trim()) throw new Rejected("task", "title is required");
@@ -567,8 +567,32 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
         return;
       }
-      if (t.status !== "open" && t.status !== "failed")
-        throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
+      if (t.status !== "open" && t.status !== "failed") {
+        /**
+         * t-253（T8）：**任务状态把活钉在某一个人身上，而那个人一走，活就冻住——这正是 T8 要挡的那件事，
+         * 而我们自己的闸此刻站在它对面。** 今夜同一形状撞到三处：
+         *   ① `t-025` 是 `done`，**造成那个回归、而且自己说要修**的 frontend 去 claim，被这一行逐字拒掉；
+         *   ② `t-249`／`t-250` 是 `failed`，只有原 owner 重 `done` 才谈得上再验；
+         *   ③ `t-248` 的 claim 攥在一个 `missing` 了两小时的节点手里，**活其实早已推上去**，别人接不了。
+         *
+         * 出路不是把这道闸拆掉——**没人可以随手接走别人正在做的活**（判据 3 的反面）。出路是让「他还在做」
+         * 与「他不在了」分得开，而那件事牌桌已经算得出来：`presenceStatus`。**只认 `missing`**：
+         * `deaf` 是「在干活但没在读日志」，那种人没走，接他的活仍然是抢。
+         *
+         * **接走不抹掉任何人**（判据 2）：`handovers` 逐条记着从谁到谁、什么时候、当时那个人是什么状态，
+         * 原 owner 一个字都没有被覆盖掉——日志是我们唯一的共享事实，让它说谎比冻住一件活更贵。
+         */
+        const held = t.owner;
+        // 没有 owner，或者就是他自己——原来那句逐字不动。
+        if (!held || held === e.actor) throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
+        // **本件新增的唯一一处拒绝**，类别是「那件事没有发生」那一类（不带 `{ at }`）：等那个人真的缺人了，
+        // 同一条命令就会通过。原来那句 `<id> is <status> (owner <who>)` 逐字留在前半——t-010 有一条验过的
+        // 断言钉着它，而被拒的人首先要知道的就是「谁拿着」；新增的只是后半句：为什么此刻接不走。
+        const how = presenceStatus(state, held, now);
+        if (how !== "missing")
+          throw new Rejected("claim", `${t.id} is ${t.status} (owner ${held})：它此刻${how === "listening" ? "在听" : "还在动，只是没在读日志"}——${HANDOVER_ONLY_WHEN_MISSING}`);
+        // 缺人：接得走。落到下面那条共用的触点检查，不另开一处。
+      }
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
       return;
     case "done": {

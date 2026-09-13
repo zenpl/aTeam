@@ -34,6 +34,13 @@ export interface TaskState {
   label?: string;
   claimed_at?: string;
   claimed_id?: string;
+  /**
+   * t-253：**这件活换过谁的手**——从谁到谁、什么时候、当时那个人在牌桌上是什么状态。
+   *
+   * 只追加，永不覆盖。`owner` 这一格只留着「此刻是谁」，而「原来是谁」不能因此消失：**接走一件活不许
+   * 让日志说谎**（判据 2）。原作者就是 `handovers[0].from`，中间每一手也都在这条链上。
+   */
+  handovers: { from: string; to: string; at: string; was: string }[];
   touches: string[];
   /**
    * t-157：**这件任务一共碰过什么**——各轮的并集。
@@ -726,7 +733,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], criteria_moved: [], refs: e.refs ?? [],
-        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [], handovers: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
         // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
@@ -758,6 +765,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       // t-105 与 t-113 靠的正是改窄（done 时按事实取代声明、把粗粒度的声明收细成符号）。把本轮也并进去，
       // 那两条当场坏掉：一条接缝再也细不下去，一次更正再也收不回来。本轮那一份在下面用的时候现并。
       indexTouches(s, t);   // t-121: the index follows the declaration, always
+      // t-253：接走别人手里的活时留下一条链。闸已经判过「那个人确实不在」（rules.ts 的 claim），
+      // 这里只负责**把它记下来而不抹掉谁**——`owner` 换人，`handovers` 一条不删。
+      if (t.owner && t.owner !== e.actor) t.handovers.push({ from: t.owner, to: e.actor, at: e.at, was: "missing" });
       t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
       return;

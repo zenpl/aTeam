@@ -35,7 +35,10 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
 }
 
 /** 冻结：此刻一共多少处，其中标成「已经发生过了」的是哪几处（文件＋规则名，不写行号——行号一改就失真）。 */
-const TOTAL = 138;
+// t-253 加了一处：`core/rules.ts claim`——「这件活在别人手里，而那个人此刻还在」。
+// 它属**「那件事没有发生」那一类**（不带 `{ at }`）：等那个人真的缺人了，同一条命令就会通过，
+// 所以它要留着、要被重做，不能说完就划掉。138 → 139。
+const TOTAL = 139;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",
