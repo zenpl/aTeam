@@ -2,12 +2,18 @@
   "name": "@ateam/cli",
   "version": "0.0.1",
   "type": "module",
-  "bin": { "ateam": "./bin/ateam.js" },
+  "bin": {
+    "ateam": "./bin/ateam.js"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && ../../bin/stamp-cli",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
-  "dependencies": { "@ateam/core": "workspace:*"  },
-  "devDependencies": { "@types/node": "^22.0.0" }
+  "dependencies": {
+    "@ateam/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
 }

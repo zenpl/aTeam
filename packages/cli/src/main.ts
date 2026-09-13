@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -157,16 +157,42 @@ export function fileCursor(me: string, root: string = process.cwd(), io: CursorI
  * `.ateam/` 里，与 cursor 同一处——这是本节点自己的事，不进日志也不该进日志。
  * 落不下去（服务拒、网络断）不挡 sync：这一句是顺带说的，不是 sync 的活。
  */
-async function recordCliSha(client: { emit(e: ClientEvent): Promise<unknown> }, me: string, head: string | null): Promise<void> {
-  if (!head) return;                                  // 说不出就不说
-  const file = join(process.cwd(), ".ateam", `cli.sha.${me}`);
-  if (existsSync(file) && readFileSync(file, "utf8").trim() === head) return;
+/**
+ * t-256：**这里不再接受 `head`。**
+ *
+ * 原来它落的是 `behind.head()`——cwd 的 git HEAD——而那回答的是「这棵树站在哪个提交上」，
+ * 不是「正在执行的是哪一份代码」。两者在同一台机器上可以差很远：pm 11:26–11:28 用一份 `e922184` 的
+ * binary 跑 `8300434` 的 checkout，**连落两条互相矛盾的 `node:pm:cli.sha`**。旧的 `CLI_SHA_METHOD` 原文里
+ * 那半句「**也就是这份 dist 该有的版本**」正是这次错的全部——**「该有的」被当成了「是的」。**
+ *
+ * 现在唯一的来源是**构建时盖在 dist 边上的那张章**（`dist/build.json`，由 `bin/stamp-cli` 在 `pnpm build`
+ * 之后写）。读它用的是**相对于正在执行的这个模块**的路径，不是 cwd——所以换一棵树跑同一份 binary，
+ * 它报的仍是这份 binary 的出身。**盖不出章就一个字都不说**（判据 1：不许拿 HEAD 顶）。
+ */
+export async function recordCliSha(client: { emit(e: ClientEvent): Promise<unknown> }, me: string, readStamp: () => string | null, root: string = process.cwd()): Promise<void> {
+  const raw = readStamp();
+  if (!raw) return;                                   // 判不出那份 dist 是哪一版：说不出就不说
+  let sha: string | null = null, dirty = false;
   try {
-    await client.emit({ kind: "reading", actor: me, surface: NODE_SURFACE, key: `${me}:cli.sha`, value: head,
+    const j = JSON.parse(raw) as { sha?: unknown; dirty?: unknown };
+    if (typeof j.sha === "string" && /^[0-9a-f]{7,40}$/.test(j.sha.trim())) sha = j.sha.trim();
+    dirty = j.dirty === true;
+  } catch { sha = null; }
+  if (!sha) return;
+  const value = dirty ? `${sha}+dirty` : sha;
+  const file = join(root, ".ateam", `cli.sha.${me}`);
+  if (existsSync(file) && readFileSync(file, "utf8").trim() === value) return;
+  try {
+    await client.emit({ kind: "reading", actor: me, surface: NODE_SURFACE, key: `${me}:${CLI_SHA_KEY}`, value,
       method: CLI_SHA_METHOD } as ClientEvent);
-    mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
-    writeFileSync(file, head);
+    mkdirSync(join(root, ".ateam"), { recursive: true });
+    writeFileSync(file, value);
   } catch { /* 顺带说的一句，落不下去不挡 sync */ }
+}
+
+/** 正在执行的这份 dist 边上那张章。相对模块自己找，不看 cwd——换棵树跑同一份 binary，答案不变。 */
+export function distStamp(): string | null {
+  try { return readFileSync(new URL("./build.json", import.meta.url), "utf8"); } catch { return null; }
 }
 
 function parseValue(s: string): unknown {
@@ -365,7 +391,7 @@ async function main(argv: string[]) {
               if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
             }
           : flushOut);
-      await recordCliSha(client, cfg.me, behind.head());
+      await recordCliSha(client, cfg.me, distStamp);
       return;
     }
     case "watch": {

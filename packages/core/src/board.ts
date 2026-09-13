@@ -1,4 +1,4 @@
-import { PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
+import { CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -824,7 +824,7 @@ export function pushLevelOf(s: State, role: string): PushLevel {
 
 /** t-211：这个节点自报的本机构建 sha（事实 `node:<role>:cli.sha`），没自报过、或那条已失效就是 null。 */
 export function cliShaOf(s: State, role: string): string | null {
-  const id = s.latestReading.get(`${NODE_SURFACE}:${role}:cli.sha`);
+  const id = s.latestReading.get(`${NODE_SURFACE}:${role}:${CLI_SHA_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   return typeof v === "string" && v ? v : null;

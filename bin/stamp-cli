@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# t-256：在 dist 边上盖一张章，记下这份构建是从哪个提交编出来的。
+# `pnpm build` 之后跑；盖不出来就不写文件——读它的那一侧「说不出就不说」，绝不拿 cwd 的 HEAD 顶。
+set -e
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out="$root/packages/cli/dist/build.json"
+[ -d "$root/packages/cli/dist" ] || exit 0
+sha="$(git -C "$root" rev-parse HEAD 2>/dev/null || true)"
+[ -n "$sha" ] || exit 0                     # 不在 git checkout 里：不盖章，不猜
+dirty=false
+git -C "$root" diff --quiet 2>/dev/null || dirty=true
+printf '{"sha":"%s","dirty":%s,"at":"%s"}\n' "$sha" "$dirty" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out"
