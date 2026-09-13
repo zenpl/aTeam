@@ -327,11 +327,6 @@ export interface Board {
     /** ask: answer it; do: do it and say "done"; info: read it. */
     kind: InstructionIntent; id: string; from: string; body: string; title: string; /** absent on the slim board (t-077) */ detail?: string; summary: string; since: string;
     /**
-     * t-215：这张卡声明的条件被改动过（`stale_by` 是改动它的那条事件）。**只是「可能过期」，不是「不成立」**
-     * ——卡照旧在、人照旧能答；标出来是为了别让人照着一句已经不真的话动手。要给人看的那句归 pd。
-     */
-    stale_since?: string; stale_by?: string;
-    /**
      * t-188（frontend 10:36 的更正）：**这张卡原来根本没有这个字段。**牌桌上一张要人拍板的卡说得出「什么时候
      * 到期」，靠的就是它；缺了它，页面只能说「不点的话按 X」而说不出「到什么时候」，pd 09:18 那句定稿也就印不全。
      * pm 10:34 报的「board 报 null」其实是 JSON 里的缺席，不是有一处代码把值抹掉了——按后者去找，那处不存在。
@@ -387,12 +382,6 @@ export interface Board {
     verified_on_production: { id: string; title: string; shows?: string }[];
     recent: { id: string; title: string; shows?: string }[];
     earlier: { id: string; title: string; shows?: string }[];
-    /**
-     * t-223：**当过生产头的那些 sha**，老的在前。回滚的合法目标就是这一类——「回到我们确实上过的某一版」是
-     * 日志里查得到的一个类别（`production:deployed.sha` 那串事实），所以闸认得它，不用谁开例外。
-     * **只在完整板上**：它每上线一次长一条，而瘦身板是发给人的那一份（t-070 那个上限）。
-     */
-    deploys?: string[];
   };
   /**
    * What is ready to ship: tasks that passed on repo in their current round and have not passed on production,
@@ -440,14 +429,7 @@ export interface Board {
    * **这里只有数据，没有句子。**pd 11:17 起人可见的字冻结，所以那句并排怎么说、印在哪一段，我没有自拟——
    * 我另发了一条 note 请 pd 定。页面拿到措辞之前，这份数据就在这儿等着。
    */
-  /** t-216：`agents` 有值＝这一条是两个在场角色共同声明更正的，human 据此看得见并可事后翻案。 */
-  disowned: { of: string; actor: string; by: string; at: string; reason: string; agents?: string[] }[];
-  /**
-   * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被别的角色声明「这不是 human 发的」，两个不同角色
-   * 各来一次才生效；这里是只来了一个的那些——牌桌据此看得出「这一条在争议中，等第二个人或等 human」。
-   * **只出数据，不出话**：要给人看的那句归 pd（冻结开着）。
-   */
-  contested: { of: string; actor: string; by: string[]; at: string; reason: string }[];
+  disowned: { of: string; actor: string; by: string; at: string; reason: string }[];
   /** Every task that is not finished, grouped by status (open, working, blocked, done, failed): all of them, plus the 5 most recently touched for a folded view. */
   in_flight: Record<string, { total: number; /** absent on the slim board (t-077) */ shown?: BoardInFlight[]; all: BoardInFlight[] }>;
   instructions: {
@@ -941,8 +923,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, denominator: "", basis: "" },
     batches: [],
     said: [],
-    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason, ...(d.agents ? { agents: [...d.agents] } : {}) })).sort(byId((x) => x.of)),
-    contested: [...s.contested].map(([of, c]) => ({ of, actor: c.actor, by: [...c.by], at: c.at, reason: c.reason })).sort(byId((x) => x.of)),
+    disowned: [...s.disowned].map(([of, d]) => ({ of, actor: d.actor, by: d.by, at: d.at, reason: d.reason })).sort(byId((x) => x.of)),
     seams: [],
     presence: [],
     roles: projectRoles(s),
@@ -1002,7 +983,6 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
         kind: instructionKind(i), ...splitTitle(body), id: i.id, from: i.actor, body, summary: `${i.actor}: ${body}${ask}`, since: i.at,
         ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st, now),
-        stale_since: st.stale_since, stale_by: st.stale_by,   // t-215：只出数据不出话
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }
@@ -1048,8 +1028,6 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     const previous = [...deploys].reverse().find((r) => !sameSha(r.value, current.value));
     b.live.since_sha = previous ? (previous.value as string) : null;
   }
-  // t-223：同一个 sha 量第二次不是又上了一次线（与 deployHistory 同一条 7 位规矩）
-  b.live.deploys = deploys.map((r) => r.value as string).filter((x, i, all) => i === 0 || !sameSha(all[i - 1], x));
   // when the current sha was first recorded (the same sha re-measured later, short or long, does not move the line).
   // t-120: split by the log's own order (event ids), not by wall clock. Two appends can share a millisecond — under a
   // loaded test run they do — and then `at >= at` put a verification recorded *before* the deploy on this version's
@@ -1642,9 +1620,7 @@ export function slimBoard(b: Board): Board {
   const release: Board["release"] = { deployed_sha: b.release.deployed_sha, counts: b.release.counts, denominator: b.release.denominator, basis: b.release.basis };
   // t-077: what this response left out, computed by comparing the two boards, never written by hand (qa 22:14)
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
-  // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
-  const live: Board["live"] = { ...b.live, deploys: undefined };
-  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
+  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, gate_honesty: [], omitted: [] };
   slim.omitted = omittedPaths(b, slim);
   return slim;
 }
@@ -1690,27 +1666,17 @@ const shortSha = (a: unknown) => String(a).slice(0, 7);
 const sameSha = (a: unknown, b: unknown) => shortSha(a) === shortSha(b);
 
 /** The containment fact as written by `ateam release` (t-078), if valid. */
-/**
- * t-219：事实里的「说不出」拆成三桶（unmeasured / bad_evidence / no_evidence）。**这里把三者合成一个
- * `unmeasured` 交给显示那一侧**——`denominatorIs` 是人可见的字、冻结开着，所以牌桌那句话一个字没改；
- * 数据更细，话不动。分桶的原文在事实里，谁要追得到。
- */
-export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; bad_evidence: string[]; no_evidence: string[]; method?: string; at: string } | null {
+export function deployedTasksFact(s: State): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[] | null; method?: string; at: string } | null {
   const id = s.latestReading.get(`production:${DEPLOYED_TASKS_KEY}`);
   const r = id ? s.readings.get(id) : undefined;
   if (!r || !r.valid || r.expired) return null;
-  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; bad_evidence?: unknown; no_evidence?: unknown; method?: unknown };
+  const v = r.reading.value as { sha?: unknown; contained?: unknown; not_contained?: unknown; unmeasured?: unknown; method?: unknown };
   if (!v || typeof v !== "object" || typeof v.sha !== "string" || !Array.isArray(v.contained) || !Array.isArray(v.not_contained)) return null;
   // t-203：第三桶。**`null` 与 `[]` 是两件事**：`null` 说的是这条事实是三桶那条规矩之前写下的，它没说过量不出的
   // 有哪些（今天生产上那几条就是这样，85 件无声消失）；`[]` 说的是量过了、一件都没有。分母算不算得出来，
   // 全看这个区别——所以这里不把缺席补成空数组。
   return { sha: v.sha, contained: v.contained.map(String), not_contained: v.not_contained.map(String),
-    // 三桶合成一个交给显示：null 仍然是「这条事实是三桶规矩之前写的，它没说量不出的有哪些」（t-203）
-    unmeasured: Array.isArray(v.unmeasured)
-      ? [...v.unmeasured.map(String), ...(Array.isArray(v.bad_evidence) ? v.bad_evidence.map(String) : []), ...(Array.isArray(v.no_evidence) ? v.no_evidence.map(String) : [])]
-      : null,
-    bad_evidence: Array.isArray(v.bad_evidence) ? v.bad_evidence.map(String) : [],
-    no_evidence: Array.isArray(v.no_evidence) ? v.no_evidence.map(String) : [],
+    unmeasured: Array.isArray(v.unmeasured) ? v.unmeasured.map(String) : null,
     method: typeof v.method === "string" ? v.method : undefined, at: r.reading.at };
 }
 

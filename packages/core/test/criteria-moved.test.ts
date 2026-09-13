@@ -86,7 +86,7 @@ describe("t-166 · 判据 4：只有判据作者、pm 或 human 能标", () => {
   });
 });
 
-describe("t-166 · 标不了的三种情况，每种说一句不同的话", () => {
+describe("t-166 · 标不了的四种情况，每种说一句不同的话", () => {
   it("序号超出范围：说出这件共几条", async () => {
     const w = await world();
     const err = await w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 9, to: "t-148" } }, -100).catch((e) => e as Rejected);
@@ -131,18 +131,13 @@ describe("t-166 · 标不了的三种情况，每种说一句不同的话", () =
     }
   });
 
-  // **这一条 17:28 反过来了，原样留着改写而不是删掉，因为它是这件活最贵的一课**：原来这里断言「已验的件标不了」，
-  // 而 qa 17:27 在生产上判了 fail——那道闸把 add 与 moved 一起挡住，于是这套标注**对它唯一的目标人群整个失效**
-  // （一条判据会被搬走，通常正因为原任务已经判完、剩下那部分归了别件）。我在 repo 那一轮的用例全造的是未验任务，
-  // 没有一条造出真实会被用到的那个形状。
-  it("已 verified 的件标得了搬迁：标注不改动被判过的内容，而已验正是它要标的那一批", async () => {
+  it("已 verified 的件不能再标：它的判据就是当时被判的那些", async () => {
     const w = await world();
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-141", evidence: "abc1234", no_human_impact: true }, -120);
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", pass: true, evidence: "看过了：判据 1、2、3" }, -110);
-    await w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 3, to: "t-148" } }, -100);
-    const t = (await st(w.s)).tasks.get("t-141")!;
-    expect(t.status).toBe("verified");
-    expect(t.criteria_moved).toEqual([{ index: 3, to: "t-148", by: "pm", at: expect.any(String) }]);
+    const err = await w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 3, to: "t-148" } }, -100).catch((e) => e as Rejected);
+    expect(err).toBeInstanceOf(Rejected);
+    expect(err.message).toContain("verified");
   });
 });
 
@@ -169,99 +164,5 @@ describe("t-166 · 判据 3：今晚那两次要能重放", () => {
     // 承接方由记号带出来，不写句子（pd 的措辞冻结开着）：显示上只有记号与任务 id
     expect(movedTrace(3, "t-148")).toContain(`${MOVED_MARK} t-148`);
     expect((movedTrace(3, "t-148").match(/[\u4e00-\u9fff]/g) ?? []).length).toBe(2);   // 只有「判据」两个字，core 里早就有
-  });
-});
-
-/**
- * t-166 的收口：**pm 17:26 第一次真去用这个机制，两条都被拒**（t-141 3→t-148、t-149 5→t-158），
- * 拒的理由是「t-141 is verified」。qa 同一时刻在生产上量到 60 条 criteria 事件里带 moved 的 0 条——
- * **那个 0 不是没人用，是用不了**，而已验正是这套标注要标的那一批（今晚那两次搬迁，两件都早已验过）。
- *
- * 分界写在这里，不在注释里：**add 改动「被判过的是什么」，moved 不改任何一条判据的字。**
- */
-describe("t-166 收口 · 已验之后仍标得了搬迁，但仍追加不了判据", () => {
-  async function verifiedWorld() {
-    const s = new MemoryStore();
-    const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
-    await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -300);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-141", title: "旧件", criteria: ["判据一", "判据二", "搬走的那条"], no_human_impact: true }, -200);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-148", title: "接走的那件", criteria: ["接过来"], no_human_impact: true }, -199);
-    await put({ kind: "task", actor: "dev", op: "claim", task: "t-141", touches: ["x"] }, -190);
-    await put({ kind: "task", actor: "dev", op: "done", task: "t-141", evidence: "abc1234", no_human_impact: true }, -180);
-    await put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", pass: true, evidence: "跑过了" }, -170);
-    expect((await st(s)).tasks.get("t-141")!.status).toBe("verified");
-    return { s, put };
-  }
-
-  it("已验的任务标得了搬迁——它正是这套标注要标的那一批", async () => {
-    const w = await verifiedWorld();
-    await w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 3, to: "t-148" } }, -100);
-    const t = (await st(w.s)).tasks.get("t-141")!;
-    expect(t.criteria_moved).toEqual([{ index: 3, to: "t-148", by: "pm", at: expect.any(String) }]);
-    // 判决与判据原样留着：标注没有改动「被判过的是什么」
-    expect(t.status).toBe("verified");
-    expect(t.criteria).toEqual(["判据一", "判据二", "搬走的那条"]);
-  });
-
-  it("已验的任务仍然追加不了判据——挡的那半是对的，没有被这次修改带走", async () => {
-    const w = await verifiedWorld();
-    await expect(w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", add: ["事后再加一条"] }, -100))
-      .rejects.toThrow(Rejected);
-    expect((await st(w.s)).tasks.get("t-141")!.criteria).toHaveLength(3);
-  });
-
-  it("已验之后标搬迁，权限那道闸照旧：判据作者/pm/human 之外的人不许标", async () => {
-    const w = await verifiedWorld();
-    await expect(w.put({ kind: "task", actor: "qa", op: "criteria", task: "t-141", moved: { index: 3, to: "t-148" } }, -100))
-      .rejects.toThrow(Rejected);
-  });
-
-  it("已验之后标搬迁，承接方必须真的存在——不许搬进空气里", async () => {
-    const w = await verifiedWorld();
-    await expect(w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 3, to: "t-999" } }, -100))
-      .rejects.toThrow(Rejected);
-  });
-});
-
-/**
- * qa 17:36 在一份真日志上撞出来的口子：**闸挂在「有没有另一件事同时发生」上，就会被那另一件事顺路带过去。**
- * 第一版写的是 `!e.moved`，而形状闸只要求 add/moved 至少给一个、不禁止同时给——于是一条同时带 moved 与 add 的
- * 事件对已验任务被收下，那条 add 真落了进去（判据 2 条变 3 条），**而拒绝话一个字都没出现**：日志上看起来
- * 只是一次搬迁。全绿而口子在，因为当时没有一条用例同时给两个字段。
- */
-describe("t-166 收口二 · 搭车：一次搬迁不许捎一条新判据进来", () => {
-  async function verified() {
-    const s = new MemoryStore();
-    const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
-    await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -300);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-x", title: "被判过的那件", criteria: ["判据一", "搬走的那条"], no_human_impact: true }, -200);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-y", title: "承接方", criteria: ["接过来"], no_human_impact: true }, -199);
-    await put({ kind: "task", actor: "dev", op: "claim", task: "t-x", touches: ["x"] }, -190);
-    await put({ kind: "task", actor: "dev", op: "done", task: "t-x", evidence: "abc1234", no_human_impact: true }, -180);
-    await put({ kind: "task", actor: "qa", op: "verify", task: "t-x", surface: "repo", pass: true, evidence: "跑过了" }, -170);
-    expect((await st(s)).tasks.get("t-x")!.status).toBe("verified");
-    return { s, put };
-  }
-
-  it("已验任务上，moved 与 add 同时给 ⇒ 整条被拒，判据一条也没多", async () => {
-    const w = await verified();
-    await expect(w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-x", moved: { index: 2, to: "t-y" }, add: ["搭车加的一条"] }, -100))
-      .rejects.toThrow(Rejected);
-    const t = (await st(w.s)).tasks.get("t-x")!;
-    expect(t.criteria).toEqual(["判据一", "搬走的那条"]);   // 没被搭车塞进来
-    expect(t.criteria_moved).toEqual([]);                    // 整条被拒，搬迁那一半也没落
-  });
-
-  it("未验的任务上，同时给两个仍然照收——挡的是「已验之后改动被判过的内容」，不是「同时给两个」", async () => {
-    const s = new MemoryStore();
-    const put = (e: NewEvent, mins: number) => append(s, e, { human: HUMAN, now: at(mins) });
-    await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -300);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-x", title: "还没判过的那件", criteria: ["判据一", "搬走的那条"], no_human_impact: true }, -200);
-    await put({ kind: "task", actor: "pm", op: "create", task: "t-y", title: "承接方", criteria: ["接过来"], no_human_impact: true }, -199);
-    await put({ kind: "task", actor: "dev", op: "claim", task: "t-x", touches: ["x"] }, -190);
-    await put({ kind: "task", actor: "pm", op: "criteria", task: "t-x", moved: { index: 2, to: "t-y" }, add: ["后加的一条"] }, -100);
-    const t = (await reduce(await s.read(), at(0))).tasks.get("t-x")!;
-    expect(t.criteria).toEqual(["判据一", "搬走的那条", "后加的一条"]);
-    expect(t.criteria_moved).toEqual([{ index: 2, to: "t-y", by: "pm", at: expect.any(String) }]);
   });
 });

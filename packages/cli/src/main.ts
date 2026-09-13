@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { Client, ClientError, ShapeError, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
@@ -12,7 +12,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, actionOf, type Refusal } from "./rejected.js";
-import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
+import { deploy, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
@@ -31,15 +31,13 @@ every turn
   ateam untell <id> --reason "..."   take back an instruction you sent, before it is acked or decided; the recipient sees 已撤回
   ateam board [--json] [--full]           what is true, what is open, who is here
   ateam fixture [--start <iso>] [--step 1m]   a sample log (events, cursors, deliveries) built with the server's own code, to stdout; no server needed
-  ateam release [--json] [--deploy <sha>] [--rollback <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
-      --rollback <sha> 回到我们上过的某一版：造一个内容与它逐字相同的新提交再快进推上去（不强推、不改历史）。目标必须当过生产头
+  ateam release [--json] [--deploy <sha>] [--anyway "<理由>"]   --deploy 推的是一个 sha，不是分支名（分支头随时会前进到还没验收的提交）；含未验收任务时拒绝，--anyway 带理由可越过并留痕
       what passed on repo and not yet on production; --deploy pushes that sha to the production branch (fact project:deploy.enabled, credential ATEAM_DEPLOY_TOKEN)
 
 say things
-  ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info] [--depends-on surface:key,...]   instruction: one recipient, ≤280 chars, must be acked; --kind only for human; --depends-on says what this card is true of, and the board marks it when that fact changes
+  ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info]         instruction: one recipient, ≤280 chars, must be acked; --kind only for human
   ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
-  ateam premise <instruction-id> [--depends-on surface:key,...] [--valid-until <iso> | --valid-for 8h]   say what an already-sent card is true of, or when it stops being true; the board marks it, nothing is deleted
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
                                     [--shape <regex>] [--enum a,b,c]   declare once what values <key> may take; later mismatches are rejected
                                     [--measured-at <ISO | 10m>]        when the world was measured (10m = ten minutes ago); validity counts from it
@@ -264,31 +262,12 @@ async function main(argv: string[]) {
       exact(rest);
       let b = await client.board(true); // candidates and evidence live on the full board (t-070)
       const target = str(a, "deploy");
-      const back = str(a, "rollback");
-      if (back !== undefined) {
-        // t-223：回滚是第二种合法的发车。走的是「反向提交再往前推」，不强推——所以它与 --deploy 共用同一条推送路径。
-        const outcome = await rollback(b, back, {
-          git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
-          reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
-          note: async (body) => { await emit({ kind: "note", body }); },
-          print: console.log,
-        });
-        if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
-        return;
-      }
       if (target === undefined) {
         // t-078: measure with git which candidates production already contains, record it when it changed, then show the three groups
-        const g = realGit(process.cwd(), undefined);
-        const measured = containment(b, gitIsAncestor(), { has: (sha) => g.resolve(sha) !== null, shallow: () => g.isShallow() });
+        const measured = containment(b, gitIsAncestor());
         const fact = containmentFact(b, measured);
         if (fact) { await emit(fact); b = await client.board(true); }
-        // t-219：三种「没测」要分得开——尤其第三种（这棵树解不出上线的 sha），因为它此前会写下一份全是 0 的假事实。
-        else if (!measured) {
-          const dep = b.release.deployed_sha;
-          console.error(!dep ? "（没有测包含关系：生产没有 deployed.sha 事实）"
-            : g.resolve(dep) === null ? `（${cannotMeasureHere(dep)}）`
-            : "（没有测包含关系：项目没有声明 absorb.form=git-ancestor）");
-        }
+        else if (!measured) console.error(`（没有测包含关系：${b.release.deployed_sha ? "项目没有声明 absorb.form=git-ancestor" : "生产没有 deployed.sha 事实"}）`);
         if (measured?.unmeasured.length) console.error(`（git 判不出 ${measured.unmeasured.join("、")}：本地没有它们的证据 sha，先 git fetch 各分支）`);
         console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
         return;
@@ -320,20 +299,9 @@ async function main(argv: string[]) {
       const [to, body] = exact(rest, "to", "body");
       const intent = str(a, "kind") as InstructionIntent | undefined;
       if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
-      // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
-      // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
-        options: list(a, "option"), default: str(a, "default"), depends_on: list(a, "depends-on"),
-        valid_until: str(a, "valid-for") ? new Date(Date.now() + duration(str(a, "valid-for")!)).toISOString() : str(a, "valid-until") });
-    }
-    // t-215 判据 7：给一张**已经发出去的**卡补声明条件。卡是不可变事件，所以补声明是一条后发的事件指着它
-    // （与 disown、untell 同一路子）。会按默认结掉的那 3 张卡全比 --depends-on 这个字段老，所以这不是补丁，是主路。
-    case "premise": {
-      const [of] = exact(rest, "instruction-id");
-      const validFor = str(a, "valid-for");
-      return emit({ kind: "premise", of, depends_on: list(a, "depends-on"),
-        valid_until: validFor ? new Date(Date.now() + duration(validFor)).toISOString() : str(a, "valid-until") });
+        options: list(a, "option"), default: str(a, "default") });
     }
     case "decide": {
       const [id, option] = exact(rest, "id", "option");
