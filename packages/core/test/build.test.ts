@@ -4,8 +4,14 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE, speaking as speakingOf, deciding as decidingOf, measureKeySymbols, SPEAKING_MIN_CHARS, renderKeySymbols, withKeySymbols } from "../src/index.js";
+import { Builder, sampleLog, Rejected, reduce, board, surfaceResults, manual, WATCH_INTERVAL, REACH_RULE, KEY_SYMBOLS, NO_HUMAN_IMPACT, SAYINGS, HUMAN_FIELDS, REGISTRY_SYMBOLS, manualFiles, MANUAL_COPY_MIN, sourceFiles, MANUAL_COPIES_FROZEN, manualCopies, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, SHOWS_RULE, PROMISE_RULE, speaking as speakingOf, deciding as decidingOf, rendered as renderedOf, RENDERING_FILES, measureKeySymbols, SPEAKING_MIN_CHARS, renderKeySymbols, withKeySymbols } from "../src/index.js";
 import { DEFAULT_WATCH_CMD } from "../../cli/src/deaf.js";
+
+/**
+ * t-270：名单此刻有**三个**方向，第三个（`rendered`）读的是渲染文件本身——
+ * `html.ts` 里 `export const whyLine = blockedWhy;` 那种再导出。**只喂 core 的源码，算出来会少两个。**
+ */
+const renderSources = () => Object.fromEntries((RENDERING_FILES as readonly string[]).map((f) => [f, readFileSync(new URL(`../../../${f}`, import.meta.url), "utf8")]));
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ulidTime = (id: string) => [...id.slice(0, 10)].reduce((n, c) => n * 32 + ALPHABET.indexOf(c), 0);
@@ -267,6 +273,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
   const sources = () => Object.fromEntries(CORE_FILES.map((f) => [f, read(`../src/${f}`)]));
   const deciding = () => decidingOf(sources());
   const speaking = () => speakingOf(sources());
+  const renderedNow = () => renderedOf(renderSources());
 
   it("量出来的每一个都在名单里——漏一个，那件活就能说「不改变人看到的东西」", () => {
     const missing = [...new Set([...speaking(), ...deciding()])].filter((x) => !(KEY_SYMBOLS as readonly string[]).includes(x));
@@ -281,7 +288,7 @@ describe("t-170 · core 里会说人话的符号，名单是量出来的不是�
   });
 
   it("名单里没有已经不说人话的：它跟着源码走，不是只增不减", () => {
-    const live = new Set([...speaking(), ...deciding()]);
+    const live = new Set([...speaking(), ...deciding(), ...renderedNow()]);
     const stale = (KEY_SYMBOLS as readonly string[]).filter((x) => !live.has(x));
     expect(stale, `名单里这些已经不在 core 里说人话了：${stale.join("、")}`).toEqual([]);
   });
@@ -394,18 +401,18 @@ describe("t-186 · 名单跑得出来，两个人各加一行也不再撞", () =
   it("判据 5：仓库里有能产出名单的东西，不只有能检查它的断言", () => {
     // 那两段现在是 core 的导出，任何人都调得到；`bin/keysyms` 就是调它的那个入口
     expect(typeof measureKeySymbols).toBe("function");
-    expect(measureKeySymbols(sources())).toEqual([...KEY_SYMBOLS]);
+    expect(measureKeySymbols(sources(), renderSources())).toEqual([...KEY_SYMBOLS]);
     const bin = readFileSync(new URL("../../../bin/keysyms", import.meta.url), "utf8");
     expect(bin).toContain("measureKeySymbols");
     expect(bin).toContain("--write");
   });
 
   it("判据 2：它仍然由源码算出来——加一个会说人话的符号，量出来的名单就多一个", () => {
-    const before = measureKeySymbols(sources());
-    const after = measureKeySymbols({ ...sources(), "probe.ts": 'export const probeSentence = "这是一句给人看的中文句子。";' });
+    const before = measureKeySymbols(sources(), renderSources());
+    const after = measureKeySymbols({ ...sources(), "probe.ts": 'export const probeSentence = "这是一句给人看的中文句子。";' }, renderSources());
     expect(after.filter((x) => !before.includes(x))).toEqual(["probeSentence"]);
     // 反向也成立：不说人话的不进名单
-    const silent = measureKeySymbols({ ...sources(), "probe.ts": 'export const quiet = 42;' });
+    const silent = measureKeySymbols({ ...sources(), "probe.ts": 'export const quiet = 42;' }, renderSources());
     expect(silent).toEqual(before);
   });
 
@@ -429,7 +436,7 @@ describe("t-186 · 名单跑得出来，两个人各加一行也不再撞", () =
     const src = sources();
     // 拿掉一个会说人话的符号：量出来的名单少一个，与仓库里那份对不上——闸就是这样红的
     const withoutBoard = Object.fromEntries(Object.entries(src).filter(([f]) => f !== "board.ts"));
-    const shrunk = measureKeySymbols(withoutBoard);
+    const shrunk = measureKeySymbols(withoutBoard, renderSources());
     expect(shrunk.length).toBeLessThan([...KEY_SYMBOLS].length);
     expect([...KEY_SYMBOLS].filter((x) => !shrunk.includes(x))).toContain("inFlightGroups");
   });
@@ -488,7 +495,7 @@ describe("t-184 · 按钮上的字也算人可见", () => {
     const src = Object.fromEntries(files.map((f) => [f, read(`../src/${f}`)]));
     expect(SPEAKING_MIN_CHARS).toBe(1);
     const oldRuler = [...new Set([...speakingOf(src, 6), ...decidingOf(src)])];   // 旧门槛，同一棵树
-    const newRuler = measureKeySymbols(src);                                       // 此刻的口径
+    const newRuler = measureKeySymbols(src, renderSources());                      // 此刻的口径
     expect(newRuler.length).toBe([...KEY_SYMBOLS].length);
     // 差额是算出来的，不是一个写死的数——写死那种，下一次有人加一个短的人可见词就得来改它，而那正是这条
     // 断言要防的那类漂移。它守的是「新尺子多出来的每一个，都是旧门槛漏掉的」，不是「恰好多 19 个」。
