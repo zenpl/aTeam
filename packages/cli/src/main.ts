@@ -19,7 +19,7 @@ import { seamAbsorbName } from "./seamparts.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
-import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
+import { titleAsShown, cardTitleLine, type InstructionIntent } from "@ateam/core";
 import { sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
 import { runImport, type Written } from "./import.js";
@@ -524,7 +524,15 @@ async function main(argv: string[]) {
     case "tell": {
       const [to, body] = withBody("to");
       const intent = str(a, "kind") as InstructionIntent | undefined;
-      if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
+      // t-265：**发之前先把这张卡在人那一页上的标题摆出来。** 三种坏法（第一句过长被截、带 markdown 标记、
+      // 被冒号截断）都是同一个人同一天踩的，三次都是发出去之后才发现的（判据 5）。
+      //
+      // 只提醒、不拦（判据 3）：发卡的人可能有理由那么写，**但他不许在不知情的情况下那么写**。
+      //
+      // 换掉的那句原话是「……牌桌上这张卡没有标题」——**它对牌桌成立，对人那一页不成立**：页面在核心算出
+      // 空标题时会兜底成「前 30 字＋…」。我实测过三种坏法两边的差（note 01M2FN4XVWSK0D6N2RH6D0CK5H），
+      // pm 09:51 裁 B：兜底搬进 core，两处一份判断。现在印的是 `titleAsShown`，也就是人真会看到的那个。
+      if (to === "human") console.error(cardTitleLine(titleAsShown(body).title));
       // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
       // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,

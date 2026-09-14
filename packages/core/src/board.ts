@@ -339,6 +339,29 @@ export function splitTitle(body: string): { title: string; detail: string } {
   return { title: first, detail: rest };
 }
 
+/**
+ * t-265（pm 09:51 裁 B）：**第一句长到当不成标题时，人那一页显示的是什么。**
+ *
+ * 这三行本来住在 `packages/server/src/html.ts`，于是这条路上有**两份判断**：核心这边算出空标题，
+ * 页面那边再兜底成「前 30 字＋…」。**空与截断是两个不同的东西**，而发卡的人只看得到核心那一份——
+ * 他会以为卡没有标题，实际上人看到的是一个被截断的标题。搬进来之后**两处只有一份判断**。
+ */
+export function tooLongTitle(text: string): { title: string; detail: string } {
+  const chars = [...text];
+  return chars.length <= TITLE_MAX_CHARS ? { title: text, detail: "" } : { title: chars.slice(0, TITLE_MAX_CHARS).join("") + "…", detail: text };
+}
+
+/**
+ * t-265 判据 1：**这条卡的标题，人那一页上会是什么样。**
+ *
+ * `splitTitle` 回答的是「第一句当不当得成标题」，**而那不是人看到的东西**——当不成的时候，
+ * 页面会拿前 30 字加「…」顶上。发卡之前要告诉发卡人的是后者。
+ */
+export function titleAsShown(body: string): { title: string; detail: string } {
+  const t = splitTitle(body);
+  return t.title ? t : tooLongTitle(body.trim());
+}
+
 export type SaidStatus = "received" | "requirement" | "task" | "live";
 /**
  * t-129: what a packed batch is worth right now. `current` — it is still packed on where production is. `stale` — it

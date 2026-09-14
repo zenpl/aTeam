@@ -48,7 +48,7 @@ export const SECOND_HOMES_ROOT = "packages";
 // （`--body-file` 那一路要求两条命令共用同一个取正文的地方）。344 → 343。
 // t-243 再搬走 5 句：i18n.ts 里 `saidStatus` 那份与 core `SAID_LABEL` 逐字相同的拷贝（四个词），
 // 以及 `sayHint` 里把其中三个词又抄了一遍的那句转述——它现在由 core 拼出来，文字一个字没变。343 → 338。
-export const SECOND_HOME_FROZEN: number = 338;
+export const SECOND_HOME_FROZEN: number = 337;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -59,7 +59,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 21,
-  "packages/cli/src/main.ts": 19,
+  "packages/cli/src/main.ts": 18,   // t-265：那句「……牌桌上这张卡没有标题」搬进 core（cardTitleLine）并改了措辞，这一处因此少一句
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,
   "packages/server/src/alerts.ts": 11,
@@ -150,6 +150,16 @@ export const DEPLOY_SOURCE = {
 export const overturnedLine = (surface: string, by: string) => `${surface} 验过，后被 ${by} 推翻`;
 
 /**
+ * t-265 · 发一张给人的卡之前，终端上先说出这张卡在人那一页上的标题会是什么。
+ *
+ * pm 判据 7 把做法收窄到这一句：**不解释坏在哪，只把算出来的标题原样摆出来**——发卡的人自己就看得出
+ * 它空了、被冒号截了、还是把星号带进去了。所以这里只有一个占位，没有三种诊断话。
+ *
+ * 算它的是 `titleAsShown`（core 一处），**不是命令行自己重写一份判断**（判据 1）。
+ */
+export const cardTitleLine = (title: string) => `标题：${title}`;
+
+/**
  * 一条人可见的话在 core 里的登记。
  *
  * `key` 唯一；`where` 说它出现在哪儿（挖层、卡、命令行……），因为 pd 05:50 那条规则要的是「每个状态指名它的
@@ -169,6 +179,7 @@ export interface Saying {
  * 它今天不全，而且不假装全——`SECOND_HOME_FROZEN` 那个数就是「还有多少句没进来」的诚实计量。
  */
 export const SAYINGS: readonly Saying[] = [
+  { key: "card.title", where: ["cli"], from: "cardTitleLine" },
   { key: "batch.deployed", where: ["page", "cli"], from: "BATCH_LINES.deployed" },
   { key: "batch.shipped", where: ["page", "cli"], from: "BATCH_LINES.shipped" },
   { key: "batch.stale", where: ["page", "cli"], from: "BATCH_LINES.stale" },
