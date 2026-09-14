@@ -9,6 +9,18 @@ import * as fmt from "../src/format.js";
 
 const HUMAN = "human";
 
+/**
+ * t-268：**这份夹具把事件钉死在 `2026-09-07T02:00:0xZ`，而 `reduce`／`board` 的 `now` 默认取真实时钟。**
+ *
+ * 于是 `2026-09-14T02:00:03Z` 一到，`alert.reached` 那条凭据满七天（`board.ts` 的 `REACH_STALE_MS`），
+ * `reachable` 自己掉成 `unproven`，这条用例在**四个 sha 上同时变红**——包括生产在跑的那一版。
+ * **没有人改坏任何东西，是日历走到了。**
+ *
+ * 修法是把时刻也当输入（`NOW`），不是把断言放宽：下面那几条断言一个字没动，
+ * 它原本测的那件事——**「一个记了地址、却一次都没真发成功过的状态，不许读起来像能用的」**——照旧被测着。
+ */
+const NOW = new Date("2026-09-07T02:01:00.000Z");   // 事件之后一分钟：凭据还新鲜，与「今天几号」无关
+
 async function at(kind: "none" | "misconfigured" | "unproven" | "reachable") {
   const store = new MemoryStore();
   let t = Date.parse("2026-09-07T02:00:00.000Z");
@@ -19,7 +31,7 @@ async function at(kind: "none" | "misconfigured" | "unproven" | "reachable") {
   // t-134: the proof is the service's own record of a call it made. Written by anyone else it is refused, and would
   // not be believed even if it were in the log.
   if (kind === "reachable") await emit({ kind: "reading", actor: SERVICE_ACTOR, surface: "project", key: "alert.reached", value: address, method: "外呼 全队停摆 真的送到了（HTTP 200）" });
-  return board(reduce(await store.read()), HUMAN);
+  return board(reduce(await store.read(), NOW), HUMAN, NOW);
 }
 
 describe("t-126 · CLI 与牌桌说同一句", () => {
