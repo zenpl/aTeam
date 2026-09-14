@@ -80,16 +80,28 @@ export function speaking(sources: Record<string, string>, min = SPEAKING_MIN_CHA
 export function deciding(sources: Record<string, string>): string[] {
   const froms = new Set(SAYINGS.map((x) => x.from.split(".")[0]));
   const out = new Set<string>();
+  const evidence = (body: string, self: string) =>
+    HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body)) ||
+    [...froms].some((x) => x !== self && new RegExp(`\\b${x}\\b`).test(body));
   for (const src0 of Object.values(sources)) {
     const src = blankComments(src0);
-    for (const m of src.matchAll(/export (?:const|function) (\w+)/g)) {
-      if ((REGISTRY_SYMBOLS as readonly string[]).includes(m[1])) continue;
-      const next = src.indexOf("\nexport ", m.index! + 1);
-      const body = src.slice(m.index!, next < 0 ? src.length : next);
-      if (!/=>|function/.test(body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
-      const byField = HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body));
-      const bySaying = [...froms].some((x) => x !== m[1] && new RegExp(`\\b${x}\\b`).test(body));
-      if (byField || bySaying) out.add(m[1]);
+    // t-264（pm 判据 8 裁 B）：**段边界认所有顶层声明，不只 `export`。**
+    //
+    // 旧版拿 `\nexport ` 当边界，于是夹在中间的非导出函数**整个折进上面那个 export 的身体里**。
+    // frontend 09-07 09:27 报的就是这个形状，`speaking()` 那一半被 t-204 顺带修好了，这一半原样活了六天。
+    const decls = [...src.matchAll(/^(?:export\s+)?(?:const|function)\s+(\w+)/gm)];
+    const seg = decls.map((d, i) => ({
+      name: d[1], exported: d[0].startsWith("export"),
+      body: src.slice(d.index!, i + 1 < decls.length ? decls[i + 1].index! : src.length),
+    }));
+    for (const e of seg) {
+      if (!e.exported || (REGISTRY_SYMBOLS as readonly string[]).includes(e.name)) continue;
+      if (!/=>|function/.test(e.body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
+      // **只切段还不够，会往反方向错。** 四个错配的符号里 `manual` **真的调** `common()`，而 `manual` 生成的是
+      // 角色手册那份人读的文档——只切段的话它会悄悄掉出闸外，那正是 pm 判据 7 里「静默放行」那个方向：
+      // 没有人会来吵。所以**一个非导出 helper 的证据，算给正文里真的调用了它的那些导出**。
+      const called = seg.filter((h) => !h.exported && new RegExp(`\\b${h.name}\\b`).test(e.body));
+      if (evidence(e.body + called.map((h) => h.body).join("\n"), e.name)) out.add(e.name);
     }
   }
   return [...out].sort();
