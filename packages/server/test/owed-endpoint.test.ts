@@ -34,8 +34,23 @@ describe("t-239 · 拉取回包里只剩一个数，全量在 GET /owed", () => 
     expect(JSON.stringify(r.owed)).not.toContain("旧的第 0 条");
   });
 
+  /**
+   * t-271：**这条用例原来会在 `2026-12-07` 那天自己变红，而成因不是夹具钉死了日期。**
+   *
+   * 它拿 `01M99999999999999999999999` 当「比任何事件都靠后」的哨兵，**而 ULID 前十位就是时刻**——
+   * 那一串逐字编码的是 `2026-12-07T22:16:43.049Z`。钟一过那天，`after=` 就不再排除任何东西，
+   * 这一拉取从「空回包」变成「整份日志」（实测 +85 天：`now` 1,700 字节 → 17,046），比值随即翻过来。
+   * 阈值恰好落在 `+80`（绿）与 `+85`（红）之间，就是因为那天距今 84.0 天。
+   *
+   * 所以修法与 `t-268` 那条不同、也必须不同：那条是夹具钉死了时刻而被测代码用真实时钟，**把时刻变成入参**即可；
+   * 这条是**哨兵本身带着一个会到来的日期**，冻住时钟只是把到期日推远，没有拿掉它。
+   * 用 ULID 的最大值 `7ZZZZZZZZZZZZZZZZZZZZZZZZZ`（时间戳 `2^48-1`，公元 10889 年）——
+   * **它「在一切之后」是按构造成立的，不是按今天几号成立的。** 断言一个字没动。
+   */
+  const AFTER_EVERYTHING = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
+
   it("**省了多少，两个数并排**：同一时刻的回包，带全量比只带一个数大一个量级", async () => {
-    const now = (await (await get("/events?after=01M99999999999999999999999")).text()).length;
+    const now = (await (await get(`/events?after=${AFTER_EVERYTHING}`)).text()).length;
     const full = (await (await get("/owed")).text()).length;
     expect(now).toBeLessThan(full / 5);
     expect(full - now, "这份夹具 30 条就差了几千字节；生产那一档 315 条差 121,817").toBeGreaterThan(5_000);
