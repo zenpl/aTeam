@@ -7,6 +7,10 @@ out="$root/packages/cli/dist/build.json"
 [ -d "$root/packages/cli/dist" ] || exit 0
 sha="$(git -C "$root" rev-parse HEAD 2>/dev/null || true)"
 [ -n "$sha" ] || exit 0                     # 不在 git checkout 里：不盖章，不猜
+# qa 09:53 在真树上逐种量过：`git diff --quiet` **只看未暂存的已跟踪改动**，于是
+# 「改了并 git add」与「新增未跟踪的源文件」两种脏法都被报成 dirty=false——
+# **三种脏法里有两种它在假装。** `status --porcelain` 三种都看得见（dist/ node_modules/ .ateam/ 都在 .gitignore 里，
+# 所以构建自己的产物不会把树弄脏）。
 dirty=false
-git -C "$root" diff --quiet 2>/dev/null || dirty=true
+[ -z "$(git -C "$root" status --porcelain 2>/dev/null)" ] || dirty=true
 printf '{"sha":"%s","dirty":%s,"at":"%s"}\n' "$sha" "$dirty" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$out"
