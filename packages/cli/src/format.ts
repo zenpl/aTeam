@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
+import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -216,7 +216,8 @@ export function board(b: Board, me: string): string {
     const st = p.status ?? (p.present === false ? "missing" : "listening");
     // t-140 · pd 05:42: say what the server can see — when this role last read the log — not whether it is listening,
     // which we do not observe. A node's own watch dying is its own business and its own terminal (t-102).
-    const label = st === "listening" ? `在读  ${ago(p.last_seen!)} 前`
+    // t-262：listening 那一行不再印一个合成的数。两个时刻、两个动作名，一个结论都不给——理由在 core 的 presenceClocks。
+    const label = st === "listening" ? presenceClocks(p.last_pull ? ago(p.last_pull) : null, p.last_event ? ago(p.last_event) : null)
       : st === "deaf" ? `${p.last_pull ? `${ago(p.last_pull)} 没读日志` : "从未读过日志"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
     out.push(`  ${name.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);

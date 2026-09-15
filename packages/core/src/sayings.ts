@@ -48,14 +48,14 @@ export const SECOND_HOMES_ROOT = "packages";
 // （`--body-file` 那一路要求两条命令共用同一个取正文的地方）。344 → 343。
 // t-243 再搬走 5 句：i18n.ts 里 `saidStatus` 那份与 core `SAID_LABEL` 逐字相同的拷贝（四个词），
 // 以及 `sayHint` 里把其中三个词又抄了一遍的那句转述——它现在由 core 拼出来，文字一个字没变。343 → 338。
-export const SECOND_HOME_FROZEN: number = 337;
+export const SECOND_HOME_FROZEN: number = 336;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/i18n.ts": 158,
-  "packages/cli/src/format.ts": 32,
+  "packages/cli/src/format.ts": 31,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 21,
@@ -157,6 +157,24 @@ export const overturnedLine = (surface: string, by: string) => `${surface} 验�
  *
  * 算它的是 `titleAsShown`（core 一处），**不是命令行自己重写一份判断**（判据 1）。
  */
+/**
+ * t-262：**「谁在」那一行的两个时刻，分开说。**
+ *
+ * 在这之前这一行印的是 `在读  <last_seen> 前`——一个数，而且取的是 `last_seen`（拉取与写入之晚的那个）。
+ * 两处都不对：
+ * ① **那个数合成过**。`pull()` 每次都无条件推游标（`packages/core/src/pull.ts:95`），`ateam watch` 每 60 秒走一遍，
+ *    所以「拉取很近」证明的是那个循环还在跑——容器活着、网络通、钥匙有效——**它不证明任何人读了任何东西**。
+ *    一个九十分钟不产出的节点与一个正在干活的节点，在这一个数上逐字相同（`presence-two-clocks.test.ts` 钉住了这一点）。
+ * ② **「在读」是个结论**，而服务端没有依据下它：一小时不出声可能是在干重活，分辨这两者就是在猜。
+ *
+ * 所以这里只给两个时刻、两个动作名，**一个结论都不给**，让读的人自己看。
+ * 「从没拉过 / 从没写过」与「刚刚」不是一回事，各自说各自的。
+ */
+export const PRESENCE_NEVER_PULLED = "从没拉过";
+export const PRESENCE_NEVER_WROTE = "从没写过";
+export const presenceClocks = (pulledAgo: string | null, wroteAgo: string | null) =>
+  `拉取 ${pulledAgo ? `${pulledAgo} 前` : PRESENCE_NEVER_PULLED}   写入 ${wroteAgo ? `${wroteAgo} 前` : PRESENCE_NEVER_WROTE}`;
+
 export const cardTitleLine = (title: string) => `标题：${title}`;
 
 /**
@@ -180,6 +198,7 @@ export interface Saying {
  */
 export const SAYINGS: readonly Saying[] = [
   { key: "card.title", where: ["cli"], from: "cardTitleLine" },
+  { key: "presence.clocks", where: ["cli"], from: "presenceClocks" },
   { key: "batch.deployed", where: ["page", "cli"], from: "BATCH_LINES.deployed" },
   { key: "batch.shipped", where: ["page", "cli"], from: "BATCH_LINES.shipped" },
   { key: "batch.stale", where: ["page", "cli"], from: "BATCH_LINES.stale" },
