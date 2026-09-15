@@ -813,6 +813,10 @@ export const WORDING_AT_FREEZE: readonly string[] = [
   "a1ac3045dc43",
   "b55ebd293050",
   "c46b7304c72c",
+  "02221937c5ec",
+  "1b1e5fa9df5a",
+  "61cbf62d907a",
+  "8b67881003d5",
 ];
 
 /**

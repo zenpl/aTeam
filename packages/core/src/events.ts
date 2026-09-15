@@ -555,6 +555,7 @@ export const KEY_SYMBOLS = [
   "SHOWS_GATE_BLIND",
   "SHOWS_RULE",
   "SPAN_UNDER_A_MINUTE",
+  "STALLED_HEADING",
   "STAND_IN_ASK_TITLE",
   "STAND_IN_OPTIONS",
   "STOOD_IN_PREFIX",
@@ -656,6 +657,7 @@ export const KEY_SYMBOLS = [
   "slimBoard",
   "span",
   "splitRelease",
+  "stalledLine",
   "standInBlocker",
   "standIns",
   "staticAllocation",
@@ -1370,6 +1372,20 @@ export const denominatorUnknown = "分母算不出：这条包含事实没写「
 export const noSuchObject = (shas: string[]) => `本地 git 里没有 ${shas.map((x) => x.slice(0, 7)).join(" 和 ")} 这个对象`;
 export const objectNotFound = (seamId: string, sha: string, other: string) =>
   `${seamId}：${sha.slice(0, 7)}（${other} 的证据 sha）这个对象我在本地 git 里找不到——占位、写错、或还没 fetch。这不是说你没合并，是说我看不见，所以判不了。三条出路，从窄到宽：先 git fetch 把它取回来；若那个 sha 本身是错的，请 ${other} 的 owner 用一条更正把它改对；确实取不回来就 --no-seam-check-for ${seamId} 单独免掉这一条（其余接缝照判），并在证据里说明为什么`;
+/**
+ * t-279：**「有人在听、却很久没动，而别人全卡在他身上」这一行。**
+ *
+ * 两个时刻并排说，因为「在听」正是从拉取那一侧来的，而卡住的是写入那一侧——**把它们并排放着，
+ * 读的人自己就看得出「在听」证明不了什么**（t-262 立的那个区分）。
+ * 后面两个数是「等着它的是什么」，没有它们这一行就只是「有人闲着」，那不是事故（判据 4）。
+ * 受众是队伍的命令行牌桌，不上人那一页（判据 1）。
+ */
+/** t-279：这一格在命令行牌桌上的标题。住在 core：`format.ts` 那份「第二个家」只减不增。 */
+export const STALLED_HEADING = "STALLED (在听，但没在动，而有人等着)";
+export const stalledLine = (role: string, sinceWrote: string, sincePulled: string, awaitingVerdict: number, overdueUnacked: number) =>
+  `${role} 在听（${sincePulled}前还在拉），但 ${sinceWrote}没写过任何事件；` +
+  [awaitingVerdict ? `${awaitingVerdict} 件等它判` : "", overdueUnacked ? `${overdueUnacked} 条指令逾期没 ack` : ""].filter(Boolean).join("、");
+
 /** t-201：这一条被单独免掉时落在日志上的那句——免掉不等于没发生。 */
 export const seamWaived = (seamId: string, key: string, owner: string) =>
   `${seamId}：这一条被 --no-seam-check-for ${key} 单独免掉了，其余接缝照判；免的理由由 ${owner} 的 owner 写在证据里`;

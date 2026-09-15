@@ -1,4 +1,4 @@
-import { CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
+import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -719,6 +719,8 @@ export interface Board {
   roles: string[];
   /** Every responsibility a role can hold, and whether someone actually holds it right now (t-059). */
   coverage: BoardCoverage[];
+  /** t-279：在听、却很久没写入、而且有人等着的那几个角色。**只给命令行牌桌，不上 GET /**（判据 1）。 */
+  stalled: BoardStalled[];
   /** t-069: how to reach the human when away. set: the fact exists (however it got there); skipped: 先不要 and no fact; else unanswered. */
   /**
    * t-119 (pd 01:21 的通则)：安全兜底的状态由**可达性**证明，不由字符串存在证明。四态说的都是「你收不收得到」，
@@ -1124,6 +1126,57 @@ export function responsibilityBoundaries(s: State): Map<string, string> {
   return out;
 }
 
+/**
+ * t-279：**牌桌看不出「有人在听、却很久没动，而别人全卡在他身上」——今天为此付了两小时。**
+ *
+ * 那天的真实形状：`qa` `14:27:02` 之后再没写过任何事件，到 `17:30` 是三小时；同一刻它十秒前还在拉。
+ * 四件交付、六条指令压在它名下，而牌桌 `COVERAGE` 一格没报。成因：`listening` 只说明「五分钟内拉过一次」，
+ * 而拉取由后台 `watch` 推——**`watch` 活着不等于人在干活**（t-262 把这两个时刻分开印，正是为了这个）。
+ *
+ * 这里用的就是 t-262 那个区分：**看的是写入那一侧**（`presence.last_event`），不是 `status`。
+ *
+ * **门槛 90 分钟，依据是量出来的，不是拍的**（九天真日志，四个在干活的角色）：
+ *   相邻两条自己事件的间隔——中位 `0.2 / 0.4 / 0.6 / 0.4` 分钟，p90 `2.8 / 3.6 / 3.6 / 3.9` 分钟，
+ *   p99 `68.0 / 37.7 / 47.8 / 90.9` 分钟。**90 分钟压在四个 p99 的上沿**：一个正在干活的人几乎不会自然越过它。
+ *   九天里越过 90 分钟的间隔共 71 次（31/14/15/11），而越过 120 分钟的是 42 次——**今天这件事的代价是两小时，
+ *   门槛定在 120 就救不了它**，所以取 90。
+ *
+ * **门槛以下什么都不说**（判据 5），**没人等它也什么都不说**（判据 4：那是休息，不是事故）。
+ * 「等着它」要有实义，所以给两个数：**几件 `done` 等它判**（只对持验收职责的角色算，且不算它自己的活——
+ * 自己的活它本来就不能判），**几条指令逾期还没 ack**。
+ */
+export const STALLED_AFTER_MS = 90 * 60_000;
+export interface BoardStalled {
+  role: string;
+  /** 多久没写过事件了（秒）。这是本件看的那一侧。 */
+  idle_event_s: number;
+  /** 多久没拉过了（秒）。并排给出来，因为「在听」正是从它来的。 */
+  idle_pull_s: number | null;
+  awaiting_verdict: number;
+  overdue_unacked: number;
+  line: string;
+}
+export function stalledRoles(s: State, b: Board, now: Date, thresholdMs = STALLED_AFTER_MS): BoardStalled[] {
+  const nowIso = now.toISOString();
+  const out: BoardStalled[] = [];
+  for (const p of b.presence) {
+    if (!p.role || p.status !== "listening") continue;
+    if (p.idle_event_s === null || p.idle_event_s * 1000 < thresholdMs) continue;
+    const verifier = (roleResponsibilities(s)[p.role] ?? []).includes(VERIFY_RESPONSIBILITY);
+    // 「等它判」= 此刻它真的判得了的那些：**一次判决都还没有过**的 done，且不是它自己的活（自己的判不了）。
+    // 已经判过 repo、在等生产的那几件不算——它们等的是发车，不是它。**这一条是 pm 05:15 纠正过我的那个口径**：
+    // 该问的是「此刻能不能判」，不是「有没有被判过」；我当时拿一条机械规则换掉了一次正确的判断。
+    const awaiting_verdict = verifier ? [...s.tasks.values()].filter((t) => t.status === "done" && t.owner !== p.role && !t.verifications.length).length : 0;
+    const overdue_unacked = [...s.instructions.values()].filter((st) =>
+      st.instruction.to === p.role && st.instruction.actor !== p.role && !st.acked_at && !st.withdrawn && st.instruction.ack_by < nowIso).length;
+    if (!awaiting_verdict && !overdue_unacked) continue;     // 没人等它 ⇒ 那是休息，不是事故
+    out.push({ role: p.role, idle_event_s: p.idle_event_s, idle_pull_s: p.idle_pull_s,
+      awaiting_verdict, overdue_unacked,
+      line: stalledLine(p.role, span(p.idle_event_s * 1000) ?? "", span((p.idle_pull_s ?? 0) * 1000) ?? "", awaiting_verdict, overdue_unacked) });
+  }
+  return out;
+}
+
 /** Who holds what right now: one row per responsibility a role can hold; the page and the CLI show the ones nobody holds. */
 export function coverage(s: State, now: Date, listenWindowMs = LISTEN_WINDOW_MS): BoardCoverage[] {
   const packing = roleResponsibilities(s);
@@ -1172,6 +1225,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     roles: projectRoles(s),
     role_names: roleNames(s),
     coverage: [],
+    stalled: [],
     allocation: { warnings: [], summary: "" },
     stand_ins: { total: 0, since: "", by_task: [], summary: "" },
     alert: { status: "unanswered" },
@@ -1405,6 +1459,8 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   b.allocation.warnings = allocation(s, now, human);
   b.allocation.summary = allocationSummary(b.allocation.warnings);
   b.stand_ins = standIns(s, now);   // t-130: for the dig layer and the reports, never 一眼
+  // t-279：放在这里是因为它要读 b.presence（上面刚填完的那几行），而它看的是写入那一侧，不是 status。
+  b.stalled = stalledRoles(s, b, now);
   for (const actor of [...s.presence.keys()].sort()) {
     if (seen.has(actor) || actor === SERVICE_ACTOR) continue;
     b.presence.push(row(actor, undefined));

@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks } from "@ateam/core";
+import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks, STALLED_HEADING } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -221,6 +221,13 @@ export function board(b: Board, me: string): string {
       : st === "deaf" ? `${p.last_pull ? `${ago(p.last_pull)} 没读日志` : "从未读过日志"}（${ago(p.last_event!)} 前还说过话）`
       : `缺人  ${p.last_seen ? `${ago(p.last_seen)}` : "从未出现"}`;
     out.push(`  ${name.padEnd(10)} ${label}${p.push && p.push !== "none" ? `  可推 ${p.push}` : ""}`);
+  }
+  // t-279：**「有人在听、却很久没动，而别人全卡在他身上」。** 只印在这儿，不上人那一页（判据 1）：
+  // 那一页要不要出卡、门槛多少、话怎么说，是 t-266 留给 pd 的那一半，pd 缺席也不搬。
+  // 整句来自 core（stalledLine），这里不新造一句人可见的话。
+  if (b.stalled?.length) {
+    out.push("", STALLED_HEADING);
+    for (const x of b.stalled) out.push(`  ${nameRoles(x.line, who, b.roles ?? [])}`);
   }
   const gaps = (b.coverage ?? []).filter((c) => c.status !== "held");
   if (gaps.length) {
