@@ -2,7 +2,7 @@
  * t-011 on the CLI side: `tell human --option A --option B --default B` parses, and sync/board show
  * the options and, once chosen, the choice next to the instruction.
  */
-// ack_by is far in the future on purpose: since t-022 an ask with a default answers itself once ack_by passes on the wall clock.
+// ack_by 必须「还没到」：t-022 起，带默认的卡一旦 ack_by 在挂钟上走过去，它自己就按默认答了。见下面的 NEVER_DUE。
 import { describe, it, expect } from "vitest";
 import { MemoryStore, append, reduce, board, Rejected, type NewEvent, type ClientEvent } from "@ateam/core";
 import { parse, list, str } from "../src/args.js";
@@ -13,6 +13,17 @@ import { partsSkipped, partRefused, PART_NAMES, EXIT_PARTIAL } from "@ateam/core
 import { ClientError } from "../src/client.js";
 
 const HUMAN = "human";
+
+/**
+ * t-272：这里要的是「这张卡还没到期」，不是「到期在 2099 年」。写死一个远期日期是在赌钟走不到那儿——
+ * 赌输的那天，`b.instructions[...].status` 会从 pending 变成 overdue，测试红在与它要守的那件事无关的地方。
+ *
+ * 照 t-271 那一路：换成一个**按构造在一切之后**的值，而不是换一个更远的日期。到期这件事，代码里比两次——
+ * `board.ts` 比 `Date.parse(ack_by) - now.getTime()`，`rules.ts:420` 比字符串 `ack_by < now.toISOString()`——
+ * 而 `Date.prototype.toISOString()` 在四位年份下能吐出的最大值就是下面这个。钟读到什么，两种比法都排在它前面；
+ * 比它更晚的值在这个表示法里写不出来，所以不存在「再往后挪一点」这一步。
+ */
+const NEVER_DUE = "9999-12-31T23:59:59.999Z";
 
 describe("t-011 · options on tell human, choice shown in sync and board", () => {
   it("--option repeats and --default is a plain flag", () => {
@@ -26,9 +37,9 @@ describe("t-011 · options on tell human, choice shown in sync and board", () =>
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
+    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
 
-    expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 00:00]  options: A | B (default B)");
+    expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 23:59]  options: A | B (default B)");
     let b = board(reduce(await store.read()), HUMAN);
     expect(fmt.board(b, "pm")).toContain("unread    pm → human: auth: A or B?  [A | B; default B]");
     expect(fmt.board(b, "pm")).not.toContain("DECIDED");
@@ -49,8 +60,8 @@ describe("t-014 · ateam decide validates before it acks", () => {
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
-    const plain = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "deploy now", ack_by: "2099-01-01T00:00:00.000Z" });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
+    const plain = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "deploy now", ack_by: NEVER_DUE });
     const emitted: NewEvent[] = [];
     const client = {
       board: async () => board(reduce(await store.read()), HUMAN),
@@ -120,7 +131,7 @@ describe("t-232 · decide 的两件有先后：ack 没成，决定就不发，�
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: "2099-01-01T00:00:00.000Z", options: ["A", "B"], default: "B" });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
     return { store, ask, client: { board: async () => board(reduce(await store.read()), HUMAN) } };
   }
 
