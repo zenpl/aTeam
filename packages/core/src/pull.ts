@@ -71,7 +71,7 @@ export function capBytes(all: Event[], limit: number): { events: Event[]; more: 
   return { events: all, more: false };
 }
 
-export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date(), limit: number = PULL_BYTES): Promise<PullResult> {
+export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date(), limit: number = PULL_BYTES, opts: { plain?: boolean } = {}): Promise<PullResult> {
   const { events, more } = capBytes(await store.since(after), limit);
   const nowIso = now.toISOString();
   const for_me: Event[] = [];
@@ -92,7 +92,9 @@ export async function pull(store: EventStore, me: string, after: string | null, 
     const { events: all } = await store.read();
     taken_back_seen = earlier.filter((id) => all.some((e) => e.id === id && e.kind === "instruction" && e.to === me));
   }
-  await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso });
+  // t-257：`opts.plain` 是「这一次不带 wait」——只有它为真时才写 `plain_pull_at`，其余时候不给，
+  // 由存储保留旧值。零新增写入：这一行本来每次拉取都要写。
+  await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso, ...(opts.plain ? { plain_pull_at: nowIso } : {}) });
   // 投递只记这一页里真的给了的那些——**记了却没给，就是「已送达」变成假话**，而那恰恰是这道闸要防的
   return { events, for_me, cursor, ...(more ? { more: true } : {}), ...(taken_back_seen?.length ? { taken_back_seen } : {}) };
 }

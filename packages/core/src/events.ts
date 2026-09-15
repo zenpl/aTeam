@@ -489,6 +489,7 @@ export const KEY_SYMBOLS = [
   "BODY_FILE_HELP",
   "BOTH_BODY_AND_FILE",
   "CLI_SHA_METHOD",
+  "CLI_SHA_UNKNOWN_PREFIX",
   "CONTACT_ASK",
   "CONTACT_ASK_WAS",
   "CONTACT_FILL",
@@ -590,6 +591,8 @@ export const KEY_SYMBOLS = [
   "checkShape",
   "classifyFollowUp",
   "cliBehindLine",
+  "cliShaUnknownAfterPoll",
+  "cliShaUnknownAfterSync",
   "cliStaleBuildLine",
   "coverage",
   "defaultMissed",
@@ -1482,6 +1485,17 @@ export interface Cursor {
   actor: string;
   last_event_id: string | null;
   at: string;
+  /**
+   * t-257：**这个节点最后一次「普通拉取」（不带 wait）的时刻，没有过就是 undefined。**
+   *
+   * 量出来的事实：`sync` 默认不带 `wait`，`watch` 恒带，而 `sync --wait` 也带——所以**带了分不出是哪一种，
+   * 不带则一定是一次普通 `sync`**。这是单向信号，只用它排除「从没跑过 sync」那一种成因，不反过来用。
+   *
+   * 记在游标上，不记成日志事件：**游标本来每次拉取就写，所以这是零新增写入**；而日志一个字没多，
+   * `built ≡ served`（t-062）因此不受影响。写的时候只在「这一次是普通拉取」时给值，
+   * 其余时候不给——存储那一侧要**保留旧值**，不能被 undefined 抹掉。
+   */
+  plain_pull_at?: string;
 }
 
 /** Server-side fact: when a recipient first pulled an instruction. */

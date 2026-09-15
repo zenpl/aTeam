@@ -172,7 +172,12 @@ export interface InstructionState {
   chosen?: { option: string; by: string; at: string; note?: string };
 }
 
-export interface Presence { last_pull: string | null; last_event: string | null }
+export interface Presence {
+  last_pull: string | null;
+  last_event: string | null;
+  /** t-257：这个节点最后一次不带 `wait` 的拉取（一次普通 `sync`）；从没有过就是 null。见 Cursor 上那段说明。 */
+  plain_pull_at?: string | null;
+}
 
 /** The later of the two: the old single "last seen". */
 export function lastSeen(p: Presence | undefined): string | null {
@@ -565,6 +570,8 @@ export function advance(s: State, log: Log, human = "human"): State {
   for (const c of log.cursors) {
     const pc = s.presence.get(c.actor) ?? { last_pull: null, last_event: null };
     if (!pc.last_pull || pc.last_pull < c.at) pc.last_pull = c.at;
+    // t-257：只往前，且没有就保持没有——一次长轮询不会把「它跑过普通 sync」抹掉。
+    if (c.plain_pull_at && (!pc.plain_pull_at || pc.plain_pull_at < c.plain_pull_at)) pc.plain_pull_at = c.plain_pull_at;
     s.presence.set(c.actor, pc);
     // t-147: how far this actor has read. Ids order the log, so "their cursor passed it" is a comparison.
     const seen = s.read_upto.get(c.actor);

@@ -219,6 +219,14 @@ export function createApp(opts: ServerOptions) {
         const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
       }
+      // t-257：**「你手上的命令行旧了」那句提醒此刻整个住在命令行里，于是最旧的那个人听不到它。**
+      // 这里发的是一条普通指令，所以一个不含 t-211 的 CLI 也照样把它印出来（判据 1）。
+      // 不猜它有多旧（判据 3）：服务端知道一个节点是哪一版的唯一来源就是它自报，而旧节点恰恰不自报。
+      for (const role of projectRoles(state)) {
+        const card = cliShaUnknownCard(state, role, at);
+        if (card) out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: role, body: card,
+          ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() }));
+      }
       // t-069 / pm 22:39: the contact card exists only when the project asked for it (fact project:alert.ask) and no
       // address is known yet; once, never repeated. 填写 / 先不要 on it work as before (t-071).
       if (contactWanted(state) && !alertContact(state).value && ![...state.instructions.values()].some((st) => isContactAsk(st.instruction.body))) {
@@ -736,17 +744,10 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "GET" && path === "/events") {
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
-        // t-257：**那条「你这支旧了」的提醒此刻整个住在命令行里，于是最旧的那个人听不到它。**
-        // 服务端唯一能知道一个节点是哪一版的来源，就是它自报（t-211 的 recordCliSha），而旧节点恰恰不自报。
-        // 所以这里不猜它有多旧，只说一句「我说不出你是哪一版」，并按这一次带不带 wait 给出分得开成因的下一步。
-        // 发在 pull 之前，所以它随这一批一起送到——**一个不含 t-211 的 CLI 照样把它当普通指令印出来**。
-        const card = cliShaUnknownCard(await stateFor(projectId, store), actor, wait > 0, after === null);
-        if (card) {
-          const e = await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: actor, body: card,
-            ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() });
-          bus.emit("append", { project: projectId, e });
-        }
-        let result = await pull(store, actor, after, real());
+        // t-257：**这一次是不是一次普通拉取（不带 wait），记进游标那一行。**
+        // 游标本来每次拉取就写（pull.ts 末尾的 setCursor），所以这是零新增写入；而游标不是日志事件，
+        // 所以 built≡served 一个字不动。board 那条路要靠它分成因：见过不带 wait 的 ⇒ 这个节点跑过普通 sync。
+        let result = await pull(store, actor, after, real(), undefined, { plain: wait === 0 });
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, wait);

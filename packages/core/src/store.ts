@@ -171,7 +171,9 @@ export class MemoryStore implements EventStore {
     return [...this.refused];
   }
   async setCursor(c: Cursor): Promise<void> {
-    this.cursors.set(c.actor, c);
+    // t-257：`plain_pull_at` 不给就保留旧的——一次长轮询不该把「它跑过普通 sync」这件事抹掉。
+    const had = this.cursors.get(c.actor)?.plain_pull_at;
+    this.cursors.set(c.actor, c.plain_pull_at === undefined && had !== undefined ? { ...c, plain_pull_at: had } : c);
   }
   async recordDelivery(d: Delivery): Promise<void> {
     if (!this.deliveries.some((x) => x.event_id === d.event_id && x.to === d.to)) this.deliveries.push(d);

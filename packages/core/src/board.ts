@@ -1063,19 +1063,32 @@ export const cliShaUnknownAfterPoll = () =>
   `${CLI_SHA_UNKNOWN_PREFIX}：这个节点从没自报过构建 sha，而这一次你是长轮询过来的（watch 或 sync --wait），我分不出是哪一种。三种可能：只挂 watch 从不 sync（偶尔跑一次 ateam sync）、这支早于 t-211（git pull && pnpm build）、或自报在你那儿失败了。在它说得出之前，你比生产旧也没人会告诉你`;
 
 /**
- * 这一次拉取要不要给这个节点发那张卡；不发就是 null。四个条件，缺一不发：
- * ① 它是这个项目的一个角色（不是人、不是服务自己）；
+ * 要不要给这个节点发那张卡；不发就是 null。这是在**牌桌那条路**上问的（`GET /board` 的 remind），
+ * 不在拉取那条路上——pm 17:02 的裁定：在拉取上发会让一次读往日志里写一笔，撞的是 t-062「built ≡ served」，
+ * 而队里此刻没有验收者去重验吃那份夹具的六个用例。**信号在拉取时记进游标（零新增写入），在这里用。**
+ *
+ * 五个条件，缺一不发：
+ * ① 它是这个项目的一个角色（不是服务自己）；
  * ② 它**从没有过**有效的 `cli.sha` 读数（有过就说得出，这张卡没有意义）；
- * ③ 这不是它的第一次拉取（`after` 非空）——一个刚 join 完、还没跑过第一条 `sync` 的新节点不该先挨一句；
- * ④ 这张卡还没发过。**只发一次**：发过之后它仍然不自报，再说第二遍是催，而这句话催不出任何东西。
+ * ③ 它确实在场过（有过一次拉取）；
+ * ④ **过了宽限期**：一个刚 join 完、还没跑过第一条 `sync` 的新节点不该先挨一句。宽限从它最近一次
+ *    普通拉取算起（没有过普通拉取的，从它最后一次说话算起），要求比 `graceMs` 更早。
+ * ⑤ 这张卡还没发过。**只发一次**：发过之后它仍然不自报，再说第二遍是催，而这句话催不出任何东西。
+ *
+ * 说哪一句由 `plain_pull_at` 决定：有 ⇒ 它跑过普通 `sync`，③「从没跑过 sync」被排除，只说两种成因，
+ * **不写「偶尔跑一次 sync」——那是叫人去修没坏的东西**；没有 ⇒ 三种都说。
  */
-export function cliShaUnknownCard(s: State, role: string, longPoll: boolean, firstPull: boolean): string | null {
+export const CLI_SHA_CARD_GRACE_MS = 10 * 60_000;
+export function cliShaUnknownCard(s: State, role: string, now: Date, graceMs = CLI_SHA_CARD_GRACE_MS): string | null {
   if (role === SERVICE_ACTOR || !projectRoles(s).includes(role)) return null;
   if (cliShaOf(s, role)) return null;
-  if (firstPull) return null;
+  const p = s.presence.get(role);
+  if (!p?.last_pull) return null;
+  const since = p.plain_pull_at ?? p.last_event;
+  if (!since || now.getTime() - Date.parse(since) < graceMs) return null;
   for (const st of s.instructions.values())
     if (st.instruction.actor === SERVICE_ACTOR && st.instruction.to === role && st.instruction.body.startsWith(CLI_SHA_UNKNOWN_PREFIX)) return null;
-  return longPoll ? cliShaUnknownAfterPoll() : cliShaUnknownAfterSync();
+  return p.plain_pull_at ? cliShaUnknownAfterSync() : cliShaUnknownAfterPoll();
 }
 
 export function projectRoles(s: State): string[] {
