@@ -1040,57 +1040,6 @@ export function presenceStatus(s: State, role: string, now: Date, listenWindowMs
 }
 
 /** The project's roles: the latest valid `project:roles` reading, else the default five. */
-/**
- * t-257：**「你手上的命令行旧了」这句提醒只在已经装了它的地方出声——最旧的那个人恰好听不到。**
- *
- * 我量过（读数 `repo:t257.server.knows = "nothing"`）：旧 CLI 与新 CLI 发给服务端的头**逐字相同**
- * （都是 `x-actor` 与 `x-ateam-client: 2`），两支唯一的差别是新的那支多发一次 `POST /events` 自报构建 sha
- * （t-211 的 `recordCliSha`）。**所以服务端知道一个节点是哪一版的唯一来源，就是它自报——而旧节点恰恰不自报。**
- * 那条提醒此刻整个算在命令行那一侧，于是它到不了该到的人。
- *
- * 这里不猜它有多旧（判据 3：说不出就说不知道，不许报平安）。能诚实说的只有一句：**我说不出你是哪一版**，
- * 外加一个能把成因分开的下一步。三种成因：① 早于 t-211；② 自报在它那儿悄悄失败（没有构建章、或那次写入被拒）；
- * ③ 这支是新的、好好的，只是从没跑过 `sync`（`watch` 不自报，`join` 也不自报）。
- *
- * **这一次的请求带不带 `wait`，决定说哪一句**（实测：`sync` 默认不带；`watch` 恒带；而 `sync --wait` 也带，
- * 所以带 `wait` 分不出是哪一种，不带则一定是一次普通 `sync`）：
- * 不带 ⇒ ③ 被排除，只说 ①②，**不写「偶尔跑一次 sync」——那是叫人去修没坏的东西**；带 ⇒ 三种都说。
- */
-export const CLI_SHA_UNKNOWN_PREFIX = "服务端说不出你这支命令行是哪一版";
-export const cliShaUnknownAfterSync = () =>
-  `${CLI_SHA_UNKNOWN_PREFIX}：你这一次跑的是普通 sync，而这个节点从没自报过构建 sha。两种可能：这支早于 t-211（git pull && pnpm build），或自报在你那儿失败了（dist 边上没有构建章，跑一次 pnpm build；或那次写入被拒）。在它说得出之前，你比生产旧也没人会告诉你`;
-export const cliShaUnknownAfterPoll = () =>
-  `${CLI_SHA_UNKNOWN_PREFIX}：这个节点从没自报过构建 sha，而这一次你是长轮询过来的（watch 或 sync --wait），我分不出是哪一种。三种可能：只挂 watch 从不 sync（偶尔跑一次 ateam sync）、这支早于 t-211（git pull && pnpm build）、或自报在你那儿失败了。在它说得出之前，你比生产旧也没人会告诉你`;
-
-/**
- * 要不要给这个节点发那张卡；不发就是 null。这是在**牌桌那条路**上问的（`GET /board` 的 remind），
- * 不在拉取那条路上——pm 17:02 的裁定：在拉取上发会让一次读往日志里写一笔，撞的是 t-062「built ≡ served」，
- * 而队里此刻没有验收者去重验吃那份夹具的六个用例。**信号在拉取时记进游标（零新增写入），在这里用。**
- *
- * 五个条件，缺一不发：
- * ① 它是这个项目的一个角色（不是服务自己）；
- * ② 它**从没有过**有效的 `cli.sha` 读数（有过就说得出，这张卡没有意义）；
- * ③ 它确实在场过（有过一次拉取）；
- * ④ **过了宽限期**：一个刚 join 完、还没跑过第一条 `sync` 的新节点不该先挨一句。宽限从它最近一次
- *    普通拉取算起（没有过普通拉取的，从它最后一次说话算起），要求比 `graceMs` 更早。
- * ⑤ 这张卡还没发过。**只发一次**：发过之后它仍然不自报，再说第二遍是催，而这句话催不出任何东西。
- *
- * 说哪一句由 `plain_pull_at` 决定：有 ⇒ 它跑过普通 `sync`，③「从没跑过 sync」被排除，只说两种成因，
- * **不写「偶尔跑一次 sync」——那是叫人去修没坏的东西**；没有 ⇒ 三种都说。
- */
-export const CLI_SHA_CARD_GRACE_MS = 10 * 60_000;
-export function cliShaUnknownCard(s: State, role: string, now: Date, graceMs = CLI_SHA_CARD_GRACE_MS): string | null {
-  if (role === SERVICE_ACTOR || !projectRoles(s).includes(role)) return null;
-  if (cliShaOf(s, role)) return null;
-  const p = s.presence.get(role);
-  if (!p?.last_pull) return null;
-  const since = p.plain_pull_at ?? p.last_event;
-  if (!since || now.getTime() - Date.parse(since) < graceMs) return null;
-  for (const st of s.instructions.values())
-    if (st.instruction.actor === SERVICE_ACTOR && st.instruction.to === role && st.instruction.body.startsWith(CLI_SHA_UNKNOWN_PREFIX)) return null;
-  return p.plain_pull_at ? cliShaUnknownAfterSync() : cliShaUnknownAfterPoll();
-}
-
 export function projectRoles(s: State): string[] {
   const v = rolesFact(s);
   if (Array.isArray(v) && v.every((x) => typeof x === "string") && v.length) return v as string[];

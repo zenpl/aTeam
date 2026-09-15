@@ -28,7 +28,9 @@ describe("t-062 · Builder", () => {
     expect(p.for_me.map((e) => e.id)).toEqual([i.id]);
     const log = await b.log();
     expect(log.deliveries).toEqual([{ event_id: i.id, to: "dev", at: new Date(start + min(2)).toISOString() }]);
-    expect(log.cursors).toEqual([{ actor: "dev", last_event_id: i.id, at: new Date(start + min(2)).toISOString() }]);
+    // t-257：游标上多了一格 `plain_pull_at`——「这个节点最后一次不带 wait 的拉取」。builder 的 pull 就是一次
+    // 普通拉取，所以它也写这一格；这条断言列的是「字段名与服务端一致」，两边一致了，名单就跟着长一格。
+    expect(log.cursors).toEqual([{ actor: "dev", last_event_id: i.id, at: new Date(start + min(2)).toISOString(), plain_pull_at: new Date(start + min(2)).toISOString() }]);
     await b.ack("dev", i.id);
     const st = await b.state();
     expect(st.instructions.get(i.id)).toMatchObject({ delivered_at: new Date(start + min(2)).toISOString(), acked_at: new Date(start + min(3)).toISOString() });

@@ -87,7 +87,9 @@ export class Builder {
   async pull(actor: string): Promise<PullResult> {
     const at = this.step();
     const after = this.cursors.get(actor) ?? null;
-    const result = await pull(this.store, actor, after, at);
+    // t-257：builder 的这一次拉取就是「一个节点在回合开头做的事」——也就是一次**普通** sync（不带 wait）。
+    // 服务端那一侧据此写 `plain_pull_at`，这里不写就会让 built≡served（t-062，它连游标一起比）当场不一致。
+    const result = await pull(this.store, actor, after, at, undefined, { plain: true });
     this.cursors.set(actor, result.cursor);
     this.steps.push({ kind: "pull", at: at.toISOString(), actor, after, result });
     return result;
