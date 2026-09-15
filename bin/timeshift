@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+/**
+ * t-273：**pm 01:35 的裁定点名了一个量具，而那个量具当时不在仓库里。** 这里把它放进来。
+ *
+ * 用法：
+ *   ./bin/timeshift                     # N 取默认 150000 天，跑三包的测试
+ *   ./bin/timeshift 36525               # 换一个 N
+ *   ./bin/timeshift 150000 -- pnpm --filter @ateam/cli test    # 换一条命令
+ *   SHIFT_DAYS=36525 ./bin/timeshift    # 环境变量也行；位置参数优先
+ *
+ * 它做的事只有一件：把进程的「现在」前推 N 天，再跑一遍命令。定时雷——此刻绿、挂钟走到某处就红的用例——
+ * 会在那一跑里现形，**与它的哨兵长什么样无关**（夹具钉死日期／ULID 自带时刻／字面远期日期，t-268/t-271/t-272 三种）。
+ *
+ * **不要把它接进任何现有的闸或测试流程。** pm 01:35 的裁定是「发车前跑一次」，不是常设闸：它看不见
+ * 「到期后变成空绿」的那一类，而一道被当成「这一类已经守住了」凭据的闸，恰好漏掉最常见的那一半，比没有它更坏。
+ */
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, utimesSync, statSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, "..");
+const PRELOAD = join(HERE, "timeshift-clock.mjs");
+const DEFAULT_DAYS = 150000;
+const DEFAULT_CMD = ["pnpm", "-r", "--no-bail", "--if-present", "run", "test"];
+
+/**
+ * 天花板不是抄来的常数，是每次现场量的。dev 01:32 在这个容器上量到 15032385535 秒（2446-05-10）——
+ * 但那是**那台机器那个文件系统**的数，换一台就未必。所以这里写一个远在任何合理 N 之外的时刻，再读回来：
+ * 读回来变小了，变小到哪儿就是这台机器的封顶。
+ */
+function probeCeiling() {
+  const want = 1e11; // 5138 年
+  let dir = "";
+  try {
+    dir = mkdtempSync(join(tmpdir(), "timeshift-probe-"));
+    const f = join(dir, "probe");
+    writeFileSync(f, "x");
+    utimesSync(f, want, want);
+    const got = Math.round(statSync(f).mtimeMs / 1000);
+    return got < want ? { kind: "clamped", s: got } : { kind: "none" };
+  } catch (e) {
+    return { kind: "unknown", why: e instanceof Error ? e.message : String(e) };
+  } finally {
+    if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch { /* 探针的清理失败不该盖住结果 */ }
+  }
+}
+
+const argv = process.argv.slice(2);
+const sep = argv.indexOf("--");
+const head = sep === -1 ? argv : argv.slice(0, sep);
+const cmd = sep === -1 || sep === argv.length - 1 ? DEFAULT_CMD : argv.slice(sep + 1);
+
+if (head[0] === "-h" || head[0] === "--help") {
+  process.stdout.write(`用法：timeshift [天数] [-- 命令…]\n默认 ${DEFAULT_DAYS} 天，默认命令 ${DEFAULT_CMD.join(" ")}\n`);
+  process.exit(0);
+}
+
+const raw = head[0] ?? process.env.SHIFT_DAYS ?? String(DEFAULT_DAYS);
+const days = Number(raw);
+if (!Number.isFinite(days) || days <= 0) {
+  process.stderr.write(`timeshift：天数要是一个正数，收到的是 ${JSON.stringify(raw)}\n`);
+  process.exit(2);
+}
+
+const realNow = Date.now();
+const shifted = new Date(realNow + days * 86400_000);
+const ceiling = probeCeiling();
+
+const line = (k, v) => process.stdout.write(`  ${k}  ${v}\n`);
+process.stdout.write(`timeshift：把进程的「现在」前推 ${days} 天\n`);
+line("此刻  ", new Date(realNow).toISOString());
+line("平移后", shifted.toISOString());
+if (ceiling.kind === "clamped") line("天花板", `${new Date(ceiling.s * 1000).toISOString()}（本机现量：真文件时刻写到这里就封顶）`);
+else if (ceiling.kind === "none") line("天花板", "本机在 5138 年之内没测到封顶");
+else line("天花板", `没探出来（${ceiling.why}）——下面那条提醒这次给不出`);
+line("命令  ", cmd.join(" "));
+
+if (ceiling.kind === "clamped" && shifted.getTime() / 1000 > ceiling.s) {
+  process.stdout.write(`\n  ⚠ 本次已越过 ${new Date(ceiling.s * 1000).toISOString().slice(0, 10)}：凡是把真文件时刻写进磁盘的用例（utimes/mtime），\n`);
+  process.stdout.write(`    红了也可能是量具而不是雷——先查那个时刻是不是被文件系统压平了，再当它是一颗雷。\n`);
+}
+process.stdout.write(`\n  这道闸抓不住的六件事、以及为什么它不是常设闸：./bin/ateam task show t-272\n\n`);
+
+const started = Date.now();
+const r = spawnSync(cmd[0], cmd.slice(1), {
+  cwd: ROOT,
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    SHIFT_DAYS: String(days),
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${pathToFileURL(PRELOAD).href}`.trim(),
+  },
+});
+const took = ((Date.now() - started) / 1000).toFixed(1);
+
+if (r.error) {
+  process.stderr.write(`\ntimeshift：${cmd[0]} 起不来——${r.error.message}\n`);
+  process.exit(2);
+}
+const code = r.status ?? (r.signal ? 1 : 0);
+process.stdout.write(`\ntimeshift：N=${days} 天（${shifted.toISOString().slice(0, 10)}），耗时 ${took}s，退出码 ${code}${r.signal ? `（信号 ${r.signal}）` : ""}\n`);
+process.exit(code);
