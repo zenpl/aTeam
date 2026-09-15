@@ -120,11 +120,11 @@ export interface CursorIo {
 }
 const nodeIo: CursorIo = { existsSync, readFileSync: (p, e) => readFileSync(p, e), mkdirSync: (p, o) => { mkdirSync(p, o); }, writeFileSync, renameSync };
 
-function cursorFile(me: string, root: string) { return join(root, ".ateam", `cursor.${me}`); }
-export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo): CursorStore {
+function cursorFile(me: string, root: string, name = "cursor") { return join(root, ".ateam", `${name}.${me}`); }
+export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, name = "cursor"): CursorStore {
   return {
     // 空文件仍然读成 null：修之前留下来的那些 0 字节游标还在各人机器上，这一支要认得它们。
-    read() { const f = cursorFile(me, root); return io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null; },
+    read() { const f = cursorFile(me, root, name); return io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null; },
     /**
      * t-254：**先写同目录的临时文件，再 rename。**
      *
@@ -142,10 +142,33 @@ export function fileCursor(me: string, root: string = process.cwd(), io: CursorI
       if (!v) return;
       const dir = join(root, ".ateam");
       io.mkdirSync(dir, { recursive: true });
-      const tmp = join(dir, `cursor.${me}.tmp`);
+      const tmp = join(dir, `${name}.${me}.tmp`);
       io.writeFileSync(tmp, v);
-      io.renameSync(tmp, cursorFile(me, root));
+      io.renameSync(tmp, cursorFile(me, root, name));
     },
+  };
+}
+
+/**
+ * t-274：**「有人读过了」那一处，与「送到了」分开存。**
+ *
+ * `cursor.<me>` 是送到了：每一次拉取都推它，`watch` 因此照旧不会每轮重复报同一批（判据 3 的禁令）。
+ * `seen.<me>` 是有人读过了：只有**把这一批真的印给操作者**的那一次 `sync` 才推它。于是后台 `watch` 吃掉的
+ * 那一批，重启之后的 `sync` 仍然看得见——qa 14:10 亲历的那一幕（12.66 小时沉默、21 条未 ack）就到此为止。
+ *
+ * **没有 `seen.<me>` 文件时读成 null，不退回 `cursor.<me>`。** 这一条我先写反过、被真实那一幕当场证伪：
+ * 退回 `cursor` 看起来只是「升级不倒带」的体面做法，而**「`seen` 还不存在」恰恰就是被咬的那个节点的样子**——
+ * qa 是，我端到端那个新节点也是。退路把读位置直接对齐到 `watch` 推过的位置，于是那一批照旧丢，判据 1 一个字没实现。
+ * （八条用例当时全绿：我的注入全落在退路之外，而那条用例断言的正是「退路成立」，等于拿用例把错固定住了。）
+ *
+ * 代价说在明处：老节点升级后第一次 `sync` 会重放一次（t-226 的上限之内、截断可见）。换来的是被咬的那一批真的
+ * 回得来。新节点不付这个代价——`join` 本来就跑一次 `sync`，那一次就把 `seen` 落下了。
+ */
+export function seenCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo): CursorStore {
+  const own = fileCursor(me, root, io, "seen");
+  return {
+    read: () => own.read(),
+    write: (c) => own.write(c),
   };
 }
 
@@ -298,7 +321,7 @@ async function main(argv: string[]) {
       const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
       console.log(`${e.id}  ${fmt.event(e, eff.me)}`);   // t-206：第五处，与其余四处一致——印事件就带上它的 id
     }
-    await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
+    await sync(client, eff.me, fileCursor(eff.me), 0, console.log, undefined, undefined, seenCursor(eff.me)).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
     console.log(joinOutput(eff.me, await client.manual(eff.me)));
     return;
@@ -416,7 +439,10 @@ async function main(argv: string[]) {
               const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
               if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
             }
-          : flushOut);
+          : flushOut,
+        // t-274：`--quiet` 那一路照旧推两者——它的「交付」是本地那一叠，不是终端。**它仍有本件的残留**
+        // （容器重启会连那一叠一起带走），按判据 5 点名在证据里，不在这一件里顺手改。
+        quiet ? undefined : seenCursor(cfg.me));
       await recordCliSha(client, cfg.me, distStamp);
       return;
     }

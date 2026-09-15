@@ -118,14 +118,29 @@ export async function pullBatch(client: Puller, cursor: CursorStore, waitMs: num
  * `print` null 是**调用方自己交付**（watch 那一路）或**明写的丢弃**（`--quiet` 的心跳）：前者由调用方在交付
  * 之后推进，后者是人自己要的，不是悄悄丢的。
  */
-export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>): Promise<PullResult> {
-  const { after, r } = await pullBatch(client, cursor, waitMs);
+export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>, seen?: CursorStore): Promise<PullResult> {
+  // t-274：**从「有人读过了」那一处往下拉，而不是从「送到了」那一处。**
+  //
+  // 背景是 qa 14:10 亲历的那一幕（我 14:14 端到端复现过）：后台 `watch` 拉到一条给它的指令、印进一个管道，
+  // 然后进程被杀。`watch` 推的是这个节点的游标，于是重启之后 `sync` 诚实地说「nothing new」——**指令确实到过，
+  // 而这个节点再也看不见它**。qa 今天 12.66 小时的沉默就是这么来的，它 14:09 一次性 ack 了 21 条。
+  //
+  // 修法不是「`watch` 别推游标」（判据 3 的禁令，t-225 那条链付过学费：那样它每轮重复报同一批）。
+  // 分成两样：`cursor` 是**送到了**（每次拉取都推，`watch` 照旧不重复），`seen` 是**有人读过了**
+  // （只有把这一批真的印给操作者的那一次才推）。`sync` 从后者往下拉，所以 `watch` 吃过的那一批它仍然看得见。
+  //
+  // 与已有那两样的关系：`ack` 是当事人说「我看见了」，`--refs` 是「我办了」；`seen` 在它们之下——
+  // 它只说明**这些字进过这个节点的终端**，不说明有谁看懂了。三者各证各的，谁也不替谁。
+  //
+  // `seen` 不给就退回今天的行为（两者同一个位置）：那正是所有只走一条路的调用方与用例要的。
+  const from = seen ?? cursor;
+  const { after, r } = await pullBatch(client, from, waitMs);
   if (print) for (const line of report(r, me, after)) print(line);
   if (print) await flush?.();
   // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——
   // 那正是 `--quiet` 原来的形状，而它让那一批对这个节点永久消失。命令行那一侧此刻不再走这条路
   // （`--quiet` 改成把那一批收进本地那一叠），这里把口子也堵上：**下一个写 `sync(..., null)` 的人不会再踩它。**
-  if (print) advance(cursor, r.cursor);
+  if (print) { advance(from, r.cursor); if (from !== cursor) advance(cursor, r.cursor); }
   // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
   // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
