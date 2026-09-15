@@ -440,9 +440,15 @@ async function main(argv: string[]) {
               if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
             }
           : flushOut,
-        // t-274：`--quiet` 那一路照旧推两者——它的「交付」是本地那一叠，不是终端。**它仍有本件的残留**
-        // （容器重启会连那一叠一起带走），按判据 5 点名在证据里，不在这一件里顺手改。
-        quiet ? undefined : seenCursor(cfg.me));
+        // t-274：**两条路都带上 `seen`，`--quiet` 也不例外。**
+        //
+        // 我先写的是 `quiet ? undefined : …`，注释却写着「照旧推两者」——注释对、代码错，而且错法有后果：
+        // `--quiet` 那一路的交付是本地那一叠（t-245），叠完就该算读过；不推 `seen`，下一次正常 `sync` 会
+        // 先印那一叠、再从 `seen` 把同一批重新拉出来印一遍。**一条修重复丢失的改动，顺手做出了重复打扰。**
+        //
+        // 它仍有本件的残留：那一叠是本地的，容器重启会连它一起带走，而 `seen` 已经推过去了。按判据 5
+        // 点名在证据里，不在这一件里顺手改。
+        seenCursor(cfg.me));
       await recordCliSha(client, cfg.me, distStamp);
       return;
     }

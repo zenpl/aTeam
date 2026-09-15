@@ -110,3 +110,23 @@ describe("t-274 · 送到了与有人读过了，是两样", () => {
     expect(again.join("\n")).toContain("nothing new");
   });
 });
+
+/**
+ * t-274 判据 5 的近邻：`--quiet` 那一路的交付是本地那一叠（t-245），不是终端。
+ * 它照旧推两者——**不推 `seen` 就会造出重复打扰**：下一次正常 `sync` 先印那一叠，再把同一批重新拉出来印一遍。
+ */
+describe("t-274 · --quiet 那一路", () => {
+  it("心跳收进那一叠之后，下一次正常 sync 不把同一批再拉出来印一遍", async () => {
+    const delivered = memoryCursor(), seen = memoryCursor();
+    const stash: string[] = [];
+    // --quiet：印到那一叠里（print 不是 null，所以它算交付），seen 照推
+    await sync(server(), ME, delivered, 0, (l) => stash.push(l), undefined, undefined, seen);
+    expect(stash.join("\n")).toContain("四件等你判");
+
+    // 下一次正常 sync：那一叠由调用方先印出来，这里只看拉取本身还给不给同一批
+    const out: string[] = [];
+    await sync(server(), ME, delivered, 0, (l) => out.push(l), undefined, undefined, seen);
+    expect(out.join("\n"), "同一批不许再来一遍").not.toContain("四件等你判");
+    expect(out.join("\n")).toContain("nothing new");
+  });
+});
