@@ -550,6 +550,7 @@ export const KEY_SYMBOLS = [
   "SEAM_SAME_FILE",
   "SEAM_UNDECIDED",
   "SEAM_VERDICT_WORDS",
+  "SEAM_WAIVE_NOT_HERE",
   "SHAPE_OF",
   "SHOWS_GATE_BLIND",
   "SHOWS_RULE",
@@ -648,6 +649,8 @@ export const KEY_SYMBOLS = [
   "runtimeAllocation",
   "saidHops",
   "sayReading",
+  "seamWaiveOtherNoSha",
+  "seamWaiveOtherNotDone",
   "seamWaived",
   "selfCorrections",
   "slimBoard",
@@ -1370,6 +1373,34 @@ export const objectNotFound = (seamId: string, sha: string, other: string) =>
 /** t-201：这一条被单独免掉时落在日志上的那句——免掉不等于没发生。 */
 export const seamWaived = (seamId: string, key: string, owner: string) =>
   `${seamId}：这一条被 --no-seam-check-for ${key} 单独免掉了，其余接缝照判；免的理由由 ${owner} 的 owner 写在证据里`;
+/**
+ * t-276：**免除点名了一条接缝，而那条接缝本来就不在被检查之列——改前它一个字都不说。**
+ *
+ * `seamCheck` 在两处提前 `continue`，都在免除判断之前：对方任务不是 `done|failed|verified`，或者对方没有证据 sha。
+ * 落进这两处的接缝，`--no-seam-check-for` 是个**静默空操作**：`done` 照成、退出码 0、零输出，
+ * 而**那条接缝仍然开着**——账留到有人去落 pass 时才爆（dev t-255 ②③ 组实测）。
+ *
+ * 两句分开写，因为下一步动作不同：一个是等，一个是让对方补证据。笼统一句「没生效」两种都答不上。
+ */
+export const seamWaiveOtherNotDone = (seamId: string, other: string, status?: string) =>
+  `${seamId}：--no-seam-check-for 在这一条上什么都没免掉——${other} 还没交（此刻是 ${status ?? "还没建"}），这条接缝本来就还没进检查，而它仍然开着。下一步是等 ${other} 交，交了这条才谈得上免`;
+export const seamWaiveOtherNoSha = (seamId: string, other: string) =>
+  `${seamId}：--no-seam-check-for 在这一条上什么都没免掉——${other} 交了，但它的证据里没有 sha，这条接缝无从检查，而它仍然开着。下一步是让 ${other} 的 owner 把证据 sha 补上`;
+
+/**
+ * t-276 判据 3：**`verify` 默默收下这个 flag，而它在那条路上毫无意义**（dev t-255 ③④ 组：带不带逐字相同）。
+ *
+ * 选的是拒，不是「收下再说一句它不起作用」。三条理由：
+ * ① 本件治的就是静默，而「收下 + 提醒」仍然让命令走下去，人多半看不见那一行；
+ * ② 这条路上它不是「暂时没用」而是**没有这个概念**——落 pass 的接缝闸在服务端，命令行关不掉；
+ * ③ 不会把能跑的路变成不能跑：此刻带着它落 pass 本来就会被服务端拒（同样 exit 2），
+ *    而全仓库（docs、CLAUDE.md、bin、.github）没有一处在 verify 上写过它。
+ * 只拒 `--no-seam-check-for`。**`--no-seam-check` 在 verify 上是真读的**（main.ts:694，t-191 那道预检），不碰。
+ */
+export const SEAM_WAIVE_NOT_HERE =
+  `--no-seam-check-for 在 verify 上不起作用，一个字都没发：接缝免除是交活那一侧的预检，` +
+  `而落 pass 这一侧的接缝闸在服务端，命令行关不掉它。要么先把那条接缝定下来（task seam <a> <b> --resolution "..."），要么这一次就该被它挡住`;
+
 /** t-201：`--no-seam-check` 仍在，但它现在会说清自己关掉的是什么，以及那条窄的出路。 */
 export const WHOLE_GATE_OFF = "跳过 seam 合并检查（--no-seam-check）：这把钥匙关掉的是全部接缝义务；只想免掉一条时用 --no-seam-check-for <接缝 id>";
 

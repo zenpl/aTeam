@@ -3,7 +3,7 @@
  * sha really contains the other side's evidence sha. A warning only: the log records what you claim; git knows the truth.
  */
 import { spawnSync } from "node:child_process";
-import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, noRealOverlap, realOverlapIs, noSuchObject, objectNotFound, seamWaived, type Board, type ClientEvent } from "@ateam/core";
+import { evidenceSha, boardTask, namesSha, ABSORB_PREFIX, ABSORB_FORM_KEY, noOutputSeam, cannotSeeOutput, noRealOverlap, realOverlapIs, noSuchObject, objectNotFound, seamWaived, type Board, type ClientEvent, seamWaiveOtherNotDone, seamWaiveOtherNoSha} from "@ateam/core";
 
 /** true/false from git; null when git or either object is unavailable (not a repo, sha not fetched). */
 export type IsAncestor = (ancestor: string, descendant: string) => boolean | null;
@@ -86,9 +86,19 @@ export function seamCheck(b: Board, id: string, evidence: string | undefined, is
     if (seam.resolved || seam.absorbed || !seam.tasks.includes(id)) continue;
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);
-    if (!other || !["done", "failed", "verified"].includes(other.status)) continue;
+    // t-276：**下面两处提前 continue 之前，先看这条是不是被点名免掉的。**
+    // 改前它们在免除判断之前无声地跳过，于是 `--no-seam-check-for` 落在这两类接缝上是一次静默空操作：
+    // done 照成、退出码 0、零输出，而接缝仍然开着。出声，并且分得清是哪一种——两种的下一步动作不同。
+    const named = waiveSet.has(seam.id) || waiveSet.has(otherId);
+    if (!other || !["done", "failed", "verified"].includes(other.status)) {
+      if (named) out.unverified.push(seamWaiveOtherNotDone(seam.id, otherId, other?.status));
+      continue;
+    }
     const theirs = other.evidence_sha ?? evidenceSha(other.evidence);
-    if (!theirs) continue;
+    if (!theirs) {
+      if (named) out.unverified.push(seamWaiveOtherNoSha(seam.id, otherId));
+      continue;
+    }
     // t-201 判据 1：**这一条被单独免掉，别的照判。**免掉不等于没发生——它进 unverified，与 done 一起落在日志上。
     if (waiveSet.has(seam.id) || waiveSet.has(otherId)) {
       out.unverified.push(seamWaived(seam.id, waiveSet.has(seam.id) ? seam.id : otherId, id));

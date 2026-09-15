@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -685,6 +685,10 @@ async function main(argv: string[]) {
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
+          // t-276 判据 3：**这条路从不读 --no-seam-check-for**（只有 done 那一路读，:662），而它此前被默默收下。
+          // 选拒不选「收下再提醒」的三条理由写在 core 的 SEAM_WAIVE_NOT_HERE 上。--no-seam-check 不在此列：
+          // 它在这条路上是真读的（下面 need_ 那一行，t-191 的预检）。
+          if ((list(a, "no-seam-check-for") ?? []).length) throw new UsageError(SEAM_WAIVE_NOT_HERE);
           const task = need(id, "<id>");
           // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
           // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
