@@ -265,10 +265,54 @@ export const UNSEEN_MAX = 500;
  * pd 有权事后否掉）。出路给两条：**升级这支命令行**（多半是版本偏斜：仓库里有、你这支还没重编），
  * 或者**改用在新旧两支上都对的写法**。
  */
-export const UNKNOWN_FLAG = (name: string): string =>
+export const UNKNOWN_FLAG = (name: string, nearest?: string): string =>
   `不认得这个开关：--${name}。一个字都没发。` +
-  `多半是你这支命令行旧了：先 git pull && pnpm build，再 ateam help 看它在不在里面；` +
-  `要在新旧两支上都对，就别用 --X-file，改写成 --X "$(cat 文件)"`;
+  // t-277：指得出最接近的那个，就只说那一句——「你这支旧了」是在回答另一个问题，
+  // 而拼错一个字母的人再 git pull 一百次也等不到那个开关，那两条出路会把他引去改一个没错的地方。
+  (nearest
+    ? `你是不是要写 --${nearest}？`
+    : `多半是你这支命令行旧了：先 git pull && pnpm build，再 ateam help 看它在不在里面；` +
+      `要在新旧两支上都对，就别用 --X-file，改写成 --X "$(cat 文件)"`);
+
+/**
+ * t-277 判据 3：**说不认得的时候，把最接近的那个真名指出来。**
+ *
+ * t-247 那句话给的两条出路都是「你这支旧了」——**对版本偏斜是对的，对拼错一个字母是答非所问**：
+ * `--critera` 的人再 `git pull && pnpm build` 一百次也等不到那个开关。pm 15:13 在自己那棵不含 t-247 的树上
+ * 撞的是另一个洞（判据 1 已作废），而这一条与那个洞无关：**认得的名字就那几十个，指得出来就该指。**
+ *
+ * 只认「改一个字就到」这一档：删一个、加一个、换一个、相邻两个对调（critera ⇒ criteria 是最后一种）。
+ * 再远就不猜——**猜错的建议比不建议更贵**，它会把人引去改一个本来就没写错的地方。同分时取字典序最小的那个，
+ * 免得同一次输入两次跑出不同的建议。
+ */
+export function nearestName(name: string, candidates: Iterable<string>): string | undefined {
+  let best: string | undefined;
+  for (const c of candidates) {
+    if (c === name) return c;
+    if (!withinOneEdit(name, c)) continue;
+    if (best === undefined || c < best) best = c;
+  }
+  return best;
+}
+
+/** 两个名字之间是不是「一次编辑」之内：删一个、加一个、换一个，或相邻两个对调。 */
+function withinOneEdit(a: string, b: string): boolean {
+  if (a === b) return true;
+  const la = [...a], lb = [...b];
+  if (Math.abs(la.length - lb.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < la.length && j < lb.length) {
+    if (la[i] === lb[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (la.length === lb.length) {
+      // 换一个，或者相邻两个对调
+      if (la[i + 1] === lb[j] && la[i] === lb[j + 1]) { i += 2; j += 2; continue; }
+      i++; j++;
+    } else if (la.length > lb.length) i++;
+    else j++;
+  }
+  return edits + (la.length - i) + (lb.length - j) <= 1;
+}
 
 /**
  * t-247 判据 3：**「写错名字」与「少写个值」要在同一处出声。** 此前前者静默退 0、后者报一句英文并退 1——

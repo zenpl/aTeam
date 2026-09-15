@@ -1,4 +1,4 @@
-import { BOTH_BODY_AND_FILE, TWICE_GIVEN, UNKNOWN_FLAG, FLAG_NEEDS_VALUE } from "@ateam/core";
+import { BOTH_BODY_AND_FILE, TWICE_GIVEN, UNKNOWN_FLAG, FLAG_NEEDS_VALUE, nearestName } from "@ateam/core";
 export interface Args {
   _: string[];
   flags: Record<string, string | boolean | string[]>;
@@ -30,6 +30,15 @@ const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "r
  * build.test.ts 里有一条闸守着这一份与 main.ts 里 `str()` 的用法一致——别手工对。
  */
 const VALUED = new Set(["ack-by", "after", "anyway", "body", "by", "default", "deploy", "evidence", "interval", "kind", "me", "measured-at", "method", "on", "push", "reason", "resolution", "rollback", "shape", "shows", "start", "step", "supersedes", "surface", "task", "to", "token", "url", "valid-for", "valid-until", "verdict", "wait"]);
+
+/**
+ * t-277：**这支命令行认得的全部名字，一处出。** `known()` 与「最接近的是哪个」读的必须是同一份，
+ * 否则会出现「它说不认得，却也指不出任何一个」或者反过来「指了一个它自己也不认的」。
+ * `--X-file` 那一族不进候选：指人去写 `--criteria-file` 而它其实想要 `--criteria`，是把人往远处引。
+ */
+export function allFlagNames(): string[] {
+  return [...BOOLEAN, ...REPEATABLE, ...VALUED];
+}
 
 /** 这支命令行认得的开关，含 t-246 那一族 `--X-file`。说不认得的时候，指名是哪一个。 */
 export function known(name: string): boolean {
@@ -70,7 +79,8 @@ export function parse(argv: string[]): Args {
     const name = eq > 0 ? a.slice(2, eq) : a.slice(2);
     // t-247：**不认得就出声，并指名是哪一个。** 此前它照收不误、命令读不到、一个字不说地退 0——
     // 而一个拼错的开关与一个不存在的开关长得一样，两者的后果都是「事件落了，那个字段是空的」。
-    if (!known(name)) throw new UsageError(UNKNOWN_FLAG(name));
+    // t-277 判据 3：不认得就连「最接近的那个真名」一起说出来。名字来源与 known() 同一份，不另抄一份名单。
+    if (!known(name)) throw new UsageError(UNKNOWN_FLAG(name, nearestName(name, allFlagNames())));
     let value: string | boolean;
     if (eq > 0) value = a.slice(eq + 1);
     else if (BOOLEAN.has(name)) value = true;
