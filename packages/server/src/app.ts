@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused } from "@ateam/core";
+import { cliShaUnknownCard, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -736,6 +736,16 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "GET" && path === "/events") {
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
+        // t-257：**那条「你这支旧了」的提醒此刻整个住在命令行里，于是最旧的那个人听不到它。**
+        // 服务端唯一能知道一个节点是哪一版的来源，就是它自报（t-211 的 recordCliSha），而旧节点恰恰不自报。
+        // 所以这里不猜它有多旧，只说一句「我说不出你是哪一版」，并按这一次带不带 wait 给出分得开成因的下一步。
+        // 发在 pull 之前，所以它随这一批一起送到——**一个不含 t-211 的 CLI 照样把它当普通指令印出来**。
+        const card = cliShaUnknownCard(await stateFor(projectId, store), actor, wait > 0, after === null);
+        if (card) {
+          const e = await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: actor, body: card,
+            ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() });
+          bus.emit("append", { project: projectId, e });
+        }
         let result = await pull(store, actor, after, real());
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
