@@ -211,6 +211,11 @@ export interface SeamState {
    * merges second; never a reason to hold a verification. Recomputed on every claim and done, like the overlap itself.
    */
   light?: boolean;
+  /**
+   * t-280: `light` 里的第二类——**两侧从没指名过同一个文件，是一侧的目录包住了另一侧**。与 t-113 那一类
+   * （都指名了同一个文件、各自的符号不相交）挡不挡人相同，但**能说的话完全不同**，所以分开标。
+   */
+  contained?: boolean;
 }
 
 export interface State {
@@ -345,31 +350,51 @@ const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) :
  * declare less, which is the opposite of what the seam is for. It takes both sides: a side that only said "this file"
  * has not told you which half of it, so anything it overlaps is still a collision.
  *
- * A directory-prefix overlap is never light: nobody declared symbols for a whole directory.
  * No whitelist, no path pattern — a test file is not special, a declaration is (pm 01:00; the omitted lesson).
+ *
+ * t-280（pm 03:24 拍的 ①′）：**一侧的目录包住了另一侧的文件、而两侧从没指名过同一个文件——这种重叠只记不挡。**
+ * 在案的 782 条接缝里这样的有 12 条，其中 6 条真的挡了人，**6 条全部出自同一条目录声明**（`t-248` 的
+ * `packages/server/test`）：每一条都要人 `git diff` 两边、比文件名、写裁决，其中两条还各挡了一次 `done`；
+ * 而这 12 条里被裁成真冲突的是 **0 条**。改的不是声明——宽声明是协议要的（a seam you did not declare is a
+ * collision you will have later），**改的只是「挡」这一件事**：接缝照旧生成、照旧上牌桌、照旧可裁，合并义务
+ * 照旧（`seamcheck` 不看 `light`，唯一看它的是 `unresolvedSeams`）。**真撞上的那一刻不会漏**：`done` 按真实
+ * diff 重算触点，那时文件名是事实而不是声明，接缝会重新长出来、照样挡。
+ * 两侧**真的指名了同一个文件**时照旧按符号判——下面那一段一个字没动。
  */
 export function overlapIsLight(a: string[], b: string[]): boolean {
   const paths = new Set<string>();
-  let any = false;
   // t-121: the same set trick — a shared path is what both sides must have named for the question to arise at all.
   // t-250 ①：这里原来分两支，有目录在场时退回两两比对（profile 里 `overlapIsLight` 自耗时 8%）。两支合成一支，
-  // 用与 `overlapOf` 同一套集合：**「重叠但路径不同」只有两种可能**——我这条路径是对面某条的上级（`theirAnc`
-  // 里有它），或者对面某条是我的上级（我的某个上级在 `theirPaths` 里）。任何一种都是「目录包住了另一个」，
-  // 而没有人会给一整个目录声明符号，所以照旧直接判「不轻」。
+  // 用与 `overlapOf` 同一套集合：**「重叠但路径不同」只有两种可能**——我这条路径是对面某条的上级（`bAnc`
+  // 里有它），或者对面某条是我的上级（我的某个上级在 `bPaths` 里）。任何一种都是「目录包住了另一个」。
+  // t-280 改的是这两种的结论：以前当场判「不轻」，现在只把它记下来（`contained`），因为目录说不出是哪个文件。
+  let contained = false;
   const aPaths = new Set(a.map(pathOf)), bPaths = new Set(b.map(pathOf));
   const bAnc = new Set<string>(); for (const p of bPaths) ancestorsOf(p, bAnc);
   for (const p of aPaths) {
-    if (bAnc.has(p)) return false;
-    for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (bPaths.has(p.slice(0, i))) return false;
-    if (bPaths.has(p)) { any = true; paths.add(p); }
+    if (bAnc.has(p)) contained = true;
+    else for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (bPaths.has(p.slice(0, i))) { contained = true; break; }
+    if (bPaths.has(p)) paths.add(p);
   }
-  if (!any) return false;
+  // t-280：两侧一个同名文件都没有时，**「只被目录包住」与「根本不重叠」是两回事**，结论也不同：
+  // 前者是一条只记不挡的接缝（`true`），后者压根没有接缝，照旧 `false`——`overlapIsLight` 的旧口径一个字没动。
+  if (!paths.size) return contained;
   for (const p of paths) {
     const syms = (side: string[]) => side.filter((t) => pathOf(t) === p).map(symbolOf);
     const as = syms(a), bs = syms(b);
     if (as.includes(null) || bs.includes(null)) return false;            // one side only said "this file"
     if (as.some((x) => bs.includes(x))) return false;                    // both named symbols, and they meet
   }
+  return true;
+}
+
+/**
+ * t-280: 这条重叠里两侧**有没有指名过同一个文件**。没有，就只可能是一侧的目录包住了另一侧
+ * （`touchesOverlap` 只有「相等」与「上级目录」两种）。只在确有重叠时问，与 `overlapIsLight` 同一处调用。
+ */
+export function overlapIsContained(a: string[], b: string[]): boolean {
+  const bPaths = new Set(b.map(pathOf));
+  for (const x of a) if (bPaths.has(pathOf(x))) return false;
   return true;
 }
 
@@ -859,9 +884,10 @@ function detectSeams(s: State, t: TaskState) {
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
     const light = overlapIsLight(mineAll, theirsAll) || undefined;
+    const contained = (light && overlapIsContained(mineAll, theirsAll)) || undefined;   // t-280
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
+    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; existing.contained = contained; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light, contained });
     for (const who of [t.id, other.id]) { let ids = s.seamsOf.get(who); if (!ids) s.seamsOf.set(who, (ids = new Set())); ids.add(id); }
   }
   for (const id of s.seamsOf.get(t.id) ?? []) { const seam = s.seams.get(id); if (seam) judgeSeam(s, seam); }

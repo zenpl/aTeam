@@ -712,7 +712,17 @@ export interface Board {
   /** `open` seams block verification until someone owns them. `stacked` names the task that was done first and the one that claimed on top of it; such a seam blocks nothing. */
   seams: { id: string; tasks: [string, string]; /** absent on the slim board for seams that are not open (t-077) */ overlap?: string[]; open: boolean; resolved?: string; stacked?: { done: string; on: string }; same_owner?: boolean; /** t-073 */ absorbed?: { later: string; earlier: string; basis: string; by?: string };
     /** t-113: both sides named symbols in the shared file and named different ones. `open` stays false: it holds nothing up. */
-    light?: boolean }[];
+    light?: boolean;
+    /** t-280: 只因一侧的目录包住了另一侧而相撞，两侧没指名过同一个文件。只在 `contained_seams` 里出现。 */
+    contained?: boolean }[];
+  /**
+   * t-280（pm 03:24）：**这一类接缝单独放一格，不进 `seams`。**
+   * 它挡不挡人与 t-113 那一类相同（都不挡），但**能说的话不同**：t-114 那句「都动了同一个文件、各自的符号
+   * 不相交」对它每个分句都不成立，而那句话是 pd 定的。在 pd 给出这一类的话之前，**人那一页一个字都不印它**，
+   * 所以它不在 `seams` 里——`GET /` 读的是 `seams`，因此这一类在那一页上逐字为零。命令行照旧印（受众是队伍，
+   * 措辞归 dev，同 t-247 先例），`done` 的合并义务也照旧看它。
+   */
+  contained_seams: Board["seams"];
   /** One row per declared role (fact project:roles, default five), plus any other actor seen: present when heard from within the window. */
   presence: BoardPresence[];
   /** The project's declared roles, in assignment order. */
@@ -1214,6 +1224,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     readings: [],
     tasks: {},
     in_flight: {},
+    contained_seams: [],
     live: { deployed_sha: null, deployed_by: null, checked_by: null, at: null, since_sha: null, verified_on_production: [], recent: [], earlier: [] },
     release: { deployed_sha: null, candidates: [], pending_deploy: [], deployed_unverified: [], unknown: [], counts: { pending_deploy: 0, deployed_unverified: 0, unknown: 0 }, counts_at: null, counts_current: false, denominator: "", basis: "" },
     batches: [],
@@ -1427,7 +1438,10 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   }
 
   for (const seam of s.seams.values()) {
-    b.seams.push({ id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed && !seam.light, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed, light: seam.light });
+    const row = { id: seam.id, tasks: seam.tasks, overlap: seam.overlap, open: !seam.resolution && !seam.stacked && !seam.same_owner && !seam.absorbed && !seam.light, resolved: seam.resolution?.by, stacked: seam.stacked, same_owner: seam.same_owner || undefined, absorbed: seam.absorbed, light: seam.light };
+    // t-280：这一类走自己那一格，`seams` 里一条都不留——人那一页读的是 `seams`
+    if (seam.contained) b.contained_seams.push({ ...row, contained: true });
+    else b.seams.push(row);
   }
 
   // who is not receiving: pending (never pulled) instructions older than 5 minutes, by recipient
@@ -2054,6 +2068,10 @@ export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   const seams = b.seams
     .filter((x) => x.open || ((x.resolved || x.stacked || x.light) && !x.tasks.every((id) => final.has(id))))   // t-113: a light seam is for whoever merges second, so it stays while a side can still be done
     .map((x) => (x.open ? x : { id: x.id, tasks: x.tasks, open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed, light: x.light, overlap: x.light ? x.overlap : undefined }));
+  // t-280：新那一格按同一条规矩瘦身，命令行要拿它来说话、也要拿它判合并义务
+  const contained_seams = b.contained_seams
+    .filter((x) => !x.tasks.every((id) => final.has(id)))
+    .map((x) => ({ id: x.id, tasks: x.tasks, open: false, resolved: x.resolved, stacked: x.stacked, same_owner: x.same_owner, absorbed: x.absorbed, light: x.light, contained: true, overlap: x.overlap }));
   const stale = b.readings.filter((r) => !r.valid).slice(-SLIM_DECIDED);
   const readings = b.readings.filter((r) => r.valid || stale.includes(r));
   // the page reads the full board in-process; the CLI reads a card's summary, not its split title/detail; in_flight.shown is all[0..5]
@@ -2065,7 +2083,7 @@ export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   // t-149 判据 3：那句实话的位置是挖层与报告，不是首屏——所以它不随瘦身板出门。`omitted` 会如实说它被略了。
   // t-223：上线过的 sha 列表只在完整板上（`ateam release` 读的是那一份）；瘦身板每上线一次就长一条，不划算
   const live: Board["live"] = { ...b.live, deploys: undefined };
-  const slim: Board = { ...b, tasks, instructions, seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
+  const slim: Board = { ...b, tasks, instructions, seams, contained_seams, readings, needs_human, in_flight, release, live, gate_honesty: [], omitted: [] };
   // **量的必须是真正发出去的那一整份**：`omitted` 自己也占字节，而它恰恰随着砍得越多而越长。
   // 每砍一刀重算一次——否则预算算的是一份比实际小的东西（t-227 那一族，这次我先想起来了）。
   fitBudget(slim, limit, () => { slim.omitted = omittedPaths(b, slim); });
@@ -2513,6 +2531,28 @@ export const SEAM_SAME_FILE = "都动了同一个文件";
 
 export function lightSeamLine(a: string, b: string, files: string): string {
   return `${a} 与 ${b} 都动了 ${files}，各自的符号不相交，验收不挡。`;
+}
+
+/**
+ * t-280 的那一类，一句话。**受众是队伍（`ateam board`、`ateam task show`），不是 `GET /` 那一页**——
+ * pm 03:24 拍的：人那一页在 pd 给话之前一个字都不印这一类，所以这句话只在命令行出现，措辞归 dev（同 t-247）。
+ *
+ * 它必须说清楚 t-114 那句说错的三件事：**没有动同一个文件**（那正是它不挡人的理由）、
+ * **撞的是哪个目录**（而不是随手点一个只有一侧动过的文件名）、**与符号无关**。
+ */
+export const SEAM_DIR_ONLY = "只撞在目录上";
+
+export function containedSeamLine(a: string, b: string, dirs: string): string {
+  return `${a} 与 ${b} 都声明了 ${dirs}，两边没动同一个文件，验收不挡；谁后落地谁合并。`;
+}
+
+/**
+ * t-280: 一条「只撞在目录上」的接缝撞在哪几个目录上——重叠里那些**包住了另一条重叠**的路径。
+ * 不点具体文件：这一类里的文件名只有一侧动过，说出来就是假话（这正是 t-114 那句的毛病）。
+ */
+export function seamDirs(overlap: string[] | undefined): string[] {
+  const paths = [...new Set((overlap ?? []).map((o) => o.split("#")[0].replace(/\/+$/, "")))];
+  return paths.filter((p) => paths.some((q) => q !== p && q.startsWith(p + "/")));
 }
 
 /**

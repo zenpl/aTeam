@@ -82,7 +82,8 @@ export interface SeamCheck { errors: string[]; unverified: string[]; absorbs: Cl
 export function seamCheck(b: Board, id: string, evidence: string | undefined, isAncestor: IsAncestor, hasObject: HasObject = () => null, waived: string[] = []): SeamCheck {
   const out: SeamCheck = { errors: [], unverified: [], absorbs: [] };
   const waiveSet = new Set(waived.map((x) => x.trim()).filter(Boolean));
-  for (const seam of b.seams) {
+  // t-280：只撞在目录上的那一类不在 `b.seams` 里（它不上人那一页），**但合并义务一个字没少**，所以这里两格都看。
+  for (const seam of [...b.seams, ...(b.contained_seams ?? [])]) {
     if (seam.resolved || seam.absorbed || !seam.tasks.includes(id)) continue;
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);
@@ -149,7 +150,7 @@ export function seamWarnings(b: Board, id: string, evidence: string | undefined,
   const mine = evidenceSha(evidence);
   if (!mine) return [];
   const out: string[] = [];
-  for (const seam of b.seams) {
+  for (const seam of [...b.seams, ...(b.contained_seams ?? [])]) {   // t-280：同上，两格都看
     if (!seam.tasks.includes(id) || !(seam.resolved || seam.stacked?.on === id)) continue; // resolved, or released by the rule with me as the later side
     const otherId = seam.tasks.find((t) => t !== id)!;
     const other = boardTask(b, otherId);

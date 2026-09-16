@@ -622,7 +622,8 @@ async function main(argv: string[]) {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
           // t-107: the same names the board shows; the role set comes from the board, one extra read
           const nb = await client.board().catch(() => null);
-          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined)); // GET /task/<id> is the whole task: nothing omitted
+          // t-280：只撞在目录上的那一类不在 `seams` 里（它不上人那一页），从牌桌那一份里取——这条路本来就多读了一次
+          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined, nb?.contained_seams ?? [])); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {

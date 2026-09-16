@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks, STALLED_HEADING } from "@ateam/core";
+import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, SEAM_DIR_ONLY, containedSeamLine, seamDirs, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks, STALLED_HEADING } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -188,6 +188,12 @@ export function board(b: Board, me: string): string {
     out.push("", SEAM_SAME_FILE);
     for (const s of lightSeams) out.push(`  ${lightSeamLine(s.tasks[0], s.tasks[1], seamFiles(s.overlap).join("、"))}`);
   }
+  // t-280：只撞在目录上的那一类，自己一格。它不在 `b.seams` 里（人那一页读的是那一份），所以这里单独取。
+  const dirSeams = b.contained_seams ?? [];
+  if (dirSeams.length) {
+    out.push("", SEAM_DIR_ONLY);
+    for (const s of dirSeams) out.push(`  ${containedSeamLine(s.tasks[0], s.tasks[1], seamDirs(s.overlap).join("、"))}`);
+  }
   const absorbed = b.seams.filter((s) => s.absorbed && !s.light);
   const stacked = b.seams.filter((s) => !s.resolved && s.stacked && !s.absorbed);
   const sameOwner = b.seams.filter((s) => !s.resolved && !s.stacked && s.same_owner);
@@ -244,7 +250,7 @@ export function board(b: Board, me: string): string {
 
 /** `ateam task show <id>`: everything the log knows about one task. */
 /** `omitted` is required (t-077, qa 22:19): every caller says what its board left out; a full task or full board passes []. */
-export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who: (id: string) => string = (x) => x): string {
+export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who: (id: string) => string = (x) => x, contained: Board["seams"] = []): string {
   const out: string[] = [];
   // A server older than this CLI (pre t-003) sends tasks without these fields; show that rather than crash.
   const touches = t.touches ?? [];
@@ -305,6 +311,11 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
   if (lightMine.length) {
     out.push(SEAM_SAME_FILE);
     for (const s of lightMine) out.push(`  ${lightSeamLine(s.tasks[0], s.tasks[1], seamFiles(s.overlap).join("、"))}`);
+  }
+  const dirMine = contained.filter((s) => s.tasks.includes(t.id));   // t-280
+  if (dirMine.length) {
+    out.push(SEAM_DIR_ONLY);
+    for (const s of dirMine) out.push(`  ${containedSeamLine(s.tasks[0], s.tasks[1], seamDirs(s.overlap).join("、"))}`);
   }
   out.push("notes");
   if (left("notes")) out.push(`  (not in the default board; ateam task show ${t.id} has them)`);

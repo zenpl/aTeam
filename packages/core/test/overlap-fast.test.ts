@@ -15,7 +15,12 @@ function naive(a: string[], b: string[]): string[] {
   for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
   return [...out];
 }
-/** 定义直译，第二个：重叠但路径不同就是「不轻」，其余收集共同路径后照旧比符号。 */
+/**
+ * 定义直译，第二个：收集两侧指名了同一个文件的那些路径，照旧比符号。
+ * **t-280 改了其中一句**：以前「重叠但路径不同」（也就是目录包住了另一侧）当场返回「不轻」，现在它只记不挡。
+ * 这一份是拿来对拍的定义，所以它跟着定义一起改——**改的是同一句话，不是把断言迁就实现**：
+ * 没有任何重叠 ⇒ 没有接缝，照旧 false；有重叠但两侧没指名过同一个文件 ⇒ 只可能是目录包出来的 ⇒ true。
+ */
 function naiveLight(a: string[], b: string[]): boolean {
   const pathOf = (t: string) => t.split("#")[0].replace(/\/+$/, "");
   const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) : null);
@@ -24,10 +29,10 @@ function naiveLight(a: string[], b: string[]): boolean {
   for (const x of a) for (const y of b) {
     if (!touchesOverlap(x, y)) continue;
     any = true;
-    if (pathOf(x) !== pathOf(y)) return false;
-    paths.add(pathOf(x));
+    if (pathOf(x) === pathOf(y)) paths.add(pathOf(x));
   }
   if (!any) return false;
+  if (!paths.size) return true;   // t-280：只被目录包住
   for (const p of paths) {
     const syms = (side: string[]) => side.filter((t) => pathOf(t) === p).map(symbolOf);
     const as = syms(a), bs = syms(b);
