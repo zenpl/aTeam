@@ -9,13 +9,21 @@ import { ulidAt } from "./ulid.js";
 import { runFollowUps } from "./verifyflow.js";
 import { pull, type PullResult } from "./pull.js";
 import { reduce, type State } from "./reduce.js";
-import { board, type Board } from "./board.js";
+import { SERVICE_ACTOR } from "./events.js";
+import { board, cliShaUnknownCard, projectRoles, type Board } from "./board.js";
 import type { Event, NewEvent, Log, TaskOp, ReadingShape, InstructionIntent } from "./events.js";
 
 type Op<K extends TaskOp["op"]> = Omit<Extract<TaskOp, { op: K }>, "op" | "task">;
 type ActorLess<T> = Omit<T, "actor">;
 
-export type Step = { kind: "event"; at: string; event: Event; /** what the service appended after it */ followed: Event[] } | { kind: "pull"; at: string; actor: string; after: string | null; result: PullResult };
+export type Step =
+  | { kind: "event"; at: string; event: Event; /** what the service appended after it */ followed: Event[] }
+  | { kind: "pull"; at: string; actor: string; after: string | null; result: PullResult }
+  /**
+   * t-278：**有人打开了牌桌**——`GET /board` 那条路上服务会自己发卡（`remindFor`），所以它是一步操作，
+   * 不是一次纯读。`sent` 是这一步服务自己追加的那几条，重放的一侧按位置对上 id（同 `followed` 那条口径）。
+   */
+  | { kind: "remind"; at: string; sent: Event[] };
 
 export interface BuilderOptions {
   human?: string;
@@ -93,6 +101,29 @@ export class Builder {
     this.cursors.set(actor, result.cursor);
     this.steps.push({ kind: "pull", at: at.toISOString(), actor, after, result });
     return result;
+  }
+
+  /**
+   * t-278 判据 2：**服务端在 `GET /board` 那条路上（`remindFor`）会自己往日志里发的服务卡，builder 这边也发同一张。**
+   *
+   * 不发就等于 built≡served（t-062）只在「那张卡没上场」时成立——而它上场的那一天分歧照样在，
+   * 只是出现在生产上，而不是一条会红的用例里。所以这不是夹具的副作用，这是夹具的正文。
+   *
+   * 只发 `cliShaUnknownCard` 这一张：`remindFor` 其余几张（起一个 X、联系方式）在样本里不触发，
+   * 而**「此刻不触发」不等于「以后也不会」**——哪一张开始触发，哪一张就该照这条路补进来，t-062 会当场红给你看。
+   * 与服务端同一个函数、同一个门槛、同一句话：这里不复制判断，只复制调用。
+   */
+  async remind(now: Date = this.now()): Promise<Event[]> {
+    const state = await this.state(now);
+    const out: Event[] = [];
+    for (const role of projectRoles(state)) {
+      const card = cliShaUnknownCard(state, role, now);
+      if (!card) continue;
+      out.push(await append(this.store, { kind: "instruction", actor: SERVICE_ACTOR, to: role, body: card,
+        ack_by: new Date(now.getTime() + 24 * 3600_000).toISOString() }, { human: this.human, now, mint: ulidAt }));
+    }
+    this.steps.push({ kind: "remind", at: now.toISOString(), sent: out });
+    return out;
   }
 
   log(): Promise<Log> { return this.store.read(); }

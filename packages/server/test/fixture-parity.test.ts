@@ -48,6 +48,14 @@ describe("t-062 · built log ≡ served log", () => {
         const followed = await store.since(served.id);
         expect(followed.map((e) => e.kind)).toEqual(step.followed.map((e) => e.kind));
         step.followed.forEach((e, i) => idMap.set(e.id, followed[i].id));
+      } else if (step.kind === "remind") {
+        // t-278：**这一步是「有人打开了牌桌」**——那条路上服务自己会发卡，两边必须都走一次，
+        // 否则比的是「多做了一步」与「少做了一步」。服务追加的那几条按位置对上 id，同上面 `followed`。
+        const before = (await store.read()).events.length;
+        expect((await fetch(`${base}/board`, { headers: hdr("qa") })).status).toBe(200);
+        const appended = (await store.read()).events.slice(before);
+        expect(appended.map((e) => e.kind), `remind at ${step.at}`).toEqual(step.sent.map((e) => e.kind));
+        step.sent.forEach((e, i) => idMap.set(e.id, appended[i].id));
       } else {
         const after = cursors.get(step.actor) ?? null;
         const r = await fetch(`${base}/events${after ? `?after=${after}` : ""}`, { headers: hdr(step.actor) });
@@ -57,11 +65,20 @@ describe("t-062 · built log ≡ served log", () => {
       }
     }
     const now = new Date(t + 60_000);
+    // t-278：**最后这一次 `GET /board?full=1` 本身也是「有人打开了牌桌」**——服务在那条路上还会再发一次卡
+    // （这一刻又有别的角色过了宽限期）。builder 这边先走同一步，否则这一次比较又变成「多做了一步」。
+    const lateReminded = await b.remind(now);
+    const before = (await store.read()).events.length;
     // t-212：两边都要带上各自那本拒绝账——服务那份从它的存储取，builder 这份从它的存储取。
     // 不带就是拿「有账」比「没账」，比的不是同一件事。
-    const built = mapIds(board(await b.state(now), HUMAN, now, { refusals: await b.store.refusals?.() }));
+    // **id 要在映射补齐之后才换**：这两张卡的 id 是这一步才配上对的，先换就换不到（我第一版就是这么红的）
+    const builtRaw = board(await b.state(now), HUMAN, now, { refusals: await b.store.refusals?.() });
     t = now.getTime();
     const served = await (await fetch(`${base}/board?full=1`, { headers: hdr("qa") })).json();
+    const appendedLate = (await store.read()).events.slice(before);
+    expect(appendedLate.map((e) => e.kind), "最后那一次打开牌桌，两边追加的也要一样").toEqual(lateReminded.map((e) => e.kind));
+    lateReminded.forEach((e, i) => idMap.set(e.id, appendedLate[i].id));
+    const built = mapIds(builtRaw);
     // the one thing the server adds for the admin key is the invite link; it is not derived from the log
     expect(typeof served.invite_url).toBe("string");
     delete served.invite_url;
