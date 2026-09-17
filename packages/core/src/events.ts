@@ -645,6 +645,7 @@ export const KEY_SYMBOLS = [
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
+  "owedThirdWay",
   "partsSkipped",
   "presenceClocks",
   "realOverlapIs",

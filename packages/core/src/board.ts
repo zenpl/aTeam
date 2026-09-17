@@ -1897,10 +1897,26 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
   }
   if (owed.untouched.length) {
     const o = oldest(owed.untouched);
-    out.push(`你读过还没动的有 ${owed.untouched.length} 条，最久 ${mins(o.sent)} 分钟：${first(o)}。办了它，或者写一句「${DECLINE_PREFIX}原因」。`);
+    out.push(`你读过还没动的有 ${owed.untouched.length} 条，最久 ${mins(o.sent)} 分钟：${first(o)}。办了它，或者写一句「${DECLINE_PREFIX}原因」。${owedThirdWay(o.instruction)}`);
   }
   return out;
 }
+
+/**
+ * t-281：**这句话原来给的出路是两条，而系统实际认的不是这两条。**
+ *
+ * `didAct`（`reduce.ts`）认三条，三条都要求动作出自收件人本人：① `refs` 里带上它的 id；② 收件人自己
+ * `untell`；③ id 以原文出现在 note／instruction 的正文里。**而①③其实是同一件事——引用它**；②对普通角色
+ * 是关不上的门（`rules.ts` 只许发信人或 `human` 撤回，所以只有当收件人就是 `human` 时它才走得通）。
+ * 提示句原来给的「办了它」含糊，而「`不办：`原因」走的是另一条路（`chosen`），**它不是 `didAct`**。
+ *
+ * 于是「已签收、无动作可办」那一类没有任何一条诚实的出路：`ack` 会被拒（already acked），写「不办」是假话。
+ * 真实的一条：`pm` 那条挂了 5 天的指令，`ack` 被当场拒，而一条 `--refs` 它的 note 把第一行从 179 降到 178。
+ *
+ * **这里只补上那条系统本来就认的路，并把命令写成可以照抄的一行**；`didAct`／`owedTo`／`reach` 一个字没动。
+ * **措辞待 `pd`**：这一版是事实层面的补，不是定稿文案（t-281 判据 4）。
+ */
+export const owedThirdWay = (id: string) => `已经办过、没有动作可办的，引用它就算了结：ateam note --refs ${id} "<它是怎么了结的>"。`;
 
 export function owedNow(s: State, to: string): OwedNow {
   const full = owedFull(s, to);
