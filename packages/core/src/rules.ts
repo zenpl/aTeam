@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
@@ -304,8 +304,10 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.to) throw new Rejected("instruction", "to is required");
       if (e.to === e.actor) throw new Rejected("instruction", "cannot instruct yourself");
       if (!e.body?.trim()) throw new Rejected("instruction", "body is required");
-      if (e.body.length > INSTRUCTION_MAX_CHARS)
-        throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
+      // t-286：量法搬进 `instructionBodyLength`，**预检叫的是同一个函数**——「两边量同一个量」从此是结构，
+      // 不是一条会被下一次改动悄悄推翻的断言。行为一个字没变：那个函数就是 `.length`。
+      if (instructionBodyLength(e.body) > INSTRUCTION_MAX_CHARS)
+        throw new Rejected("instruction", `body is ${instructionBodyLength(e.body)} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
       // t-181 判据 6 (pd 09:17)：带默认的卡没有 ack_by，那个默认永远不会生效——「到期按 X」里没有「到期」。
       // CLI 总会填 15m，所以这道闸防的是别的客户端与直接调 API 的情形，拒绝话要说清怎么补。
       if (!e.ack_by) throw new Rejected("instruction", e.default !== undefined

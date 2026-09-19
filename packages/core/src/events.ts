@@ -229,6 +229,29 @@ export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskE
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
+/**
+ * t-286：**闸用哪把尺，预检就得用哪把**——而这只有在两边叫同一个函数时才是结构上成立的，
+ * 不是靠一条断言说它们相等。今晚已知有三种量错法，都不是假想的：
+ * · `bash` 的 `${#M}` 在 `LANG`／`LC_ALL` 为空时**数字节**，中文一字三字节：同一条 qa 得 354、服务端算 180（实测）。
+ * · `rules.ts` 这一处数的是 **UTF-16 单元**（`.length`），而 `label`／`shows` 数的是**码点**（`[...s].length`）；
+ *   纯 BMP 两者相同，遇代理对（emoji）分叉。
+ * · `verifyflow.ts` 拼自动卡时按**码点**算剩余位置，却要过这道按 UTF-16 量的闸——同一族的第三处。
+ *
+ * **这把尺照抄此刻服务端的行为，不是照抄「更合理」的那一个**：一个 emoji 在这里算 2。
+ * 该不该统一到码点是另一件事（t-286 判据 3 的结论：该收，但要一件自己的任务，因为它改的是被接受／被拒的边界）。
+ */
+export const instructionBodyLength = (body: string): number => body.length;
+/** 超了几个（没超就是 0 或负数）。 */
+export const instructionOverBy = (body: string): number => instructionBodyLength(body) - INSTRUCTION_MAX_CHARS;
+/**
+ * 发之前那一句。**只报告，不替人做决定**：不改那个 280、不截断、不拒绝发送——发卡的人可能有理由那么写，
+ * 但他不许在不知情的情况下那么写（与 t-265 那条标题提醒同一条道理）。
+ */
+export const tooLongLine = (body: string): string =>
+  `⚠ 这条 ${instructionBodyLength(body)} 字，超了 ${instructionOverBy(body)} 字（上限 ${INSTRUCTION_MAX_CHARS}）——服务端会拒。把讲道理的那半挪进 note，动作留在这里。`;
+/** 预检自己没跑成时那一句。**不许悄悄跳过**：命令照发、由服务端裁，但这台机器得说出它没量成。 */
+export const precheckFailedLine = (why: string): string =>
+  `⚠ 发之前那道长度预检没跑成（${why}），这一条照样发出去、由服务端裁——别把没出声当成没超。`;
 export type InstructionIntent = "ask" | "do" | "info";
 export const INSTRUCTION_INTENTS: InstructionIntent[] = ["ask", "do", "info"];
 /** A first sentence up to this long is the card's title on the human's board. */
@@ -660,6 +683,7 @@ export const KEY_SYMBOLS = [
   "owedSentences",
   "owedThirdWay",
   "partsSkipped",
+  "precheckFailedLine",
   "presenceClocks",
   "realOverlapIs",
   "releaseUnits",
@@ -688,6 +712,7 @@ export const KEY_SYMBOLS = [
   "symbolsUnnamed",
   "taskHeading",
   "titleAsShown",
+  "tooLongLine",
   "unknownSpanReason",
   "until",
   "validate",

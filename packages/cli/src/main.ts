@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -16,6 +16,7 @@ import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touch
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, type Refusal } from "./rejected.js";
 import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
+import { tellPrecheck } from "./precheck.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, type ShipOutcome } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
@@ -565,6 +566,10 @@ async function main(argv: string[]) {
       // 空标题时会兜底成「前 30 字＋…」。我实测过三种坏法两边的差（note 01M2FN4XVWSK0D6N2RH6D0CK5H），
       // pm 09:51 裁 B：兜底搬进 core，两处一份判断。现在印的是 `titleAsShown`，也就是人真会看到的那个。
       if (to === "human") console.error(cardTitleLine(titleAsShown(body).title));
+      // t-286：**280 那道闸此前要撞上才知道。** 这里先量一次，用的是闸自己那把尺（同一个函数，不是同一个想法）。
+      // 判据 4：只报告——不改那个数、不截断、不拒绝发送。判据 5：预检自己出错时命令照发，但**要出声**，
+      // 不许悄悄跳过（一道关着的时候看起来和开着一样的闸，比没有这道闸更坏，t-284 那一条同族）。
+      for (const line of tellPrecheck(body)) console.error(line);
       // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
       // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
