@@ -13,7 +13,7 @@ import { verifyParts } from "./verifyparts.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
-import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
+import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, type Refusal } from "./rejected.js";
 import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
@@ -783,6 +783,12 @@ async function whoElse(client: { board: (full?: boolean) => Promise<Board> }, to
  */
 /**
  * t-116: a refusal is visible for exactly one second — the moment it happens. At 01:11 I read a successful `tell` and
+ * t-283 判据 7：**这个文件与 `.ateam/refused-queue.<me>.jsonl` 是两套东西，出队条件不同，别读成一件事。**
+ * · `refused.<me>`（这里）：本地提醒，**单槽覆写**，一次只记最后一条；出队条件是「**同一个动作又成功了一次**」，
+ *   或者人自己 `--clear-refused`。它从不发往服务端。
+ * · `refused-queue.<me>.jsonl`（`refusalqueue.ts`）：出站遥测，**追加式**；出队条件是「**服务端说它记下了**」
+ *   （`POST /refusals` 回 `recorded` 才划掉哪几条）。两者互不影响——生产此刻没有那条路由，所以它只进不出。
+ *
  * told two people a task was done; its `done` had been refused seconds earlier and I never looked back. So the node
  * writes down its last refusal and says it again on the next `sync` or `board`, until the same action goes through or
  * the person crosses it off. Local, like the deaf notice: no event, no log line — a refusal is this node's business.
@@ -804,7 +810,8 @@ function noteRefusal(argv: string[], refusal: Refusal | null): void {
     if (refusal) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(path, JSON.stringify(refusal)); return; }
     // a success crosses off a refusal of the *same* action, and nothing else: redoing `task claim` does not clear a refused `task done`
     const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
-    if (st.kind === "open" && st.refusal.what !== actionOf(argv)) return;
+    // t-283：**两边都要收窄**——`actionOf` 管这一次的命令行，`identityOf` 管盘上那条旧记录里存的字符串。
+    if (st.kind === "open" && identityOf(st.refusal.what) !== actionOf(argv)) return;
     if (existsSync(path)) rmSync(path, { force: true });
   } catch { /* the record is a convenience; never let it break the command */ }
 }

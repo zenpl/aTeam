@@ -51,7 +51,12 @@ describe("t-116 · a refusal is said again on the next turn", () => {
     expect(actionOf(["task", "claim", "t-113", "--touches", "a.ts"])).toBe("task claim t-113");
     expect(actionOf(["task", "done", "t-113"])).not.toBe(actionOf(["task", "claim", "t-113"]));
     expect(actionOf(["sync"])).toBe("sync");
-    expect(actionOf(["reading", "roles", "{...}", "--surface", "project"])).toBe("reading roles {...}");
+    // t-283：**这一行原来断言读数的「值」也进指纹，现在不进了。** 改的是规则不是断言迁就实现：
+    // 一条 `reading` 被拒的常见成因是值不合形状，而唯一的修法是**换一个值**——若值进指纹，
+    // 换值就换指纹，那条被拒记录永远划不掉，与 `tell` 超长那一族逐字同形。键仍然进：换一个键是另一件事。
+    expect(actionOf(["reading", "roles", "{...}", "--surface", "project"])).toBe("reading roles");
+    expect(actionOf(["reading", "roles", "{...}"]), "换个值仍是同一件事").toBe(actionOf(["reading", "roles", "{其他}"]));
+    expect(actionOf(["reading", "roles", "{...}"]), "换个键就不是了").not.toBe(actionOf(["reading", "focus", "{...}"]));
   });
 
   it("提醒是给本人的一行字：没有事件、没有日志，纯函数只看记录与时间", () => {
