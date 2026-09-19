@@ -25,6 +25,55 @@ if [ "${1-}" = "staging" ]; then
   esac
 fi
 
+# t-282：**发车路上原来一步测试都不跑**——`deploy.yml` 与这个脚本都直通 `fly deploy`。
+# 挡的不是眼前那条红（那条在夹具里，源码零行），挡的是「一颗真在源码里的雷，同样不会被发车拦下」。
+#
+# 三件写死：
+# ① **默认拦住**：测试不全绿就不发车，退出码非 0。
+# ② **跑不了也算拦住**：没有 pnpm、没装依赖时**不许静默放行**——一道「关着的时候看起来和开着一样」的闸
+#    比没有这道闸更坏（今晚那条「投递失败按设计不出声」是同一族）。
+# ③ **留一条带理由的越过**：`--skip-tests "<原因>"`，照 `--no-seam-check` 的体例。理由必须写，且会被打出来。
+#    生产此刻是残的，真出事时「发不了车」比「发了一版没跑测试的车」更贵——所以这条路必须存在，但要留下名字。
+skip_tests=""
+saved=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --skip-tests)
+      shift
+      skip_tests="${1-}"
+      [ -n "$skip_tests" ] || { echo "bin/deploy: --skip-tests 要一个理由，例如 --skip-tests \"生产在燃，先发车后补\"" >&2; exit 2; }
+      ;;
+    *) saved="$saved $1";;
+  esac
+  shift
+done
+# shellcheck disable=SC2086
+set -- $saved
+
+if [ -n "$skip_tests" ]; then
+  echo "bin/deploy: 跳过测试发车。理由：$skip_tests" >&2
+  echo "  （这一行是这次越过的唯一痕迹；按队里的规矩，越过的人自己在日志里记一条 note）" >&2
+else
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "bin/deploy: 这里没有 pnpm，测试跑不了——不发车。" >&2
+    echo "  要么装上依赖再来，要么 --skip-tests \"<原因>\" 明说你在越过它。" >&2
+    exit 2
+  fi
+  if [ ! -d node_modules ]; then
+    echo "bin/deploy: 依赖没装（没有 node_modules），测试跑不了——不发车。" >&2
+    echo "  先 pnpm install，或 --skip-tests \"<原因>\"。" >&2
+    exit 2
+  fi
+  echo "bin/deploy: 先把测试跑一遍（pnpm -r --if-present run test）" >&2
+  if ! pnpm -r --no-bail --if-present run test; then
+    echo "" >&2
+    echo "bin/deploy: 测试没全绿——没有发车。" >&2
+    echo "  修好再来，或 --skip-tests \"<原因>\" 明说你在带着红发车。" >&2
+    exit 1
+  fi
+  echo "bin/deploy: 测试全绿，继续发车" >&2
+fi
+
 sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   echo "bin/deploy: working tree is dirty; the deployed sha ($sha) will not match what runs" >&2
