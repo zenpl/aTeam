@@ -392,6 +392,17 @@ export function overlapIsLight(a: string[], b: string[]): boolean {
  * t-280: 这条重叠里两侧**有没有指名过同一个文件**。没有，就只可能是一侧的目录包住了另一侧
  * （`touchesOverlap` 只有「相等」与「上级目录」两种）。只在确有重叠时问，与 `overlapIsLight` 同一处调用。
  */
+/**
+ * t-289：**这一族的定义，写成一个能跑的判据，而不是散文里的一句话。**
+ *
+ * 「只撞在目录上」＝ 两边的声明**真的**撞上了，而两边**没有任何同名文件**——只有一侧的目录包住了另一侧。
+ *
+ * **两侧各自的 `touches` 才是依据，`overlap` 字段不是**（qa `09-19T05:09` 实测的坑，它按 `overlap` 分类得到
+ * 的是反过来的 5/10）：`overlap` 里装着那条裸目录声明**加上它包住的那些文件**，而那些文件是**对面**点的，
+ * 不是两边都点了它。**一个把两边的声明合并过的字段，回答不了「两边有没有点同一个东西」。**
+ */
+export const isDirOnlySeam = (a: string[], b: string[]): boolean => overlapIsLight(a, b) && overlapIsContained(a, b);
+
 export function overlapIsContained(a: string[], b: string[]): boolean {
   const bPaths = new Set(b.map(pathOf));
   for (const x of a) if (bPaths.has(pathOf(x))) return false;
