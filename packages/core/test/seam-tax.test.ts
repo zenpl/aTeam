@@ -47,6 +47,11 @@ const SIX: [string, string[]][] = [
   ["t-271", ["packages/server/test/owed-endpoint.test.ts"]],
   ["t-257", ["packages/core/src/pull.ts", "packages/server/src/app.ts", "packages/server/test/plain-pull-signal.test.ts", "packages/server/test/cli-sha-card.test.ts"]],
   ["t-279", ["packages/core/src/board.ts", "packages/cli/src/format.ts", "packages/core/test/stalled.test.ts", "packages/server/test/stalled-not-on-page.test.ts"]],
+  // t-288：**第九条，09-19T04:19 我自己撞的**，也是这一族第一条发生在 t-280 落地之后的。
+  // 它被挡住是因为**服务端跑的是 3e50e5b**（不含 t-280）——在这棵树上它与前六条同形，照旧只记不挡。
+  // 收进来不是为了多一条，是为了让这份名单里有一条「修好之后仍然发生过」的，免得下次有人拿它当反证。
+  ["t-287", ["packages/core/src/events.ts", "packages/core/src/rules.ts", "packages/core/src/verifyflow.ts",
+    "packages/cli/src/precheck.ts", "packages/server/test/instruction-ruler.test.ts"]],
 ];
 
 describe("t-280 · 一条目录声明收的税", () => {

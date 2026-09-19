@@ -255,6 +255,27 @@ export const instructionOverBy = (body: string): number => instructionBodyLength
  * 预检不会跟着变，而它们看上去仍然「用的是同一个函数」。现在两处都叫这一个。
  */
 export const instructionTooLong = (body: string): boolean => instructionOverBy(body) > 0;
+
+/**
+ * t-288 判据 7：**`done` 被接缝挡住时，那句「与对方定下来」在对侧缺人时没有出路。**
+ *
+ * 真样本是 dev `04:19`：`t-287+t-248` 被挡，`t-248` blocked、主人 `frontend` 缺席 145 小时。
+ * 那句提示唯一可执行的读法就是「自己定」——**于是它把「替不在场的人做决定」教成了唯一的动作**，
+ * 而闸挡的正是这一刻。dev 照做了，qa `04:24` 报了，pm `04:26` 裁了：
+ * 对侧缺人时先 `tell pm`；pm 也不在场而你被挡住可以自解，**但要在同一条 resolution 里写明「pm 未在场，我自解」**。
+ *
+ * 这句只出现在 agent 的终端里，不上 `GET /`。
+ */
+export function seamSettleAdvice(mine: string, other: string, otherOwner: string | null, otherHere: boolean, pmHere: boolean): string {
+  const cmd = `task seam ${mine} ${other} --resolution "..."`;
+  if (otherHere) return `再与对方定下来（${cmd}），然后 done。`;
+  // **不写一个单独的 `"对方"` 兜底**：那是一个两字的字符串，而同样两个字也出现在这段注释与别处的话里，
+  // 于是 t-214 那份「拿一句真话换成新话，条数不变闸照样红」的元用例会挑中注释而不是字符串，当场失灵。
+  // 一个为了兜底而生的短字面量，成本落在别人的量具上——名字缺席时留空就够了。
+  const who = otherOwner ? ` ${otherOwner} ` : "";
+  if (pmHere) return `而 ${other} 的主人${who}此刻不在场——「与对方定下来」没有对方可定：先 tell pm 要一个判或一个指派，不要替不在场的人决定。`;
+  return `而 ${other} 的主人${who}与 pm 此刻都不在场：你被挡住时可以自解（${cmd}），但要在同一条 resolution 的正文里写明「pm 未在场，我自解」。`;
+}
 /**
  * 发之前那一句。**只报告，不替人做决定**：不改那个 280、不截断、不拒绝发送——发卡的人可能有理由那么写，
  * 但他不许在不知情的情况下那么写（与 t-265 那条标题提醒同一条道理）。
@@ -706,6 +727,7 @@ export const KEY_SYMBOLS = [
   "runtimeAllocation",
   "saidHops",
   "sayReading",
+  "seamSettleAdvice",
   "seamWaiveOtherNoSha",
   "seamWaiveOtherNotDone",
   "seamWaived",

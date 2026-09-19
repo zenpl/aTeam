@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
@@ -227,6 +227,16 @@ export function checkShape(e: NewEvent): void {
   }
   const sh = (e as { shape?: unknown }).shape;
   if (sh !== undefined && (!sh || typeof sh !== "object" || Array.isArray(sh))) throw new Rejected("shape", `reading 的 shape 要是 {regex?, enum?} 这样的对象，收到 ${valueForm(sh)}`);
+}
+
+/**
+ * t-288 判据 7：那句「怎么把这条接缝定下来」要看对侧此刻有没有人。**在场判断只有一处**（`presenceStatus`），
+ * 不在这里再写一份——t-287 刚为「两把尺」付过账。
+ */
+function settleAdvice(state: State, mine: string, other: string, now: Date): string {
+  const owner = state.tasks.get(other)?.owner ?? null;
+  const otherHere = !!owner && presenceStatus(state, owner, now) !== "missing";
+  return seamSettleAdvice(mine, other, owner, otherHere, presenceStatus(state, PM_ACTOR, now) !== "missing");
 }
 
 export function validate(state: State, e: NewEvent, human: string, now: Date = new Date()): void {
@@ -686,7 +696,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         const fresh = blockingSeamsIfTouches(state, t, revised).filter((x) => !before.has(x.with));
         if (fresh.length) {
           const added = revised.filter((x) => !t.touches.includes(x));
-          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），再与对方定下来（task seam ${t.id} ${fresh[0].with} --resolution "..."），然后 done。不属于这件的触点就去掉`);
+          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），${settleAdvice(state, t.id, fresh[0].with, now)}不属于这件的触点就去掉`);
         }
       }
       return;
