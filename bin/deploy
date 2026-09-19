@@ -34,21 +34,23 @@ fi
 #    比没有这道闸更坏（今晚那条「投递失败按设计不出声」是同一族）。
 # ③ **留一条带理由的越过**：`--skip-tests "<原因>"`，照 `--no-seam-check` 的体例。理由必须写，且会被打出来。
 #    生产此刻是残的，真出事时「发不了车」比「发了一版没跑测试的车」更贵——所以这条路必须存在，但要留下名字。
+#
+# **参数必须原样转给 `fly`。** 第一版把 `"$@"` 拼成一个字符串再 `set -- $saved`，qa 03:29 拿改动前后对照量出
+# 三种坏法，全是这次改动带来的：`--build-arg "FOO=a b"` 裂成两个参数、`--label "*.txt"` 被当时目录里的文件名
+# 替换掉（**静默**，不报错）、`--label ""` 整个消失。转发额外参数是这个脚本明写支持的用法，闸不该顺手改坏它。
+# 这里改用 POSIX 的轮转写法：`n` 只数**原来那批**还剩几个，留下的追加到 `$@` 末尾，一次都不经过分词与通配。
 skip_tests=""
-saved=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
+n=$#
+while [ "$n" -gt 0 ]; do
+  arg="$1"; shift; n=$((n - 1))
+  case "$arg" in
     --skip-tests)
-      shift
-      skip_tests="${1-}"
+      if [ "$n" -gt 0 ]; then skip_tests="$1"; shift; n=$((n - 1)); fi
       [ -n "$skip_tests" ] || { echo "bin/deploy: --skip-tests 要一个理由，例如 --skip-tests \"生产在燃，先发车后补\"" >&2; exit 2; }
       ;;
-    *) saved="$saved $1";;
+    *) set -- "$@" "$arg";;
   esac
-  shift
 done
-# shellcheck disable=SC2086
-set -- $saved
 
 if [ -n "$skip_tests" ]; then
   echo "bin/deploy: 跳过测试发车。理由：$skip_tests" >&2
