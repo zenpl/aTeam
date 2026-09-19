@@ -16,7 +16,7 @@ import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touch
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, type Refusal } from "./rejected.js";
 import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
-import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
+import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, type ShipOutcome } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { titleAsShown, cardTitleLine, type InstructionIntent } from "@ateam/core";
@@ -862,9 +862,21 @@ async function shipRefusals(): Promise<void> {
     const queued = pendingRefusals(process.cwd(), me);
     if (!queued.length) return;
     const cfg = loadConfig();
-    const { recorded } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
-    clearRefusals(process.cwd(), me, recorded);
-  } catch { /* 没捎成就还在队里，下一条命令再捎 */ }
+    let outcome: ShipOutcome = "ok";
+    try {
+      const { recorded, counted } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
+      // **`counted === false` 才算「没记下」**：回了空名单而 `counted` 为真，说明那几条自己不合格
+      // （id 或规则名不成形），那是队里那几行的毛病，不是这条路捎不过去——不该算进这个连续失败。
+      if (counted === false) outcome = "not-counted";
+      clearRefusals(process.cwd(), me, recorded);
+    } catch { outcome = "unreachable"; }   // 没捎成就还在队里，下一条命令再捎（t-218，这一条一个字没改）
+    // t-284：**这一次的沉默照旧，长期的沉默不照旧。** 一句话走 stderr，退出码与 stdout 一个字不动。
+    const now = new Date();
+    let st = afterShip(loadShipState(process.cwd(), me), outcome, now);
+    const line = outcome === "ok" ? null : shipSilenceNotice(st, pendingRefusals(process.cwd(), me), now);
+    if (line) { console.error(line); st = markSaid(st, now); }
+    saveShipState(process.cwd(), me, st);
+  } catch { /* 这整段都是顺带说的一句，出什么事都不许弄坏那条命令 */ }
 }
 
 const ARGV = process.argv.slice(2);

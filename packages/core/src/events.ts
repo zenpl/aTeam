@@ -403,6 +403,19 @@ export const CLI_REFUSAL_OVERFLOW = "cli-queue-overflow";
 export const CLI_REFUSAL_BATCH_MAX = 200;
 export const cliRefusalDropped = (n: number) => cliRefusalOp(`(dropped ${n})`);
 
+/**
+ * t-284：**捎不上去这件事，长期发生时说的那两句。** 住在 core 而不是命令行里，是 t-143 那道闸的规矩：
+ * **新增的人可见的话一律进 core**，否则第二个家越搬越大而没人数得清。
+ *
+ * 两句分开，因为要人做的事不同：一句说「请求没到那台服务」（要动的是服务端），一句说「服务收下了但那边
+ * 没有这本账」（`counted: false`，t-218 写死了不许假装记下了，这一句只是把它从沉默变成出声）。
+ */
+export const shipTriesLine = (n: number) => `连续 ${n} 次没捎成`;
+export const shipUnreachableLine = (queued: number, days: number, tries: number) =>
+  `⚠ 这台机器上有 ${queued} 条被拒记录捎不上去，最早的一条已经 ${days} 天（${shipTriesLine(tries)}，请求没到服务或那台服务没有这条路）。它们此刻只活在这里，那本账是缺的。`;
+export const shipNotCountedLine = (queued: number, days: number, tries: number) =>
+  `⚠ 服务收下了请求但没有这本账（counted: false），这台机器上 ${queued} 条被拒记录一条都没记下，最早的一条已经 ${days} 天（${shipTriesLine(tries)}）。不划掉是对的，但它不会自己好。`;
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -660,6 +673,9 @@ export const KEY_SYMBOLS = [
   "seamWaiveOtherNotDone",
   "seamWaived",
   "selfCorrections",
+  "shipNotCountedLine",
+  "shipTriesLine",
+  "shipUnreachableLine",
   "slimBoard",
   "span",
   "splitRelease",

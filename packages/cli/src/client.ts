@@ -98,7 +98,9 @@ export class Client {
    * t-218：**把这台机器上那几条「没发出去就被拒了」的写入捎给服务。** 服务只记得下它认得的那几样
    * （规则名、谁、哪种写入、什么时候），正文本来就没有。返回它真记下了哪几条 id——**捎成了才划掉**。
    */
-  reportRefusals(refusals: readonly Refused[]): Promise<{ recorded: string[] }> {
+  reportRefusals(refusals: readonly Refused[]): Promise<{ recorded: string[]; counted?: boolean }> {
+    // t-284：`counted` 也收下来。服务端一直在回它（`app.ts` 那条路由的末行），而命令行此前只读 `recorded`——
+    // 于是「服务收下了但没有这本账」与「服务压根没收到」在这边长得一模一样，**两种失败混成一件事**。
     return this.call("POST", "/refusals", { refusals });
   }
 }
