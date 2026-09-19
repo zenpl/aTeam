@@ -22,6 +22,8 @@ export function verifySurface(s: State): string {
   return typeof v === "string" && v.trim() ? v.trim() : DEFAULT_VERIFY_SURFACE;
 }
 
+/** `证据：<…>。` 那层包装，预算里要按它的真长度扣，不写一个手抄的 4。 */
+const ASK_EVIDENCE_WRAP = "证据：。";
 const head = (text: string, n: number) => { const cs = [...text.trim()]; return cs.length > n ? cs.slice(0, n).join("") + "…" : cs.join(""); };
 
 /**
@@ -82,7 +84,11 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
     const surface = verifySurface(s);
     const tail = `判在 ${surface}。`;
     const lead = `${t.title}${VERIFY_ASK}`;
-    const room = INSTRUCTION_MAX_CHARS - [...lead].length - [...tail].length - 4;
+    // t-287：**这条预算原来短一个字。** `head()` 在截断时会补一个 `…`，而 `- 4` 只算了 `证据：` 与 `。`
+    // 那四个字——于是贴着上限的那一张卡拼出来是 281，**被服务自己的闸拒掉**（实测：标题与证据都塞满代理对时
+    // 正好复现）。这不是尺的问题：换成 UTF-16 也一样差这一个，只是被另一个更大的误差盖着。
+    const wrap = [...ASK_EVIDENCE_WRAP].length + 1;   // `证据：` + `。` + head 截断时补的那个 `…`
+    const room = INSTRUCTION_MAX_CHARS - [...lead].length - [...tail].length - wrap;
     const evidence = e.evidence?.trim() ? `证据：${head(e.evidence, Math.min(ASK_EVIDENCE_CHARS, room))}。` : "没给证据。";
     return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: ["过", "不过"], body: `${lead}${evidence}${tail}`, ack_by: new Date(now.getTime() + VERIFY_ASK_ACK_MS).toISOString(), refs: [e.id] }];
   }

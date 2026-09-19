@@ -237,12 +237,24 @@ export const INSTRUCTION_MAX_CHARS = 280;
  *   纯 BMP 两者相同，遇代理对（emoji）分叉。
  * · `verifyflow.ts` 拼自动卡时按**码点**算剩余位置，却要过这道按 UTF-16 量的闸——同一族的第三处。
  *
- * **这把尺照抄此刻服务端的行为，不是照抄「更合理」的那一个**：一个 emoji 在这里算 2。
- * 该不该统一到码点是另一件事（t-286 判据 3 的结论：该收，但要一件自己的任务，因为它改的是被接受／被拒的边界）。
+ * **t-287：收成一把尺，按码点量。** 一个 emoji 从此算 1，不算 2。
+ *
+ * 方向不是「码点更合理」，理由是第四处自己给的：`verifyflow.ts` 拼自动卡时，`room` 与 `head()` 的截断
+ * **本来就按码点算**。收成码点 ⇒ 生成端与闸自动一致，那一处一个字都不用改；收成 UTF-16 ⇒ 那两处都得再改一次，
+ * 否则带代理对时算出的 `room` 偏大、拼出来的卡超闸被自己拒。**一个方向让现有的三处自洽，另一个方向要再动两处。**
+ *
+ * 边界会动，而且动得干净：**判决发生变化的输入，恰好是且仅是含代理对的那些**——纯 BMP（中文、英文、标点）
+ * 两把尺逐字相同，一条也不受影响。
  */
-export const instructionBodyLength = (body: string): number => body.length;
+export const instructionBodyLength = (body: string): number => [...body].length;
 /** 超了几个（没超就是 0 或负数）。 */
 export const instructionOverBy = (body: string): number => instructionBodyLength(body) - INSTRUCTION_MAX_CHARS;
+/**
+ * t-287（答 pm 04:14）：**判断式也搬过来，否则「一致」只保住了数、没保住比较。**
+ * 搬之前：闸写 `len > MAX`，预检写 `overBy > 0`——数是同一个，**比较是两份**。谁把闸改成 `>=`，
+ * 预检不会跟着变，而它们看上去仍然「用的是同一个函数」。现在两处都叫这一个。
+ */
+export const instructionTooLong = (body: string): boolean => instructionOverBy(body) > 0;
 /**
  * 发之前那一句。**只报告，不替人做决定**：不改那个 280、不截断、不拒绝发送——发卡的人可能有理由那么写，
  * 但他不许在不知情的情况下那么写（与 t-265 那条标题提醒同一条道理）。
@@ -521,6 +533,7 @@ export const KEY_SYMBOLS = [
   "ALERT_FAILED",
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
+  "ASK_EVIDENCE_WRAP",
   "BATCH_LINES",
   "BODY_FILE_HELP",
   "BOTH_BODY_AND_FILE",

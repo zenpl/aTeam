@@ -24,13 +24,14 @@ function refusedCount(body: string): number {
 }
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 const points = (s: string) => [...s].length;
-const rep = (unit: string, n: number) => unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
+/** 造一条**恰好 n 个码点**的串。t-287 之后按码点造，`slice` 那种按 UTF-16 切的写法会把代理对劈成半个。 */
+const rep = (unit: string, n: number) => [...unit.repeat(Math.ceil(n / [...unit].length))].slice(0, n).join("");
 
 const SAMPLES = [
   { name: "纯 ASCII", body: rep("a", 300) },
   { name: "纯中文", body: rep("中", 300) },
   { name: "中英混合", body: rep("中a文b", 300) },
-  { name: "含 emoji（代理对）", body: rep("好👍", 300) },
+  { name: "含 emoji（代理对）", body: rep("好👍", 300) },   // 300 码点 = 400 UTF-16 单元
   { name: "边界 281（超一个）", body: rep("a", INSTRUCTION_MAX_CHARS + 1) },
 ];
 
@@ -59,16 +60,32 @@ describe("t-286 判据 2 · 预检与闸量同一个量", () => {
     expect(instructionBodyLength(zh)).not.toBe(bytes(zh));
   });
 
-  it("**emoji 上两把尺分叉，而这里照抄服务端此刻用的那把**：一个 emoji 算 2，不算 1", () => {
-    const e = rep("好👍", 300);
-    expect(points(e), "码点那把尺会少数").toBeLessThan(instructionBodyLength(e));
-    expect(instructionBodyLength(e), "闸报的就是这个").toBe(refusedCount(e));
-    expect(instructionBodyLength("a👍b")).toBe(4);
-    expect(points("a👍b")).toBe(3);
-    // 判据 2 那句「不许按更合理选」：如果预检改用码点，下面这条就会红——**它正是会被放过去的那一格**。
-    const justOver = "a".repeat(INSTRUCTION_MAX_CHARS - 1) + "👍";   // 码点 280、UTF-16 281
-    expect(points(justOver)).toBe(INSTRUCTION_MAX_CHARS);
-    expect(instructionBodyLength(justOver)).toBe(INSTRUCTION_MAX_CHARS + 1);
-    expect(refusedCount(justOver), "服务端拒它；按码点量的预检会说「没超」").toBe(INSTRUCTION_MAX_CHARS + 1);
+  /**
+   * t-287：**这一格就是边界动的那一格，改前红改后绿。**
+   *
+   * `"a"×279 + "👍"` 码点 280、UTF-16 单元 281。t-286 那版（`.length`）**拒它**并报 281；收成码点之后
+   * **它过**。这条断言的是闸的判决（`validate` 抛不抛），不是某个函数的返回值——函数层与真路是两格（t-285）。
+   */
+  it("**边界动了：280 码点、281 单元的那一条，从被拒变成通过**", () => {
+    const justOver = "a".repeat(INSTRUCTION_MAX_CHARS - 1) + "👍";
+    expect(points(justOver), "码点 280").toBe(INSTRUCTION_MAX_CHARS);
+    expect(justOver.length, "UTF-16 单元 281").toBe(INSTRUCTION_MAX_CHARS + 1);
+    expect(() => send(justOver), "收成码点之后它过得去").not.toThrow();
+    expect(instructionOverBy(justOver), "预检也说没超").toBe(0);
+    // 再往前一个码点就该拒，而且报的是码点数——**边界仍在，只是换了把尺**
+    const oneMore = "a".repeat(INSTRUCTION_MAX_CHARS) + "👍";
+    expect(points(oneMore)).toBe(INSTRUCTION_MAX_CHARS + 1);
+    expect(refusedCount(oneMore)).toBe(INSTRUCTION_MAX_CHARS + 1);
+    expect(instructionBodyLength("a👍b"), "只有代理对那一族变了：4 → 3").toBe(3);
+  });
+
+  it("**判决变化的输入恰好是且仅是含代理对的那些**：纯 BMP 一条也不受影响", () => {
+    for (const unit of ["a", "中", "。", "Ω"]) {
+      const at = rep(unit, INSTRUCTION_MAX_CHARS);
+      const over = rep(unit, INSTRUCTION_MAX_CHARS + 1);
+      expect(points(at), `${unit}：纯 BMP 两把尺逐字相同`).toBe(at.length);
+      expect(() => send(at), `${unit}：280 照旧过`).not.toThrow();
+      expect(refusedCount(over), `${unit}：281 照旧拒，报的数也没变`).toBe(INSTRUCTION_MAX_CHARS + 1);
+    }
   });
 });

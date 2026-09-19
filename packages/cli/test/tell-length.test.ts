@@ -15,7 +15,12 @@ import type { AddressInfo } from "node:net";
 import { tellPrecheck } from "../src/precheck.js";
 import { INSTRUCTION_MAX_CHARS, instructionBodyLength } from "@ateam/core";
 
-const rep = (unit: string, n: number) => unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
+/**
+ * 造一条**恰好 n 个码点**的串。第一版用 `.slice(0, n)`（按 UTF-16 切），它会把代理对劈成半个——
+ * 而半个代理对过不了进程边界（转成 UTF-8 时变成替换字符），于是子进程收到的正文与我这边的不是同一条。
+ * **一个量具自己在传递中被改了，量出来的两个数当然对不上。**
+ */
+const rep = (unit: string, n: number) => [...unit.repeat(Math.ceil(n / [...unit].length))].slice(0, n).join("");
 const OVER = rep("中", 300);
 const OK = rep("中", INSTRUCTION_MAX_CHARS);
 
@@ -34,7 +39,7 @@ describe("t-286 判据 4、5 · 预检说什么、不说什么", () => {
   });
 
   it("**判据 5：预检自己出错时出声，不悄悄跳过**", () => {
-    const boom = () => { throw new Error("量不出来"); };
+    const boom = (): boolean => { throw new Error("量不出来"); };
     const [line, ...rest] = tellPrecheck(OVER, boom);
     expect(rest).toHaveLength(0);
     expect(line).toContain("没跑成");
