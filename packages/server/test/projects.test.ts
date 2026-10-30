@@ -110,10 +110,10 @@ describe("t-041 · isolation", () => {
     // with the project's cookie the forms post straight to the prefixed actions
     const inside = await (await fetch(`${base}/p/${a.project}/`, { headers: { accept: "text/html", cookie: cookie.split(";")[0] } })).text();
     expect(inside).toContain(`action="/p/${a.project}/ack"`);
-    // the token page of the project validates the project's own admin key, sets its cookie, runs the action, returns under the prefix
+    // the token page of the project validates the project's own admin key, sets its cookie, runs the action, and its receipt links back under the prefix (t-306)
     const gate = await fetch(`${base}/p/${a.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "从项目页说的", token: k }).toString() });
-    expect(gate.status).toBe(303);
-    expect(gate.headers.get("location")).toBe(`/p/${a.project}/`);
+    expect(gate.status).toBe(200);   // t-306：办了事之后是一页回执
+    expect(await gate.text(), "t-306：前缀原来由 location 证，现在由回执里那个返回链接证——钉的是同一件事").toContain(`href="/p/${a.project}/"`);
     expect(gate.headers.get("set-cookie")!.startsWith(`ateam_token_${a.project}=`)).toBe(true);
     expect((await fetch(`${base}/p/${b.project}/token`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ then: "/say", text: "x", token: a.admin_key }).toString() })).status).toBe(401);
     expect((await fetch(`${base}/p/${b.project}/?token=${a.admin_key}`, { redirect: "manual" })).status).toBe(401);

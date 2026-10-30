@@ -57,8 +57,10 @@ describe("t-036 · POST /ack", () => {
     await post("pm", { kind: "task", op: "create", task: "t-9", title: "一键部署", criteria: ["按钮"] , no_human_impact: true});
     const i = await post("pm", { kind: "instruction", to: HUMAN, body: "部署 t-9。合并后推到 production", ack_by: later() });
     const r = await ack({ id: i.id, note: "明天再部署" }, { authorization: `Bearer ${OWNER}`, accept: "text/html" });
-    expect(r.status).toBe(303);
-    expect(r.headers.get("location")).toBe("/");
+    // t-306：**这里原来断言 303 跳回牌桌**。那一跳没了（成功之后给一页回执），所以这一条改成 200。
+    // 这条用例本来要钉的那件事一个字没变——它数的是「这一下落下去了、牌桌随后怎么变」，而不是「服务用哪种方式把人送回去」。
+    expect(r.status).toBe(200);
+    expect(r.headers.get("location"), "t-306：成功之后不再跳回牌桌").toBeNull();
     const b = await boardJson();
     const it = b.instructions.find((x: { id: string }) => x.id === i.id);
     expect(it).toMatchObject({ status: "acked", kind: "do", title: "部署 t-9", deferred: { body: "明天再部署" } });

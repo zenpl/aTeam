@@ -57,7 +57,7 @@ describe("t-306 判据① · 四个按钮成功之后都给回执，没有一个
     expect(page).toContain(UI.receipt.landed);
     expect(page).toContain(UI.receipt.what["/say"]);
     expect(page, "回牌桌是可选的，所以它是一个链接，而且它不在那句话的结尾").toContain(`href="/"`);
-    expect(page, "那句话自己说完（pd 06:42：全部用意是「你不用做任何事」的句子，不许以要人做一件事结尾）").toContain(UI.receipt.nothingToDo);
+    expect(page, "第一行只放结果，并给出那个许可（pd 17:02 定稿）").toContain(UI.receipt.landed);
     expect((await store.read()).events.some((e) => e.actor === HUMAN && e.body?.includes("开工了")), "写入真落了").toBe(true);
   });
 

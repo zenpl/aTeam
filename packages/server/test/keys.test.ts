@@ -157,7 +157,7 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     // 人打开自己的地址
     await fetch(p.ownerUrl, { headers: { accept: "text/html" }, redirect: "manual" });
     // 现在：主人自己的钥匙按得动
-    expect((await press(p.ownerKey, "/say", { text: "我自己说的" })).status).toBe(303);
+    expect((await press(p.ownerKey, "/say", { text: "我自己说的" })).status).toBe(200);   // t-306：回执，不再 303
     // 而共享钥匙按不动，拒绝话与 /events 那条一模一样
     const denied = await press(p.adminKey, "/say", { text: "替他说" });
     expect(denied.status).toBe(403);
@@ -182,7 +182,7 @@ describe("t-103 · what you may say is decided by the key you hold", () => {
     expect(page).not.toContain(p.ownerKey);                          // 页面从不回显钥匙（pd 01:02）
     // 把地址里那段粘进来，刚才按的那一下就落下去了
     const done = await fetch(`${p.base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: p.ownerKey, then: "/say", text: "cookie 过期了还想说" }), redirect: "manual" });
-    expect(done.status).toBe(303);
+    expect(done.status).toBe(200);   // t-306：办了事之后是一页回执，不再 303
     const log = await (await fetch(`${p.base}/log`, { headers: { authorization: `Bearer ${p.adminKey}`, "x-actor": "pm" } })).json() as { events: { kind: string; actor: string; body?: string }[] };
     expect(log.events.filter((e) => e.kind === "note" && e.body?.includes("cookie 过期了还想说"))).toMatchObject([{ actor: HUMAN }]);
   });
