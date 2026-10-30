@@ -71,7 +71,7 @@ export function capBytes(all: Event[], limit: number): { events: Event[]; more: 
   return { events: all, more: false };
 }
 
-export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date(), limit: number = PULL_BYTES): Promise<PullResult> {
+export async function pull(store: EventStore, me: string, after: string | null, now: Date = new Date(), limit: number = PULL_BYTES, opts: { plain?: boolean } = {}): Promise<PullResult> {
   const { events, more } = capBytes(await store.since(after), limit);
   const nowIso = now.toISOString();
   const for_me: Event[] = [];
@@ -92,7 +92,9 @@ export async function pull(store: EventStore, me: string, after: string | null, 
     const { events: all } = await store.read();
     taken_back_seen = earlier.filter((id) => all.some((e) => e.id === id && e.kind === "instruction" && e.to === me));
   }
-  await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso });
+  // t-257：`opts.plain` 是「这一次不带 wait」——只有它为真时才写 `plain_pull_at`，其余时候不给，
+  // 由存储保留旧值。零新增写入：这一行本来每次拉取都要写。
+  await store.setCursor({ actor: me, last_event_id: cursor, at: nowIso, ...(opts.plain ? { plain_pull_at: nowIso } : {}) });
   // 投递只记这一页里真的给了的那些——**记了却没给，就是「已送达」变成假话**，而那恰恰是这道闸要防的
   return { events, for_me, cursor, ...(more ? { more: true } : {}), ...(taken_back_seen?.length ? { taken_back_seen } : {}) };
 }
@@ -138,7 +140,7 @@ export function forPoster(s: State, me: string, limit: number = POST_REPLY_BYTES
 export const OWED_SHARE = 0.25;
 
 export function postReply(s: State, me: string, base: unknown, limit: number = POST_REPLY_BYTES): { for_me: Instruction[]; owed: OwedNow; more?: boolean } {
-  const empty: OwedNow = { unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 };
+  const empty: OwedNow = { unanswered: [], unseen: [], untouched: [], legacy_before_acted_rule_count: 0 };
   const bytes = (x: unknown) => Buffer.byteLength(JSON.stringify(x), "utf8");
   // `more: true` 也一起量进去：没截断时这 12 字节是白留的，而白留比超标好。
   const frame = bytes({ ...(base as object), for_me: [], owed: empty, more: true });
@@ -172,9 +174,18 @@ export function postReply(s: State, me: string, base: unknown, limit: number = P
  */
 export function capOwed(owed: OwedNow, limit: number = POST_REPLY_BYTES): OwedNow & { more?: boolean } {
   // t-239：历史那一桶只剩一个数，不参与这笔预算——它本来就是常量大小，而且没人读它的内容。
-  const out: OwedNow & { more?: boolean } = { unanswered: [], untouched: [], legacy_before_acted_rule_count: owed.legacy_before_acted_rule_count };
+  const out: OwedNow & { more?: boolean } = { unanswered: [], unseen: [], untouched: [], legacy_before_acted_rule_count: owed.legacy_before_acted_rule_count };
   let used = 0;
-  for (const bucket of ["unanswered", "untouched"] as const) {
+  /**
+   * t-290 判据 4：**顺序是「谁只有这一条路」，不是「谁更急」。** 第一版我按急迫排（unanswered → unseen →
+   * untouched），`post-budget.test.ts` 当场红，而它红得对：
+   *
+   * `unseen` 的那几条**同时也在 `for_me` 里**（那份用例自己写着「`owed` 是 `for_me` 的超集」），所以把预算
+   * 先给它等于把同一批字送两遍；而 `untouched` 是那个节点**唯一**能知道自己还欠着这几条的地方——
+   * t-227 做这件事的全部理由就是它。第一版在 176 条 unseen 的真状态下把 untouched 挤到 0 条，
+   * **正好把 t-244 修掉的那个毛病原样做了回来。**
+   */
+  for (const bucket of ["unanswered", "untouched", "unseen"] as const) {
     for (const item of owed[bucket]) {
       // 每一条都按「自己 + 一个逗号」算。每个桶的头一条其实不带逗号，于是最多算多 3 字节——
       // 宁可算多，也不要一个说不出真话的上限。

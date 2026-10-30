@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -90,12 +90,31 @@ export function createApp(opts: ServerOptions) {
   const defaultProject = opts.defaultProject ?? "ateam";
   const registry = opts.registry ?? new MemoryRegistry();
   const memory = new Map<string, EventStore>();
-  const storeFor = opts.storeFor ?? ((p: string) => {
+  const makeStore = opts.storeFor ?? ((p: string) => {
     if (p === defaultProject && opts.store) return opts.store;
     let s = memory.get(p);
     if (!s) { s = new MemoryStore(); memory.set(p, s); }
     return s;
   });
+  /**
+   * t-250 ②（pm 00:39 钉死的第一步）：**一个项目一个 store 对象，按 `projectId` 存——读那一路早就是这么做的
+   * （下面 `reading` 那个 Map），照抄过来。**
+   *
+   * 此前 `main.ts` 注入的那支每次调用都 `new SqliteStore(sdb, project)`，于是 core 里写入侧那个
+   * **按 store 对象存的 `WeakMap`（`store.ts:96`）永远落空**：每一条写入都从零折一遍整条日志。
+   * qa 00:38 的对照实测：**同一个 store 对象连写三条 = 494／3／2ms；每次 new 一个 = 435／424／418ms。**
+   * 这一处不改，写入侧的增量折叠形同不存在，而它每一次落空都让整台服务器停住那么久
+   * （`node:sqlite` 的 `DatabaseSync` 是同步的——见 `sqlite-store.ts#since`）。
+   *
+   * 这里只保证**对象身份稳定**，不缓存任何状态：store 自己是无状态的一层壳，真正被复用的是 core 挂在它上面的
+   * 那个 `Reduction`。
+   */
+  const stores = new Map<string, EventStore>();
+  const storeFor = (p: string): EventStore => {
+    let s = stores.get(p);
+    if (!s) stores.set(p, (s = makeStore(p)));
+    return s;
+  };
   const ready = registry.ensure(defaultProject, defaultProject, token);
   // t-063: `real()` stamps records (events, cursors, deadlines); `now()` is what the server believes the time is when it
   // reads the world (overdue, presence, call-outs). They differ only by the test offset, which production cannot set.
@@ -199,6 +218,15 @@ export function createApp(opts: ServerOptions) {
         const body = missingCard(role, status, minutes, undelivered?.count ?? unread.length);
         const refs = [...new Set([...overdue.map((st) => st.instruction.id), ...[...state.instructions.values()].filter((st) => st.instruction.to === role && !st.delivered_at && !st.acked_at).map((st) => st.instruction.id)])];
         out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "do", body, ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString(), refs }, { human, now: real() }));
+      }
+      // t-278（t-257 拆出来的另一半）：**「你手上的命令行旧了」那句提醒此刻整个住在命令行里，于是最旧的那个人听不到它。**
+      // 这里发的是一条普通指令，所以一个不含 t-211 的 CLI 也照样把它印出来（判据 1）。
+      // 不猜它有多旧：服务端知道一个节点是哪一版的唯一来源就是它自报，而旧节点恰恰不自报。
+      // 说哪一句由 t-257 落下的 `plain_pull_at` 决定——见过不带 wait 的拉取 ⇒ 排除「从没跑过 sync」那一种。
+      for (const role of projectRoles(state)) {
+        const card = cliShaUnknownCard(state, role, at);
+        if (card) out.push(await append(store, { kind: "instruction", actor: SERVICE_ACTOR, to: role, body: card,
+          ack_by: new Date(real().getTime() + 24 * 3600_000).toISOString() }, { human, now: real() }));
       }
       // t-069 / pm 22:39: the contact card exists only when the project asked for it (fact project:alert.ask) and no
       // address is known yet; once, never repeated. 填写 / 先不要 on it work as before (t-071).
@@ -719,13 +747,37 @@ export function createApp(opts: ServerOptions) {
       }
 
       if (req.method === "GET" && path === "/events") {
+        // t-291：**认不出来的参数在读任何一个之前就拒掉。** 放在第一行有两重意思：这一次什么都没发生（游标
+        // 不动、长轮询不挂起），以及记账走 t-212 那个统一的 catch——这里一行都不补。
+        checkQuery(url.searchParams.keys());
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
-        let result = await pull(store, actor, after, real());
+        // t-257：**这一次是不是一次普通拉取（不带 wait），记进游标那一行。**
+        // 游标本来每次拉取就写（pull.ts 末尾的 setCursor），所以这是零新增写入；而游标不是日志事件，
+        // 所以 built≡served 一个字不动。board 那条路要靠它分成因：见过不带 wait 的 ⇒ 这个节点跑过普通 sync。
+        let result = await pull(store, actor, after, real(), undefined, { plain: wait === 0 });
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, wait);
-            function onAppend(x: { project: string }) { if (x.project === projectId) done(); }
+            /**
+             * t-290 判据 5：**提前叫醒他的，只能是「有东西还没送到他眼前」。**
+             *
+             * 此前任何一条本项目事件都叫醒所有等待者——量过（本支 86ec251）：别人发一条与 dev 无关的 note，
+             * dev 那条 wait=5000 的长轮询 206 ms 就回来了，回包里 `for_me=0`。
+             *
+             * **判据里那个条件在这一刻等价于「刚落的这条是发给他的指令」**，可证：会等在这里的前提是第一次
+             * `pull` 一条事件都没拿到，也就是游标已经走到日志末尾——那时他的 `unseen` 必然是空的
+             * （`unseen` 的定义就是游标还没走过）。所以「`unseen` 从空变成非空」只能由新落的一条给他的指令造成。
+             * 这样写是 O(1)：不必为每一个等待者重算一遍全量日志，而那正是此刻服务端最贵的那件事。
+             *
+             * 代价说在明处：**不是发给他的那些事件，要等这一轮 `wait` 到点才拿到**（看守那边 ≤ 30 s）。
+             * 它们没有丢——下一次拉取照旧全给，只是不再由它们提前叫醒谁。
+             */
+            function onAppend(x: { project: string; e?: unknown }) {
+              if (x.project !== projectId) return;
+              const e = x.e as { kind?: unknown; to?: unknown } | undefined;
+              if (e && e.kind === "instruction" && e.to === actor) done();
+            }
             function done() { clearTimeout(timer); bus.off("append", onAppend); resolve(); }
             bus.on("append", onAppend);
             req.on("close", done);
@@ -810,7 +862,9 @@ export function createApp(opts: ServerOptions) {
         if (!err.recorded) await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
         // t-233 判据 2：**类别跟着这条拒绝一起出门。** 客户端此前只拿得到 rule 与一句话，要分辨「那件事已经
         // 发生过了」只能去匹配话里的字——而那正是这件任务不许的做法。
-        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message, already: err.already });
+        // t-291：码与那一句都跟着拒绝走。默认仍是 409 与带 `rule: ` 前缀的 message——**既有的每一条回包
+        // 一个字不变**；只有自己声明了的那种（此刻只有查询参数那一条）回 400 并把 pd 锁的字逐字送出去。
+        return json(res, err.status, { error: "rejected", rule: err.rule, message: err.verbatim ?? err.message, already: err.already });
       }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
       console.error(err);

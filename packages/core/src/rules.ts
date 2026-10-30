@@ -1,7 +1,7 @@
-import { type Event, type NewEvent, type ReadingShape, INSTRUCTION_MAX_CHARS, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -107,6 +107,23 @@ export class Rejected extends Error {
    */
   recorded = false;
   /**
+   * t-291：**这条拒绝自己说它回哪个状态码。**
+   *
+   * 默认 409 的意思是「这条写入不合规」。而一个认不出来的查询参数不是一条不合规的写入——它是一个这台服务
+   * 读不懂的请求；回 409 会让客户端照着「日志不让我这么做」去找规则，而它该改的只是自己的地址栏。
+   *
+   * 码跟着拒绝走，于是 t-212 那条「Rejected 的唯一出口，也是记账的唯一出口」一个字不动：**下一个人再加一条
+   * 带自己码的拒绝，不必记得去那个 catch 里补一行。**
+   */
+  status = 409;
+  /**
+   * t-291 判据 1（**pd 的字不改**）：回包里给人看的那一句用这一份原文。
+   *
+   * `Error.message` 是 `${rule}: ${message}`，那个前缀是给日志与堆栈看的；pd 锁了字的句子一旦被前缀改了形，
+   * 判据 1 当场不成立。不带这个字段的拒绝照旧用 `message`——**既有的每一条回包一个字不变。**
+   */
+  verbatim?: string;
+  /**
    * t-233：**一次拒绝有两种意思，而提醒只印一种。**
    *
    * 真样本（qa 16:55）：拒绝话逐字是「already acked at 16:54:51.880Z」，而 t-116 的提醒照旧说「没有落下去」
@@ -119,6 +136,31 @@ export class Rejected extends Error {
   constructor(public readonly rule: string, message: string, public readonly already?: { at: string | null }) {
     super(`${rule}: ${message}`);
   }
+}
+
+/**
+ * t-291：一条 **400** 的拒绝——请求本身这台服务读不懂，不是写入不合规。回包里的 `message` 是逐字那一句。
+ */
+export function badRequest(rule: string, message: string): Rejected {
+  const r = new Rejected(rule, message);
+  r.status = 400;
+  r.verbatim = message;
+  return r;
+}
+
+/**
+ * t-291 判据 1、2：**认不出来的查询参数当场拒收，一个都不吞。**
+ *
+ * pd 05:30 的通则：凡是我们收下的东西，要么作用于结果，要么当场拒收并说清怎么改；不许既不作用也不报错。
+ * 此前这里走的正是被禁的第三条路——只问认得的那两个，别的连看都不看。
+ *
+ * 顺序照 `names` 给的来（`URLSearchParams.keys()` 是地址里的顺序），所以同时写错两个时报的是第一个：
+ * **一次说一件、说清怎么改**，比一次甩一串更接近 pd 那句话的意思。
+ *
+ * 判据 5：**范围只有参数名。** 值合不合规、事件字段那一层、幂等命中那一层都不在这里，另排。
+ */
+export function checkQuery(names: Iterable<string>, legal: readonly string[] = EVENTS_PARAMS): void {
+  for (const name of names) if (!legal.includes(name)) throw badRequest("query", unknownParamLine(name, legal));
 }
 
 /**
@@ -248,6 +290,16 @@ export function checkShape(e: NewEvent): void {
   if (bad.length) stop();
 }
 
+/**
+ * t-288 判据 7：那句「怎么把这条接缝定下来」要看对侧此刻有没有人。**在场判断只有一处**（`presenceStatus`），
+ * 不在这里再写一份——t-287 刚为「两把尺」付过账。
+ */
+function settleAdvice(state: State, mine: string, other: string, now: Date): string {
+  const owner = state.tasks.get(other)?.owner ?? null;
+  const otherHere = !!owner && presenceStatus(state, owner, now) !== "missing";
+  return seamSettleAdvice(mine, other, owner, otherHere, presenceStatus(state, PM_ACTOR, now) !== "missing");
+}
+
 export function validate(state: State, e: NewEvent, human: string, now: Date = new Date()): void {
   if (!e.actor) throw new Rejected("actor", "actor is required");
   checkShape(e); // t-109: shape before rules, so no rule ever reads a field that is not there
@@ -323,8 +375,10 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       if (!e.to) throw new Rejected("instruction", "to is required");
       if (e.to === e.actor) throw new Rejected("instruction", "cannot instruct yourself");
       if (!e.body?.trim()) throw new Rejected("instruction", "body is required");
-      if (e.body.length > INSTRUCTION_MAX_CHARS)
-        throw new Rejected("instruction", `body is ${e.body.length} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
+      // t-286：量法搬进 `instructionBodyLength`，**预检叫的是同一个函数**——「两边量同一个量」从此是结构，
+      // 不是一条会被下一次改动悄悄推翻的断言。行为一个字没变：那个函数就是 `.length`。
+      if (instructionTooLong(e.body))
+        throw new Rejected("instruction", `body is ${instructionBodyLength(e.body)} chars; max ${INSTRUCTION_MAX_CHARS}. Put the argument in a note and the action here.`);
       // t-181 判据 6 (pd 09:17)：带默认的卡没有 ack_by，那个默认永远不会生效——「到期按 X」里没有「到期」。
       // CLI 总会填 15m，所以这道闸防的是别的客户端与直接调 API 的情形，拒绝话要说清怎么补。
       if (!e.ack_by) throw new Rejected("instruction", e.default !== undefined
@@ -448,7 +502,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       return;
 
     case "task":
-      return validateTask(state, e, human);
+      return validateTask(state, e, human, now);
   }
 }
 
@@ -475,7 +529,7 @@ function humanImpactPromised(op: "create" | "done", e: { shows?: string; no_huma
     throw new Rejected(op, `${what}：--shows "<人现在能看到什么>"；确实什么都没变就明写 --no-human-impact（意思是「${NO_HUMAN_IMPACT}」，你看过了）。${EMPTY_IS_NOT_NO_IMPACT}`);
 }
 
-function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string): void {
+function validateTask(state: State, e: NewEvent & { kind: "task" }, human: string, now: Date): void {
   if (e.op === "create") {
     if (state.tasks.has(e.task)) throw new Rejected("task", `${e.task} already exists`, { at: state.tasks.get(e.task)!.created_at });
     if (!e.title?.trim()) throw new Rejected("task", "title is required");
@@ -587,8 +641,32 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         if (!e.touches?.length) throw new Rejected("claim", "say what else you will touch");
         return;
       }
-      if (t.status !== "open" && t.status !== "failed")
-        throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
+      if (t.status !== "open" && t.status !== "failed") {
+        /**
+         * t-253（T8）：**任务状态把活钉在某一个人身上，而那个人一走，活就冻住——这正是 T8 要挡的那件事，
+         * 而我们自己的闸此刻站在它对面。** 今夜同一形状撞到三处：
+         *   ① `t-025` 是 `done`，**造成那个回归、而且自己说要修**的 frontend 去 claim，被这一行逐字拒掉；
+         *   ② `t-249`／`t-250` 是 `failed`，只有原 owner 重 `done` 才谈得上再验；
+         *   ③ `t-248` 的 claim 攥在一个 `missing` 了两小时的节点手里，**活其实早已推上去**，别人接不了。
+         *
+         * 出路不是把这道闸拆掉——**没人可以随手接走别人正在做的活**（判据 3 的反面）。出路是让「他还在做」
+         * 与「他不在了」分得开，而那件事牌桌已经算得出来：`presenceStatus`。**只认 `missing`**：
+         * `deaf` 是「在干活但没在读日志」，那种人没走，接他的活仍然是抢。
+         *
+         * **接走不抹掉任何人**（判据 2）：`handovers` 逐条记着从谁到谁、什么时候、当时那个人是什么状态，
+         * 原 owner 一个字都没有被覆盖掉——日志是我们唯一的共享事实，让它说谎比冻住一件活更贵。
+         */
+        const held = t.owner;
+        // 没有 owner，或者就是他自己——原来那句逐字不动。
+        if (!held || held === e.actor) throw new Rejected("claim", `${t.id} is ${t.status}${t.owner ? ` (owner ${t.owner})` : ""}`);
+        // **本件新增的唯一一处拒绝**，类别是「那件事没有发生」那一类（不带 `{ at }`）：等那个人真的缺人了，
+        // 同一条命令就会通过。原来那句 `<id> is <status> (owner <who>)` 逐字留在前半——t-010 有一条验过的
+        // 断言钉着它，而被拒的人首先要知道的就是「谁拿着」；新增的只是后半句：为什么此刻接不走。
+        const how = presenceStatus(state, held, now);
+        if (how !== "missing")
+          throw new Rejected("claim", `${t.id} is ${t.status} (owner ${held})：它此刻${how === "listening" ? "在听" : "还在动，只是没在读日志"}——${HANDOVER_ONLY_WHEN_MISSING}`);
+        // 缺人：接得走。落到下面那条共用的触点检查，不另开一处。
+      }
       if (!e.touches?.length) throw new Rejected("claim", "declare what you will touch (paths/symbols/fields)");
       return;
     case "done": {
@@ -680,7 +758,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         const fresh = blockingSeamsIfTouches(state, t, revised).filter((x) => !before.has(x.with));
         if (fresh.length) {
           const added = revised.filter((x) => !t.touches.includes(x));
-          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），再与对方定下来（task seam ${t.id} ${fresh[0].with} --resolution "..."），然后 done。不属于这件的触点就去掉`);
+          throw new Rejected("done", `按实际改动重算接缝，多出 ${fresh.length} 条挡住 done：${fresh.map((x) => `${x.with}（碰在 ${x.overlap.join("、")}）`).join("；")}。claim 时没声明、实际碰了的是：${added.length ? added.join("、") : "（没有新触点，是对方的声明变了）"}。接缝要先存在才谈得上定：先把这些触点 claim 进来（task claim ${t.id} --touches ...，你是 owner，claim 会把它们并进声明、接缝随即出现），${settleAdvice(state, t.id, fresh[0].with, now)}不属于这件的触点就去掉`);
         }
       }
       return;

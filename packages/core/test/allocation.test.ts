@@ -175,21 +175,27 @@ describe("runtime metrics over the last window", () => {
     });
 
     /**
-     * t-175（pd 08:40 ①：**把一道闸改安静，就要列出它此前真拦下过的形状逐条重跑**）。本件让那一行**整行先不出**
-     * ——门槛的分子换了意思，句子一字不改就是假话，而改句子是 pd 的事（pm 00:07：「句子与数都不动，或整行先不出」）。
+     * t-175（pd 08:40 ①：**把一道闸改安静，就要列出它此前真拦下过的形状逐条重跑**）。
      *
-     * **所以代价在这里写成断言，不写在注释里**：此前这一行在这份夹具上是会说话的（「pd 17% 的指令是自己写错后
-     * 更正的（3/18）」），现在一条预警都不出。这不是闸失效，是一个**等 pd 定字的空窗**，t-175 那一半挂着
-     * blocked on pd。两桶照旧算得出来——缺的只是这一行。pd 定稿后把这条断言连同那一行一起改回来。
+     * 本件拆了桶，但**人看得见的那一行一个字都没动**——句子逐字是拆桶之前那一句，分子仍是两桶之和，
+     * 由这一处自己加出来（存储里没有合计字段）。所以此前拦下过的那一种此刻照旧被拦下、照旧是同一句话。
+     *
+     * 我先交的那一版不是这样：它让整行不出。qa 00:47 把代价量了出来——真日志 325 个时刻破了 1 个，
+     * 而且门槛整个没有了、`selfCorrections` 在 src 里一个生产消费者都不剩。**一个没人读的指标不是指标。**
+     *
+     * 还差的那一半写在这里，免得它被当成做完了：判据 1 要的「门槛只管『别人发现的』那一桶」**没有**做到，
+     * 分子还是两桶之和。pd 定稿那天分子与句子一起改，这条断言也跟着改。
      */
-    it("t-175：拆桶之后自我更正那一行整行先不出，而两桶照旧算得出来（等 pd 定字）", async () => {
+    it("t-175：拆桶之后人看得见的那一行逐字不变，而两桶各自算得出来", async () => {
       const w = world();
       const ackBy = () => new Date(w.at().getTime() + min(60)).toISOString();
       const say = (to: string, body: string, plus?: number) => w.emit({ kind: "instruction", actor: "pd", to, body, ack_by: ackBy() }, plus);
       for (let i = 0; i < 8; i++) await say("pm", `第 ${i} 件事，各不相同：${"甲乙丙丁戊己庚辛"[i]}`, min(12));
+      let acked = 0;
       for (const second of ["更正：改成寅，我上一条的 sha 写错了", "更正我刚才那条：是 t-2 不是 t-1", "纠正：判据 3 我写反了"]) {
         const first = await say("pm", "先按这个做", min(12)) as { id: string };
-        await w.emit({ kind: "ack", of: first.id, actor: "pm" } as unknown as NewEvent, min(1) / 2);   // 收件人签收了 → 「别人」
+        // 三条里只让收件人签收两条，两桶都非空，而那一行的分子仍是两桶之和、句子仍是那一句
+        if (acked++ < 2) await w.emit({ kind: "ack", of: first.id, actor: "pm" } as unknown as NewEvent, min(1) / 2);
         await say("pm", second, min(1));
       }
       await say("pm", "先按那个做", min(12));
@@ -200,11 +206,11 @@ describe("runtime metrics over the last window", () => {
 
       const st = await w.state();
       const list = [...st.instructions.values()].map((x) => x.instruction).filter((i) => i.actor === "pd").sort((a, b) => a.at.localeCompare(b.at));
-      // 三条都被签收过 → 三条全进「别人」，按旧口径这正是 17%、正是此前拦下过的那一种
-      expect(selfCorrections(st, list, st.notes).get("pd")!).toMatchObject({ sent: 18, 自己: 0, 别人: 3, 更新: 1, 说不好: 1 });
-      // 而那一行此刻不出现——这是本件故意的空窗，不是闸失效
+      expect(selfCorrections(st, list, st.notes).get("pd")!).toEqual({ sent: 18, 自己: 1, 别人: 2, 更新: 1, 说不好: 1, note自己: 0, note别人: 0 });
+      // **逐字是 t-175 之前那一句**：分子 3 = 1 + 2，两桶之和，而句子一个字没改
       const ws = runtimeAllocation(st, w.at(), HUMAN);
-      expect(ws.flatMap((x) => x.evidence).filter((e) => e.includes("更正"))).toEqual([]);
+      expect(ws.map((x) => x.pattern)).toEqual(["负载陷阱"]);
+      expect(ws[0].evidence).toEqual(["pd 17% 的指令是自己写错后更正的（3/18）；另有 1 条是情况变了才重发的、1 条说不好，都不计入"]);
     });
 
     it("the four pm really wrote that night are corrections; the ones a looser pattern caught are not", () => {

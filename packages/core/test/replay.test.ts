@@ -265,7 +265,11 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
 describe("t-010 · touches overlap by path, and the owner can widen a claim", () => {
   const create = (store: MemoryStore, c: ReturnType<typeof clock>, id: string) =>
     emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["works"] , no_human_impact: true});
-  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).seams;
+  // t-280：只撞在目录上的那一类改放在 `contained_seams`（它不上人那一页），接缝本身一条没少——这里两格都取。
+  const seams = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
+    const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
+    return [...b.seams, ...b.contained_seams];
+  };
 
   it("main.ts#init overlaps main.ts; packages/cli overlaps packages/cli/src/main.ts; unrelated paths do not", async () => {
     const store = new MemoryStore();
@@ -2698,8 +2702,24 @@ describe("t-113 · a seam is judged at the finest granularity both sides declare
     expect((await seamOf(await pair([F], [F]))).light).toBeUndefined();
   });
 
-  it("a directory that contains the other side's file is never light: nobody declares symbols for a directory", async () => {
+  // t-280（pm 03:24 拍的 ①′）：**这一条原来断言「目录包住文件永远不轻」，现在反过来。** 改的不是断言迁就实现——
+  // 是那条规则本身被改了：目录说不出是哪个文件，所以它只够记一笔，不够挡人。t-113 要的「说得越细闸越准」没变，
+  // 上面那几条（两侧都说文件、符号撞上、一侧只说文件）一个字没动，仍然全挡。
+  it("t-280：目录包住对面的文件、而两侧没指名过同一个文件——记下来，但不挡人", async () => {
     const w = await pair(["packages/core/test/"], [`${F}#t-111`]);
+    const seam = await seamOf(w);
+    expect(seam.light).toBe(true);
+    expect(seam.contained, "与 t-113 那一类分开标：能说的话不同").toBe(true);
+    expect(await canVerify(w)).toBe(true);
+    // 记一笔是真的记着：牌桌上它在，只是在自己那一格里，且不在「未解」那一组
+    const b = board(reduce(await w.store.read(), w.c.now()), HUMAN, w.c.now());
+    expect(b.contained_seams.find((x) => x.id === seam.id)).toMatchObject({ light: true, open: false, contained: true });
+    expect(b.seams.find((x) => x.id === seam.id), "人那一页读的是 seams：这一类一条都不该在里面").toBeUndefined();
+    expect(openSeamsFor(reduce(await w.store.read(), w.c.now()), "B")).toEqual([]);
+  });
+
+  it("t-280：同一个目录声明，只要两侧真的指名了同一个文件，照旧挡", async () => {
+    const w = await pair(["packages/core/test/", F], [F]);
     expect((await seamOf(w)).light).toBeUndefined();
     expect(await canVerify(w)).toBe(false);
   });

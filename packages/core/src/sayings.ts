@@ -48,18 +48,18 @@ export const SECOND_HOMES_ROOT = "packages";
 // （`--body-file` 那一路要求两条命令共用同一个取正文的地方）。344 → 343。
 // t-243 再搬走 5 句：i18n.ts 里 `saidStatus` 那份与 core `SAID_LABEL` 逐字相同的拷贝（四个词），
 // 以及 `sayHint` 里把其中三个词又抄了一遍的那句转述——它现在由 core 拼出来，文字一个字没变。343 → 338。
-export const SECOND_HOME_FROZEN: number = 338;
+export const SECOND_HOME_FROZEN: number = 336;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
  */
 export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/server/src/i18n.ts": 158,
-  "packages/cli/src/format.ts": 32,
+  "packages/cli/src/format.ts": 31,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
   "packages/cli/src/release.ts": 21,
-  "packages/cli/src/main.ts": 19,
+  "packages/cli/src/main.ts": 18,   // t-265：那句「……牌桌上这张卡没有标题」搬进 core（cardTitleLine）并改了措辞，这一处因此少一句
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,
   "packages/server/src/alerts.ts": 11,
@@ -116,6 +116,42 @@ export const WATCH_LINES = {
   neverPulled: "⚠ 服务端从没见过你拉取——它那边你一条都没读到过。先跑一次 ateam sync",
   /** 心跳还在跳，但服务端很久没见它拉取了。`how` 是 core 的 span(ms)：这一句说的是时长不是时刻。 */
   behind: (how: string) => `⚠ 服务端说你 ${how}没拉过了（你的监听还在跳）——你在读但没跟上，跑一次 ateam sync 看漏了什么`,
+  /**
+   * t-259：**第三种，此前没有自己的话。** 服务端说它落后，而这台机器上**根本没有看守在跑**。
+   *
+   * 原来这一档走的是上面那句 `behind`，于是对一个从没挂过看守的节点说「你的监听还在跳」——**一句假话**，
+   * 外加一条治不了它的处方（去 sync）。它缺的不是一次 sync，是一个看守；所以这句话给的是挂看守的命令。
+   * 不说「重挂」：从没挂过，谈不上「重」。
+   */
+  noWatch: (how: string, cmd: string) => `⚠ 服务端说你 ${how}没拉过了，而你这儿没有看守在跑——挂一个：${cmd}`,
+} as const;
+
+/**
+ * t-300 判据 4：**看守自己停下来时说的那两句。** 措辞是 pd 10:0x 的逐字定稿。
+ *
+ * 为什么要有第二句（它是 pd 加的，也是这一行存在的理由）：**「停了」是状态，「没人会叫醒你」才是后果。**
+ * 读到状态的人要自己推一步才知道该着急，而这一步我们替他走没有成本。
+ *
+ * 为什么三种停法第一句必须分开：**下一个动作不同。** `--once` 命中不是故障、做完了被要求的事，
+ * 所以它**不劝重挂**；被信号中断是人或宿主停的，重挂之前先问是不是故意的；出错才是真要人看一眼的那种。
+ * 共用的只有第二句——后果一样。
+ *
+ * **主语给一次，不给两次，也不给零次**（pd 立的通则）。我先给过两版，两版都不对：模板前缀「看守停了：」
+ * 加上一句本身已成句的「…停的」是**说了两遍停**；把前缀删掉，三句就**一个主语都没有**——终端上这一行前面是
+ * 一串事件，「按 --once 停的：…」没有说出是谁停了。正确的改法是**把主语融进那一句**，不是在前面再接一截。
+ *
+ * **这几句是尽力而为，不是契约**（pd 判据 4④）：`kill -9`、宿主被回收、容器没了，三种都留不下任何一行。
+ * 所以「流里最后一行不是『看守…停了』就说明它还活着」是**假的**，而它恰恰是实现完之后最容易被人推出来的
+ * 那一句。判一个节点还在不在听，唯一的依据仍是牌桌按拉取算出来的在场。**我们要补的是那一行，不是靠那一行。**
+ */
+export const WATCH_STOPPED = {
+  /** 三种共用的第二句。缺了它，这一行只报状态、不报后果。 */
+  consequence: "从这一行之后没有人会叫醒你——新指令要等你下一次 sync 才看得见。",
+  /** 劝重挂那半句。**`--once` 那一种不带它**：它做完了被要求的事，不是故障。 */
+  reArm: "重挂：ateam watch",
+  once: (): string => `看守按 --once 停了：你等的那条指令到了。${WATCH_STOPPED.consequence}`,
+  interrupted: (signal: string): string => `看守被中断停了（${signal}）。${WATCH_STOPPED.consequence}${WATCH_STOPPED.reArm}`,
+  failed: (why: string): string => `看守出错停了：${why}。${WATCH_STOPPED.consequence}${WATCH_STOPPED.reArm}`,
 } as const;
 
 /**
@@ -142,6 +178,34 @@ export const DEPLOY_SOURCE = {
 export const overturnedLine = (surface: string, by: string) => `${surface} 验过，后被 ${by} 推翻`;
 
 /**
+ * t-265 · 发一张给人的卡之前，终端上先说出这张卡在人那一页上的标题会是什么。
+ *
+ * pm 判据 7 把做法收窄到这一句：**不解释坏在哪，只把算出来的标题原样摆出来**——发卡的人自己就看得出
+ * 它空了、被冒号截了、还是把星号带进去了。所以这里只有一个占位，没有三种诊断话。
+ *
+ * 算它的是 `titleAsShown`（core 一处），**不是命令行自己重写一份判断**（判据 1）。
+ */
+/**
+ * t-262：**「谁在」那一行的两个时刻，分开说。**
+ *
+ * 在这之前这一行印的是 `在读  <last_seen> 前`——一个数，而且取的是 `last_seen`（拉取与写入之晚的那个）。
+ * 两处都不对：
+ * ① **那个数合成过**。`pull()` 每次都无条件推游标（`packages/core/src/pull.ts:95`），`ateam watch` 每 60 秒走一遍，
+ *    所以「拉取很近」证明的是那个循环还在跑——容器活着、网络通、钥匙有效——**它不证明任何人读了任何东西**。
+ *    一个九十分钟不产出的节点与一个正在干活的节点，在这一个数上逐字相同（`presence-two-clocks.test.ts` 钉住了这一点）。
+ * ② **「在读」是个结论**，而服务端没有依据下它：一小时不出声可能是在干重活，分辨这两者就是在猜。
+ *
+ * 所以这里只给两个时刻、两个动作名，**一个结论都不给**，让读的人自己看。
+ * 「从没拉过 / 从没写过」与「刚刚」不是一回事，各自说各自的。
+ */
+export const PRESENCE_NEVER_PULLED = "从没拉过";
+export const PRESENCE_NEVER_WROTE = "从没写过";
+export const presenceClocks = (pulledAgo: string | null, wroteAgo: string | null) =>
+  `拉取 ${pulledAgo ? `${pulledAgo} 前` : PRESENCE_NEVER_PULLED}   写入 ${wroteAgo ? `${wroteAgo} 前` : PRESENCE_NEVER_WROTE}`;
+
+export const cardTitleLine = (title: string) => `标题：${title}`;
+
+/**
  * 一条人可见的话在 core 里的登记。
  *
  * `key` 唯一；`where` 说它出现在哪儿（挖层、卡、命令行……），因为 pd 05:50 那条规则要的是「每个状态指名它的
@@ -161,6 +225,8 @@ export interface Saying {
  * 它今天不全，而且不假装全——`SECOND_HOME_FROZEN` 那个数就是「还有多少句没进来」的诚实计量。
  */
 export const SAYINGS: readonly Saying[] = [
+  { key: "card.title", where: ["cli"], from: "cardTitleLine" },
+  { key: "presence.clocks", where: ["cli"], from: "presenceClocks" },
   { key: "batch.deployed", where: ["page", "cli"], from: "BATCH_LINES.deployed" },
   { key: "batch.shipped", where: ["page", "cli"], from: "BATCH_LINES.shipped" },
   { key: "batch.stale", where: ["page", "cli"], from: "BATCH_LINES.stale" },

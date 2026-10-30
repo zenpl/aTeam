@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { serverKey } from "../src/main.js";
 
 const CLI = resolve(__dirname, "..", "dist", "main.js");
 // **远大于管道缓冲区（64 KiB）**：2,000 条、每条正文上百字节 ≈ 300 KB。
@@ -50,7 +51,15 @@ function checkout(): string {
   writeFileSync(join(dir, ".ateam", "config.json"), JSON.stringify({ me: "dev", url: base, token: "k" }));
   return dir;
 }
-const cursorOf = (dir: string) => (existsSync(join(dir, ".ateam", "cursor.dev")) ? readFileSync(join(dir, ".ateam", "cursor.dev"), "utf8").trim() : "");
+/**
+ * t-293 判据 8①：游标文件名从 `cursor.dev` 变成 `cursor.dev.<服务器指纹>`。
+ * **这里改的只是「去哪儿找那个文件」，断言一个字没动**——名字由 `serverKey()` 现算，不再抄一份字面量，
+ * 所以下一次名字再变，这份用例跟着变、不会悄悄去读一个不存在的文件然后把空串当成「游标没动」。
+ */
+const cursorOf = (dir: string) => {
+  const f = join(dir, ".ateam", `cursor.dev.${serverKey(base)}`);
+  return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+};
 const env = { ...process.env, ATEAM_ME: "", ATEAM_URL: "", ATEAM_TOKEN: "" };
 const until = async (cond: () => boolean, ms: number) => {
   for (let i = 0; i < ms / 10 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));

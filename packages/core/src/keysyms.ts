@@ -80,24 +80,66 @@ export function speaking(sources: Record<string, string>, min = SPEAKING_MIN_CHA
 export function deciding(sources: Record<string, string>): string[] {
   const froms = new Set(SAYINGS.map((x) => x.from.split(".")[0]));
   const out = new Set<string>();
+  const evidence = (body: string, self: string) =>
+    HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body)) ||
+    [...froms].some((x) => x !== self && new RegExp(`\\b${x}\\b`).test(body));
   for (const src0 of Object.values(sources)) {
     const src = blankComments(src0);
-    for (const m of src.matchAll(/export (?:const|function) (\w+)/g)) {
-      if ((REGISTRY_SYMBOLS as readonly string[]).includes(m[1])) continue;
-      const next = src.indexOf("\nexport ", m.index! + 1);
-      const body = src.slice(m.index!, next < 0 ? src.length : next);
-      if (!/=>|function/.test(body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
-      const byField = HUMAN_FIELDS.some((x) => new RegExp(`\\.${x}\\b`).test(body));
-      const bySaying = [...froms].some((x) => x !== m[1] && new RegExp(`\\b${x}\\b`).test(body));
-      if (byField || bySaying) out.add(m[1]);
+    // t-264（pm 判据 8 裁 B）：**段边界认所有顶层声明，不只 `export`。**
+    //
+    // 旧版拿 `\nexport ` 当边界，于是夹在中间的非导出函数**整个折进上面那个 export 的身体里**。
+    // frontend 09-07 09:27 报的就是这个形状，`speaking()` 那一半被 t-204 顺带修好了，这一半原样活了六天。
+    const decls = [...src.matchAll(/^(?:export\s+)?(?:const|function)\s+(\w+)/gm)];
+    const seg = decls.map((d, i) => ({
+      name: d[1], exported: d[0].startsWith("export"),
+      body: src.slice(d.index!, i + 1 < decls.length ? decls[i + 1].index! : src.length),
+    }));
+    for (const e of seg) {
+      if (!e.exported || (REGISTRY_SYMBOLS as readonly string[]).includes(e.name)) continue;
+      if (!/=>|function/.test(e.body.slice(0, 200))) continue;   // 只看函数：常量表引用一个名字不算「决定」
+      // **只切段还不够，会往反方向错。** 四个错配的符号里 `manual` **真的调** `common()`，而 `manual` 生成的是
+      // 角色手册那份人读的文档——只切段的话它会悄悄掉出闸外，那正是 pm 判据 7 里「静默放行」那个方向：
+      // 没有人会来吵。所以**一个非导出 helper 的证据，算给正文里真的调用了它的那些导出**。
+      const called = seg.filter((h) => !h.exported && new RegExp(`\\b${h.name}\\b`).test(e.body));
+      if (evidence(e.body + called.map((h) => h.body).join("\n"), e.name)) out.add(e.name);
     }
   }
   return [...out].sort();
 }
 
-/** 此刻 core 里会说人话、或决定人看到什么的每一个符号。两个方向的并，字典序——名单该长什么样，就由这里说了算。 */
-export function measureKeySymbols(sources: Record<string, string>): string[] {
-  return [...new Set([...speaking(sources), ...deciding(sources)])].sort();
+/**
+ * t-270 · **第三个方向：一个渲染文件把某个 core 符号再导出了。**
+ *
+ * 前两个方向问的都是「这个符号自己写了什么」——`speaking` 看它有没有中文字面量，`deciding` 看它读不读
+ * 人可见字段、引不引用登记过的话。**两个都看不见 `blockedWhy`**：它那一段没有中文，也不读那些字段，
+ * 而 `html.ts` 里逐字写着 `export const whyLine = blockedWhy;`——**它算的是人第一屏那句「为什么卡住」。**
+ *
+ * 于是那道闸此刻的答案是两样的：声明碰了 `html.ts#whyLine` 被拒，声明碰了 `board.ts#blockedWhy` 放行。
+ * **别名被护着，被别名的那个没有。**
+ *
+ * 所以第三问不问它写了什么，问**别人拿它做了什么**：**一个渲染文件把它接到人眼前，那就是人可见的。**
+ * 再导出是一次明确的动作，不是巧合——这也是为什么这里只认再导出，**不把渲染文件 import 过的东西一律算上**：
+ * 那样会一次吞进 31 个（其中 10 个只是类型），而一道对什么都响的闸，人会整个忽略掉它（t-211 的账）。
+ * 被 import 且调用、却没被再导出的那一族，是 t-270 判据 4 单独列的清单，不在这里收。
+ */
+export function rendered(renderSources: Record<string, string>): string[] {
+  const out = new Set<string>();
+  for (const [, src0] of Object.entries(renderSources)) {
+    const src = blankComments(src0);
+    const fromCore = new Set<string>();
+    for (const m of src.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*["'][^"']*core[^"']*["']/g))
+      for (const raw of m[1].split(",")) {
+        const name = raw.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0].trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(name)) fromCore.add(name);
+      }
+    for (const m of src.matchAll(/^export\s+const\s+\w+\s*=\s*(\w+)\s*;/gm)) if (fromCore.has(m[1])) out.add(m[1]);
+  }
+  return [...out].sort();
+}
+
+/** 此刻 core 里会说人话、或决定人看到什么的每一个符号。三个方向的并，字典序——名单该长什么样，就由这里说了算。 */
+export function measureKeySymbols(sources: Record<string, string>, renderSources: Record<string, string> = {}): string[] {
+  return [...new Set([...speaking(sources), ...deciding(sources), ...rendered(renderSources)])].sort();
 }
 
 /** 名单在 `events.ts` 里的写法：**一行一个**，所以两个人各加一个名字落在不同的行上，git 自己就合得了。 */

@@ -89,6 +89,32 @@ describe("t-137 · 心跳停了，和心跳活着但服务端没见你拉", () =
     expect(line).not.toContain("重挂");              // re-arming a watch that never stopped fixes nothing
   });
 
+  /**
+   * t-259：**从没挂过看守的节点，不该被告知「你的监听还在跳」。**
+   *
+   * `listeningNotices` 原来的写法是「`deafNotice` 说不出话就当它还在跳」，而 `deafNotice` 对 `never` 与
+   * `listening` 都返回 null——**三态在这里被压成两态**。后果是一个根本没有看守在跑的节点，收到一句
+   * 说它看守还在跳的话，外加一条治不了它的处方（去 sync）：真正缺的是**挂一个看守**。
+   */
+  it("t-259：从没挂过看守、而服务端说它落后——不许说「监听还在跳」，要给挂看守的命令", () => {
+    const lines = listeningNotices(st(null), pullIdle(String(40 * 60)));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).not.toContain("你的监听还在跳");   // 它没有监听在跳
+    expect(lines[0]).toContain(DEFAULT_WATCH_CMD);      // 治得了它的那条处方
+    expect(lines[0]).toContain("40");                   // 落后多久也要说
+  });
+
+  it("t-259：三种状态各说各的，两两都不相同", () => {
+    const behind = pullIdle(String(40 * 60));
+    const never = listeningNotices(st(null), behind)[0];
+    const alive = listeningNotices(st(beating()), behind)[0];
+    const dead = listeningNotices(st(stopped(40)), behind)[0];
+    expect(new Set([never, alive, dead]).size).toBe(3);
+    expect(alive).toContain("你的监听还在跳");           // 它确实在跳
+    expect(dead).toContain("重挂");                      // 它停了，要重挂
+    expect(never).not.toContain("重挂");                 // 从没挂过，谈不上「重」挂
+  });
+
   it("both fine: not a word", () => {
     expect(listeningNotices(st(beating()), pullIdle("9"))).toEqual([]);
     expect(listeningNotices(st(beating()), null)).toEqual([]);

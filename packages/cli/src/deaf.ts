@@ -90,5 +90,15 @@ export function listeningNotices(st: WatchState, idle: PullIdle, windowMs = LIST
   const deaf = deafNotice(st);
   if (deaf) return [deaf];
   const behind = behindNotice(idle, windowMs);
-  return behind ? [behind] : [];
+  if (!behind) return [];
+  /**
+   * t-259：**三态不许压成两态。** 这里原来写的是「`deafNotice` 说不出话就当它还在跳」，而 `deafNotice`
+   * 对 `never` 与 `listening` **都**返回 null——于是一个从没挂过看守的节点收到「你的监听还在跳」，
+   * 一句假话，外加一条治不了它的处方。三档各有各的话：停了→重挂；还在跳但落后→去 sync；没有看守→挂一个。
+   *
+   * **边界说清楚**：只有「落后了多久」这一种走新句子。`idle.kind === "never"`（服务端从没见过它拉取）
+   * 仍走 `neverPulled`——那句说的是另一件事实（一条都没读到过），而且它没有时长可填。
+   */
+  if (st.kind === "never" && idle?.kind === "seconds") return [WATCH_LINES.noWatch(span(idle.s * 1000)!, DEFAULT_WATCH_CMD)];
+  return [behind];
 }

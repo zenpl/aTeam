@@ -59,7 +59,7 @@ describe("t-249 · 判据 1：回包里要带时间", () => {
     try {
       const quiet = await v.health();
       expect(quiet.ok).toBe(true);
-      const until = Date.now() + HEALTH_BUDGET_MS + 400;
+      const until = Date.now() + HEALTH_BUDGET_MS + 400;   // 期限之上足够远，不靠毫秒级的运气
       while (Date.now() < until) { /* 同步忙等：生产上那 48 秒就是这么来的，只是来自 sqlite 的同步 API */ }
       await new Promise((r) => setTimeout(r, 1200));        // 让采样器记下这一段
       const after = await v.health();
@@ -79,13 +79,20 @@ describe("t-249 · 判据 2：要有期限，超过就不算 ok", () => {
     expect(healthBody("a", 0, HEALTH_BUDGET_MS + 1).ok).toBe(false);                // 这次不慢，但刚才卡过
   });
 
-  /** 那个数是怎么定的：qa 那批实测两群之间的缝。缝的两侧各取一个真样本钉住，改数就要连这两条一起解释。 */
-  it("期限落在 qa 实测那两群之间的缝里：最慢的稳态过得去，最轻的那次卡过不去", () => {
-    const 稳态最慢 = 280, 卡住最轻 = 8320;   // 0.28s / 8.32s，qa 00:14
-    expect(healthBody("a", 稳态最慢, 稳态最慢).ok).toBe(true);
-    expect(healthBody("a", 卡住最轻, 卡住最轻).ok).toBe(false);
-    expect(HEALTH_BUDGET_MS).toBeGreaterThan(稳态最慢);
-    expect(HEALTH_BUDGET_MS).toBeLessThan(卡住最轻);
+  /**
+   * 那个数是怎么定的：**服务端事件循环延迟**这一个量里两群之间的缝。缝的两侧各取一个真样本钉住，
+   * 改数就要连这两条一起解释。
+   *
+   * 第一版这里写的是 280 与 8320——那是**客户端端到端**的数（里面约 200ms 是网络），拿它给循环延迟定期限
+   * 是拿一个量去定另一个量，qa 00:58 用「零流量的服务器有一分钟在说 not ok」把它证伪了。两个量差两个数量级。
+   */
+  it("期限落在服务端循环延迟那两群之间的缝里：健康那群的上界过得去，会挡住人那群里最轻的一次过不去", () => {
+    const 空转最慢 = 4;      // 1–4ms：qa 空转 200 秒，与我在 9372 条库上实测一致
+    const 挡人最轻 = 232;    // 一次 /board?full=1，9372 条库，实测
+    expect(healthBody("a", 空转最慢, 空转最慢).ok).toBe(true);
+    expect(healthBody("a", 挡人最轻, 挡人最轻).ok).toBe(false);
+    expect(HEALTH_BUDGET_MS).toBeGreaterThan(空转最慢);
+    expect(HEALTH_BUDGET_MS).toBeLessThan(挡人最轻);
   });
 
   it("一次卡过去之后，下一次 /health 还说得出「刚才卡过」——窗口内最坏的那次不会立刻被忘掉", () => {

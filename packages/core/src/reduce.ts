@@ -34,6 +34,13 @@ export interface TaskState {
   label?: string;
   claimed_at?: string;
   claimed_id?: string;
+  /**
+   * t-253：**这件活换过谁的手**——从谁到谁、什么时候、当时那个人在牌桌上是什么状态。
+   *
+   * 只追加，永不覆盖。`owner` 这一格只留着「此刻是谁」，而「原来是谁」不能因此消失：**接走一件活不许
+   * 让日志说谎**（判据 2）。原作者就是 `handovers[0].from`，中间每一手也都在这条链上。
+   */
+  handovers: { from: string; to: string; at: string; was: string }[];
   touches: string[];
   /**
    * t-157：**这件任务一共碰过什么**——各轮的并集。
@@ -165,7 +172,12 @@ export interface InstructionState {
   chosen?: { option: string; by: string; at: string; note?: string };
 }
 
-export interface Presence { last_pull: string | null; last_event: string | null }
+export interface Presence {
+  last_pull: string | null;
+  last_event: string | null;
+  /** t-257：这个节点最后一次不带 `wait` 的拉取（一次普通 `sync`）；从没有过就是 null。见 Cursor 上那段说明。 */
+  plain_pull_at?: string | null;
+}
 
 /** The later of the two: the old single "last seen". */
 export function lastSeen(p: Presence | undefined): string | null {
@@ -199,11 +211,22 @@ export interface SeamState {
    * merges second; never a reason to hold a verification. Recomputed on every claim and done, like the overlap itself.
    */
   light?: boolean;
+  /**
+   * t-280: `light` 里的第二类——**两侧从没指名过同一个文件，是一侧的目录包住了另一侧**。与 t-113 那一类
+   * （都指名了同一个文件、各自的符号不相交）挡不挡人相同，但**能说的话完全不同**，所以分开标。
+   */
+  contained?: boolean;
 }
 
 export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
+  /**
+   * t-290 判据 2：**这个项目的日志从哪一刻开始。** 旁桶的起算点算不出来时退回这里，而不是返回 undefined——
+   * 一个「算不出来」的起算点会让整条分桶逻辑静默失效（那正是 t-147 写死在代码里时第二个租户的样子）。
+   * 日志一条事件都没有时它不存在，而那时也没有任何指令要分桶。
+   */
+  first_event_at?: string;
   /**
    * t-196: 每条事件署的是谁。署名更正要判「是不是本人自报」，就得知道那条事件本来署谁——而 State 只留 id，
    * 不留事件本身。一个 id -> actor 的映射，`disown` 那条规则读它。
@@ -277,25 +300,54 @@ export function touchesOverlap(a: string, b: string): boolean {
   return pa.startsWith(pb + "/") || pb.startsWith(pa + "/");
 }
 
-/** The touches of either task that overlap something the other declared. */
+/**
+ * 一条路径的每一个上级目录（不含它自己）：`a/b/c.ts` → `a`、`a/b`。深度是个位数，所以这是常数级的。
+ * 尾部斜杠在 `touchPath` 里已经去掉了，这里不会产出空段。
+ */
+function ancestorsOf(p: string, into: Set<string>): void {
+  for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) into.add(p.slice(0, i));
+}
+
+/**
+ * The touches of either task that overlap something the other declared.
+ *
+ * t-121 (pm 02:43): our own rules push touch counts up — claim wide, revise at done, name symbols. So the pairwise
+ * comparison has to stop being pairwise. Two touches without a directory in play meet exactly when their paths are
+ * equal, which a set answers in one step.
+ *
+ * t-250 ①（qa 01:16 的 profile：`touchesOverlap` 占写入路径自耗时 **41%**，9279 条日志上 **840 万次**调用）：
+ * **有目录在场时它整个退回两两比对**，而「有人声明了一个目录」在这个仓库里是常态（`s.dirTouchers`）。
+ * 于是那一支按「任务数 × 每任务触点数」平方涨——**贵的是这里的实现，不是人多声明了触点**（判据里钉死的
+ * 那条硬约束：不许靠少声明把曲线压下去）。
+ *
+ * 拆开看，`touchesOverlap(x, y)` 只有三种成立方式，每一种都答得出而不必扫对面：
+ *   · 两条路径相等          ⇒ 对面的**路径集合**里有它；
+ *   · 对面包含我（`pb/` 是 `pa` 的前缀）⇒ **我的某一个上级目录**在对面的路径集合里；
+ *   · 我包含对面（`pa/` 是 `pb` 的前缀）⇒ 我这条路径在**对面所有路径的上级集合**里。
+ * 三个集合预先算一遍（各 O(条数 × 路径深度)），之后每条触点只问三次 has。**语义一个字没改**——
+ * 它既不看 `dirLike`、也不看扩展名，与 `touchesOverlap` 的定义逐条对应；那个函数仍然是定义，
+ * 用例里拿它与这里的结果对拍。
+ */
 export function overlapOf(a: string[], b: string[]): string[] {
   const out = new Set<string>();
-  // t-121 (pm 02:43): our own rules push touch counts up — claim wide, revise at done, name symbols. So the pairwise
-  // comparison has to stop being pairwise. Without a directory in play, two touches meet exactly when their paths are
-  // equal, which a set answers in one step instead of a scan. A directory can contain anything, so that case still walks.
-  if (!a.some(dirLike) && !b.some(dirLike)) {
-    const bPaths = new Set(b.map(touchPath));
-    const aPaths = new Set(a.map(touchPath));
-    for (const x of a) if (bPaths.has(touchPath(x))) out.add(x);
-    for (const y of b) if (aPaths.has(touchPath(y))) out.add(y);
-    return [...out];
-  }
-  for (const x of a) if (b.some((y) => touchesOverlap(x, y))) out.add(x);
-  for (const y of b) if (a.some((x) => touchesOverlap(x, y))) out.add(y);
+  const paths = new Set<string>(), anc = new Set<string>();
+  const meets = (side: string[], theirPaths: Set<string>, theirAnc: Set<string>) => {
+    for (const x of side) {
+      const p = touchPath(x);
+      if (theirPaths.has(p) || theirAnc.has(p)) { out.add(x); continue; }
+      for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (theirPaths.has(p.slice(0, i))) { out.add(x); break; }
+    }
+  };
+  for (const y of b) { const p = touchPath(y); paths.add(p); ancestorsOf(p, anc); }
+  meets(a, paths, anc);
+  paths.clear(); anc.clear();
+  for (const x of a) { const p = touchPath(x); paths.add(p); ancestorsOf(p, anc); }
+  meets(b, paths, anc);
   return [...out];
 }
 
-const pathOf = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+/** t-250：与 `touchPath` 逐字同义，本来就是同一个函数的两个名字；现在它们真的是同一个（带记忆的那个）。 */
+const pathOf = (t: string): string => touchPath(t);
 const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) : null);
 
 /**
@@ -304,31 +356,62 @@ const symbolOf = (t: string) => (t.includes("#") ? t.slice(t.indexOf("#") + 1) :
  * declare less, which is the opposite of what the seam is for. It takes both sides: a side that only said "this file"
  * has not told you which half of it, so anything it overlaps is still a collision.
  *
- * A directory-prefix overlap is never light: nobody declared symbols for a whole directory.
  * No whitelist, no path pattern — a test file is not special, a declaration is (pm 01:00; the omitted lesson).
+ *
+ * t-280（pm 03:24 拍的 ①′）：**一侧的目录包住了另一侧的文件、而两侧从没指名过同一个文件——这种重叠只记不挡。**
+ * 在案的 782 条接缝里这样的有 12 条，其中 6 条真的挡了人，**6 条全部出自同一条目录声明**（`t-248` 的
+ * `packages/server/test`）：每一条都要人 `git diff` 两边、比文件名、写裁决，其中两条还各挡了一次 `done`；
+ * 而这 12 条里被裁成真冲突的是 **0 条**。改的不是声明——宽声明是协议要的（a seam you did not declare is a
+ * collision you will have later），**改的只是「挡」这一件事**：接缝照旧生成、照旧上牌桌、照旧可裁，合并义务
+ * 照旧（`seamcheck` 不看 `light`，唯一看它的是 `unresolvedSeams`）。**真撞上的那一刻不会漏**：`done` 按真实
+ * diff 重算触点，那时文件名是事实而不是声明，接缝会重新长出来、照样挡。
+ * 两侧**真的指名了同一个文件**时照旧按符号判——下面那一段一个字没动。
  */
 export function overlapIsLight(a: string[], b: string[]): boolean {
   const paths = new Set<string>();
-  let any = false;
   // t-121: the same set trick — a shared path is what both sides must have named for the question to arise at all.
-  if (!a.some(dirLike) && !b.some(dirLike)) {
-    const bPaths = new Set(b.map(pathOf));
-    for (const x of a) if (bPaths.has(pathOf(x))) { any = true; paths.add(pathOf(x)); }
-  } else {
-    for (const x of a) for (const y of b) {
-      if (!touchesOverlap(x, y)) continue;
-      any = true;
-      if (pathOf(x) !== pathOf(y)) return false;   // a directory containing the other: no symbols were ever declared for it
-      paths.add(pathOf(x));
-    }
+  // t-250 ①：这里原来分两支，有目录在场时退回两两比对（profile 里 `overlapIsLight` 自耗时 8%）。两支合成一支，
+  // 用与 `overlapOf` 同一套集合：**「重叠但路径不同」只有两种可能**——我这条路径是对面某条的上级（`bAnc`
+  // 里有它），或者对面某条是我的上级（我的某个上级在 `bPaths` 里）。任何一种都是「目录包住了另一个」。
+  // t-280 改的是这两种的结论：以前当场判「不轻」，现在只把它记下来（`contained`），因为目录说不出是哪个文件。
+  let contained = false;
+  const aPaths = new Set(a.map(pathOf)), bPaths = new Set(b.map(pathOf));
+  const bAnc = new Set<string>(); for (const p of bPaths) ancestorsOf(p, bAnc);
+  for (const p of aPaths) {
+    if (bAnc.has(p)) contained = true;
+    else for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) if (bPaths.has(p.slice(0, i))) { contained = true; break; }
+    if (bPaths.has(p)) paths.add(p);
   }
-  if (!any) return false;
+  // t-280：两侧一个同名文件都没有时，**「只被目录包住」与「根本不重叠」是两回事**，结论也不同：
+  // 前者是一条只记不挡的接缝（`true`），后者压根没有接缝，照旧 `false`——`overlapIsLight` 的旧口径一个字没动。
+  if (!paths.size) return contained;
   for (const p of paths) {
     const syms = (side: string[]) => side.filter((t) => pathOf(t) === p).map(symbolOf);
     const as = syms(a), bs = syms(b);
     if (as.includes(null) || bs.includes(null)) return false;            // one side only said "this file"
     if (as.some((x) => bs.includes(x))) return false;                    // both named symbols, and they meet
   }
+  return true;
+}
+
+/**
+ * t-280: 这条重叠里两侧**有没有指名过同一个文件**。没有，就只可能是一侧的目录包住了另一侧
+ * （`touchesOverlap` 只有「相等」与「上级目录」两种）。只在确有重叠时问，与 `overlapIsLight` 同一处调用。
+ */
+/**
+ * t-289：**这一族的定义，写成一个能跑的判据，而不是散文里的一句话。**
+ *
+ * 「只撞在目录上」＝ 两边的声明**真的**撞上了，而两边**没有任何同名文件**——只有一侧的目录包住了另一侧。
+ *
+ * **两侧各自的 `touches` 才是依据，`overlap` 字段不是**（qa `09-19T05:09` 实测的坑，它按 `overlap` 分类得到
+ * 的是反过来的 5/10）：`overlap` 里装着那条裸目录声明**加上它包住的那些文件**，而那些文件是**对面**点的，
+ * 不是两边都点了它。**一个把两边的声明合并过的字段，回答不了「两边有没有点同一个东西」。**
+ */
+export const isDirOnlySeam = (a: string[], b: string[]): boolean => overlapIsLight(a, b) && overlapIsContained(a, b);
+
+export function overlapIsContained(a: string[], b: string[]): boolean {
+  const bPaths = new Set(b.map(pathOf));
+  for (const x of a) if (bPaths.has(pathOf(x))) return false;
   return true;
 }
 
@@ -431,6 +514,7 @@ export function advance(s: State, log: Log, human = "human"): State {
   for (const [of, c] of claims) s.contested.set(of, { ...c, actor: s.actorOf.get(of) ?? "" });
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
+    if (s.first_event_at === undefined) s.first_event_at = e.at;   // t-290 判据 2
     s.ids.add(e.id);
     s.actorOf.set(e.id, e.actor);
     // t-196: 一条被署名更正过的事件不再计入状态——历史不改，但它不再算数。放在折叠的最前面，是因为
@@ -529,6 +613,8 @@ export function advance(s: State, log: Log, human = "human"): State {
   for (const c of log.cursors) {
     const pc = s.presence.get(c.actor) ?? { last_pull: null, last_event: null };
     if (!pc.last_pull || pc.last_pull < c.at) pc.last_pull = c.at;
+    // t-257：只往前，且没有就保持没有——一次长轮询不会把「它跑过普通 sync」抹掉。
+    if (c.plain_pull_at && (!pc.plain_pull_at || pc.plain_pull_at < c.plain_pull_at)) pc.plain_pull_at = c.plain_pull_at;
     s.presence.set(c.actor, pc);
     // t-147: how far this actor has read. Ids order the log, so "their cursor passed it" is a comparison.
     const seen = s.read_upto.get(c.actor);
@@ -697,7 +783,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], criteria_moved: [], refs: e.refs ?? [],
-        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [],
+        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [], handovers: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
         // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
@@ -729,6 +815,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       // t-105 与 t-113 靠的正是改窄（done 时按事实取代声明、把粗粒度的声明收细成符号）。把本轮也并进去，
       // 那两条当场坏掉：一条接缝再也细不下去，一次更正再也收不回来。本轮那一份在下面用的时候现并。
       indexTouches(s, t);   // t-121: the index follows the declaration, always
+      // t-253：接走别人手里的活时留下一条链。闸已经判过「那个人确实不在」（rules.ts 的 claim），
+      // 这里只负责**把它记下来而不抹掉谁**——`owner` 换人，`handovers` 一条不删。
+      if (t.owner && t.owner !== e.actor) t.handovers.push({ from: t.owner, to: e.actor, at: e.at, was: "missing" });
       t.owner = e.actor; t.status = "working"; t.claimed_at = e.at; t.claimed_id = e.id;
       detectSeams(s, t);
       return;
@@ -813,9 +902,10 @@ function detectSeams(s: State, t: TaskState) {
     const id = seamId(t.id, other.id);
     const same_owner = !!t.owner && t.owner === other.owner;
     const light = overlapIsLight(mineAll, theirsAll) || undefined;
+    const contained = (light && overlapIsContained(mineAll, theirsAll)) || undefined;   // t-280
     const existing = s.seams.get(id);
-    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; continue; }
-    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light });
+    if (existing) { existing.overlap = overlap; existing.same_owner = same_owner; existing.light = light; existing.contained = contained; continue; }
+    s.seams.set(id, { id, tasks: [t.id, other.id], overlap, same_owner, light, contained });
     for (const who of [t.id, other.id]) { let ids = s.seamsOf.get(who); if (!ids) s.seamsOf.set(who, (ids = new Set())); ids.add(id); }
   }
   for (const id of s.seamsOf.get(t.id) ?? []) { const seam = s.seams.get(id); if (seam) judgeSeam(s, seam); }
@@ -849,7 +939,17 @@ function seamCandidates(s: State, id: string, touches: string[]): Iterable<TaskS
   return out.values();
 }
 
-const touchPath = (t: string) => t.split("#")[0].replace(/\/+$/, "");
+/**
+ * t-250 ①：**这一行是写入路径上被叫得最多的一行**（每一次 `touchesOverlap` 叫两遍，9279 条日志上 840 万次），
+ * 而它每次都重新 split 一遍、再跑一遍正则。**触点字符串是高度重复的**（同一条路径被几十件任务声明），
+ * 所以记住算过的答案。表的大小以日志里出现过的不同触点为界（今天是几千条），随日志长而不随调用次数长。
+ */
+const pathMemo = new Map<string, string>();
+const touchPath = (t: string): string => {
+  let p = pathMemo.get(t);
+  if (p === undefined) pathMemo.set(t, (p = t.split("#")[0].replace(/\/+$/, "")));
+  return p;
+};
 /** A touch that could contain another: no file extension on its last segment ("packages/core/test/", "docs"). */
 const dirLike = (t: string) => !t.includes("#") && !/\.[A-Za-z0-9]+$/.test(touchPath(t));
 

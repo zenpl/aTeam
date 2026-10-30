@@ -62,6 +62,9 @@ export class SqliteDb {
         ALTER TABLE cursors_v2 RENAME TO cursors;
       `);
     }
+    // t-257：这个节点最后一次「普通拉取」（不带 wait）的时刻。加一列，不新建表——游标这一行本来每次拉取就写，
+    // 所以记它是零新增写入；而它不是日志事件，`built ≡ served`（t-062）一个字不动。
+    if (!cols("cursors").includes("plain_pull_at")) this.db.exec("ALTER TABLE cursors ADD COLUMN plain_pull_at TEXT");
     if (!cols("projects").includes("node_secret")) this.db.exec(`ALTER TABLE projects ADD COLUMN node_secret TEXT NOT NULL DEFAULT ''`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS events_project ON events (project, id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS deliveries_project_at ON deliveries (project, at)`); // t-128
@@ -104,7 +107,8 @@ export class SqliteStore implements EventStore {
 
   async read(): Promise<Log> {
     const events = (this.db.prepare("SELECT json FROM events WHERE project = ? ORDER BY id").all(this.project) as { json: string }[]).map((r) => JSON.parse(r.json) as Event);
-    const cursors = this.db.prepare("SELECT actor, last_event_id, at FROM cursors WHERE project = ?").all(this.project) as unknown as Cursor[];
+    const cursors = (this.db.prepare("SELECT actor, last_event_id, at, plain_pull_at FROM cursors WHERE project = ?").all(this.project) as unknown as (Cursor & { plain_pull_at: string | null })[])
+      .map((c) => (c.plain_pull_at === null ? { actor: c.actor, last_event_id: c.last_event_id, at: c.at } : c));
     const deliveries = (this.db.prepare("SELECT event_id, to_actor, at FROM deliveries WHERE project = ?").all(this.project) as { event_id: string; to_actor: string; at: string }[])
       .map((d) => ({ event_id: d.event_id, to: d.to_actor, at: d.at }));
     return { events, cursors, deliveries };
@@ -168,8 +172,10 @@ export class SqliteStore implements EventStore {
   }
 
   async setCursor(c: Cursor): Promise<void> {
-    this.db.prepare("INSERT INTO cursors (project, actor, last_event_id, at) VALUES (?, ?, ?, ?) ON CONFLICT(project, actor) DO UPDATE SET last_event_id = excluded.last_event_id, at = excluded.at")
-      .run(this.project, c.actor, c.last_event_id, c.at);
+    // t-257：`plain_pull_at` 不给就**保留旧值**（COALESCE 取旧的那一个）——一次长轮询不该把
+    // 「它跑过普通 sync」这件事抹掉。给了才写新的。
+    this.db.prepare("INSERT INTO cursors (project, actor, last_event_id, at, plain_pull_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project, actor) DO UPDATE SET last_event_id = excluded.last_event_id, at = excluded.at, plain_pull_at = COALESCE(excluded.plain_pull_at, cursors.plain_pull_at)")
+      .run(this.project, c.actor, c.last_event_id, c.at, c.plain_pull_at ?? null);
   }
 
   async recordDelivery(d: Delivery): Promise<void> {

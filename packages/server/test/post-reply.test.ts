@@ -59,7 +59,15 @@ describe("t-227 判据 1、2 · 只发不拉的节点，从回包里就看得见
     const reply = await post("pm", { kind: "note", body: "我没被点名" });
     expect(Array.isArray(reply.for_me)).toBe(true);
     expect(reply.for_me).toEqual([]);
-    expect(reply.owed).toEqual({ unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 });
+    // t-290 判据 4 改了这一行：那一格拆成了两格，所以空回包里是三格都在。
+    // **这条用例要钉的「空与缺失要分得开」一个字没变**——它数的就是「每一格都在、都是空的」，
+    // 而拆桶之后「每一格」多了一格。写成逐格列出而不是 toEqual 一个字面量，是为了下一次再多一格时
+    // 这条用例红在「这一格没有」上，而不是红在「字面量对不上」上。
+    expect(Object.keys(reply.owed).sort()).toEqual(["legacy_before_acted_rule_count", "unanswered", "unseen", "untouched"]);
+    expect(reply.owed.unanswered).toEqual([]);
+    expect(reply.owed.unseen, "新那一格同样要「在且为空」，不许缺").toEqual([]);
+    expect(reply.owed.untouched).toEqual([]);
+    expect(reply.owed.legacy_before_acted_rule_count).toBe(0);
   });
 });
 

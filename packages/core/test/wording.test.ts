@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { sourceFiles, isProductSource, SECOND_HOMES_ROOT, measureWording, newWording, wordingHash, WORDING_AT_FREEZE, WORDING_ADDED_DURING_FREEZE, WORDING_FROZEN } from "../src/index.js";
+import { sourceFiles, isProductSource, SECOND_HOMES_ROOT, measureWording, newWording, wordingHash, WORDING_AT_FREEZE, WORDING_ADDED_DURING_FREEZE, WORDING_FROZEN, CLI_SHA_KEY } from "../src/index.js";
 
 const ROOT = join(import.meta.dirname, "../../..");
 const sources = () => Object.fromEntries(
@@ -122,7 +122,10 @@ describe("t-211 判据 2 · 节点自报的构建版本进牌桌，但只出数�
     const s = new MemoryStore();
     const at = (m: number) => new Date(Date.now() + m * 60_000);
     await append(s, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev"] }, { human: "human", now: at(-100) });
-    await append(s, { kind: "reading", actor: "dev", surface: NODE_SURFACE, key: "dev:cli.sha", value: "abc1234" }, { human: "human", now: at(-10) });
+    // t-256：键从 `cli.sha` 改成 `cli.sha.last`（`CLI_SHA_KEY`）——**本条断言的行为一个字没改**
+    // （自报过就显示、没自报过是 null），改的只是它读哪个键。键名不再从这里手写，改从 core 取，
+    // 下一次再改名时这条用例跟着走，不会又红在一个字符串上。
+    await append(s, { kind: "reading", actor: "dev", surface: NODE_SURFACE, key: `dev:${CLI_SHA_KEY}`, value: "abc1234" }, { human: "human", now: at(-10) });
     const b = board(reduce(await s.read(), at(0)), "human", at(0));
     const row = (r: string) => b.presence.find((x) => x.actor === r);
     expect(row("dev")?.cli_sha).toBe("abc1234");

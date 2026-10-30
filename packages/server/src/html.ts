@@ -1,4 +1,4 @@
-import { missingRoleOf, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -12,7 +12,8 @@ export const REFRESH_SECONDS = 30;
 export const SHOWN = 5;
 export const SAID_SHOWN = 5;
 /** A first sentence up to this long is the card's title; the rest goes under 细节. */
-export const TITLE_MAX = 30;
+/** t-265：不再另写一个 30——与 core 的 `TITLE_MAX_CHARS` 同源，两处不会各自漂移。 */
+export const TITLE_MAX = TITLE_MAX_CHARS;
 /** How long 「你刚定了」 stays on the page after the human answered. */
 const JUST_MS = 60 * 60_000;
 
@@ -138,10 +139,14 @@ export function splitTitle(body: string): { title: string; detail: string } {
   return tryAt(ENDERS, true) ?? tryAt(COLONS, false) ?? tooLong(text);
 }
 
-/** No short first sentence: the first 30 characters and 「…」 are the title, the whole text is the detail (pd decision, 15:57). */
-function tooLong(text: string): { title: string; detail: string } {
-  return [...text].length <= TITLE_MAX ? { title: text, detail: "" } : { title: clip(text, TITLE_MAX), detail: text };
-}
+/**
+ * t-265（pm 09:51 裁 B）：**这三行搬去了 core（`tooLongTitle`），这里只转调。**
+ *
+ * 原来它只住在这里，于是「第一句当不成标题」这件事有两份判断：核心算出空，页面兜底成截断。
+ * 发卡的人看得到的只有核心那一份，**于是他被告知「没有标题」，而人看到的是一个截断标题**。
+ * pd 15:57 定的那条规矩（前 30 字加「…」当标题，全文当详情）一个字没变，只是换了住处。
+ */
+const tooLong = tooLongTitle;
 
 /** A blocked reason on the first screen: ids, paths and long shas become 「…」, then clipped (board.md: 60 chars). */
 export const whyLine = blockedWhy;

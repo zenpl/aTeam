@@ -1,4 +1,4 @@
-import { append, type EventStore, type AppendOptions } from "./store.js";
+import { append, Reduction, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
 import { projectRoles, importCounts, standIns } from "./board.js";
 import { Rejected } from "./rules.js";
@@ -22,6 +22,8 @@ export function verifySurface(s: State): string {
   return typeof v === "string" && v.trim() ? v.trim() : DEFAULT_VERIFY_SURFACE;
 }
 
+/** `证据：<…>。` 那层包装，预算里要按它的真长度扣，不写一个手抄的 4。 */
+const ASK_EVIDENCE_WRAP = "证据：。";
 const head = (text: string, n: number) => { const cs = [...text.trim()]; return cs.length > n ? cs.slice(0, n).join("") + "…" : cs.join(""); };
 
 /**
@@ -82,7 +84,11 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
     const surface = verifySurface(s);
     const tail = `判在 ${surface}。`;
     const lead = `${t.title}${VERIFY_ASK}`;
-    const room = INSTRUCTION_MAX_CHARS - [...lead].length - [...tail].length - 4;
+    // t-287：**这条预算原来短一个字。** `head()` 在截断时会补一个 `…`，而 `- 4` 只算了 `证据：` 与 `。`
+    // 那四个字——于是贴着上限的那一张卡拼出来是 281，**被服务自己的闸拒掉**（实测：标题与证据都塞满代理对时
+    // 正好复现）。这不是尺的问题：换成 UTF-16 也一样差这一个，只是被另一个更大的误差盖着。
+    const wrap = [...ASK_EVIDENCE_WRAP].length + 1;   // `证据：` + `。` + head 截断时补的那个 `…`
+    const room = INSTRUCTION_MAX_CHARS - [...lead].length - [...tail].length - wrap;
     const evidence = e.evidence?.trim() ? `证据：${head(e.evidence, Math.min(ASK_EVIDENCE_CHARS, room))}。` : "没给证据。";
     return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: ["过", "不过"], body: `${lead}${evidence}${tail}`, ack_by: new Date(now.getTime() + VERIFY_ASK_ACK_MS).toISOString(), refs: [e.id] }];
   }
@@ -101,13 +107,42 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
   return [];
 }
 
+/**
+ * t-252：**这条路自己的那一份增量折叠，不与任何人共享。**
+ *
+ * 此前这里每转一圈都 `reduce(await store.read(), now)`——**每写一条事件把整份日志重折一遍**，在 t-250 之后
+ * 它就是写入自耗时里最大的一块（qa 02:36 的 profile：`store.read` 32%）。
+ *
+ * **为什么不直接用写入路径那一份**（qa 01:42 原地试过，6 条用例当场红：core t-092×2／t-097／t-098／t-062、
+ * server t-095×2，全在 import／迁移／Builder）：**一份 `Reduction` 是就地 settle 的**，谁拿着它的 `State`
+ * 跨过一次 `await append`，那份 state 就会在他脚下被 settle 到另一个时刻。而 `runFollowUps` 的调用方
+ * 正是那样用的——它们拿着自己的 state 调这里。**所以共享不是省一次折叠，是把一颗雷埋进别人手里。**
+ *
+ * 这里给这条路一份**私有的**：`WeakMap` 按 store 存（t-250 之后一个项目一个 store 对象，所以它跨请求活着），
+ * 别人碰不到它，它也碰不到别人那一份。**这份 state 从取出到用完没有跨过任何 await**——`followUps` 是同步的，
+ * 它返回的每一条都是现造的字面量（连 `STAND_IN_OPTIONS` 都是展开拷贝），**没有一条引用指回 state**，
+ * 所以后面那几次 `await append` settle 谁都与它无关。
+ *
+ * 顺带补上一处没接的线：原来那句 `reduce(log, now)` **没有把 `human` 传进去**，吃的是默认值 "human"。
+ * 这个项目的人恰好就叫 human，所以看不出来——与 t-216 抓到的是同一种「默认值把一根没接的线藏住了」。
+ * `Reduction` 的构造函数不给默认值，正是为了这个。
+ */
+const following = new WeakMap<EventStore, Map<string, Reduction>>();
+function followReduction(store: EventStore, human: string): Reduction {
+  let per = following.get(store);
+  if (!per) following.set(store, (per = new Map()));
+  let r = per.get(human);
+  if (!r) per.set(human, (r = new Reduction(store, human)));
+  return r;
+}
+
 /** Append `e`'s follow-ups, and theirs, until nothing follows. A rejected follow-up becomes a note saying why, not a crash. */
 export async function runFollowUps(store: EventStore, e: Event, human: string, now: Date = new Date(), mint?: AppendOptions["mint"]): Promise<Event[]> {
   const out: Event[] = [];
   const queue: Event[] = [e];
   while (queue.length) {
     const x = queue.shift()!;
-    const state = reduce(await store.read(), now);
+    const state = await followReduction(store, human).at(now);
     for (const ne of followUps(state, x, human, now)) {
       try {
         const appended = await append(store, ne, { human, now, mint });

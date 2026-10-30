@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, DEADLINE_WORDS_HEAD, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict } from "@ateam/core";
+import { WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, DEADLINE_WORDS, DEADLINE_WORDS_HEAD, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict, SEAM_WAIVE_NOT_HERE, CLI_SHA_KEY, owedSentences, WATCH_STOPPED } from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
-import { sendAll as sendParts } from "./send.js";
+import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
 import { resolveConfig, initFields, joinOutput, type Config } from "./config.js";
 import * as fmt from "./format.js";
@@ -13,14 +13,16 @@ import { verifyParts } from "./verifyparts.js";
 import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
-import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "./rejected.js";
-import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
+import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, type Refusal } from "./rejected.js";
+import { stashUnseen, stashNotice, unseenRows, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
-import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf } from "./refusalqueue.js";
+import { tellPrecheck } from "./precheck.js";
+import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, type ShipOutcome } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
-import { splitTitle, TITLE_MAX_CHARS, type InstructionIntent } from "@ateam/core";
-import { sync, watch, type CursorStore } from "./loop.js";
+import { titleAsShown, cardTitleLine, type InstructionIntent } from "@ateam/core";
+import { createHash } from "node:crypto";
+import { advance, sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
 import { runImport, type Written } from "./import.js";
 
@@ -107,11 +109,146 @@ function loadConfig(): Config {
   return resolveConfig(f, process.env);
 }
 
-function cursorFile(me: string) { return join(process.cwd(), ".ateam", `cursor.${me}`); }
-function fileCursor(me: string): CursorStore {
+/**
+ * t-254：游标读写这一小块的落盘动作，单拎出来是为了**能在用例里把它打断**。
+ * 默认就是 node 的那几个，没有第二种行为；用例传一个 `renameSync` 会抛的进来，模拟「kill 落在两步之间」。
+ */
+export interface CursorIo {
+  existsSync(p: string): boolean;
+  readFileSync(p: string, enc: "utf8"): string;
+  mkdirSync(p: string, o: { recursive: true }): void;
+  writeFileSync(p: string, data: string): void;
+  renameSync(from: string, to: string): void;
+  /**
+   * t-293 判据 8：**这个检出跟几台服务器说过话。** 可以不给——给不出时按「只跟一台」处理（见 `fileCursor.read`），
+   * 那正是今天的行为，所以一个老的 `CursorIo` 替身不会因为少这一项而改变任何既有用例的结论。
+   */
+  readdirSync?(p: string): string[];
+}
+const nodeIo: CursorIo = { existsSync, readFileSync: (p, e) => readFileSync(p, e), mkdirSync: (p, o) => { mkdirSync(p, o); }, writeFileSync, renameSync, readdirSync: (p) => readdirSync(p) };
+
+/**
+ * t-293 判据 8：**一台服务器的身份，缩成文件名里认得出的一小段。**
+ *
+ * 取的是**规范化之后的地址**的指纹：末尾的斜杠与大小写不该把同一台服务器算成两台（`https://X.fly.dev` 与
+ * `https://x.fly.dev/` 是同一台）。指纹而不是地址本身，是因为地址里有斜杠、冒号，还可能带路径——那不是一个文件名。
+ */
+export const serverKey = (url: string): string =>
+  createHash("sha256").update(url.trim().replace(/\/+$/, "").toLowerCase()).digest("hex").slice(0, 8);
+
+function cursorFile(me: string, root: string, name = "cursor", key?: string) {
+  return join(root, ".ateam", key ? `${name}.${me}.${key}` : `${name}.${me}`);
+}
+/**
+ * t-293 判据 8①：**读位置按「服务器＋角色」隔离。**
+ *
+ * qa 06:33 量出的第四种静默改写：这个文件原来只按角色命名，于是**另一台服务器一个格式完全正确的回包**就能
+ * 把它改写成那本日志里的 id。`advance` 的单调闸挡不住——它只要求「更大」，而两本日志的 ULID 之间没有可比性，
+ * 「更大」在这里不是「更新」。
+ *
+ * 旧文件（`cursor.<me>`，没有服务器那一段）仍然认，但**只在这个检出看起来只跟一台服务器说过话时才认**：
+ * 目录里已经有另一台服务器的位置文件，就说明它不止一台，那个旧值是谁的说不出来——**说不出就不猜**，
+ * 这台服务器从 null 起算（代价是重放一次，在 t-226 的上限之内、截断可见；而猜错的代价正是本件要修的那一种）。
+ */
+export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, name = "cursor", key?: string): CursorStore {
+  const dir = join(root, ".ateam");
+  const text = (f: string) => (io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null);
   return {
-    read() { const f = cursorFile(me); return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null; },
-    write(c) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(cursorFile(me), c ?? ""); },
+    // 空文件仍然读成 null：修之前留下来的那些 0 字节游标还在各人机器上，这一支要认得它们。
+    read() {
+      const mine = text(cursorFile(me, root, name, key));
+      if (mine !== null || !key) return mine;
+      // 本服务器还没有位置。旧文件可以接过来，前提是这个检出只跟一台服务器说过话。
+      const others = io.readdirSync?.(dir)?.filter((f) => f.startsWith(`${name}.${me}.`) && f !== `${name}.${me}.${key}` && !f.endsWith(".tmp")) ?? [];
+      return others.length ? null : text(cursorFile(me, root, name));
+    },
+    /**
+     * t-254：**先写同目录的临时文件，再 rename。**
+     *
+     * 原来是 `writeFileSync(cursorFile, c ?? "")`——两件事都错：
+     * ① `writeFileSync` **先截断再写**，kill 落在两步之间就留下 0 字节；`read()` 把空读成 `null`，
+     *    下一次**从日志第一条重放**。frontend 00:24 量到它咬自己两次，qa 今天又被咬两次，第二次赔进 689 条。
+     * ② `c ?? ""` 把「没有游标可记」写成了一个空文件——**等于主动制造上面那个 0 字节状态**。
+     *
+     * 现在：空的**根本不落盘**（判据 2），有值的走「临时文件 + rename」。rename 在同一个文件系统上是原子的，
+     * 所以任何时刻那个文件要么是旧值要么是新值，**没有半条这种状态**；临时文件用固定名，
+     * 失败时最多留下一个，下一次写会盖掉它，不会越积越多。
+     */
+    write(c) {
+      const v = c?.trim();
+      if (!v) return;
+      io.mkdirSync(dir, { recursive: true });
+      // 临时文件也带上服务器那一段：两台服务器各自崩在两步之间时，留下的也是各自一个，互不覆盖。
+      const tmp = join(dir, key ? `${name}.${me}.${key}.tmp` : `${name}.${me}.tmp`);
+      io.writeFileSync(tmp, v);
+      io.renameSync(tmp, cursorFile(me, root, name, key));
+    },
+  };
+}
+
+/**
+ * t-293 判据 8②：**凡命令以非零码结束，游标一律不动。**
+ *
+ * qa 06:33 那一格里，被改写的游标还有后半句：**那次命令随后崩了，而游标已经改掉**——一次失败移动了读位置。
+ * 所以写入不再当场落盘，而是攒着，由命令在**确认自己要以 0 结束**的那一刻提交（`main` 末尾那一处）；
+ * `watch` 是长跑进程，没有「命令结束」那一刻，它每一轮交付完自己提交一次（t-240 的「先交付后推进」因此一个字不动）。
+ *
+ * 两处保住不变：① 同一个进程里 `read()` 看得见还没落盘的那个值，所以 `sync` 内部的先后一个字没变；
+ * ② 提交时拿文件里的值再比一次单调（`advance`），所以两个进程抢同一个文件时，旧值仍然盖不掉新值（t-049）。
+ *
+ * 失败时丢弃待写的位置，方向与 t-240 一致：**重放是安全的那一头，丢失不是。**
+ */
+export function deferredCursor(inner: CursorStore): CursorStore & { commit(): void } {
+  let pending: string | null | undefined;
+  return {
+    read: () => (pending !== undefined ? pending : inner.read()),
+    write(c) { pending = c; },
+    commit() {
+      if (pending === undefined) return;
+      const v = pending;
+      pending = undefined;
+      advance(inner, v);
+    },
+  };
+}
+
+/** 本次命令里攒着的那几个读位置。命令以 0 结束时一起提交；非零就一个都不提交。 */
+const deferredCursors: { commit(): void }[] = [];
+/** 建一个「等命令成功再落盘」的读位置，并记在上面那一叠里。 */
+export function cursorForCommand(inner: CursorStore): CursorStore {
+  const d = deferredCursor(inner);
+  deferredCursors.push(d);
+  return d;
+}
+export function commitCursors(): void { for (const d of deferredCursors) d.commit(); }
+/**
+ * t-293 判据 8②：**落盘与否只看这一个数。**
+ *
+ * 单拎出来是为了它判得到：抛到顶层那一条路本来就走不到收尾那一段，所以**那条路靠的是「到不了」，不是这道闸**；
+ * 这道闸管的是另一半——命令没抛，但自己把退出码设成了非零（部分成功那几条路）。两半各有用例，不许只测一半。
+ */
+export function commitCursorsIfOk(exitCode: number | string | null | undefined): void { if (!exitCode) commitCursors(); }
+
+/**
+ * t-274：**「有人读过了」那一处，与「送到了」分开存。**
+ *
+ * `cursor.<me>` 是送到了：每一次拉取都推它，`watch` 因此照旧不会每轮重复报同一批（判据 3 的禁令）。
+ * `seen.<me>` 是有人读过了：只有**把这一批真的印给操作者**的那一次 `sync` 才推它。于是后台 `watch` 吃掉的
+ * 那一批，重启之后的 `sync` 仍然看得见——qa 14:10 亲历的那一幕（12.66 小时沉默、21 条未 ack）就到此为止。
+ *
+ * **没有 `seen.<me>` 文件时读成 null，不退回 `cursor.<me>`。** 这一条我先写反过、被真实那一幕当场证伪：
+ * 退回 `cursor` 看起来只是「升级不倒带」的体面做法，而**「`seen` 还不存在」恰恰就是被咬的那个节点的样子**——
+ * qa 是，我端到端那个新节点也是。退路把读位置直接对齐到 `watch` 推过的位置，于是那一批照旧丢，判据 1 一个字没实现。
+ * （八条用例当时全绿：我的注入全落在退路之外，而那条用例断言的正是「退路成立」，等于拿用例把错固定住了。）
+ *
+ * 代价说在明处：老节点升级后第一次 `sync` 会重放一次（t-226 的上限之内、截断可见）。换来的是被咬的那一批真的
+ * 回得来。新节点不付这个代价——`join` 本来就跑一次 `sync`，那一次就把 `seen` 落下了。
+ */
+export function seenCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, key?: string): CursorStore {
+  const own = fileCursor(me, root, io, "seen", key);
+  return {
+    read: () => own.read(),
+    write: (c) => own.write(c),
   };
 }
 
@@ -123,16 +260,42 @@ function fileCursor(me: string): CursorStore {
  * `.ateam/` 里，与 cursor 同一处——这是本节点自己的事，不进日志也不该进日志。
  * 落不下去（服务拒、网络断）不挡 sync：这一句是顺带说的，不是 sync 的活。
  */
-async function recordCliSha(client: { emit(e: ClientEvent): Promise<unknown> }, me: string, head: string | null): Promise<void> {
-  if (!head) return;                                  // 说不出就不说
-  const file = join(process.cwd(), ".ateam", `cli.sha.${me}`);
-  if (existsSync(file) && readFileSync(file, "utf8").trim() === head) return;
+/**
+ * t-256：**这里不再接受 `head`。**
+ *
+ * 原来它落的是 `behind.head()`——cwd 的 git HEAD——而那回答的是「这棵树站在哪个提交上」，
+ * 不是「正在执行的是哪一份代码」。两者在同一台机器上可以差很远：pm 11:26–11:28 用一份 `e922184` 的
+ * binary 跑 `8300434` 的 checkout，**连落两条互相矛盾的 `node:pm:cli.sha`**。旧的 `CLI_SHA_METHOD` 原文里
+ * 那半句「**也就是这份 dist 该有的版本**」正是这次错的全部——**「该有的」被当成了「是的」。**
+ *
+ * 现在唯一的来源是**构建时盖在 dist 边上的那张章**（`dist/build.json`，由 `bin/stamp-cli` 在 `pnpm build`
+ * 之后写）。读它用的是**相对于正在执行的这个模块**的路径，不是 cwd——所以换一棵树跑同一份 binary，
+ * 它报的仍是这份 binary 的出身。**盖不出章就一个字都不说**（判据 1：不许拿 HEAD 顶）。
+ */
+export async function recordCliSha(client: { emit(e: ClientEvent): Promise<unknown> }, me: string, readStamp: () => string | null, root: string = process.cwd()): Promise<void> {
+  const raw = readStamp();
+  if (!raw) return;                                   // 判不出那份 dist 是哪一版：说不出就不说
+  let sha: string | null = null, dirty = false;
   try {
-    await client.emit({ kind: "reading", actor: me, surface: NODE_SURFACE, key: `${me}:cli.sha`, value: head,
+    const j = JSON.parse(raw) as { sha?: unknown; dirty?: unknown };
+    if (typeof j.sha === "string" && /^[0-9a-f]{7,40}$/.test(j.sha.trim())) sha = j.sha.trim();
+    dirty = j.dirty === true;
+  } catch { sha = null; }
+  if (!sha) return;
+  const value = dirty ? `${sha}+dirty` : sha;
+  const file = join(root, ".ateam", `cli.sha.${me}`);
+  if (existsSync(file) && readFileSync(file, "utf8").trim() === value) return;
+  try {
+    await client.emit({ kind: "reading", actor: me, surface: NODE_SURFACE, key: `${me}:${CLI_SHA_KEY}`, value,
       method: CLI_SHA_METHOD } as ClientEvent);
-    mkdirSync(join(process.cwd(), ".ateam"), { recursive: true });
-    writeFileSync(file, head);
+    mkdirSync(join(root, ".ateam"), { recursive: true });
+    writeFileSync(file, value);
   } catch { /* 顺带说的一句，落不下去不挡 sync */ }
+}
+
+/** 正在执行的这份 dist 边上那张章。相对模块自己找，不看 cwd——换棵树跑同一份 binary，答案不变。 */
+export function distStamp(): string | null {
+  try { return readFileSync(new URL("./build.json", import.meta.url), "utf8"); } catch { return null; }
 }
 
 function parseValue(s: string): unknown {
@@ -238,7 +401,7 @@ async function main(argv: string[]) {
       const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
       console.log(`${e.id}  ${fmt.event(e, eff.me)}`);   // t-206：第五处，与其余四处一致——印事件就带上它的 id
     }
-    await sync(client, eff.me, fileCursor(eff.me), 0, console.log).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
+    await sync(client, eff.me, cursorForCommand(fileCursor(eff.me, process.cwd(), nodeIo, "cursor", serverKey(eff.url))), 0, console.log, undefined, undefined, cursorForCommand(seenCursor(eff.me, process.cwd(), nodeIo, serverKey(eff.url)))).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
     console.log(joinOutput(eff.me, await client.manual(eff.me)));
     return;
@@ -256,6 +419,15 @@ async function main(argv: string[]) {
     // 更要紧的一句写在这里：**没有任何回执抓得住 shell 吃字**——它发生在命令行看见这段字之前，
     // 命令行拿到的就是被吃过的那份。抓得住它的是 `--X-file`（判据 1 那一半）。
     console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+    /**
+     * t-290 判据 4／位置（pd 07:57，外部 Y-F1-1 三件里的第一件）：**写入的回包是对一个不拉的节点唯一能说话的
+     * 地方。** 它不拉，所以 `sync` 的出口对它永远不存在；而它在写。服务端从 t-227 起就在回包里送这两样，
+     * 到此刻为止**没有任何调用方读过它们**（`client.emit` 的返回类型把它们扔掉了）。
+     *
+     * 只印句子，不印那两样的内容：句子由 core 算（`owedSentences`），它本来就只说这个节点自己的账（判据 3）。
+     * 一个字都说不出来时一行都不印——**没有账要还的那一次，写入的回执不该多出一行**。
+     */
+    for (const line of owedSentences(ev.owed, new Date())) console.log(line);
   };
   /**
    * t-246：**正文可以走 `--body-file <路径>`**（经 `fromFiles` 变成 `--body`）。给了它，位置参数上就不该再有
@@ -264,6 +436,32 @@ async function main(argv: string[]) {
   const withBody = (...names: string[]): string[] => {
     const flag = str(a, "body");
     return flag === undefined ? exact(rest, ...names, "body") : [...exact(rest, ...names), flag];
+  };
+
+  /**
+   * t-261：`release` 那一路的部件发送器与收尾。两条命令（`--deploy`／`--rollback`）共用，
+   * 免得「怎么算退出码」在两处各写一遍——那正是这份日志里数过一整天的毛病。
+   */
+  /** t-261：两条 release 命令共用这一份「怎么把 key/value 变成事件」。 */
+  const releaseBuild = {
+    reading: (key: string, value: unknown, extra: { surface: string; method?: string; writes?: string[] }) =>
+      ({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent),
+    note: (body: string) => ({ kind: "note", body } as ClientEvent),
+  };
+  const releaseParts = () => partSender<ClientEvent>(async (e) => {
+    const ev = await client.emit({ ...e, ...common(a) } as ClientEvent);
+    return { id: ev.id, line: `${ev.id}  ${fmt.event(ev, cfg.me)}` };
+  }, console.log, console.error);
+  /**
+   * 发车本身的结果与「那几件落没落下去」是**两件事**，退出码要两样都反映：
+   * 发车被拒／失败 ⇒ 2（这是这条命令的动作没做成）；发车成了而某一件没落下去 ⇒ `partSender` 算出来的那个
+   * （有成有拒是 `EXIT_PARTIAL`）。前者压过后者：动作都没成，先说动作。
+   */
+  const finishRelease = (outcome: string, parts: ReturnType<typeof releaseParts>): void => {
+    const t = parts.tally();
+    if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+    else if (t.exit) process.exitCode = t.exit;
+    recordParts(t.failed);
   };
 
   /**
@@ -309,29 +507,47 @@ async function main(argv: string[]) {
       const quiet = bool(a, "quiet");
       const dir = process.cwd();
       if (!quiet) {
-        const waiting = unseenLines(dir, cfg.me);
-        if (waiting.length) {
-          console.log(UNSEEN_HEAD(waiting.length));
-          for (const line of waiting) console.log(line);
+        // t-293 判据 7／pd 07:39：**通知先印、且不算进那个数。** 那一叠数的是事件；通知是我们对人说的话。
+        const { notices, events: waiting } = unseenRows(dir, cfg.me);
+        if (notices.length || waiting.length) {
+          for (const line of notices) console.log(line);
+          if (waiting.length) {
+            console.log(UNSEEN_HEAD(waiting.length));
+            for (const line of waiting) console.log(line);
+          }
           await flushOut();
           clearUnseen(dir, cfg.me);        // 印完了才清——与游标同一条规矩（t-240）
         }
       }
       const keep: string[] = [];
+      /** t-293 判据 7：`--quiet` 那一路也要留下通知——它不吵人，但不许把话吞掉。 */
+      const notices: string[] = [];
       // t-245（qa 22:21 判 fail 之后重做）：**`--quiet` 那一路的「交付」就是这一叠落盘**，所以它必须在推进游标
       // 之前发生、而且失败要把这条命令掀翻。第一版是「先推进、后写，写失败还默默吞掉」——磁盘写不进时
       // `sync --quiet` 退 0、一声不吭，那一批照样消失。**我刚在 t-240 修过同一形状的东西，转手又在自己的修法里
       // 做了一遍**：交付与推进之间有缝，缝里丢的东西不留痕。现在它走的是同一个屏障参数（`flush`）。
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0,
+      await sync(client, cfg.me, cursorForCommand(fileCursor(cfg.me, process.cwd(), nodeIo, "cursor", serverKey(cfg.url))), str(a, "wait") ? duration(str(a, "wait")!) : 0,
         quiet ? (line) => keep.push(line) : console.log, behind,
         quiet
           ? async () => {
               stashUnseen(dir, cfg.me, keep);        // 抛就抛：没落盘就不推进游标，那一批下次还在
+              if (notices.length) stashNotice(dir, cfg.me, notices);   // t-293 判据 7：通知也留着，但不进那个数
               const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
-              if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
+              // `UNSEEN_DROPPED` 从一开始就是一条通知，而它此前一直被数进那个数里——这一行是把它归位。
+              if (dropped) stashNotice(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
             }
-          : flushOut);
-      await recordCliSha(client, cfg.me, behind.head());
+          : flushOut,
+        // t-274：**两条路都带上 `seen`，`--quiet` 也不例外。**
+        //
+        // 我先写的是 `quiet ? undefined : …`，注释却写着「照旧推两者」——注释对、代码错，而且错法有后果：
+        // `--quiet` 那一路的交付是本地那一叠（t-245），叠完就该算读过；不推 `seen`，下一次正常 `sync` 会
+        // 先印那一叠、再从 `seen` 把同一批重新拉出来印一遍。**一条修重复丢失的改动，顺手做出了重复打扰。**
+        //
+        // 它仍有本件的残留：那一叠是本地的，容器重启会连它一起带走，而 `seen` 已经推过去了。按判据 5
+        // 点名在证据里，不在这一件里顺手改。
+        cursorForCommand(seenCursor(cfg.me, process.cwd(), nodeIo, serverKey(cfg.url))),
+        quiet ? (line) => notices.push(line) : console.log);
+      await recordCliSha(client, cfg.me, distStamp);
       return;
     }
     case "watch": {
@@ -345,8 +561,16 @@ async function main(argv: string[]) {
       beat();
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
-      for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
-      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
+      /**
+       * t-300 判据 4：**现场被中断时那一句印在这里。**
+       *
+       * `watch` 自己那条 `signal.aborted` 的路在生产上走不到——这个调用处不传 AbortSignal，人按 Ctrl-C
+       * 走的就是这个 handler。pd 把这件事立成了判据：**一句话印在哪，由它在现场会不会被执行到决定，
+       * 不由它在用例里好不好测决定**；一句只在用例里出现的话比没有它更坏，因为用例会证明它好用。
+       * 走 stdout（判据 4③）：只盯管道的看守读不到 stderr。
+       */
+      for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { console.log(WATCH_STOPPED.interrupted(sig)); release(); process.exit(130); });
+      await watch(client, cfg.me, deferredCursor(fileCursor(cfg.me, process.cwd(), nodeIo, "cursor", serverKey(cfg.url))), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
       release();
       return;
     }
@@ -367,13 +591,15 @@ async function main(argv: string[]) {
       const back = str(a, "rollback");
       if (back !== undefined) {
         // t-223：回滚是第二种合法的发车。走的是「反向提交再往前推」，不强推——所以它与 --deploy 共用同一条推送路径。
+        // t-261：这一路一次发多件（成功时 note ＋ reading 连着），而它们**夹在真的 git push 中间**，攒不齐再发。
+        // 所以走 `partSender`：每一件各自报结果，一件被拒不再把整条命令连同已经落下去的那件一起掀翻。
+        const parts = releaseParts();
         const outcome = await rollback(b, back, {
           git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
-          reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
-          note: async (body) => { await emit({ kind: "note", body }); },
+          ...releaseEmitters(parts.one, releaseBuild),
           print: console.log,
         });
-        if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+        finishRelease(outcome, parts);
         return;
       }
       if (target === undefined) {
@@ -393,13 +619,13 @@ async function main(argv: string[]) {
         console.log(bool(a, "json") ? JSON.stringify(b.release, null, 2) : fmt.release(b));
         return;
       }
+      const parts = releaseParts();   // t-261：同 rollback，每一件各自报结果
       const outcome = await deploy(b, target, {
         git: realGit(process.cwd(), process.env.ATEAM_DEPLOY_TOKEN), me: cfg.me, hasCredential: !!process.env.ATEAM_DEPLOY_TOKEN, anyway: str(a, "anyway"),
-        reading: async (key, value, extra) => { await emit({ kind: "reading", key, value, surface: extra.surface, method: extra.method, writes: extra.writes } as ClientEvent); },
-        note: async (body) => { await emit({ kind: "note", body }); },
+        ...releaseEmitters(parts.one, releaseBuild),
         print: console.log,
       });
-      if (outcome === "refused" || outcome === "failed") process.exitCode = 2;
+      finishRelease(outcome, parts);
       return;
     }
     case "trace": {
@@ -436,7 +662,19 @@ async function main(argv: string[]) {
     case "tell": {
       const [to, body] = withBody("to");
       const intent = str(a, "kind") as InstructionIntent | undefined;
-      if (to === "human" && !splitTitle(body).title) console.error(`提示：第一句超过 ${TITLE_MAX_CHARS} 字或没有句号，牌桌上这张卡没有标题。把要点写成第一句，用句号断开。`);
+      // t-265：**发之前先把这张卡在人那一页上的标题摆出来。** 三种坏法（第一句过长被截、带 markdown 标记、
+      // 被冒号截断）都是同一个人同一天踩的，三次都是发出去之后才发现的（判据 5）。
+      //
+      // 只提醒、不拦（判据 3）：发卡的人可能有理由那么写，**但他不许在不知情的情况下那么写**。
+      //
+      // 换掉的那句原话是「……牌桌上这张卡没有标题」——**它对牌桌成立，对人那一页不成立**：页面在核心算出
+      // 空标题时会兜底成「前 30 字＋…」。我实测过三种坏法两边的差（note 01M2FN4XVWSK0D6N2RH6D0CK5H），
+      // pm 09:51 裁 B：兜底搬进 core，两处一份判断。现在印的是 `titleAsShown`，也就是人真会看到的那个。
+      if (to === "human") console.error(cardTitleLine(titleAsShown(body).title));
+      // t-286：**280 那道闸此前要撞上才知道。** 这里先量一次，用的是闸自己那把尺（同一个函数，不是同一个想法）。
+      // 判据 4：只报告——不改那个数、不截断、不拒绝发送。判据 5：预检自己出错时命令照发，但**要出声**，
+      // 不许悄悄跳过（一道关着的时候看起来和开着一样的闸，比没有这道闸更坏，t-284 那一条同族）。
+      for (const line of tellPrecheck(body)) console.error(line);
       // t-215：`--depends-on surface:key` 声明这张卡活着的条件；那条事实一被 writes 命中，牌桌就标出它可能过期。
       // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
@@ -494,7 +732,8 @@ async function main(argv: string[]) {
           const { task: t, seams } = await client.task(need(id, "<id>")).catch((err) => { if (err instanceof ClientError && err.status === 404) throw new Error(`no task "${id}" in the log`); throw err; });
           // t-107: the same names the board shows; the role set comes from the board, one extra read
           const nb = await client.board().catch(() => null);
-          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined)); // GET /task/<id> is the whole task: nothing omitted
+          // t-280：只撞在目录上的那一类不在 `seams` 里（它不上人那一页），从牌桌那一份里取——这条路本来就多读了一次
+          console.log(fmt.task(t, seams, [], nb ? roleNamer(nb) : undefined, nb?.contained_seams ?? [])); // GET /task/<id> is the whole task: nothing omitted
           return;
         }
         case "create": {
@@ -557,6 +796,10 @@ async function main(argv: string[]) {
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");
+          // t-276 判据 3：**这条路从不读 --no-seam-check-for**（只有 done 那一路读，:662），而它此前被默默收下。
+          // 选拒不选「收下再提醒」的三条理由写在 core 的 SEAM_WAIVE_NOT_HERE 上。--no-seam-check 不在此列：
+          // 它在这条路上是真读的（下面 need_ 那一行，t-191 的预检）。
+          if ((list(a, "no-seam-check-for") ?? []).length) throw new UsageError(SEAM_WAIVE_NOT_HERE);
           const task = need(id, "<id>");
           // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
           // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
@@ -650,6 +893,12 @@ async function whoElse(client: { board: (full?: boolean) => Promise<Board> }, to
  */
 /**
  * t-116: a refusal is visible for exactly one second — the moment it happens. At 01:11 I read a successful `tell` and
+ * t-283 判据 7：**这个文件与 `.ateam/refused-queue.<me>.jsonl` 是两套东西，出队条件不同，别读成一件事。**
+ * · `refused.<me>`（这里）：本地提醒，**单槽覆写**，一次只记最后一条；出队条件是「**同一个动作又成功了一次**」，
+ *   或者人自己 `--clear-refused`。它从不发往服务端。
+ * · `refused-queue.<me>.jsonl`（`refusalqueue.ts`）：出站遥测，**追加式**；出队条件是「**服务端说它记下了**」
+ *   （`POST /refusals` 回 `recorded` 才划掉哪几条）。两者互不影响——生产此刻没有那条路由，所以它只进不出。
+ *
  * told two people a task was done; its `done` had been refused seconds earlier and I never looked back. So the node
  * writes down its last refusal and says it again on the next `sync` or `board`, until the same action goes through or
  * the person crosses it off. Local, like the deaf notice: no event, no log line — a refusal is this node's business.
@@ -671,7 +920,8 @@ function noteRefusal(argv: string[], refusal: Refusal | null): void {
     if (refusal) { mkdirSync(join(process.cwd(), ".ateam"), { recursive: true }); writeFileSync(path, JSON.stringify(refusal)); return; }
     // a success crosses off a refusal of the *same* action, and nothing else: redoing `task claim` does not clear a refused `task done`
     const st = readRefusal(existsSync(path) ? readFileSync(path, "utf8") : null);
-    if (st.kind === "open" && st.refusal.what !== actionOf(argv)) return;
+    // t-283：**两边都要收窄**——`actionOf` 管这一次的命令行，`identityOf` 管盘上那条旧记录里存的字符串。
+    if (st.kind === "open" && identityOf(st.refusal.what) !== actionOf(argv)) return;
     if (existsSync(path)) rmSync(path, { force: true });
   } catch { /* the record is a convenience; never let it break the command */ }
 }
@@ -722,9 +972,21 @@ async function shipRefusals(): Promise<void> {
     const queued = pendingRefusals(process.cwd(), me);
     if (!queued.length) return;
     const cfg = loadConfig();
-    const { recorded } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
-    clearRefusals(process.cwd(), me, recorded);
-  } catch { /* 没捎成就还在队里，下一条命令再捎 */ }
+    let outcome: ShipOutcome = "ok";
+    try {
+      const { recorded, counted } = await new Client(cfg).reportRefusals(queued.slice(0, CLI_REFUSAL_BATCH_MAX));
+      // **`counted === false` 才算「没记下」**：回了空名单而 `counted` 为真，说明那几条自己不合格
+      // （id 或规则名不成形），那是队里那几行的毛病，不是这条路捎不过去——不该算进这个连续失败。
+      if (counted === false) outcome = "not-counted";
+      clearRefusals(process.cwd(), me, recorded);
+    } catch { outcome = "unreachable"; }   // 没捎成就还在队里，下一条命令再捎（t-218，这一条一个字没改）
+    // t-284：**这一次的沉默照旧，长期的沉默不照旧。** 一句话走 stderr，退出码与 stdout 一个字不动。
+    const now = new Date();
+    let st = afterShip(loadShipState(process.cwd(), me), outcome, now);
+    const line = outcome === "ok" ? null : shipSilenceNotice(st, pendingRefusals(process.cwd(), me), now);
+    if (line) { console.error(line); st = markSaid(st, now); }
+    saveShipState(process.cwd(), me, st);
+  } catch { /* 这整段都是顺带说的一句，出什么事都不许弄坏那条命令 */ }
 }
 
 const ARGV = process.argv.slice(2);
@@ -733,6 +995,8 @@ main(ARGV).then(async () => {
   // （被拒不再掀翻整条命令，t-228），于是这一行会把刚刚记下的那条当场划掉——**记了等于没记**。
   // 退出码是这件事唯一的真凭据：非 0 就是「有东西没落下去」。
   if (!process.exitCode) noteRefusal(ARGV, null);
+  // t-293 判据 8②：**这一刻才落盘。** 非零码的命令一个位置都不提交——失败不许移动读位置。
+  commitCursorsIfOk(process.exitCode);
   await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV);
 }).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure
@@ -759,16 +1023,23 @@ main(ARGV).then(async () => {
   //
   // 所以退出前在 stdout 上留一行，不取代 stderr 那一行（人盯着终端时两处都看得见，管道只看得见这一处）。
   const lastWords = (line: string) => console.log(`ateam: ${line}`);
+  /**
+   * t-300 判据 4：**看守抛错退出时那一句，也走 stdout。**
+   *
+   * 它替掉 `ateam: <原文>` 那一行而不是叠在它上面：pd 的定稿里 `<原文>` 就在句子里，两行等于说两遍。
+   * 不是 `watch` 的命令照旧走原来那一行——这一句说的是「没人会再叫醒你」，而那只对看守成立。
+   */
+  const stoppedOrPlain = (line: string) => (ARGV[0] === "watch" ? console.log(WATCH_STOPPED.failed(line)) : lastWords(line));
   if (err instanceof BadResponse) {
     console.error(err.message);
-    lastWords(err.message);
+    stoppedOrPlain(err.message);
     // 游标一个字节没动（advance 只收字符串或 null），退出码不是 1——好让看守分得清「坏响应」和「它自己崩了」
     return bye(3);
   }
   if (err instanceof ClientError) {
     const line = err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`;
     console.error(line);
-    lastWords(line);
+    stoppedOrPlain(line);
     return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined, false, err.body.already);
   }
   if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
@@ -776,6 +1047,6 @@ main(ARGV).then(async () => {
   if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage", true); }
   const what = err instanceof Error ? err.message : String(err);
   console.error(what);
-  lastWords(what);
+  stoppedOrPlain(what);
   return bye(1);
 });

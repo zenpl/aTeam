@@ -11,6 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # t-282: bin/deploy now refuses to deploy unless the suite is green, and refuses just as loudly when it
+      # cannot run the suite at all. That means this job has to be able to run it: node + pnpm + install.
+      # Without these three steps the deploy would stop at "no pnpm here" — which is the gate working, not a bug.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: deploy
         env:
@@ -19,5 +28,8 @@ jobs:
           if [ -z "$FLY_API_TOKEN" ]; then echo "FLY_API_TOKEN secret is empty: add it under Settings > Secrets and variables > Actions > Repository secrets" >&2; exit 1; fi
           # setup-flyctl installs `flyctl`; bin/deploy calls `fly`
           sudo ln -sf "$(command -v flyctl)" /usr/local/bin/fly
+          # t-282: the fallback branch bypasses bin/deploy and therefore the test gate. It only fires when
+          # bin/deploy is missing or not executable — a broken checkout — so it now refuses instead of shipping
+          # an untested build. Losing a deploy there is cheaper than a deploy nobody tested.
           if [ -x bin/deploy ]; then ./bin/deploy --remote-only
-          else flyctl deploy --remote-only --build-arg "GIT_SHA=$GITHUB_SHA"; fi
+          else echo "bin/deploy is missing or not executable: refusing to deploy without the test gate (t-282)" >&2; exit 1; fi

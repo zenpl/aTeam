@@ -229,6 +229,62 @@ export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskE
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
+/**
+ * t-286：**闸用哪把尺，预检就得用哪把**——而这只有在两边叫同一个函数时才是结构上成立的，
+ * 不是靠一条断言说它们相等。今晚已知有三种量错法，都不是假想的：
+ * · `bash` 的 `${#M}` 在 `LANG`／`LC_ALL` 为空时**数字节**，中文一字三字节：同一条 qa 得 354、服务端算 180（实测）。
+ * · `rules.ts` 这一处数的是 **UTF-16 单元**（`.length`），而 `label`／`shows` 数的是**码点**（`[...s].length`）；
+ *   纯 BMP 两者相同，遇代理对（emoji）分叉。
+ * · `verifyflow.ts` 拼自动卡时按**码点**算剩余位置，却要过这道按 UTF-16 量的闸——同一族的第三处。
+ *
+ * **t-287：收成一把尺，按码点量。** 一个 emoji 从此算 1，不算 2。
+ *
+ * 方向不是「码点更合理」，理由是第四处自己给的：`verifyflow.ts` 拼自动卡时，`room` 与 `head()` 的截断
+ * **本来就按码点算**。收成码点 ⇒ 生成端与闸自动一致，那一处一个字都不用改；收成 UTF-16 ⇒ 那两处都得再改一次，
+ * 否则带代理对时算出的 `room` 偏大、拼出来的卡超闸被自己拒。**一个方向让现有的三处自洽，另一个方向要再动两处。**
+ *
+ * 边界会动，而且动得干净：**判决发生变化的输入，恰好是且仅是含代理对的那些**——纯 BMP（中文、英文、标点）
+ * 两把尺逐字相同，一条也不受影响。
+ */
+export const instructionBodyLength = (body: string): number => [...body].length;
+/** 超了几个（没超就是 0 或负数）。 */
+export const instructionOverBy = (body: string): number => instructionBodyLength(body) - INSTRUCTION_MAX_CHARS;
+/**
+ * t-287（答 pm 04:14）：**判断式也搬过来，否则「一致」只保住了数、没保住比较。**
+ * 搬之前：闸写 `len > MAX`，预检写 `overBy > 0`——数是同一个，**比较是两份**。谁把闸改成 `>=`，
+ * 预检不会跟着变，而它们看上去仍然「用的是同一个函数」。现在两处都叫这一个。
+ */
+export const instructionTooLong = (body: string): boolean => instructionOverBy(body) > 0;
+
+/**
+ * t-288 判据 7：**`done` 被接缝挡住时，那句「与对方定下来」在对侧缺人时没有出路。**
+ *
+ * 真样本是 dev `04:19`：`t-287+t-248` 被挡，`t-248` blocked、主人 `frontend` 缺席 145 小时。
+ * 那句提示唯一可执行的读法就是「自己定」——**于是它把「替不在场的人做决定」教成了唯一的动作**，
+ * 而闸挡的正是这一刻。dev 照做了，qa `04:24` 报了，pm `04:26` 裁了：
+ * 对侧缺人时先 `tell pm`；pm 也不在场而你被挡住可以自解，**但要在同一条 resolution 里写明「pm 未在场，我自解」**。
+ *
+ * 这句只出现在 agent 的终端里，不上 `GET /`。
+ */
+export function seamSettleAdvice(mine: string, other: string, otherOwner: string | null, otherHere: boolean, pmHere: boolean): string {
+  const cmd = `task seam ${mine} ${other} --resolution "..."`;
+  if (otherHere) return `再与对方定下来（${cmd}），然后 done。`;
+  // **不写一个单独的 `"对方"` 兜底**：那是一个两字的字符串，而同样两个字也出现在这段注释与别处的话里，
+  // 于是 t-214 那份「拿一句真话换成新话，条数不变闸照样红」的元用例会挑中注释而不是字符串，当场失灵。
+  // 一个为了兜底而生的短字面量，成本落在别人的量具上——名字缺席时留空就够了。
+  const who = otherOwner ? ` ${otherOwner} ` : "";
+  if (pmHere) return `而 ${other} 的主人${who}此刻不在场——「与对方定下来」没有对方可定：先 tell pm 要一个判或一个指派，不要替不在场的人决定。`;
+  return `而 ${other} 的主人${who}与 pm 此刻都不在场：你被挡住时可以自解（${cmd}），但要在同一条 resolution 的正文里写明「pm 未在场，我自解」。`;
+}
+/**
+ * 发之前那一句。**只报告，不替人做决定**：不改那个 280、不截断、不拒绝发送——发卡的人可能有理由那么写，
+ * 但他不许在不知情的情况下那么写（与 t-265 那条标题提醒同一条道理）。
+ */
+export const tooLongLine = (body: string): string =>
+  `⚠ 这条 ${instructionBodyLength(body)} 字，超了 ${instructionOverBy(body)} 字（上限 ${INSTRUCTION_MAX_CHARS}）——服务端会拒。把讲道理的那半挪进 note，动作留在这里。`;
+/** 预检自己没跑成时那一句。**不许悄悄跳过**：命令照发、由服务端裁，但这台机器得说出它没量成。 */
+export const precheckFailedLine = (why: string): string =>
+  `⚠ 发之前那道长度预检没跑成（${why}），这一条照样发出去、由服务端裁——别把没出声当成没超。`;
 export type InstructionIntent = "ask" | "do" | "info";
 export const INSTRUCTION_INTENTS: InstructionIntent[] = ["ask", "do", "info"];
 /** A first sentence up to this long is the card's title on the human's board. */
@@ -403,6 +459,82 @@ export const CLI_REFUSAL_OVERFLOW = "cli-queue-overflow";
 export const CLI_REFUSAL_BATCH_MAX = 200;
 export const cliRefusalDropped = (n: number) => cliRefusalOp(`(dropped ${n})`);
 
+/**
+ * t-284：**捎不上去这件事，长期发生时说的那两句。** 住在 core 而不是命令行里，是 t-143 那道闸的规矩：
+ * **新增的人可见的话一律进 core**，否则第二个家越搬越大而没人数得清。
+ *
+ * 两句分开，因为要人做的事不同：一句说「请求没到那台服务」（要动的是服务端），一句说「服务收下了但那边
+ * 没有这本账」（`counted: false`，t-218 写死了不许假装记下了，这一句只是把它从沉默变成出声）。
+ */
+export const shipTriesLine = (n: number) => `连续 ${n} 次没捎成`;
+export const shipUnreachableLine = (queued: number, days: number, tries: number) =>
+  `⚠ 这台机器上有 ${queued} 条被拒记录捎不上去，最早的一条已经 ${days} 天（${shipTriesLine(tries)}，请求没到服务或那台服务没有这条路）。它们此刻只活在这里，那本账是缺的。`;
+export const shipNotCountedLine = (queued: number, days: number, tries: number) =>
+  `⚠ 服务收下了请求但没有这本账（counted: false），这台机器上 ${queued} 条被拒记录一条都没记下，最早的一条已经 ${days} 天（${shipTriesLine(tries)}）。不划掉是对的，但它不会自己好。`;
+
+/**
+ * t-291：**这个地址认哪些查询参数，一处表。**
+ *
+ * pd 05:30 的通则：**凡是我们收下的东西，要么作用于结果，要么当场拒收并说清怎么改；不许既不作用也不报错。**
+ * 查询参数此前走的正是被禁的第三条路——`url.searchParams.get("after")` 只问它认得的那两个，别的连看都不看，
+ * 于是 `?since=…` 静默变成「从头开始」，而要的人以为自己只要了一截。三份外部反馈各自排第一的那件事是同一个
+ * 形状（pm 05:3x 焦点①）：**我们吞掉一个输入，换来别人去诊断一个不存在的 bug。**
+ */
+export const EVENTS_PARAMS = ["after", "wait"] as const;
+
+/**
+ * t-291：**一个不认识的参数，大概想要的是哪一个。**
+ *
+ * 不是凭形近猜的：`since` 是别处 API 的通名，写成它的人要的正是我们的 `after`；`from`/`cursor` 同理，
+ * `timeout` 是 `wait` 的通名。**查不到就不猜**——pd 那句里中间那半句要的是「说清怎么改」，
+ * 一个猜错的「大概是」比不说更坏：它让人去改一个本来就不存在的参数。
+ */
+export const PARAM_MEANT: Record<string, string> = { since: "after", from: "after", cursor: "after", timeout: "wait" };
+
+/** t-291：建议那半句里，参数连它的值长什么样一起给——光给名字，要的人还得再猜一次值。 */
+export const PARAM_FORM: Record<string, string> = { after: "after=<上次返回的 cursor>", wait: "wait=<毫秒>" };
+
+/**
+ * t-291：`param` 大概想要 `legal` 里的哪一个；说不出就是 null。
+ *
+ * 大小写不同算同一个：`?After=` 今天也被静默吞掉，而写它的人要的就是 `after`——**拒收照旧（名字不是这个字），
+ * 但那一句要说得出他差的只是大小写**。
+ */
+export const paramMeant = (param: string, legal: readonly string[] = EVENTS_PARAMS): string | null => {
+  const lower = param.toLowerCase();
+  const sameWord = legal.find((p) => p.toLowerCase() === lower);
+  if (sameWord) return sameWord;
+  const meant = PARAM_MEANT[lower];
+  return meant && legal.includes(meant) ? meant : null;
+};
+
+/**
+ * t-291 判据 1：拒收那一句，**pd 05:30 ① 锁的字**。他写的是 `since` 那一例，三段照搬：点名那个参数、
+ * 说出要的大概是哪个、把这个地址认的全列出来。
+ *
+ * 说不出「大概是哪个」时中间那段不印（见 `paramMeant`）——少一段是 pd 的规矩本身要的，不是改他的字。
+ */
+export const unknownParamLine = (param: string, legal: readonly string[] = EVENTS_PARAMS): string => {
+  const meant = paramMeant(param, legal);
+  const guess = meant ? `你要的大概是 ${PARAM_FORM[meant] ?? meant}。` : "";
+  return `我不认识参数 ${param}。${guess}这个地址认的参数只有 ${legal.join("、")}。`;
+};
+
+/**
+ * t-293 判据 7：**这台机器第一次在这儿读日志时，先说清这一批是什么、而且只送一次。**
+ *
+ * pd 06:21 的现场：92 条被标成读过而他一个字没看见（含解除叫停与三张新单），于是他照着一份 34 分钟前的
+ * FOCUS 去抬一个一小时前就抬了的闸，在日志上多下了一个决策。读数 repo:init.consumed.silently = 92。
+ *
+ * **措辞是 pd 07:39 的定稿，三条约束跟着它一起进来**（他的原话，不是我的转述）：
+ * · **必须是第一行。** 理由是实测的：97 行、17,008 字节的一批，摆在结尾的总结 `head -60` 看不到。
+ * · **第二句不许删。**「只送一次」是这一句存在的全部理由；**只报条数的版本救不了 06:21 那次，因为他当时
+ *   看见了条数**。
+ * · 不许在这一句里加任何「要不要现在看」的选项——它说的是一件已经发生的事，不是一个问法。
+ */
+export const firstPullLine = (n: number, first: string, last: string) =>
+  `这台机器以前没在这儿读过日志，所以下面是从头开始的 ${n} 条（${first} 到 ${last}）。这一批只送一次：读完这一次，游标就停在最后一条，下一次 sync 不会再给你它们。`;
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -486,10 +618,12 @@ export const KEY_SYMBOLS = [
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
   "APART_LINES",
+  "ASK_EVIDENCE_WRAP",
   "BATCH_LINES",
   "BODY_FILE_HELP",
   "BOTH_BODY_AND_FILE",
   "CLI_SHA_METHOD",
+  "CLI_SHA_UNKNOWN_PREFIX",
   "CONTACT_ASK",
   "CONTACT_ASK_WAS",
   "CONTACT_FILL",
@@ -509,6 +643,7 @@ export const KEY_SYMBOLS = [
   "FAIL_NOTICE",
   "FLAG_NEEDS_VALUE",
   "FORWARD_LINK",
+  "HANDOVER_ONLY_WHEN_MISSING",
   "IMPORT_DONE_PREFIX",
   "IMPORT_NOTHING_WRITTEN",
   "INJECT_BUILD_BROKE",
@@ -532,10 +667,13 @@ export const KEY_SYMBOLS = [
   "OWED_LEGACY_HELP",
   "OWNER_URL_LOCKED",
   "OWNER_URL_NEEDS_SECRET",
+  "PARAM_FORM",
   "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
   "PD_PLACEHOLDER",
+  "PRESENCE_NEVER_PULLED",
+  "PRESENCE_NEVER_WROTE",
   "PROMISE_RULE",
   "PUSH_LINES",
   "QUIET_HELP",
@@ -550,17 +688,21 @@ export const KEY_SYMBOLS = [
   "SAID_LABEL",
   "SAID_PREFIX",
   "SAY_HINT",
+  "SEAM_DIR_ONLY",
   "SEAM_SAME_FILE",
   "SEAM_UNDECIDED",
   "SEAM_VERDICT_WORDS",
+  "SEAM_WAIVE_NOT_HERE",
   "SHAPE_OF",
   "SHOWS_GATE_BLIND",
   "SHOWS_RULE",
   "SPAN_UNDER_A_MINUTE",
+  "STALLED_HEADING",
   "STAND_IN_ASK_TITLE",
   "STAND_IN_OPTIONS",
   "STOOD_IN_PREFIX",
   "SURFACE_GATE_BLIND_SPOTS",
+  "TITLE_MAX_CHARS",
   "TWICE_GIVEN",
   "UNANSWERED_HEAD",
   "UNKNOWN_FLAG",
@@ -570,7 +712,9 @@ export const KEY_SYMBOLS = [
   "VERIFIED_ON_THIS_VERSION",
   "VERIFY_ASK",
   "WATCH_LINES",
+  "WATCH_STOPPED",
   "WHOLE_GATE_OFF",
+  "advance",
   "ago",
   "alertContact",
   "allocationSummary",
@@ -586,11 +730,15 @@ export const KEY_SYMBOLS = [
   "cannotMeasureHere",
   "cannotSeeOutput",
   "capabilityKey",
+  "cardTitleLine",
   "caughtBy",
   "checkShape",
   "classifyFollowUp",
   "cliBehindLine",
+  "cliShaUnknownAfterPoll",
+  "cliShaUnknownAfterSync",
   "cliStaleBuildLine",
+  "containedSeamLine",
   "coverage",
   "defaultMissed",
   "denominatorIs",
@@ -601,7 +749,9 @@ export const KEY_SYMBOLS = [
   "exitCodeLine",
   "factCannotPlace",
   "factPredatesThirdBucket",
+  "firstPullLine",
   "fixWhere",
+  "followReduction",
   "followUps",
   "gateHonesty",
   "honestyLine",
@@ -639,7 +789,11 @@ export const KEY_SYMBOLS = [
   "overdueByPresence",
   "overturnedLine",
   "owedSentences",
+  "owedThirdWay",
+  "owedUnpulledLine",
   "partsSkipped",
+  "precheckFailedLine",
+  "presenceClocks",
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
@@ -648,12 +802,18 @@ export const KEY_SYMBOLS = [
   "runtimeAllocation",
   "saidHops",
   "sayReading",
+  "seamSettleAdvice",
+  "seamWaiveOtherNoSha",
+  "seamWaiveOtherNotDone",
   "seamWaived",
   "selfCorrections",
-  "shapeFor",
+  "shipNotCountedLine",
+  "shipTriesLine",
+  "shipUnreachableLine",
   "slimBoard",
   "span",
   "splitRelease",
+  "stalledLine",
   "standInBlocker",
   "standIns",
   "staticAllocation",
@@ -661,7 +821,10 @@ export const KEY_SYMBOLS = [
   "symbolsMeasured",
   "symbolsUnnamed",
   "taskHeading",
+  "titleAsShown",
+  "tooLongLine",
   "unansweredRow",
+  "unknownParamLine",
   "unknownSpanReason",
   "until",
   "validate",
@@ -801,6 +964,12 @@ export const WATCH_INTERVAL = "60s";
  *
  * This constant is the one Chinese statement of it, so the manual quotes rather than paraphrases (t-147 判据 5).
  */
+/**
+ * t-253：**接走别人的活，只在他不在的时候。** 这句话是拒绝话与说明书共用的那一句，所以住在 core。
+ * 「不在」的判据是牌桌算得出来的 `presenceStatus === "missing"`，不是谁觉得他不在了。
+ */
+export const HANDOVER_ONLY_WHEN_MISSING = "只有它缺人（牌桌上是 missing）时别人才接得走。要么等它，要么请 pm 裁";
+
 export const REACH_STATES = ["unread", "read", "acted"] as const;
 export type Reach = (typeof REACH_STATES)[number];
 export const REACH_WORDS: Record<Reach, string> = { unread: "还没读到", read: "读到了，还没动", acted: "办了" };
@@ -1018,12 +1187,15 @@ export const SHOWS_GATE_BLIND = (fix: string) =>
   `这道闸只认得「那句话变了」，认不出「哪句话出现在哪儿变了」：比如在途那几行改成印「这件干了什么」（shows）还是印任务标题（title），它看不见。这一类改动请作者自己在判据里说出人会看到什么变化。修法在 ${fix}。`;
 
 /**
- * t-193 判据 7：**「引用才算办了」这条规矩随哪一件任务上线。**
+ * t-290 判据 1、2：**这里曾经写着 `ACTED_RULE_TASK = "t-147"`，它被删了。**
  *
- * 它是一个 id，不是一个时刻——时刻由日志算（`ruleLiveAt`）。id 是永远的，而时刻会随部署顺序变；把时刻写死，
- * 就是又一次「一个数与它描述的东西分开维护」。
+ * t-193 判据 7 当初的推理只错了一半：它说「它是一个 id，不是一个时刻」，这一半对——时刻会随部署顺序变。
+ * 错的那一半是**它把一个本项目的任务 id 当成了平台的常量**：第二个租户的日志里永远不会有一批含着 `t-147`，
+ * 于是 `ruleLiveAt` 对他们恒返回 undefined，`owedFull` 据此「一条都不进旁桶」，**他们的全部历史落进活欠账**
+ * （读数 repo:owed.legacy.second-tenant = 0）。一个写死的本项目 id，在别人的租户上是一个静默失效的开关。
+ *
+ * 起算点现在由每个项目自己的日志算（`actedRuleLiveAt`），一个 id 都不认。
  */
-export const ACTED_RULE_TASK = "t-147";
 
 /**
  * t-191：一条接缝因为「对方 claim 了却还没写代码」而**无从判定**时，写回日志的那句结论。
@@ -1147,7 +1319,17 @@ export const apartLine = (a: ApartFromLive | null): string | null =>
 export const cliStaleBuildLine = "你手上的 dist 比源码旧，跑着的不是这棵树的代码，跑 pnpm build";
 
 /** t-211 判据 2：这条节点事实是怎么量出来的。住在 core，命令行那侧不留人可见的字。 */
-export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
+/**
+ * t-256 判据 7：**这个字段的名字逐字承认它是「最后一次」。**
+ *
+ * 它是**节点级**的，而一个节点手边可以有好几棵树、好几份 binary（qa 09-11 23:38 报的就是这个）。
+ * 所以它记不了「这个节点在跑哪一版」——那句话没有唯一答案；它只记得下「**这个节点最近一次说话，
+ * 用的是哪一份构建**」。判据 7 给了两条路：把构建 sha 带到事件级（每条事件自带当次的），或者让名字与
+ * method 逐字承认它是「最后一次」。**取后者**，理由在证据里：前者要动事件结构与每一条发出路径，
+ * 那不是一件 tooling 的量级，得由 pm 另排。
+ */
+export const CLI_SHA_KEY = "cli.sha.last";
+export const CLI_SHA_METHOD = "sync 顺手记的：读的是这份 dist 边上构建时盖的章（dist/build.json，bin/stamp-cli 写），按正在执行的那个模块找、不看 cwd。它说的是「这个节点最近一次说话用的那份构建」，不是「这个节点在跑哪一版」——一个节点手边可以有好几棵树。带 +dirty 的表示盖章时工作区是脏的，那份构建与那个 sha 不完全对应";
 
 /**
  * t-219（dev 17:12 自己撞出来的）：**一棵解不出上线 sha 的树，量不了包含关系，也就不该写那条事实。**
@@ -1168,7 +1350,22 @@ export const cannotMeasureHere = (sha: string) =>
  * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
  * 调用方**闭嘴**而不是报平安。这条与 `owed` 那个可选字段是同一条规矩（t-147）：**缺字段是不知道。**
  */
-export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, has: (sha: string) => boolean | null, serverSha?: string | null): number | null {
+export interface TreeRelation {
+  /**
+   * 这个 sha 是不是我的祖先（我含不含它）。`null` 是 git 答不上来；
+   * **本地根本没有这个对象算 `false`，不算「说不出」**——t-211 那一条，改了它最该被提醒的节点就再也收不到提醒。
+   */
+  has(sha: string): boolean | null;
+  /**
+   * t-263：**我是不是它的祖先**——也就是它在不在我前头。`null` 是答不出来（本地没有这个对象时就是这样）。
+   *
+   * 这一问是本件的全部。只有 `has` 时，「它在我前头」与「它和我互不包含」长得一模一样，
+   * 而**回滚产物永远落在后一种**：一个树与旧版逐字相同的新提交，谁的功能分支里都没有。
+   */
+  descends(sha: string): boolean | null;
+}
+
+export function behindDeploys(mine: string | null, deploys: readonly string[] | undefined, rel: TreeRelation, serverSha?: string | null): number | null {
   if (!mine || !deploys?.length) return null;
   // t-230 判据 3：**服务自报在跑哪一版，胜过名单的尾巴。**
   //
@@ -1176,11 +1373,20 @@ export function behindDeploys(mine: string | null, deploys: readonly string[] | 
   // sha 落在最新处时，「名单尾巴是个错字」与「我真落后一次」在 `has` 这一个问句下长得一模一样。
   // 而拉取的回包里本来就带着服务自己报的 sha（t-211 加的）——**我含着它，我就是在跑线上那一版**，
   // 名单尾巴写的是什么都不改变这件事。
-  if (serverSha) {
-    const running = has(serverSha);
-    if (running === null) return null;   // git 答不上来：整句不说
-    if (running) return 0;
-  }
+  const tip = serverSha ?? deploys[deploys.length - 1];
+  const mineHasIt = rel.has(tip);
+  if (mineHasIt === null) return null;   // git 答不上来：整句不说
+  if (mineHasIt) return 0;
+  // t-263：**先问关系，再数次数。**
+  //
+  // 真样本：`14:11` 那次回滚把生产退到 `3e50e5b`（树与 `d57acbc` 逐字相同的**新**提交）。它不在任何人的
+  // 功能分支里，于是旧口径对每一个在场的人都说「你旧 1 次，跑 git pull && pnpm build」——**而照做会把
+  // 命令行降到 `t-223` 之前。一条永远为真、照做还变坏的提醒，比不提醒更坏。**
+  //
+  // 三种关系（判据 2）：**它是我的祖先** ⇒ 上面已经答完，不落后；**我是它的祖先** ⇒ 它真在我前头，往下数；
+  // **互不包含** ⇒ 我说不出「你旧了」，整句不说。`null` 是答不出来——那时退回 t-211 的行为（只由 `has` 说了算），
+  // 因为「从不 fetch 的那棵树」正是这一格，而它恰恰最该被提醒。
+  if (rel.descends(tip) === false) return null;
   // t-211（qa 16:11 在生产上判 fail）：**问错了问题。**
   //
   // 旧版数的是「名单里有几条我这棵树没有」，于是名单里任何一条**谁都拿不到**的条目，都会被算成「你落后」：
@@ -1191,7 +1397,7 @@ export function behindDeploys(mine: string | null, deploys: readonly string[] | 
   // 该问的是：**在我这棵树含着的那一版之后，还上过几次线。** 历史更早处有几条谁都解不出的垃圾，与「我是不是
   // 落后了」无关。从最新往回找第一条我有的，它之后的那些才是我落后的。
   for (let i = deploys.length - 1; i >= 0; i--) {
-    const got = has(deploys[i]);
+    const got = rel.has(deploys[i]);
     if (got === null) return null;   // git 答不上来：整句不说，不猜
     if (got) return deploys.length - 1 - i;
   }
@@ -1252,6 +1458,9 @@ export const PART_NAMES = {
   verify: (task: string, pass: boolean) => `${task} ${pass ? "verify --pass" : "verify --fail"}`,
   seamUnjudgeable: (seam: string) => `接缝 ${seam} 判不了的说明`,
   seamTruth: (seam: string) => `接缝 ${seam} 按真交集重判`,
+  // t-261：release 那一路也一次发多件，而且**夹在真的 git push 中间**：先记「越过未验收」、推、再记 deployed.sha。
+  releaseReading: (key: string) => `记下 ${key}`,
+  releaseNote: () => "记下这次发车的说明",
   // t-232：decide 也是两件（先 ack，再落决定），而它们之间有先后：ack 没成，决定就不该写。
   decideAck: (id: string) => `ack ${id}`,
   decideNote: (id: string, option: string) => `记下决定 ${id} → ${option}`,
@@ -1450,9 +1659,51 @@ export const denominatorUnknown = "分母算不出：这条包含事实没写「
 export const noSuchObject = (shas: string[]) => `本地 git 里没有 ${shas.map((x) => x.slice(0, 7)).join(" 和 ")} 这个对象`;
 export const objectNotFound = (seamId: string, sha: string, other: string) =>
   `${seamId}：${sha.slice(0, 7)}（${other} 的证据 sha）这个对象我在本地 git 里找不到——占位、写错、或还没 fetch。这不是说你没合并，是说我看不见，所以判不了。三条出路，从窄到宽：先 git fetch 把它取回来；若那个 sha 本身是错的，请 ${other} 的 owner 用一条更正把它改对；确实取不回来就 --no-seam-check-for ${seamId} 单独免掉这一条（其余接缝照判），并在证据里说明为什么`;
+/**
+ * t-279：**「有人在听、却很久没动，而别人全卡在他身上」这一行。**
+ *
+ * 两个时刻并排说，因为「在听」正是从拉取那一侧来的，而卡住的是写入那一侧——**把它们并排放着，
+ * 读的人自己就看得出「在听」证明不了什么**（t-262 立的那个区分）。
+ * 后面两个数是「等着它的是什么」，没有它们这一行就只是「有人闲着」，那不是事故（判据 4）。
+ * 受众是队伍的命令行牌桌，不上人那一页（判据 1）。
+ */
+/** t-279：这一格在命令行牌桌上的标题。住在 core：`format.ts` 那份「第二个家」只减不增。 */
+export const STALLED_HEADING = "STALLED (在听，但没在动，而有人等着)";
+export const stalledLine = (role: string, sinceWrote: string, sincePulled: string, awaitingVerdict: number, overdueUnacked: number) =>
+  `${role} 在听（${sincePulled}前还在拉），但 ${sinceWrote}没写过任何事件；` +
+  [awaitingVerdict ? `${awaitingVerdict} 件等它判` : "", overdueUnacked ? `${overdueUnacked} 条指令逾期没 ack` : ""].filter(Boolean).join("、");
+
 /** t-201：这一条被单独免掉时落在日志上的那句——免掉不等于没发生。 */
 export const seamWaived = (seamId: string, key: string, owner: string) =>
   `${seamId}：这一条被 --no-seam-check-for ${key} 单独免掉了，其余接缝照判；免的理由由 ${owner} 的 owner 写在证据里`;
+/**
+ * t-276：**免除点名了一条接缝，而那条接缝本来就不在被检查之列——改前它一个字都不说。**
+ *
+ * `seamCheck` 在两处提前 `continue`，都在免除判断之前：对方任务不是 `done|failed|verified`，或者对方没有证据 sha。
+ * 落进这两处的接缝，`--no-seam-check-for` 是个**静默空操作**：`done` 照成、退出码 0、零输出，
+ * 而**那条接缝仍然开着**——账留到有人去落 pass 时才爆（dev t-255 ②③ 组实测）。
+ *
+ * 两句分开写，因为下一步动作不同：一个是等，一个是让对方补证据。笼统一句「没生效」两种都答不上。
+ */
+export const seamWaiveOtherNotDone = (seamId: string, other: string, status?: string) =>
+  `${seamId}：--no-seam-check-for 在这一条上什么都没免掉——${other} 还没交（此刻是 ${status ?? "还没建"}），这条接缝本来就还没进检查，而它仍然开着。下一步是等 ${other} 交，交了这条才谈得上免`;
+export const seamWaiveOtherNoSha = (seamId: string, other: string) =>
+  `${seamId}：--no-seam-check-for 在这一条上什么都没免掉——${other} 交了，但它的证据里没有 sha，这条接缝无从检查，而它仍然开着。下一步是让 ${other} 的 owner 把证据 sha 补上`;
+
+/**
+ * t-276 判据 3：**`verify` 默默收下这个 flag，而它在那条路上毫无意义**（dev t-255 ③④ 组：带不带逐字相同）。
+ *
+ * 选的是拒，不是「收下再说一句它不起作用」。三条理由：
+ * ① 本件治的就是静默，而「收下 + 提醒」仍然让命令走下去，人多半看不见那一行；
+ * ② 这条路上它不是「暂时没用」而是**没有这个概念**——落 pass 的接缝闸在服务端，命令行关不掉；
+ * ③ 不会把能跑的路变成不能跑：此刻带着它落 pass 本来就会被服务端拒（同样 exit 2），
+ *    而全仓库（docs、CLAUDE.md、bin、.github）没有一处在 verify 上写过它。
+ * 只拒 `--no-seam-check-for`。**`--no-seam-check` 在 verify 上是真读的**（main.ts:694，t-191 那道预检），不碰。
+ */
+export const SEAM_WAIVE_NOT_HERE =
+  `--no-seam-check-for 在 verify 上不起作用，一个字都没发：接缝免除是交活那一侧的预检，` +
+  `而落 pass 这一侧的接缝闸在服务端，命令行关不掉它。要么先把那条接缝定下来（task seam <a> <b> --resolution "..."），要么这一次就该被它挡住`;
+
 /** t-201：`--no-seam-check` 仍在，但它现在会说清自己关掉的是什么，以及那条窄的出路。 */
 export const WHOLE_GATE_OFF = "跳过 seam 合并检查（--no-seam-check）：这把钥匙关掉的是全部接缝义务；只想免掉一条时用 --no-seam-check-for <接缝 id>";
 
@@ -1534,6 +1785,17 @@ export interface Cursor {
   actor: string;
   last_event_id: string | null;
   at: string;
+  /**
+   * t-257：**这个节点最后一次「普通拉取」（不带 wait）的时刻，没有过就是 undefined。**
+   *
+   * 量出来的事实：`sync` 默认不带 `wait`，`watch` 恒带，而 `sync --wait` 也带——所以**带了分不出是哪一种，
+   * 不带则一定是一次普通 `sync`**。这是单向信号，只用它排除「从没跑过 sync」那一种成因，不反过来用。
+   *
+   * 记在游标上，不记成日志事件：**游标本来每次拉取就写，所以这是零新增写入**；而日志一个字没多，
+   * `built ≡ served`（t-062）因此不受影响。写的时候只在「这一次是普通拉取」时给值，
+   * 其余时候不给——存储那一侧要**保留旧值**，不能被 undefined 抹掉。
+   */
+  plain_pull_at?: string;
 }
 
 /** Server-side fact: when a recipient first pulled an instruction. */

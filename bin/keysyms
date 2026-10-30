@@ -26,11 +26,13 @@ try {
   console.error("先 pnpm build：这条命令读的是 core 的产物（dist），不是源码。");
   process.exit(2);
 }
-const { sourceFiles, measureKeySymbols, withKeySymbols, CORE_SRC } = mod;
+const { sourceFiles, measureKeySymbols, withKeySymbols, CORE_SRC, RENDERING_FILES } = mod;
 
 const files = sourceFiles(join(repo, CORE_SRC), CORE_SRC);
 const sources = Object.fromEntries(files.map((f) => [f, readFileSync(join(repo, f), "utf8")]));
-const names = measureKeySymbols(sources);
+// t-270：第三个方向要读渲染文件本身（`export const whyLine = blockedWhy;` 那种再导出）。
+const renderSources = Object.fromEntries(RENDERING_FILES.map((f) => [f, readFileSync(join(repo, f), "utf8")]));
+const names = measureKeySymbols(sources, renderSources);
 
 const eventsPath = join(core, "src/events.ts");
 const src = readFileSync(eventsPath, "utf8");

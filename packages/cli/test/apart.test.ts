@@ -22,9 +22,18 @@ const run = async (behind: Behind | undefined, over: Partial<PullResult> = {}) =
   return out;
 };
 /** 一棵树：两个方向各多出几条；`has` 照旧按包含关系答，好让退路那一句在该出现时出现。 */
-const tree = (counts: { mine: number; theirs: number } | null, has: string[] = ["d1"]): Behind => ({
+/**
+ * 合并 dev aea4c8f 之后，这个夹具多一格 `descends`（t-263：**它在不在我前头**），而它不是形式上的一格：
+ * dev 在 `behindDeploys` 里加了 `if (rel.descends(tip) === false) return null`——**互不包含（分叉）时那句旧话
+ * 整句不说**。所以 dev 和我各自补了同一个洞的一半：它让旧话在分叉时闭嘴，我让分叉有自己的一句话。
+ * 两半合起来才是完整的：落后 → 旧话；分叉 → 我这句；两样都量不出 → 谁都不说。
+ *
+ * 默认 `descends: () => true`（线上那一版在我前头，也就是我真落后），因为退路那几格要的正是这一种。
+ */
+const tree = (counts: { mine: number; theirs: number } | null, has: string[] = ["d1"], descends = true): Behind => ({
   head: () => "mine",
   has: (sha) => has.includes(sha),
+  descends: () => descends,
   apart: () => counts,
 });
 
@@ -57,7 +66,7 @@ describe("t-292 判据 2 · 落后与分叉是两句话", () => {
 
   it("**不该挡的那一格**：数不出两个方向时，旧话照旧说——说不出不等于没话说", async () => {
     expect(await run(tree(null))).toContain(cliBehindLine(2));                 // apart 给 null
-    expect(await run({ head: () => "mine", has: (s) => s === "d1" })).toContain(cliBehindLine(2));  // 老调用方没有 apart
+    expect(await run({ head: () => "mine", has: (s) => s === "d1", descends: () => true })).toContain(cliBehindLine(2));  // 老调用方没有 apart
     expect(await run(tree({ mine: 1, theirs: 1 }), { sha: undefined })).toContain(cliBehindLine(2)); // 服务没报自己在跑哪一版
   });
 
@@ -70,7 +79,7 @@ describe("t-292 判据 2 · 落后与分叉是两句话", () => {
   });
 
   it("dist 那一句照旧各说各的：它说的是另一件事", async () => {
-    const out = await run({ head: () => "mine", has: () => false, built: () => false, apart: () => ({ mine: 49, theirs: 2 }) });
+    const out = await run({ head: () => "mine", has: () => false, descends: () => false, built: () => false, apart: () => ({ mine: 49, theirs: 2 }) });
     expect(out).toContain(APART_LINES.diverged(49, 2));
     expect(out).toContain(cliStaleBuildLine);
   });

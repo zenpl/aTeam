@@ -34,6 +34,10 @@ export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder>
     await b.reading("release", key, x.saying.sample, { surface: x.surface });
   }
   await b.pull("pm");
+  // t-278 判据 3：**样本里要有服务自己发的那张卡，因为真跑一遍的服务端一定会发它。**
+  // 这不是副作用：一份「服务不会发卡」的样本，正是 built≡served 之所以曾经绿着的原因——
+  // 绿不是因为两边一致，是那张造成分歧的卡没上场。吃这份样本的用例期望因此会变，那是这一件的正文。
+  await b.remind();
   return b;
 }
 

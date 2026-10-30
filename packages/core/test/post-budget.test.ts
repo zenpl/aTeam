@@ -8,7 +8,11 @@
  * 回包里两样东西抢同一个预算**。共同形状：**一个装不下的包，而谁被挤掉是偶然决定的。**
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, postReply, owedNow, POST_REPLY_BYTES, OWED_SHARE, ACTED_RULE_TASK, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, postReply, owedNow, POST_REPLY_BYTES, OWED_SHARE, type NewEvent } from "../src/index.js";
+
+/** t-290 判据 1：`THAT_BATCH_TASK` 没了（平台代码不许写死本项目任务 id）。起算点此后看「有没有一批」，不看那一批装了谁，所以这里写成普通字面量——**夹具里的 id 是夹具自己的，不是平台常量**。 */
+const THAT_BATCH_TASK = "t-147";
+
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-12T12:00:00.000Z");
@@ -62,9 +66,13 @@ describe("t-244 · 两样东西各有份额，不是谁先填谁占满", () => {
   it("两样是包含关系：没读过的那些同时出现在两边", async () => {
     const s = await world(3, 2);
     const reply = postReply(s, "dev", { id: "01X", kind: "note" });
-    const owedIds = new Set(reply.owed.untouched.map((x) => x.instruction));
+    // t-290 判据 4 改了这两行：这条用例要钉的「超集关系」一个字没变，而活欠账此后分在两格里——
+    // **没读过的那 3 条正是 `unseen`**（这条用例自己的标题就这么说的），读过没动的 2 条是 `untouched`。
+    // 原来把两种东西算进同一格，正是本件要拆的那件事；只看一格会让超集关系看起来不成立。
+    const owedIds = new Set([...reply.owed.unseen, ...reply.owed.untouched].map((x) => x.instruction));
     expect(reply.for_me.every((i) => owedIds.has((i as unknown as { id: string }).id))).toBe(true);
-    expect(reply.owed.untouched).toHaveLength(5);   // 3 条没读过 + 2 条读过没动
+    expect(reply.owed.unseen).toHaveLength(3);      // 没读过的
+    expect(reply.owed.untouched).toHaveLength(2);   // 读过没动的
   });
 
   it("份额是写下来的那个数，不是「剩多少给多少」：`for_me` 再多也不许吃掉留给活欠账的那一份", async () => {
@@ -79,7 +87,9 @@ describe("t-244 · 两样东西各有份额，不是谁先填谁占满", () => {
     const s = await world(2, 2);
     const reply = postReply(s, "dev", { id: "01X", kind: "note" });
     expect(reply.for_me).toHaveLength(2);
-    expect(reply.owed.untouched, "两条读过没动的 + 两条没读过的（`owed` 含 `for_me`）").toHaveLength(4);
+    // 同上：两种东西此后各有一格，和仍然是 4。
+    expect(reply.owed.untouched, "两条读过没动的").toHaveLength(2);
+    expect(reply.owed.unseen, "两条没读过的（`owed` 含 `for_me`）").toHaveLength(2);
     expect(reply.more).toBeUndefined();
   });
 
