@@ -20,9 +20,33 @@ export const seen: { pullIdle: string | null } = { pullIdle: null };
 
 export class ClientError extends Error {
   // t-233：`already` 是服务端给的类别——「那件事已经发生过了」。**类别由拒绝自己带来**，客户端不许去匹配话里的字。
-  constructor(public status: number, public body: { error: string; rule?: string; message?: string; already?: { at: string | null } }) {
+  constructor(
+    public status: number,
+    public body: { error: string; rule?: string; message?: string; already?: { at: string | null } },
+    /**
+     * t-300 判据 2：**限流时等多久，是服务端说的，不是我们猜的。**
+     *
+     * 429 自己带着答案（`Retry-After`），而 pd grep 过：整个仓库零命中——**我们在限流上面又加了一层自己的
+     * 退避表**。同 t-233 那条道理：答案由对方带来，客户端不许去猜；猜出来的那个数在最忙的那一刻恰好最可能错。
+     * 毫秒；服务端没说就是 undefined（「没说」与「说了 0」要分得开）。
+     */
+    public retryAfterMs?: number,
+  ) {
     super(body.message ?? body.error);
   }
+}
+
+/**
+ * t-300 判据 2：`Retry-After` 的两种写法都认——**秒数**与 **HTTP-date**（RFC 9110 两种都合法，
+ * 而只认一种等于在另一种上静默回到猜）。认不出来就返回 undefined：说不出就不说。
+ */
+export function retryAfterMs(raw: string | null, now: Date = new Date()): number | undefined {
+  if (!raw) return undefined;
+  const t = raw.trim();
+  if (/^\d+$/.test(t)) return Number(t) * 1000;
+  const when = Date.parse(t);
+  if (Number.isNaN(when)) return undefined;
+  return Math.max(0, when - now.getTime());
 }
 
 /**
@@ -68,9 +92,9 @@ export class Client {
     try { data = JSON.parse(text) as unknown; }
     catch {
       if (res.ok) throw new BadResponse(res.status, text.slice(0, SNIPPET_CHARS).replace(/\s+/g, " ").trim());
-      throw new ClientError(res.status, { error: res.statusText });
+      throw new ClientError(res.status, { error: res.statusText }, retryAfterMs(res.headers.get("retry-after")));
     }
-    if (!res.ok) throw new ClientError(res.status, data as { error: string });
+    if (!res.ok) throw new ClientError(res.status, data as { error: string }, retryAfterMs(res.headers.get("retry-after")));
     checkShape(data);
     return data as T;
   }

@@ -42,12 +42,44 @@ const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Network trouble and 5xx are the server's moment, not ours; 4xx, rejections and config errors are ours. */
+/**
+ * t-300 判据 1：**这几个码在说「是我们自己发错了」。** 重试一万次也是同一个答案，所以看守该停下来让人看见。
+ *
+ * 名单只列这一边，是故意的：**另一边是默认**。一个没列进来的码（网关塞回的 413、502，或者明天多出来的某个）
+ * 按「服务端的时刻」处理，于是它换来的最坏结果是**退避重试几次、多印几行**；反过来默认成「我们的」，
+ * 它换来的是**一个变聋的节点，而且它自己不知道**。两种错的代价不对称，所以默认站在吵一点那一边。
+ */
+export const OURS_NOT_THEIRS: readonly number[] = [400, 401, 403, 404, 409, 422];
+
+/**
+ * t-300 判据 1：**按这个码在说什么分类，不按数字区间。**
+ *
+ * 此前是 `err.status >= 500`，于是 **408（请求超时）与 429（太多请求）都被归成「我们自己的错」**，
+ * 而 `watch` 只在 transient 时重试、否则抛出去结束——**服务端最忙的那一刻，看守一个接一个地聋掉**。
+ * pd 08:4x 的看守就死于一个 408，而它是去读输出文件才知道的（qa 07:17 报过同一个形状的另一面）。
+ *
+ * 这段注释原来就写对了标准（「网络问题与 5xx 是服务端的时刻，不是我们的」）——**是实现没照它做**：
+ * 标准按含义写，实现按区间判，而 408／425／429 这三个「服务端的时刻」恰好住在 4xx 里。
+ */
 export function isTransient(err: unknown): boolean {
   // t-225：**正文坏掉算服务那一侧的时刻**，和 5xx、断网同一类：网关塞回一张 HTML、代理截断了正文、
   // 部署中途的空回应——都会自己过去，而且下一轮重试的代价只是一次拉取。杀掉看守才是贵的那一种。
   if (err instanceof BadResponse) return true;
-  if (err instanceof ClientError) return err.status >= 500;
+  if (err instanceof ClientError) return !OURS_NOT_THEIRS.includes(err.status);
   return err instanceof Error && !(err instanceof SyntaxError);
+}
+
+/**
+ * t-300 判据 2：**这一轮等多久。** 服务端说了就照它说的（`Retry-After`），没说才用自己的退避表。
+ *
+ * 上限是 `RETRY_AFTER_MAX_MS`：一个 `Retry-After: 86400` 会让看守睡一天，而那和聋掉没有区别。
+ * 封顶之后仍然照说的等——**封顶防的是一个荒谬的值，不是不信服务端**；等多久那一行本来就印出来，人看得见。
+ */
+export const RETRY_AFTER_MAX_MS = 5 * 60_000;
+export function retryWait(err: unknown, backoff: readonly number[], failures: number, intervalMs: number): number {
+  const said = err instanceof ClientError ? err.retryAfterMs : undefined;
+  if (said !== undefined) return Math.min(said, RETRY_AFTER_MAX_MS);
+  return Math.min(backoff[Math.min(failures, backoff.length - 1)], intervalMs);
 }
 
 /**
@@ -213,7 +245,7 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
       // A transient failure (deploy in progress, network blip) must not end the watch: the cursor is untouched,
       // say what happened, back off, try again. Anything else is ours to fix, so it still exits.
       if (!isTransient(err)) throw err;
-      const wait = Math.min(backoff[Math.min(failures, backoff.length - 1)], intervalMs);
+      const wait = retryWait(err, backoff, failures, intervalMs);   // t-300 判据 2：服务端说了就照它说的
       failures += 1;
       print(`watch: ${describeError(err)}; retrying in ${wait / 1000}s (attempt ${failures})`);
       await sleep(wait);
