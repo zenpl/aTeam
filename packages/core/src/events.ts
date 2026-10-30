@@ -472,6 +472,54 @@ export const shipUnreachableLine = (queued: number, days: number, tries: number)
 export const shipNotCountedLine = (queued: number, days: number, tries: number) =>
   `⚠ 服务收下了请求但没有这本账（counted: false），这台机器上 ${queued} 条被拒记录一条都没记下，最早的一条已经 ${days} 天（${shipTriesLine(tries)}）。不划掉是对的，但它不会自己好。`;
 
+/**
+ * t-291：**这个地址认哪些查询参数，一处表。**
+ *
+ * pd 05:30 的通则：**凡是我们收下的东西，要么作用于结果，要么当场拒收并说清怎么改；不许既不作用也不报错。**
+ * 查询参数此前走的正是被禁的第三条路——`url.searchParams.get("after")` 只问它认得的那两个，别的连看都不看，
+ * 于是 `?since=…` 静默变成「从头开始」，而要的人以为自己只要了一截。三份外部反馈各自排第一的那件事是同一个
+ * 形状（pm 05:3x 焦点①）：**我们吞掉一个输入，换来别人去诊断一个不存在的 bug。**
+ */
+export const EVENTS_PARAMS = ["after", "wait"] as const;
+
+/**
+ * t-291：**一个不认识的参数，大概想要的是哪一个。**
+ *
+ * 不是凭形近猜的：`since` 是别处 API 的通名，写成它的人要的正是我们的 `after`；`from`/`cursor` 同理，
+ * `timeout` 是 `wait` 的通名。**查不到就不猜**——pd 那句里中间那半句要的是「说清怎么改」，
+ * 一个猜错的「大概是」比不说更坏：它让人去改一个本来就不存在的参数。
+ */
+export const PARAM_MEANT: Record<string, string> = { since: "after", from: "after", cursor: "after", timeout: "wait" };
+
+/** t-291：建议那半句里，参数连它的值长什么样一起给——光给名字，要的人还得再猜一次值。 */
+export const PARAM_FORM: Record<string, string> = { after: "after=<上次返回的 cursor>", wait: "wait=<毫秒>" };
+
+/**
+ * t-291：`param` 大概想要 `legal` 里的哪一个；说不出就是 null。
+ *
+ * 大小写不同算同一个：`?After=` 今天也被静默吞掉，而写它的人要的就是 `after`——**拒收照旧（名字不是这个字），
+ * 但那一句要说得出他差的只是大小写**。
+ */
+export const paramMeant = (param: string, legal: readonly string[] = EVENTS_PARAMS): string | null => {
+  const lower = param.toLowerCase();
+  const sameWord = legal.find((p) => p.toLowerCase() === lower);
+  if (sameWord) return sameWord;
+  const meant = PARAM_MEANT[lower];
+  return meant && legal.includes(meant) ? meant : null;
+};
+
+/**
+ * t-291 判据 1：拒收那一句，**pd 05:30 ① 锁的字**。他写的是 `since` 那一例，三段照搬：点名那个参数、
+ * 说出要的大概是哪个、把这个地址认的全列出来。
+ *
+ * 说不出「大概是哪个」时中间那段不印（见 `paramMeant`）——少一段是 pd 的规矩本身要的，不是改他的字。
+ */
+export const unknownParamLine = (param: string, legal: readonly string[] = EVENTS_PARAMS): string => {
+  const meant = paramMeant(param, legal);
+  const guess = meant ? `你要的大概是 ${PARAM_FORM[meant] ?? meant}。` : "";
+  return `我不认识参数 ${param}。${guess}这个地址认的参数只有 ${legal.join("、")}。`;
+};
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -599,6 +647,7 @@ export const KEY_SYMBOLS = [
   "OWED_LEGACY_HELP",
   "OWNER_URL_LOCKED",
   "OWNER_URL_NEEDS_SECRET",
+  "PARAM_FORM",
   "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
@@ -748,6 +797,7 @@ export const KEY_SYMBOLS = [
   "taskHeading",
   "titleAsShown",
   "tooLongLine",
+  "unknownParamLine",
   "unknownSpanReason",
   "until",
   "validate",

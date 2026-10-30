@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, cliShaUnknownCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, cliShaUnknownCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, checkQuery, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -743,6 +743,9 @@ export function createApp(opts: ServerOptions) {
       }
 
       if (req.method === "GET" && path === "/events") {
+        // t-291：**认不出来的参数在读任何一个之前就拒掉。** 放在第一行有两重意思：这一次什么都没发生（游标
+        // 不动、长轮询不挂起），以及记账走 t-212 那个统一的 catch——这里一行都不补。
+        checkQuery(url.searchParams.keys());
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
         // t-257：**这一次是不是一次普通拉取（不带 wait），记进游标那一行。**
@@ -837,7 +840,9 @@ export function createApp(opts: ServerOptions) {
         if (!err.recorded) await refusalStore?.recordRefusal?.({ kind: "refused", who: whoIsAsking, rule: err.rule, op: `${req.method} ${new URL(req.url ?? "/", "http://x").pathname}`, id: ulid(real().getTime()), at: real().toISOString() });
         // t-233 判据 2：**类别跟着这条拒绝一起出门。** 客户端此前只拿得到 rule 与一句话，要分辨「那件事已经
         // 发生过了」只能去匹配话里的字——而那正是这件任务不许的做法。
-        return json(res, 409, { error: "rejected", rule: err.rule, message: err.message, already: err.already });
+        // t-291：码与那一句都跟着拒绝走。默认仍是 409 与带 `rule: ` 前缀的 message——**既有的每一条回包
+        // 一个字不变**；只有自己声明了的那种（此刻只有查询参数那一条）回 400 并把 pd 锁的字逐字送出去。
+        return json(res, err.status, { error: "rejected", rule: err.rule, message: err.verbatim ?? err.message, already: err.already });
       }
       if (err instanceof SyntaxError) return json(res, 400, { error: "bad json" });
       console.error(err);

@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
@@ -107,6 +107,23 @@ export class Rejected extends Error {
    */
   recorded = false;
   /**
+   * t-291：**这条拒绝自己说它回哪个状态码。**
+   *
+   * 默认 409 的意思是「这条写入不合规」。而一个认不出来的查询参数不是一条不合规的写入——它是一个这台服务
+   * 读不懂的请求；回 409 会让客户端照着「日志不让我这么做」去找规则，而它该改的只是自己的地址栏。
+   *
+   * 码跟着拒绝走，于是 t-212 那条「Rejected 的唯一出口，也是记账的唯一出口」一个字不动：**下一个人再加一条
+   * 带自己码的拒绝，不必记得去那个 catch 里补一行。**
+   */
+  status = 409;
+  /**
+   * t-291 判据 1（**pd 的字不改**）：回包里给人看的那一句用这一份原文。
+   *
+   * `Error.message` 是 `${rule}: ${message}`，那个前缀是给日志与堆栈看的；pd 锁了字的句子一旦被前缀改了形，
+   * 判据 1 当场不成立。不带这个字段的拒绝照旧用 `message`——**既有的每一条回包一个字不变。**
+   */
+  verbatim?: string;
+  /**
    * t-233：**一次拒绝有两种意思，而提醒只印一种。**
    *
    * 真样本（qa 16:55）：拒绝话逐字是「already acked at 16:54:51.880Z」，而 t-116 的提醒照旧说「没有落下去」
@@ -119,6 +136,31 @@ export class Rejected extends Error {
   constructor(public readonly rule: string, message: string, public readonly already?: { at: string | null }) {
     super(`${rule}: ${message}`);
   }
+}
+
+/**
+ * t-291：一条 **400** 的拒绝——请求本身这台服务读不懂，不是写入不合规。回包里的 `message` 是逐字那一句。
+ */
+export function badRequest(rule: string, message: string): Rejected {
+  const r = new Rejected(rule, message);
+  r.status = 400;
+  r.verbatim = message;
+  return r;
+}
+
+/**
+ * t-291 判据 1、2：**认不出来的查询参数当场拒收，一个都不吞。**
+ *
+ * pd 05:30 的通则：凡是我们收下的东西，要么作用于结果，要么当场拒收并说清怎么改；不许既不作用也不报错。
+ * 此前这里走的正是被禁的第三条路——只问认得的那两个，别的连看都不看。
+ *
+ * 顺序照 `names` 给的来（`URLSearchParams.keys()` 是地址里的顺序），所以同时写错两个时报的是第一个：
+ * **一次说一件、说清怎么改**，比一次甩一串更接近 pd 那句话的意思。
+ *
+ * 判据 5：**范围只有参数名。** 值合不合规、事件字段那一层、幂等命中那一层都不在这里，另排。
+ */
+export function checkQuery(names: Iterable<string>, legal: readonly string[] = EVENTS_PARAMS): void {
+  for (const name of names) if (!legal.includes(name)) throw badRequest("query", unknownParamLine(name, legal));
 }
 
 /**

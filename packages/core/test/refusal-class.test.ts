@@ -38,7 +38,11 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
 // t-253 加了一处：`core/rules.ts claim`——「这件活在别人手里，而那个人此刻还在」。
 // 它属**「那件事没有发生」那一类**（不带 `{ at }`）：等那个人真的缺人了，同一条命令就会通过，
 // 所以它要留着、要被重做，不能说完就划掉。138 → 139。
-const TOTAL = 139;
+// t-291 又加一处：`core/rules.ts rule`——那是 `badRequest()` 里唯一那个 `new Rejected(`（规则名是参数，所以
+// 这道闸量到的是变量名 `rule`）。此刻只有一条拒绝走它：GET /events 收到认不出来的查询参数。
+// 它属**「那件事没有发生」那一类**（不带 `{ at }`）：那一次拉取确实没发生，把参数改对了同一条请求就通，
+// 所以它要被重做，不能说完就划掉。139 → 140。
+const TOTAL = 140;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",
