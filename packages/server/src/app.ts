@@ -755,7 +755,25 @@ export function createApp(opts: ServerOptions) {
         if (!result.events.length && wait > 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, wait);
-            function onAppend(x: { project: string }) { if (x.project === projectId) done(); }
+            /**
+             * t-290 判据 5：**提前叫醒他的，只能是「有东西还没送到他眼前」。**
+             *
+             * 此前任何一条本项目事件都叫醒所有等待者——量过（本支 86ec251）：别人发一条与 dev 无关的 note，
+             * dev 那条 wait=5000 的长轮询 206 ms 就回来了，回包里 `for_me=0`。
+             *
+             * **判据里那个条件在这一刻等价于「刚落的这条是发给他的指令」**，可证：会等在这里的前提是第一次
+             * `pull` 一条事件都没拿到，也就是游标已经走到日志末尾——那时他的 `unseen` 必然是空的
+             * （`unseen` 的定义就是游标还没走过）。所以「`unseen` 从空变成非空」只能由新落的一条给他的指令造成。
+             * 这样写是 O(1)：不必为每一个等待者重算一遍全量日志，而那正是此刻服务端最贵的那件事。
+             *
+             * 代价说在明处：**不是发给他的那些事件，要等这一轮 `wait` 到点才拿到**（看守那边 ≤ 30 s）。
+             * 它们没有丢——下一次拉取照旧全给，只是不再由它们提前叫醒谁。
+             */
+            function onAppend(x: { project: string; e?: unknown }) {
+              if (x.project !== projectId) return;
+              const e = x.e as { kind?: unknown; to?: unknown } | undefined;
+              if (e && e.kind === "instruction" && e.to === actor) done();
+            }
             function done() { clearTimeout(timer); bus.off("append", onAppend); resolve(); }
             bus.on("append", onAppend);
             req.on("close", done);
