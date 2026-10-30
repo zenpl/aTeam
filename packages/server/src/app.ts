@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery } from "@ateam/core";
+import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery, livingBoard} from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -523,7 +523,10 @@ export function createApp(opts: ServerOptions) {
         }
         await remind();
         const state = await stateFor(projectId, store);
-        const b = board(state, human, now());
+        // t-307 判据①：**人那一页只由活着的事组成。** 基线（qa 16:29）是 80% 是历史——tasks 53.7% ＋
+        // instructions 26.4%。判据⑤：不许把成因说成缓存——这一行上面的 `stateFor` 就是那层缓存，它早就在了，
+        // **而缓存不封顶回包**：回包仍随历史线性长。所以动的是这一份里有什么（`livingBoard`），不是外面再套一层。
+        const b = livingBoard(board(state, human, now()), human);
         if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
         b.owner_key = await ownerKeyState();
         return html(res, 200, renderBoard(b, state, { sha, canDecide: mayActAsHuman, human, base, ask: url.searchParams.get("ask") }));
@@ -532,8 +535,11 @@ export function createApp(opts: ServerOptions) {
       // t-133: the detail page behind the 线上 row. Same rules as the board and a task page: public unless private.
       if (req.method === "GET" && wantsHtml && (path === "/release" || path === "/release/")) {
         if (!boardPublic && !isAdmin) return html(res, 401, unauthorizedPage());
-        const state = reduce(await store.read(), undefined, human);
-        return html(res, 200, renderRelease(board(state, human), state, { sha, human, base }));
+        // t-307 判据④：**范围里必须含 `/release`。** 这一行原来是全量重放（`reduce(await store.read())`）——
+        // `GET /` 走增量缓存而这一页不走，于是人点开「线上」就撞上同一件事。`stateFor` 不是另一种算法，
+        // 是同一个 reduce 的增量缓存（`Reduction`），所以这一页看到的状态一个字没变，只是不再从头读一遍日志。
+        const state = await stateFor(projectId, store);
+        return html(res, 200, renderRelease(livingBoard(board(state, human), human), state, { sha, human, base }));
       }
 
       // t-065: one task in full, same rules as the board (public unless the board is private).

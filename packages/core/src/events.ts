@@ -791,9 +791,11 @@ export const KEY_SYMBOLS = [
   "owedSentences",
   "owedThirdWay",
   "owedUnpulledLine",
+  "pageHistoryLine",
   "partsSkipped",
   "precheckFailedLine",
   "presenceClocks",
+  "reachCountLine",
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
@@ -1115,6 +1117,30 @@ export const DEFAULT_LINES = {
    */
   missed: (option: string) => cn`本该按默认执行，我们没有执行，现在仍在等你（默认是${option}）。`,
 };
+
+/**
+ * t-307（pm 17:27 要的那个计数）：**开着的指令按 `reach` 分三桶，每次都印。**
+ *
+ * 三桶的名字不许照搬字段（`unread`／`read`／`acted`）：人读的是「到哪一步了」。中间那一桶是这一句存在的
+ * 理由——一条指令落在那里，意思是**收件人自己拉过它，而没有任何一条事件引用过它**，所以「办了没回来引用」
+ * 与「看见了什么也没做」在那一桶里长得一模一样。**那个数就是「可能已经办了而账上没清」的上界**（T15）。
+ * 印出它的作用正是这一条：一旦每次都印，T15 就再也藏不住。
+ *
+ * **措辞占位，定稿归 pd（t-307 判据⑥：上线前必须换成定稿，未换不算完成）。**
+ */
+export const reachCountLine = (open: number, unread: number, read: number, acted: number): string =>
+  cn`${PD_PLACEHOLDER}还开着 ${open} 条：没送到眼前 ${unread}、拉过了没人引用 ${read}、有人引用过 ${acted}。中间那个数是「可能已经办完、只是账上没清」的上限。`;
+
+/**
+ * t-307 判据①：**这一页不印已经完结的事，而它说出自己没印什么。**
+ *
+ * 「少给而不自知」是这几天数了二十多次的那一族，所以砍了多少要在页面上，不只在 `omitted` 里。
+ * 两个数分开说，因为它们去的地方不同：完结的任务在它自己的详情页，关上的指令在日志里。
+ *
+ * **措辞占位，定稿归 pd（t-307 判据⑥）。**
+ */
+export const pageHistoryLine = (tasks: number, instructions: number): string =>
+  cn`${PD_PLACEHOLDER}这一页只印还在动的事。已经完结的 ${tasks} 件任务、已经关上的 ${instructions} 条指令不在这一页上。`;
 
 /**
  * t-292（pd 05:33 六，逐字）：命令行「过期还没答」那一段的两句。

@@ -1,4 +1,4 @@
-import { missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
+import { missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch, reachCountLine, pageHistoryLine, RECENT_ANSWER_MS} from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -15,7 +15,8 @@ export const SAID_SHOWN = 5;
 /** t-265：不再另写一个 30——与 core 的 `TITLE_MAX_CHARS` 同源，两处不会各自漂移。 */
 export const TITLE_MAX = TITLE_MAX_CHARS;
 /** How long 「你刚定了」 stays on the page after the human answered. */
-const JUST_MS = 60 * 60_000;
+// t-307：这个窗口 `livingBoard` 也要用（它决定人刚答过的卡留不留在这一份里），所以出处只有 core 那一个。
+const JUST_MS = RECENT_ANSWER_MS;
 
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null; /** t-235：这一页的绝对上限，默认 `PAGE_BYTES`；用例给小一点的数来测「装不下时它怎么办」。 */ limit?: number }
@@ -525,6 +526,10 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, shownValid.length))}</span></summary>`);
 
+  // t-307 判据①：**这一页不印已经完结的事，而它说出自己没印什么。**没砍过就不印这一行（完整板没有 `page_cut`）。
+  if (b.page_cut && (b.page_cut.tasks || b.page_cut.instructions))
+    d.push(`<p class="meta history-cut">${esc(pageHistoryLine(b.page_cut.tasks, b.page_cut.instructions))}</p>`);
+
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
   d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
@@ -551,6 +556,9 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const openCut = cut(open);
   d.push(open.length ? `<ul class="plain">${openCut.vis.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(moreLine(openCut.hidden));
+  // t-307（pm 17:27）：**三桶的数每次都印。** 数的是整份里开着的那些（`board()` 在 `livingBoard` 砍之前算的），
+  // 不是上面这张名单印出来的几条——这一行的用处正是说出这一页之外还有什么。句子在 core，这里只印。
+  d.push(`<p class="meta reach">${esc(reachCountLine(b.reach_counts.open, b.reach_counts.unread, b.reach_counts.read, b.reach_counts.acted))}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
   /**
    * t-189：这一行原来只看 `chosen.by === "default"` 就印「已按默认「X」执行（你仍可改）」——**时间过了就当它发生了**。

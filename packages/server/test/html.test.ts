@@ -129,12 +129,20 @@ describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句�
     expect(rest).toMatch(/没人办[\s\S]*<b>dev<\/b>：(在听|从没读过日志|有 \d+ 分钟没读日志了)[^<]*/);
     expect(rest).toContain("production:deployed.sha");
     expect(rest).toContain("Card page for the human");
-    expect(rest).toContain("cookie is SameSite=Lax");
-    expect(rest).toContain(esc("no <script> on the page"));
-    expect(rest).toContain("sha 1234567");
-    expect(rest).toContain("2 条留言 · <a href=\"/task/t-1\">看详情</a>");   // t-065: a finished task's notes are read on its page
+    /**
+     * t-307 判据①（pm）：**已经完结的任务不在这一页上，占比是 0。**
+     *
+     * 这七行原来断言的是 t-1 的判据、证据、留言数与那条仓库判决——而 t-1 在这份夹具里**验在生产上**，
+     * 也就是「没有任何人还能对它做一件事」。t-065 当年给的答案是把它印成一条 brief（短行），而 qa 16:29
+     * 在生产上量到的结果是：那些短行占了人那一页的 **53.7%**。**t-307 取消的是 brief 这个答案，不是
+     * t-065 的判据**——「这一页不随日志长」这句话仍然成立，而且比当年更严：**它一行都不印**。
+     * t-1 的这些字此刻在 `/task/t-1` 上（本文件下面 t-065 那两条用例去那里核它们还在）。
+     */
+    for (const gone of ["cookie is SameSite=Lax", esc("no <script> on the page"), "sha 1234567", "2 条留言"]) expect(rest).not.toContain(gone);
+    expect(rest).toContain("已经完结的 1 件任务");
     expect(rest).not.toContain("+ also on the default branch as 7654321");
-    expect(rest).toMatch(/验过，在 <b>仓库<\/b>，由 qa/);
+    // t-4 是 done 而还没验——它还活着（人推一把就上线），所以它的证据照旧在这一页上
+    expect(rest).toContain("b6228e3 on the dev branch");
     expect(rest).toMatch(/已失效，原因 <code>/);
     expect(rest).toContain("packages/server/src/html.ts");
   });
@@ -507,7 +515,10 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
 
       for (const html of [await z.authedPage(), await z.page()]) {
         const ui = html.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<code[^>]*>[^<]*<\/code>/g, "").replace(/<[^>]+>/g, " ");
-        for (const c of ["看板认证", "私有还是公开？", "请读部署说明", "今天不再部署", "会话 cookie 标志", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "SameSite=Lax", "按钮太小"]) expect(ui).toContain(c);
+        // t-307 判据①：t-1（「会话 cookie 标志」，判据「cookie 是 SameSite=Lax」）在这份夹具里验在生产上，
+        // 于是它离开这一页。这一行要钉的是「内容照原样渲染、不翻译」，所以换成一件**活着**的任务的判据
+        // （t-2「限流」的「每秒 100 次后返回 429」）——钉的那件事没变，钉它的那个例子换了。
+        for (const c of ["看板认证", "私有还是公开？", "请读部署说明", "今天不再部署", "每秒 100 次后返回 429", "限流", "看板中文化", "日志脱敏", "导出报表", "先发哪个？", "等 pm 定阈值", "按钮太小"]) expect(ui).toContain(c);
         const words = ui.replace(/\b[0-9a-f]{7,}\b/g, "")
           .replace(/\b(pm|dev|qa|human|frontend|aTeam|repo|production|staging|team|ok|cookie|SameSite|Lax|Z|GET|POST|token|ateam|fly|seam|session|surface|key|agent)\b/g, "")   // agent: pd's own word in 「要更多 agent」
           .match(/[A-Za-z]{3,}/g) ?? [];
@@ -785,8 +796,11 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       await v.post("frontend", { kind: "task", op: "claim", task: "t-3", touches: ["src/io.ts"] });
       let html = await v.page();
       let rest = html.slice(html.indexOf('<details class="rest"'));
-      expect(rest).toContain('<li class="brief"><a href="/task/t-1">登录修复</a> <span class="meta">@dev · ✓ 生产</span></li>');
-      for (const gone of ["能登录", "记住我", "提交 1234567", "线上登录成功", "无痕窗口"]) expect(rest).not.toContain(gone);
+      // t-307 判据①：t-1 验在生产上＝完结，它一行都不印（当年这里是一条 brief 短行）。**那句「不随日志长」
+      // 没有被放弃，是被做到了底**：少印的那几条由这一页自己说出来，而不是由读的人去发现。
+      expect(rest).not.toContain('<li class="brief"><a href="/task/t-1">登录修复</a>');
+      expect(rest).toContain("已经完结的 1 件任务");
+      for (const gone of ["登录修复", "能登录", "记住我", "提交 1234567", "线上登录成功", "无痕窗口"]) expect(rest).not.toContain(gone);
       expect(rest).toContain('<span class="tag warn">未解决</span> <a href="/task/t-3"><code>t-3</code></a> + <a href="/task/t-2"><code>t-2</code></a> 都涉及 <code>src/io.ts</code>');
       expect(rest).not.toContain("另有");
       await v.post("pm", { kind: "task", op: "seam", tasks: ["t-2", "t-3"], resolution: "frontend 合 dev" });
@@ -850,7 +864,10 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       const html = await v.page();
       expect(Buffer.byteLength(html)).toBeLessThan(80 * 1024);
       const rest = html.slice(html.indexOf('<details class="rest"'));
-      expect(rest.match(/<li class="brief">/g)).toHaveLength(60);
+      // t-307 判据①②：**60 件完结的任务在这一页上占 0 行**，而这一页说得出它们存在。
+      // 这一条用例的名字（「不随日志长」）此刻比当年成立得更彻底：当年是 60 条短行随日志长，现在是一句话。
+      expect(rest.match(/<li class="brief">/g)).toBeNull();
+      expect(rest).toContain("已经完结的 60 件任务");
       expect(rest).not.toContain("这是一段很长的判据或证据文字");
       // the log is long; the task page still has everything
       const tp = await (await fetch(`${v.base}/task/t-60`, { headers: { accept: "text/html" } })).text();
