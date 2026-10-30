@@ -905,8 +905,8 @@ export function receiptPage(then: string, body: unknown, base = ""): string {
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${r.title} · ${UI.title}</title>
 <style>${CSS}</style></head>
 <body><main class="token-page"><header><h1>${UI.header}</h1></header>
-<section class="now"><h2>${r.landed}</h2>${what ? `<p>${what}</p>` : ""}${id ? `<p class="why"><code>${esc(id)}</code></p>` : ""}
-<p><a href="${esc(base)}/">${r.back}</a>${r.backTail}</p>
+<section class="now"><h2>${r.landed}</h2><p>${what ? `${what}` : ""}${r.nothingToDo}</p>${id ? `<p class="why"><code>${esc(id)}</code></p>` : ""}
+<p class="why"><a href="${esc(base)}/">${r.back}</a> · ${r.slow}</p>
 </section></main></body></html>
 `;
 }
