@@ -313,7 +313,11 @@ export function createApp(opts: ServerOptions) {
         const role = decodeURIComponent(path.slice("/manual/".length));
         // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
         const known = await registry.get(projectId);
-        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read(), undefined, human)) : null;
+        // t-308 判据①：**这一行此前每次请求都把整本日志重放一遍**（`reduce(await …read())`），而它上面那句注释写着
+        // 「generic by construction, so they need no key」——**不要钥匙 ＋ 每次重算整本日志，叠在一处才是那张单的内容**。
+        // 改走与 `GET /` 同一个增量缓存。原来那个 `undefined` 不是「跳过 settle」：`reduce` 的签名是
+        // `now: Date = new Date()`，所以它本来就等于「此刻」——**换过来不改行为，只是不再从头折叠一次**。
+        const packing = known ? roleResponsibilities(await stateFor(projectId, storeFor(projectId))) : null;
         const text = manualFor(role, packing?.[role]);
         // t-292（pd 05:30 ②）：**全局那个地址上没有项目**，所以不能说「这个项目没有 X 这个角色」。
         // 两条路分开：带 `/p/<id>` 的照旧说项目里没这个角色；不带的说 pd 改稿那一句（出处在 core）。
@@ -357,8 +361,16 @@ export function createApp(opts: ServerOptions) {
           if (caps instanceof Error) return json(res, 400, { error: "capabilities", message: caps.message });
           const pstore = storeFor(owner.id);
           const result = await serialize(async () => {
-            const state = reduce(await pstore.read(), now(), human);
+            // t-308 判据②：同样不再重放整本日志。
+            //
+            // **而换成增量缓存之后多一条必须守的规矩，它是 `Reduction` 自己写着的**：那一份 state 是**原地 settle 的
+            // 共享对象**，所以「不许把它跨 await 拿着」。此前这里是 `reduce()` 现折一份私有的，跨 await 拿着没事；
+            // 换成共享那一份之后，下面每一个 `await`（registry、append）期间都可能有另一个请求把它重新 settle。
+            // 所以**要用的三样在第一个 await 之前一次性取完**，此后一次都不再碰 state。
+            const state = await stateFor(owner.id, pstore);
             const roles = projectRoles(state);
+            const missingNow = new Set(roles.filter((r) => isMissing(state, r, now())));
+            const resp = roleResponsibilities(state);
             const nodes = await registry.nodes(owner.id);
             const mine = nodes.find((n) => n.agent_id === agentId);
             let role = mine?.role ?? (typeof body.role === "string" ? body.role.trim() : "");
@@ -371,7 +383,7 @@ export function createApp(opts: ServerOptions) {
               // the first node is pm (Q15); after that, the first role nobody present holds
               // 自动分配也不许分到人身上（判据 4：不许只堵显式指定那一半）
               const assignable = roles.filter((r) => r !== human);
-              role = first && assignable.includes("pm") ? "pm" : assignable.find((r) => isMissing(state, r, now())) ?? "";
+              role = first && assignable.includes("pm") ? "pm" : assignable.find((r) => missingNow.has(r)) ?? "";
               if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
             }
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
@@ -389,7 +401,7 @@ export function createApp(opts: ServerOptions) {
               // decision after the human said 外呼地址先不做; the moment the fact is set, the follow-up above sends it.
             }
             for (const e of out) bus.emit("append", { project: owner.id, e });
-            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, roleResponsibilities(state)[role] ?? []) : "", first, created } };
+            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, resp[role] ?? []) : "", first, created } };
           });
           return json(res, result.status, result.body);
         }
