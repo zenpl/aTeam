@@ -53,6 +53,24 @@ async function alive(store: MemoryStore) {
   await put(store, { kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？细节在任务上。", options: ["报表", "限流"], default: "报表", ack_by: soon() });
 }
 
+/**
+ * t-314（qa 20:42 定的做法，我原来那条是 `toBeLessThan(8)`）：**把门槛去掉，不是把门槛放宽。**
+ *
+ * 判据②要说的话是「这一页不随历史长」，而它的残差是 **log n**：页上那几个计数器各多一位，就多几个字节。
+ * 一个常数门槛去量一个对数的东西，换多大的常数都只是把假红推后——我自己量过它什么时候咬人：
+ * 同一份夹具 10 轮 14,218 字节、100 轮 14,226，**差正好 8**，而我断言的是 `toBeLessThan(8)`，当场红，
+ * 而那一刻的行为完全正确。
+ *
+ * 所以改成「抠掉数字之后两份逐字相同」：它不认是哪几个计数器在变（我先前写「两个计数器各多一位」是一个
+ * 不必要的归因，qa 同样认了它自己那条「五个计数器」），**只认「这一页还是同一页，只是里面的数变了」**——
+ * 那正是判据②那句话。
+ *
+ * **ULID 要先归一化，这一半是 qa 连踩过的坑一起交的**：只抠数字的话 `10=40` 就已经不等，而第一处不同在
+ * 那个 `<input name="id" value="…">` 上——事件 id 每次跑都不同。**一条会红在「每次跑都不同的随机 id」上的
+ * 用例，比一个常数门槛更坏。** 先换 id 再抠数字，顺序不能倒：抠完数字，ULID 就不再是 26 位了。
+ */
+const strip = (html: string) => html.replace(/[0-9A-HJKMNP-TV-Z]{26}/g, "<id>").replace(/[0-9]/g, "");
+
 async function page(rounds: number, extra?: (s: MemoryStore) => Promise<void>): Promise<string> {
   const store = new MemoryStore();
   const r = await rig(store);
@@ -175,13 +193,12 @@ describe("t-307 · 那一份 state 不许跨 await 拿着（pm 18:50 的形状�
 });
 
 describe("t-307 判据② · 大小与项目活过多久无关", () => {
-  it("历史涨四倍，这一页一个字节都不涨（完结的任务 ＋ 签收过的指令）", async () => {
-    const one = await page(10);
-    const four = await page(40);
-    const bytes = (s: string) => Buffer.byteLength(s, "utf8");
-    // 两份日志里活着的事件一模一样，所以差额只可能来自历史。差的那几个字节是那句「已经完结的 N 件任务」
-    // 里的数字本身——它随历史变长，而它是**一句话**，不是一张随历史长的名单。
-    expect(bytes(four) - bytes(one), `1 倍 ${bytes(one)} ／ 4 倍 ${bytes(four)}`).toBeLessThan(8);
+  it("历史涨十倍，这一页除了几个数字以外逐字不变（完结的任务 ＋ 签收过的指令）", async () => {
+    const [one, four, hundred] = [await page(10), await page(40), await page(100)];
+    const bytes = (x: string) => Buffer.byteLength(x, "utf8");
+    const where = `10 轮 ${bytes(one)} ／ 40 轮 ${bytes(four)} ／ 100 轮 ${bytes(hundred)}`;
+    expect(strip(four), where).toBe(strip(one));
+    expect(strip(hundred), where).toBe(strip(one));
   });
 
   /**
@@ -197,12 +214,13 @@ describe("t-307 判据② · 大小与项目活过多久无关", () => {
    * T15 落地之后把 `.skip` 去掉，它该当场变绿；若那时它仍是红的，说明 T15 没有真的关掉这一类。
    */
   it.skip("卡在 T15：办了但没引用的永远算开着——从没签收过的那一类涨四倍，这一页就跟着涨", async () => {
-    const never = async (s: MemoryStore, rounds: number) => {
-      for (let i = 1; i <= rounds; i++) await put(s, { kind: "instruction", actor: "pm", to: "release", body: `${long(9)}（没人签收，第 ${i} 条）`, ack_by: soon() });
+    const never = async (st: MemoryStore, rounds: number) => {
+      for (let i = 1; i <= rounds; i++) await put(st, { kind: "instruction", actor: "pm", to: "release", body: `${long(9)}（没人签收，第 ${i} 条）`, ack_by: soon() });
     };
-    const one = await page(1, (s) => never(s, 10));
-    const four = await page(1, (s) => never(s, 40));
-    const bytes = (s: string) => Buffer.byteLength(s, "utf8");
-    expect(bytes(four) - bytes(one), `1 倍 ${bytes(one)} ／ 4 倍 ${bytes(four)}`).toBeLessThan(8);
+    const one = await page(1, (st) => never(st, 10));
+    const four = await page(1, (st) => never(st, 40));
+    // 与上面那一条**同一个断言**：T15 落地之后，这一类也该只差几个数字。
+    // qa 20:39 量过此刻差多少：那 30 条多花 21,660 字节——不是数字，是整整 30 行。
+    expect(strip(four), `10 条 ${Buffer.byteLength(one, "utf8")} ／ 40 条 ${Buffer.byteLength(four, "utf8")}`).toBe(strip(one));
   });
 });
