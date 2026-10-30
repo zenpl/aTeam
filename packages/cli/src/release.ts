@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type PushLevel, type ClientEvent } from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -32,62 +32,6 @@ export type RevList = (from: string, to: string) => string[] | null;
 /** t-209：一件任务声称的那一段产出。`base` 缺席时区间不可知——那不是「没有产出」，是「说不清」。 */
 export interface Span { task: string; base?: string; evidence: string }
 
-/**
- * t-222：**起点是人手边那棵树在 claim／reopen 那一刻的 HEAD，而人往往先提交、后跑命令。** 于是 `base` 落在
- * 自己的产出之后，区间 `(base, evidence]` 一条都装不下，那件任务的提交全成了「没人认领」。
- *
- * 这不是推测，是量出来的：生产头 d57acbc 到 31b92ae 之间 12 条提交，闸点名 10 条为孤儿，而**12 条每一条都属于
- * 一件已验任务**（t-166×2、t-219×2、t-220×2、t-215×2、t-216×3、…）。假阳性 10/10。四件里三件的 base 与自己的
- * evidence 是同一个 sha，一件的 base 比 evidence 还新。
- *
- * 这里只做**证得出来的两件事**，不猜谁写了哪条提交：
- * · `base` 若不能证明早于 `evidence`（缺席、相等、或反过来是 evidence 的后代），它就不是这一轮的起点；
- *   退到**上一轮的证据 sha**——那是同一件任务自己在日志里写下的、可核的前一个点。
- * · 两者都拿不到时给 `undefined`，进 `unknown_span`（说不清），**不进 orphans**（那是诬告）。
- *
- * **代价说在明处**：退到上一轮证据之后，那段窗口里若真有一条没人认领的提交，它会被这件任务的区间盖住。
- * 窗口是这件任务两轮之间，不是整条历史；而另一边的代价是今天这样——每一次发车都要 `--anyway`，
- * 一道每次被越过的闸等于没有。
- */
-export function effectiveBase(t: BoardTask, evidence: string, isAncestor: IsAncestor): { base?: string; widened: boolean } {
-  const base = t.base_sha;
-  const before = (x: string) => !sameCommit(x, evidence) && isAncestor(x, evidence) === true;
-  if (base && before(base)) return { base, widened: false };
-  const dones = (t.history ?? []).filter((h) => h.op === "done");
-  for (let i = dones.length - 2; i >= 0; i--) {
-    const prev = evidenceSha(dones[i].evidence);
-    if (prev && before(prev)) return { base: prev, widened: true };
-  }
-  return { base: undefined, widened: false };
-}
-
-/** 同一个提交的两种写法（一方可能是另一方的缩写）——牌桌上到处是 7 位缩写，git 给的是 40 位。 */
-export const sameCommit = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
-
-/**
- * t-222：一件任务的每一轮各算一段。相邻两轮之间（上一轮证据, 这一轮证据] 是后一轮的产出——**这两个点都是这件
- * 任务自己在日志里写下的**，比那个会戳歪的起点可核。最早那一轮用 `base`，它若也证不出早于自己的产出就给
- * `undefined`（说不清，进 unknown_span，并且只把它那一段划成不可判）。
- */
-export function roundSpans(t: BoardTask, evidence: string, isAncestor: IsAncestor): { base?: string; evidence: string; widened: boolean }[] {
-  const before = (x: string, y: string) => !sameCommit(x, y) && isAncestor(x, y) === true;
-  const dones = (t.history ?? []).filter((h) => h.op === "done");
-  // 这一批只关心还没上线的那几轮：证据 sha 认得出、且落在这条线上的
-  const shas: string[] = [];
-  for (const h of dones) { const x = evidenceSha(h.evidence); if (x && !shas.some((y) => sameCommit(x, y))) shas.push(x); }
-  if (!shas.length || !shas.some((x) => sameCommit(x, evidence))) shas.push(evidence);
-  const out: { base?: string; evidence: string; widened: boolean }[] = [];
-  for (const [i, ev] of shas.entries()) {
-    if (i === 0) {
-      const b = t.base_sha;
-      out.push({ base: b && before(b, ev) ? b : undefined, evidence: ev, widened: false });
-    } else {
-      out.push({ base: shas[i - 1], evidence: ev, widened: true });
-    }
-  }
-  return out;
-}
-
 export interface Plan {
   ok: boolean; reasons: string[]; included: string[];
   /** t-093: the tasks this push would add that are not verified, by id. */ unverified: string[];
@@ -106,23 +50,15 @@ export interface Plan {
    * 这一格不并进 `orphans`（那是诬告），也不并进「已覆盖」（那是把它们变没）。这正是 t-203 第三桶那件事的第三次。
    */
   unknown_span: string[];
-  /**
-   * t-222：**区间被退到上一轮证据的那几件任务**，按 id 列出来。它们的 `base` 证不出早于自己的产出（先提交、后
-   * claim／reopen 是常态），所以这个答案比 `(base, evidence]` 宽——宽在哪里、宽了几件，要说得出来，不能悄悄放行。
-   */
-  wide_base: string[];
-  /** t-223：这一批里那几条回滚提交——没有任务盖着，但树与某个上过线的版本逐字相同，所以不算无主。 */
-  rollbacks: string[];
 }
 /** t-093: the rule a refusal names (M4). */
 export const DEPLOY_RULE = "deploy-unverified";
 
 /** What the sha carries, and whether it may ship: every task whose evidence is inside it must be verified on repo with no open seam. */
-export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null, revList?: RevList, treeOf?: (sha: string) => string | null): Plan {
+export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: string | null, revList?: RevList): Plan {
   const reasons: string[] = [];
   const included: string[] = [];
   const unverified: string[] = [];
-  const wide_base: string[] = [];
   const spans: Span[] = [];
   const tasks = Object.values(b.tasks).flat();
   for (const t of tasks) {
@@ -134,12 +70,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
     // t-093: only what this push *adds* — a task already inside the running sha is not this push's to answer for
     if (deployed && isAncestor(s, deployed) === true) continue;
     included.push(t.id);
-    // t-222：**一件重开过的任务有好几轮，每一轮各有自己的产出。** state 里只留得下最后一轮的起点，但每一轮的
-    // 证据 sha 都在 history 里——相邻两轮之间那一段就是后一轮的产出，可核，不用猜。第一轮的起点若也证不出来，
-    // 那一段才是真说不清。
-    const rounds = roundSpans(t, s, isAncestor);
-    if (rounds.some((r) => r.widened)) wide_base.push(t.id);
-    for (const r of rounds) spans.push({ task: t.id, base: r.base, evidence: r.evidence });
+    spans.push({ task: t.id, base: t.base_sha, evidence: s });
     const passedRepo = (t.surfaces ?? []).some((r) => r.surface === REPO_SURFACE && r.pass);
     if (t.status !== "verified") { unverified.push(t.id); reasons.push(`${t.id}（${t.status}${passedRepo ? "，repo 验过但整件还没 verified" : ""}）：证据 ${s.slice(0, 7)} 在这个 sha 里，但这件不是 verified`); }
     else if (!passedRepo && !(t.surfaces ?? []).some((r) => r.surface === HUMAN_SURFACE && r.pass)) reasons.push(`${t.id} 的证据 ${s.slice(0, 7)} 在这个 sha 里，但还没在 repo 验过（${t.status}）`);
@@ -155,21 +86,7 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 两次都是「算不到的东西等于不存在」。
   //
   // 算法：`deployed..sha` 里的每一个提交，减去从任何一个已算进来的证据 sha 可达的那些。剩下的就是没人盖着的。
-  const raw = orphanCommits(sha, deployed, spans, revList);
-  const unknown_span = raw.unknown_span;
-  // t-223：**回滚提交没有任务盖着，但有账可查。** 它的树与某个上过线的版本逐字相同——那是 git 答得出的一个类别，
-  // 不是谁开的例外。少了这一格，回滚每次都要 `--anyway`，而一道每次被越过的闸等于没有（release 17:25 的原话）。
-  const rollbacks: string[] = [];
-  let orphans = raw.orphans;
-  if (orphans?.length && treeOf) {
-    const shipped = new Set<string>();
-    for (const x of b.live?.deploys ?? []) { const t = treeOf(x); if (t) shipped.add(t); }
-    orphans = orphans.filter((c) => {
-      const t = treeOf(c);
-      if (t && shipped.has(t)) { rollbacks.push(c); return false; }
-      return true;
-    });
-  }
+  const { orphans, unknown_span } = orphanCommits(sha, deployed, spans, revList);
   if (orphans?.length) reasons.push(orphanReason(orphans));
   // t-209 判据 7：**「说不清」要说出来，但它不拦车。**
   //
@@ -181,12 +98,8 @@ export function plan(b: Board, sha: string, isAncestor: IsAncestor, deployed?: s
   // 所以它进 `reasons`（发车前照样印在人眼前）、进 `unknown_span`（能被别处读），**但不改 `ok`**。
   // 真孤儿——有名有姓、确实没人认领的那些——照旧拦。
   const blocking = [...reasons];
-  // t-223：回滚提交要报出来，但**不拦车**——它有账可查，那正是这道认领的意思。与 unknown_span 同一格：
-  // 印在人眼前、别处读得到，不改 ok。
-  if (rollbacks.length) reasons.push(rollbackCommitsLine(rollbacks));
   if (unknown_span.length) reasons.push(unknownSpanReason(unknown_span));
-  if (wide_base.length) reasons.push(wideBaseReason(wide_base));
-  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span, wide_base, rollbacks };
+  return { ok: blocking.length === 0, reasons: [...new Set(reasons)], included, unverified: [...new Set(unverified)], orphans, unknown_span };
 }
 
 /**
@@ -213,6 +126,7 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
   // 于是**它们全被算成孤儿**。那正是我在上一段注释里说要避免的诬告，而我一边写下它一边做了它。
   // 说不清哪几条属于那几件，就说不清剩下的是不是没人认领的——所以这里答 null，并把「为什么算不出」交给
   // unknown_span 说。**不猜，也不诬告。**
+  if (unknown_span.length) return { orphans: null, unknown_span };
   if (!revList || !deployed) return { orphans: null, unknown_span };
   const all = revList(deployed, sha);
   if (all === null) return { orphans: null, unknown_span };
@@ -223,27 +137,7 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
     if (seg === null) return { orphans: null, unknown_span };   // 有一段问不出来，整个答案就不可信
     for (const c of seg) covered.add(c);
   }
-  // t-222 删掉过一条规矩，写在这里因为它是我自己的假覆盖：我先加了「一件任务的证据 sha 永远算它自己的产出」，
-  // 还在注释里写下「10 条假孤儿里有 6 条是这么来的」。**注入验它时两处都没红：用例一条不红，真样本的数一个不变。**
-  // 那 6 条其实是下面这个「说不清的窗口」盖住的。一条谁都不需要的放行规矩，比没有更坏——它会在别处悄悄放过东西，
-  // 而没有任何用例盯着它。
-  // t-222：**「说不清」缩到它真正说不清的那一段，不再整盘作废。**
-  //
-  // t-209 定的是「只要有一件任务的区间不可知，整个『谁是孤儿』就不可知」——当时对：那时的选择是「诬告」或
-  // 「不答」，不答对。但它的代价今天量出来了：**先提交后 claim 是常态**，于是几乎每一批都有一件说不清的任务，
-  // 而它一出现，这道闸对整批闭眼。
-  //
-  // 说不清的其实只有一段：那件任务的证据 sha 及其之前（它可能一路做过来）。**它的证据之上那些提交，与它无关**，
-  // 照样判得出。所以这里把不可判的范围缩成「(生产头, 那件任务的证据]」这个窗口，窗口之外仍然点名。
-  // 仍然不诬告：窗口里的提交既不算覆盖也不算孤儿。
-  const blind = new Set<string>();
-  for (const x of spans) {
-    if (x.base) continue;
-    const win = revList(deployed, x.evidence);
-    if (win === null) return { orphans: null, unknown_span };   // 这一段问不出来，那就真的答不了
-    for (const c of win) blind.add(c);
-  }
-  return { orphans: all.filter((c) => !covered.has(c) && !blind.has(c)), unknown_span };
+  return { orphans: all.filter((c) => !covered.has(c)), unknown_span };
 }
 
 /**
@@ -251,33 +145,13 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
  * (project:absorb.form); any other form, or no deployed sha, is nothing to measure. Candidates git cannot place
  * (object missing locally, no evidence sha) are neither contained nor not: the board lists them as unknown.
  */
-export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null } = {}):
-  { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; bad_evidence: string[]; no_evidence: string[]; method: string } | null {
+export function containment(b: Board, isAncestor: IsAncestor): { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; method: string } | null {
   const sha = b.release?.deployed_sha;
   if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
-  // t-219：**连上线那个 sha 都解不出来，就一个候选也测不了**——那时写下的「事实」全是 0 与「量不出」，
-  // 而它会盖掉别人从完整的树量出来的那一份。这不是阈值，是前提；理由见 core 的 cannotMeasureHere。
-  if (opts.has && opts.has(sha) === false) return null;
-  const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[],
-    bad_evidence: [] as string[], no_evidence: [] as string[],
-    method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
-  const shallow = opts.shallow?.() ?? null;
+  const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[], method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
   for (const c of b.release.candidates ?? []) {
-    // t-219：**「说不出」原来是一个桶，里面装着三件不同的事**，而它们的出路完全不同：
-    // ① 这件根本没写证据 sha —— 那是这件活的交付有问题（no_evidence）；
-    // ② 那个 sha 在这棵树里根本不存在，而这棵树不是浅克隆 —— qa 16:31 在一棵 fetch 了全部 8 个远端分支的
-    //    完整克隆里量过：t-150/t-183 那两个 sha 在 506 条可达提交里一条都对不上。**那是证据无效**
-    //    （写错、占位），不是「量不出」（bad_evidence）；
-    // ③ 浅克隆、或 git 自己答不上来 —— 那才是真的说不出（unmeasured）。
-    // **不许把 ①② 说成 not_contained**（qa 16:31 更正了它自己的第一版建议）：那会让它们进「已验没上线，
-    // 谁来推」，而它们**推不了**——那个提交不存在。把「还没上线」说大与说小一样坏。
-    if (!c.evidence_sha) { out.no_evidence.push(c.task); continue; }
-    const r = isAncestor(c.evidence_sha, sha);
-    if (r === true) { out.contained.push(c.task); continue; }
-    if (r === false) { out.not_contained.push(c.task); continue; }
-    const has = opts.has?.(c.evidence_sha) ?? null;
-    if (has === false && shallow === false) out.bad_evidence.push(c.task);
-    else out.unmeasured.push(c.task);
+    const r = c.evidence_sha ? isAncestor(c.evidence_sha, sha) : null;
+    (r === true ? out.contained : r === false ? out.not_contained : out.unmeasured).push(c.task);
   }
   return out;
 }
@@ -294,29 +168,18 @@ export function containmentFact(b: Board, measured: ReturnType<typeof containmen
   // 当「生产上有什么」的全集，而那份名单缺了一桶。
   //
   // 三桶一个不少地写下去，比较也比三桶（少了这一条，unmeasured 变了不会触发新事实，那一桶就永远停在旧值）。
-  // t-219：**「说不出」那一桶拆成三个，事实里逐个写下去。** 显示那一侧不动（`denominatorIs` 是人可见的字、
-  // 冻结开着），所以牌桌上那句「量不出 N」= unmeasured + bad_evidence + no_evidence 三者之和；**数据更细，
-  // 话一个字没改**。比较也比这三桶，否则其中一桶变了不会触发新事实，它就永远停在旧值（t-203 那笔账）。
-  type Fact = { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[]; bad_evidence?: string[]; no_evidence?: string[] };
-  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as Fact | undefined;
+  const current = b.readings.find((r) => r.valid && r.surface === HUMAN_SURFACE && r.key === DEPLOYED_TASKS_KEY)?.value as { sha?: string; contained?: string[]; not_contained?: string[]; unmeasured?: string[] } | undefined;
   const same = (a?: string[], b?: string[]) => JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
-  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained)
-      && same(current.unmeasured, measured.unmeasured) && same(current.bad_evidence, measured.bad_evidence) && same(current.no_evidence, measured.no_evidence)) return null;
-  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, bad_evidence: measured.bad_evidence, no_evidence: measured.no_evidence, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
+  if (current && current.sha === measured.sha && same(current.contained, measured.contained) && same(current.not_contained, measured.not_contained) && same(current.unmeasured, measured.unmeasured)) return null;
+  return { kind: "reading", surface: HUMAN_SURFACE, key: DEPLOYED_TASKS_KEY, value: { sha: measured.sha, contained: measured.contained, not_contained: measured.not_contained, unmeasured: measured.unmeasured, method: measured.method }, depends_on: ["production:deployed.sha"], method: measured.method } as ClientEvent;
 }
 
 export interface Git {
   isAncestor: IsAncestor;
-  /** t-219：这棵树是不是浅克隆。浅克隆里「祖先不在本地」是真的说不出；完整克隆里那是另一回事。 */
-  isShallow(): boolean | null;
   /** The remote's current tip of `branch`, or null when it does not exist. */
   remoteTip(branch: string): string | null;
   /** Push `sha` to `branch` on the remote (fast-forward only). Throws with git's message on failure. */
   push(sha: string, branch: string): void;
-  /** t-223：一个提交的树对象。回滚认的是**树**：内容与那一版逐字相同，而历史只进不退。 */
-  treeOf?(sha: string): string | null;
-  /** t-223：拿 `tree` 做内容、`parent` 做父，造一个新提交。不改历史、不强推——这就是「反向提交再往前推」。 */
-  commitTree?(tree: string, parent: string, message: string): string | null;
   /** Resolve a short sha to the full one, or null when unknown locally. */
   resolve(sha: string): string | null;
   /** t-209: the commits `from` does not have and `to` does, newest first. null when git cannot say. */
@@ -335,14 +198,11 @@ export function realGit(cwd: string, token: string | undefined): Git {
   };
   return {
     isAncestor: (a, d) => { const r = run(["merge-base", "--is-ancestor", a, d]); return r.status === 0 ? true : r.status === 1 ? false : null; },
-    isShallow: () => { const r = run(["rev-parse", "--is-shallow-repository"]); return r.status === 0 ? r.stdout.trim() === "true" : null; },
     remoteTip: (branch) => { const r = run(["ls-remote", remote(), `refs/heads/${branch}`]); return r.status === 0 && r.stdout.trim() ? r.stdout.trim().split(/\s+/)[0] : null; },
     // t-209：`from..to` 里的提交。答不上来就答 null——「问不出来」与「一条都没有」是两件事。
     revList: (from, to) => { const r = run(["rev-list", `${from}..${to}`]); return r.status === 0 ? r.stdout.split("\n").map((x) => x.trim()).filter(Boolean) : null; },
     push: (sha, branch) => { const r = run(["push", remote(), `${sha}:refs/heads/${branch}`]); if (r.status !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/x-access-token:[^@]+@/g, "x-access-token:***@")); },
     resolve: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{commit}`]); return r.status === 0 ? r.stdout.trim() : null; },
-    treeOf: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{tree}`]); return r.status === 0 ? r.stdout.trim() : null; },
-    commitTree: (tree, parent, message) => { const r = run(["commit-tree", tree, "-p", parent, "-m", message]); return r.status === 0 ? r.stdout.trim() : null; },
   };
 }
 
@@ -371,32 +231,20 @@ export interface DeployDeps {
 
 export type DeployOutcome = "skipped" | "refused" | "pushed" | "already" | "failed";
 
-/**
- * t-223：**推生产之前那四问，`--deploy` 与 `--rollback` 走同一份。** 第一版我把它照抄进回滚那一路，
- * 闸当场看见：同样的四句话在仓库里多了一份（bin/wording 报了新增）。同一句话两个出处，改一处就会漏另一处
- * ——那正是 SECOND_HOME 那道闸整天在数的东西。
- */
-export function mayPush(b: Board, deps: DeployDeps): { setting: DeploySetting } | { outcome: "skipped" | "refused" } {
+/** The whole `release --deploy <sha>` step. Returns what happened; the caller maps it to an exit code. */
+export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promise<DeployOutcome> {
   const setting = deploySetting(b);
-  if (!setting) { deps.print(`这个项目没有开启团队部署（事实 project:${DEPLOY_KEY}），什么都没做。`); return { outcome: "skipped" }; }
-  if (!setting.by.includes(deps.me)) { deps.print(`只有 ${setting.by.join("/")} 可以推 ${setting.branch}，你是 ${deps.me}。`); return { outcome: "refused" }; }
+  if (!setting) { deps.print(`这个项目没有开启团队部署（事实 project:${DEPLOY_KEY}），什么都没做。`); return "skipped"; }
+  if (!setting.by.includes(deps.me)) { deps.print(`只有 ${setting.by.join("/")} 可以推 ${setting.branch}，你是 ${deps.me}。`); return "refused"; }
   const level: PushLevel = b.presence?.find((p) => p.actor === deps.me)?.push ?? "none";
   if (level !== "production") {
     deps.print(`不推：你（${deps.me}）加入时声明的推送能力是 ${level}，推 ${setting.branch} 要 production。缺的是许可：human 许可后，用 ateam join --me ${deps.me} --push production 重新声明。`);
-    return { outcome: "refused" };
+    return "refused";
   }
-  if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return { outcome: "refused" }; }
-  return { setting };
-}
-
-/** The whole `release --deploy <sha>` step. Returns what happened; the caller maps it to an exit code. */
-export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promise<DeployOutcome> {
-  const gate = mayPush(b, deps);
-  if (!("setting" in gate)) return gate.outcome;
-  const setting = gate.setting;
+  if (!deps.hasCredential) { deps.print(`不推：环境里没有推送凭据（ATEAM_DEPLOY_TOKEN）。缺的是凭据，不是许可。`); return "refused"; }
   const sha = deps.git.resolve(shaArg);
-  if (!sha) { deps.print(PUSH_LINES.noSuchCommit(shaArg)); return "refused"; }
-  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null, deps.git.revList, deps.git.treeOf?.bind(deps.git));
+  if (!sha) { deps.print(`本地没有提交 ${shaArg}；先 fetch。`); return "refused"; }
+  const p = plan(b, sha, deps.git.isAncestor, b.live?.deployed_sha ?? null, deps.git.revList);
   if (!p.ok && !deps.anyway) {
     // t-093 (M4): a refusal names its rule, lists what is not verified, and says what would happen with a branch name
     deps.print(`REFUSED (${DEPLOY_RULE}): 不推 ${sha.slice(0, 7)}，它比生产多出的提交里有还没验收的东西：`);
@@ -422,65 +270,12 @@ export async function deploy(b: Board, shaArg: string, deps: DeployDeps): Promis
   } catch (err) {
     const why = (err as Error).message;
     await deps.note(`部署失败：${deps.me} 推 ${sha.slice(0, 7)} 到 ${setting.branch} 未成功：${gitReason(why)}`);
-    deps.print(PUSH_LINES.pushFailed(why));
+    deps.print(`推送失败：${why}`);
     return "failed";
   }
   deps.print(`已推 ${sha.slice(0, 7)} 到 ${setting.branch}（包含 ${p.included.length ? p.included.join("、") : "无候选任务"}）。`);
   await deps.reading("deployed.sha", sha, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: `ateam release --deploy 推到 ${setting.branch}，由 CI 部署；含 ${p.included.join("、") || "无候选任务"}` });
   return "pushed";
-}
-
-/** t-223：回滚被拒时点的规则名（与 DEPLOY_RULE 同一层）。 */
-export const ROLLBACK_RULE = "rollback-target";
-
-/** t-223：这个 sha 当过生产头吗——曾经上过线的那几批就是回滚的合法目标，日志里查得到，不用谁开例外。 */
-export function rollbackTarget(b: Board, sha: string): { sha: string; batch: string } | null {
-  // 口径是**事实**（production:deployed.sha 那一串），不是批次分组：批次是按任务证据derived 出来的，
-  // 而「这一版上过线」是日志里直接写着的一句话。第几次上线只是给人读的序号。
-  const all = b.live?.deploys ?? [];
-  const i = all.findIndex((x) => sameCommit(x, sha));
-  if (i < 0) return null;
-  return { sha: all[i], batch: String(i + 1) };
-}
-
-export type RollbackOutcome = "skipped" | "refused" | "rolled" | "already" | "failed";
-
-/**
- * t-223：`ateam release --rollback <sha>`。
- *
- * **不强推**：造一个新提交，树取自那一版、父是当前生产头，然后照常快进推上去。历史只进不退，
- * `deployed.sha` 与分支历史始终对得上，O6「从线上的版本回到需求、决策、验证」不被换掉。
- */
-export async function rollback(b: Board, targetArg: string, deps: DeployDeps): Promise<RollbackOutcome> {
-  const gate = mayPush(b, deps);
-  if (!("setting" in gate)) return gate.outcome;
-  const setting = gate.setting;
-
-  const target = deps.git.resolve(targetArg);
-  if (!target) { deps.print(PUSH_LINES.noSuchCommit(targetArg)); return "refused"; }
-  const was = rollbackTarget(b, target);
-  if (!was) { deps.print(`REFUSED (${ROLLBACK_RULE}): ${notARollbackTarget(target)}`); return "refused"; }
-
-  const tip = deps.git.remoteTip(setting.branch) ?? b.live?.deployed_sha ?? null;
-  if (!tip) { deps.print(ROLLBACK_LINES.tipUnknown(setting.branch)); return "refused"; }
-  if (sameCommit(tip, target)) { deps.print(ROLLBACK_LINES.nothingToRollBack(setting.branch, target)); return "already"; }
-
-  const tree = deps.git.treeOf?.(target) ?? null;
-  const made = tree ? deps.git.commitTree?.(tree, tip, rollbackMessage(target, was.batch)) ?? null : null;
-  if (!made) { deps.print(ROLLBACK_LINES.cannotMake()); return "failed"; }
-
-  try {
-    deps.git.push(made, setting.branch);
-  } catch (err) {
-    const why = (err as Error).message;
-    await deps.note(ROLLBACK_LINES.failed(deps.me, made, target, setting.branch, gitReason(why)));
-    deps.print(PUSH_LINES.pushFailed(why));
-    return "failed";
-  }
-  deps.print(ROLLBACK_LINES.rolled(setting.branch, made, target, was.batch));
-  await deps.note(ROLLBACK_LINES.note(deps.me, tip, was.batch, target, made, deps.anyway));
-  await deps.reading("deployed.sha", made, { surface: HUMAN_SURFACE, writes: ["production:deployed.sha"], method: ROLLBACK_LINES.method(target, was.batch) });
-  return "rolled";
 }
 
 /**

@@ -67,40 +67,6 @@ export interface Instruction extends Base {
   default?: string;
   /** For the human's board: a question to answer, a thing to do, or something to know. Derived when absent. */
   intent?: InstructionIntent;
-  /**
-   * t-215：**这张卡活着的条件**，写成 `surface:key`。哪条事实一被 `writes` 命中，这张卡就被标成「可能已过期」。
-   *
-   * 读数那一侧早有这套机制（`depends_on` ＋ 被 `writes` 命中即失效），**指令这一侧一直没有**。代价今天摆在人
-   * 的首屏上：release 02:13 那张「37 件已验的没上线，谁来推？」挂了 13.5 小时、期间上了 19 批，此刻待上线
-   * 是 0，它请人推的那个 sha 早就是生产的祖先——**一张人写的卡，正文是自由文本，服务重算不了**（这正是它与
-   * t-202、t-210 那两种的分界）。所以出路是**发卡的人声明条件**，不是让服务猜。
-   *
-   * 标出来就够了，**不删卡**：过期与不成立是两回事，删掉一张人还没答的卡是 t-190 已经定过的错。
-   */
-  depends_on?: string[];
-  /**
-   * t-215 判据 7：**过了这个时刻，这张卡说的事就不成立了。** 与 `depends_on` **并列**，不是二选一——
-   * qa 16:52 量出来的：pd 那张 Q25 的默认支写「明早开工时」，它过期是因为那个早上过去了，**没有任何
-   * `surface:key` 变过**。钟点那一类（「明早」「今天之内」「这一批上线前」）是过期的主要形状。
-   *
-   * 与 `ack_by` 不是一回事：`ack_by` 是「什么时候该答」，这个是「什么时候它说的话不再真」。
-   */
-  valid_until?: string;
-}
-
-/**
- * t-215 判据 7 的第二半：**给一张已经发出去的卡补声明条件。**
- *
- * qa 16:52 的账：会按默认结掉的卡此刻 3 条，带 `depends_on` 的 0 条——它们全比这个字段老。**只认卡自己
- * 声明过的条件，等于对所有比字段老的卡沉默，而那批正是挂得最久、最可能过期的。** 卡是不可变事件，所以补
- * 声明只能是一条**后发的事件指着它**（与 `disown`、`untell` 同一路子：历史不改，后来的事件改变它此刻算什么）。
- */
-export interface Premise extends Base {
-  kind: "premise";
-  /** 哪张卡。 */
-  of: string;
-  depends_on?: string[];
-  valid_until?: string;
 }
 
 export interface Ack extends Base {
@@ -225,7 +191,7 @@ export type TaskOp =
 
 export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
-export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent | Premise;
+export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent;
 export type Kind = Event["kind"];
 
 export const INSTRUCTION_MAX_CHARS = 280;
@@ -492,14 +458,12 @@ export const KEY_SYMBOLS = [
   "PASSTHROUGH_IS_NOT_A_LITERAL",
   "PASS_ONLY_GATE",
   "PROMISE_RULE",
-  "PUSH_LINES",
   "REACH_RULE",
   "REACH_WORDS",
   "READING_SAYINGS",
   "REAL_OVERLAP_PREFIX",
   "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING",
-  "ROLLBACK_LINES",
   "SAID_LABEL",
   "SAID_PREFIX",
   "SEAM_SAME_FILE",
@@ -527,7 +491,6 @@ export const KEY_SYMBOLS = [
   "batchesEmptyLine",
   "blockedWhy",
   "board",
-  "cannotMeasureHere",
   "cannotSeeOutput",
   "capabilityKey",
   "checkShape",
@@ -563,7 +526,6 @@ export const KEY_SYMBOLS = [
   "noRealOverlap",
   "noSuchObject",
   "nobodyElse",
-  "notARollbackTarget",
   "objectNotFound",
   "orphanReason",
   "overdueByPresence",
@@ -572,8 +534,6 @@ export const KEY_SYMBOLS = [
   "realOverlapIs",
   "releaseUnits",
   "responsibilityAppendix",
-  "rollbackCommitsLine",
-  "rollbackMessage",
   "runtimeAllocation",
   "saidHops",
   "sayReading",
@@ -596,7 +556,6 @@ export const KEY_SYMBOLS = [
   "verifierEligibility",
   "whoCanVerify",
   "whoElseTouches",
-  "wideBaseReason",
 ] as const;
 
 /** t-170: 会渲染给人看的东西的文件。改里面的内部符号不算人可见；只给文件名说不清改在哪儿，算不准。 */
@@ -933,14 +892,9 @@ export const realOverlapIs = (other: string, real: string[], reported: string[])
  * 明说算不出，不许猜：不并进孤儿（那是诬告），也不并进「已覆盖」（那是把它们变没）。
  *
  * 住在 core；**措辞是我写的、pd 没过目**（人可见的字 11:17 起冻结）。
- *
- * t-222 改了最后半句：原来写的是「它们是这条规矩之前交的活；下一次 done 会记下起点」——**量下来那不是主因**。
- * 今天进这一格的四件（t-166、t-215、t-216、t-220）都记了起点，只是那个起点戳在自己的产出之后（先提交、后跑
- * claim／reopen），证不出早于它。照原话读的人会去等「下一次 done」，而下一次 done 会一模一样。
- * 另一处也改准：算不出的只是它们那一段，不是整批——窗口之上的提交照旧点得出名。
  */
 export const unknownSpanReason = (tasks: string[]) =>
-  `这 ${tasks.length} 件任务拿不出可信的起点（${tasks.join("、")}）：要么没记，要么记下的那个 sha 已经含着自己的产出。它们各自做了哪几条提交说不清，那一段里有没有没人认领的提交也就跟着说不清——这几段之外照常点名。`;
+  `这 ${tasks.length} 件任务没记下自己这一轮从哪儿开始（${tasks.join("、")}），所以说不清它们各自产出了哪几条提交——这一批里有哪些提交没人认领，也就跟着算不出来。它们是这条规矩之前交的活；下一次 done 会记下起点。`;
 
 /**
  * t-166：一条判据**已经搬到别的任务上**时，显示上怎么把它与仍然有效的那几条分开。
@@ -973,19 +927,6 @@ export const cliStaleBuildLine = "你手上的 dist 比源码旧，跑着的不�
 export const CLI_SHA_METHOD = "sync 顺手记的：本机 git HEAD，也就是这份 dist 该有的版本";
 
 /**
- * t-219（dev 17:12 自己撞出来的）：**一棵解不出上线 sha 的树，量不了包含关系，也就不该写那条事实。**
- *
- * 我为了复现一个发车闸的问题，在自己的检出里跑了一次 `ateam release`——它顺手写事实，而我这棵树没有
- * `d57acbc` 这个对象（release 的合并提交在我没 fetch 的分支上）。于是 127 件里 125 件判不出、`contained`
- * 写成 **0**，而牌桌那句分母就是从它算出来的。**这是今天第七次「量了看得见的那一份、报成想说的那一份」，
- * 前六次都停在话里，这次进了共享事实。**
- *
- * 判准不是一个阈值（阈值要拍脑袋），是一条前提：**连上线那个 sha 都解不出来，就一个候选也测不了。**
- */
-export const cannotMeasureHere = (sha: string) =>
-  `这棵树里没有 ${sha.slice(0, 7)} 这个对象，量不了谁在里面——先 git fetch，或换一棵有它的树。没有写下任何事实。`;
-
-/**
  * 落后几次上线：上线过的 sha 里，本地这棵树**没有**的那几次。
  *
  * `null` 是「说不出」，不是「你是最新的」——本地不是 git 检出、服务太旧没送这份名单、或者 git 答不上来时，
@@ -1009,60 +950,6 @@ export const movedTrace = (index: number, to: string) => `判据 ${index} ${MOVE
 
 export const orphanReason = (shas: string[]) =>
   `这一批里有 ${shas.length} 条提交不属于任何一件任务的证据链：${shas.map((x) => x.slice(0, 7)).join("、")}——没有任务盖着它们，也就没有任何判决盖着它们。把它们并进某件任务的证据，或说明为什么它们该跟着上线。`;
-
-/**
- * t-222：**这道闸放宽过一次，宽在哪几件要说得出来。** 一件任务的起点若证不出早于它自己的产出（先提交、后
- * claim／reopen 是常态），区间退到它上一轮的证据 sha——那仍是这件任务自己写下的、可核的点，但窗口比原来宽。
- * 不说出来的放宽就是悄悄放行，那和把闸关掉只差一句话。
- */
-/**
- * t-223：**回滚是第二种合法的发车，不是一次例外。**
- *
- * 今天这条路一次都没走过（20 次上线、0 次回滚），release 17:25 第一次去走：把旧 sha 推回生产被拒，
- * non-fast-forward——不是配置问题，`release --deploy` 用的那个 push 就是 fast-forward only。
- * 强推能过，但那会让「什么时候部署过什么」变得不可靠，是拿 O6 换省事。
- *
- * 所以回滚走「反向提交再往前推」：造一个新提交，**内容（树）与那一版逐字相同**，父是当前生产头，然后照常快进。
- * 历史只进不退，而闸认得它——不靠 `--anyway`，因为「目标 sha 曾经当过生产头」是日志里查得到的一个类别。
- */
-export const rollbackMessage = (sha: string, batch: string) =>
-  `回滚到 ${sha.slice(0, 7)}（第 ${batch} 批）：内容与那一版逐字相同，历史只进不退。`;
-
-/**
- * t-223：`--rollback` 这一路上人（agent）会读到的每一句，住在 core 一处。
- *
- * **第一版我把它们写在 release.ts 里，SECOND_HOME 那道只减不增的闸当场从 349 涨到 359。** 那道闸数的正是
- * 「人可见的话住在 core 之外还有几句」，而我一次加了十句——**新写的代码不该是那个棘轮的第一个例外**。
- */
-/** t-223：`--deploy` 与 `--rollback` 都会说的那两句，住在一处（同 mayPush 那四问）。 */
-export const PUSH_LINES = {
-  noSuchCommit: (sha: string) => `本地没有提交 ${sha}；先 fetch。`,
-  pushFailed: (why: string) => `推送失败：${why}`,
-} as const;
-
-export const ROLLBACK_LINES = {
-  nothingToRollBack: (branch: string, sha: string) => `${branch} 已经在 ${sha.slice(0, 7)}，没有可回的。`,
-  tipUnknown: (branch: string) => `说不出 ${branch} 此刻在哪一版，不敢造这条提交；先 fetch。`,
-  cannotMake: () => `造不出那条回滚提交（git commit-tree 没给出结果）；什么都没推。`,
-  rolled: (branch: string, made: string, target: string, batch: string) =>
-    `已回滚：${branch} 现在是 ${made.slice(0, 7)}，内容与 ${target.slice(0, 7)}（第 ${batch} 批）逐字相同。`,
-  note: (me: string, from: string, batch: string, target: string, made: string, why?: string) =>
-    `回滚：${me} 把生产从 ${from.slice(0, 7)} 回到第 ${batch} 批 ${target.slice(0, 7)} 的内容，新提交 ${made.slice(0, 7)}（不改历史，快进推上去）。${why ? `理由：${why}` : ""}`,
-  failed: (me: string, made: string, target: string, branch: string, why: string) =>
-    `回滚失败：${me} 把 ${made.slice(0, 7)}（内容 = ${target.slice(0, 7)}）推到 ${branch} 未成功：${why}`,
-  method: (target: string, batch: string) => `ateam release --rollback：内容回到 ${target.slice(0, 7)}（第 ${batch} 批），反向提交再快进`,
-} as const;
-
-/** t-223：目标 sha 从来没当过生产头时说清楚——回滚的合法目标是「回到我们上过的某一版」，不是「换成任意一版」。 */
-export const notARollbackTarget = (sha: string) =>
-  `${sha.slice(0, 7)} 没当过生产头，回不回去无从谈起：回滚是回到我们确实上过的某一版（日志里 production:deployed.sha 记着的那些）。要上一个新版本用 --deploy。`;
-
-/** t-223：发车报告里，这一批里那几条「内容等于某个上过线的版本」的提交——它们有账可查，不是无主。 */
-export const rollbackCommitsLine = (shas: string[]) =>
-  `这一批里有 ${shas.length} 条提交是回滚（内容与某个上过线的版本逐字相同）：${shas.map((x) => x.slice(0, 7)).join("、")}——它们没有任务盖着，但有账可查。`;
-
-export const wideBaseReason = (tasks: string[]) =>
-  `有 ${tasks.length} 件任务的起点证不出早于它自己的产出，区间已退到它上一轮的证据：${tasks.join("、")}——这几件的窗口比声明的宽，窗口里若有没人认领的提交，会被它们盖住。`;
 
 /**
  * t-203：包含事实的**第三桶**，以及分母算不算得出来。

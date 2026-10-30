@@ -151,8 +151,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   instruction: { to: "string", body: "string" },
   ack: { of: "string" },
   untell: { of: "string", reason: "string" },
-  disown: { of: "string", reason: "string" },
-  premise: { of: "string" },   // t-215：depends_on / valid_until 至少给一个，见 EITHER   // t-196: 署名更正——指着哪一条，以及为什么它不是你做的
+  disown: { of: "string", reason: "string" },   // t-196: 署名更正——指着哪一条，以及为什么它不是你做的
   note: { body: "string" },
   "task:create": { task: "string", title: "string", criteria: "strings" },
   "task:label": { task: "string", label: "string" },
@@ -169,9 +168,8 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 };
 /** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
-  reading: {}, instruction: { options: "strings", default: "string", intent: "string", depends_on: "strings" }, ack: {}, untell: {},
+  reading: {}, instruction: { options: "strings", default: "string", intent: "string" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
-  premise: { depends_on: "strings", valid_until: "string" },
   "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count", base_sha: "string" },
   "task:verify": { evidence: "string", shows: "string" },
   "task:seam": { verdict: "string", missed: "boolean" },
@@ -188,7 +186,6 @@ const OPTIONAL: Record<string, Record<string, FieldKind>> = {
  */
 const EITHER: Record<string, string[]> = {
   "task:criteria": ["add", "moved"],
-  premise: ["depends_on", "valid_until"],   // t-215：一条什么条件都不带的补声明，什么也没说
 };
 
 const holds = (v: unknown, k: FieldKind): boolean =>
@@ -202,7 +199,7 @@ const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", b
 /** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
 export function checkShape(e: NewEvent): void {
   if (e.refs !== undefined && !holds(e.refs, "strings")) throw new Rejected("shape", `refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}`);
-  const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task", "premise"];
+  const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task"];
   if (!kinds.includes(e.kind as string)) throw new Rejected("shape", `kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`);
   let slot: string = e.kind;
   if (e.kind === "task") {
@@ -387,18 +384,6 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       return;
     }
 
-    /**
-     * t-215 判据 7：给一张已经发出去的卡补声明条件。**只有发卡的人、pm 或 human**——这张卡说的是什么、
-     * 什么时候不再真，是发卡人的事；第三方替它声明，等于替它改口。
-     */
-    case "premise": {
-      const st = state.instructions.get(e.of);
-      if (!st) throw new Rejected("premise", `${e.of} 不是这个日志里的一条指令`);
-      if (e.actor !== st.instruction.actor && e.actor !== PM_ACTOR && e.actor !== human)
-        throw new Rejected("premise", `${e.of} 是 ${st.instruction.actor} 发的：补声明它活着的条件，只有发卡的人、${PM_ACTOR} 或 ${human} 能做`);
-      return;
-    }
-
     case "note":
       if (!e.body?.trim()) throw new Rejected("note", "body is required");
       if (e.supersedes && !state.notes.some((n) => n.id === e.supersedes))
@@ -518,17 +503,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // 这里只管「给了 add，但里面是空白」——那是内容问题，形状闸看不出来。
       const add = (e.add ?? []).map((x) => x?.trim()).filter(Boolean);
       if (e.add !== undefined && (!add.length || add.length !== e.add.length)) throw new Rejected("criteria", "give at least one non-empty criterion");
-      // t-166 的收口（pm 17:26 第一次真去用它，两条都被这一行挡了）：**挡的理由只对 add 成立**。
-      // 追加判据会改动「被判过的是什么」，所以已验之后不许；而标注搬迁不改任何一条判据的字，它只多说一句
-      // 「这一条不再归这件，去那件看」——被判过的那句话原样留着，判决也原样留着。两件事挤在同一行里的结果是：
-      // **这套机制对已验任务全用不了，而已验正是它要标的那一批**（生产上 60 条 criteria 事件带 moved 的 0 条，
-      // 不是没人用，是用不了）。
-      //
-      // **条件挂在被挡的那件事上，不挂在「有没有另一件事同时发生」上**（qa 17:36 判 fail 的那一格）：
-      // 第一版写的是 `!e.moved`，而形状闸只要求 add/moved 至少给一个、不禁止同时给——于是一次搬迁可以顺路
-      // 捎一条新判据进来，**拒绝话一个字都不出现，日志上看起来只是一次搬迁**，比原来更隐蔽。两种写法在只给
-      // 一个字段时等价，同时给两个时不等价，差别就在这一格。
-      if (t.status === "verified" && e.add !== undefined) throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
+      if (t.status === "verified") throw new Rejected("criteria", `${t.id} is verified; its criteria are what was judged. Create a new task for more`);
       const authors = criteriaAuthors(t);
       if (!authors.includes(e.actor) && e.actor !== PM_ACTOR && e.actor !== PD_ACTOR && e.actor !== human)
         throw new Rejected("criteria", `only ${authors.join("/")} (criteria author), ${PM_ACTOR}, ${PD_ACTOR} or ${human} can add criteria to ${t.id}, not ${e.actor}`);

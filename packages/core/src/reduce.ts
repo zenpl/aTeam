@@ -128,17 +128,6 @@ export interface InstructionState {
    * default because a cursor that has not passed it proves nothing was read.
    */
   reach: Reach;
-  /**
-   * t-215：这张卡声明的条件被改动了——`stale_by` 是改动它的那条事件，`stale_since` 是那一刻。
-   * **只是「可能过期」，不是「不成立」**：卡照旧在，人照旧可以答；标出来是为了别让人照着一句已经不真的话动手。
-   */
-  stale_since?: string;
-  stale_by?: string;
-  /** t-215 判据 7：这张卡此刻生效的条件——发卡时声明的，加上后来补声明的（后者覆盖同名的那一项）。 */
-  depends_on?: string[];
-  valid_until?: string;
-  /** 补声明是哪条事件加的（没有补过就没有）。 */
-  premise_by?: string;
   /** t-147: what the recipient wrote that shows they acted on it — the first such event's id. */
   acted_by_event?: string;
   /**
@@ -213,12 +202,7 @@ export interface State {
    * t-196: 被署名更正过的那些事件：`of` -> 谁更正的、什么时候、为什么、原来署的是谁。**原事件原样留在日志里**，
    * 这里记的是「它不再计入状态」。牌桌把两条并排显示，人不必读日志正文就知道那一条不是他做的。
    */
-  /**
-   * t-216 判据 5（pm 16:50 改的口径）：`agents` 是**两个在场角色共同声明**那一路——它要对 human 可见，
-   * 否则「事后翻案」是一句空话：他得先看得见「有两个 agent 更正了一条署你名的事」。本人自报与 human 自己
-   * 发的那两路不带它。
-   */
-  disowned: Map<string, { by: string; at: string; reason: string; actor: string; agents?: string[] }>;
+  disowned: Map<string, { by: string; at: string; reason: string; actor: string }>;
   /**
    * t-216：**只差一个人的那些更正。** 一条署着 human 的事件被误写时，本人（human）不在，而按 t-196 只有本人
    * 或 human 能更正——于是全队谁都动不了它。今天它真的卡住了一件事：qa 03:36 试共享 token 时误落一条 ack，
@@ -424,7 +408,7 @@ export function advance(s: State, log: Log, human = "human"): State {
     if (!c.by.includes(e.actor)) c.by.push(e.actor);
     claims.set(e.of, c);
     if (c.by.length >= 2) {
-      s.disowned.set(e.of, { by: c.by.join("+"), agents: [...c.by], at: e.at, reason: c.reason, actor: signer });
+      s.disowned.set(e.of, { by: c.by.join("+"), at: e.at, reason: c.reason, actor: signer });
       claims.delete(e.of);
     }
   }
@@ -449,20 +433,9 @@ export function advance(s: State, log: Log, human = "human"): State {
         if (readingKey(e) === `${PROJECT_SURFACE}:${ABSORB_FORM_KEY}`) judgeAll = true;  // it decides how every seam is read
         break;
       case "instruction":
-        s.instructions.set(e.id, { instruction: e, reach: "unread", depends_on: e.depends_on, valid_until: e.valid_until });
+        s.instructions.set(e.id, { instruction: e, reach: "unread" });
         s.pending.add(e.id);
         break;
-      // t-215 判据 7：后发的一条指着已发的卡，给它补上条件。**历史不改**——卡的正文一字未动，改的是它此刻
-      // 按什么算过期。补声明只加不减：同名那一项被覆盖，另一项留着。
-      case "premise": {
-        const st = s.instructions.get(e.of);
-        if (st) {
-          if (e.depends_on) st.depends_on = e.depends_on;
-          if (e.valid_until) st.valid_until = e.valid_until;
-          st.premise_by = e.id;
-        }
-        break;
-      }
       case "ack": {
         const st = s.instructions.get(e.of);
         // t-193 判据 6 (pd 11:16)：**结掉一张给人的卡，理由只能是人的答复，不能是任何人的一次 ack。**
@@ -605,13 +578,6 @@ export function settle(s: State, now: Date): State {
     const rs = s.readings.get(id);
     if (rs) rs.expired = rs.reading.valid_until! < nowIso || undefined;
   }
-  // t-215 判据 7：钟点那一路。**过了这个时刻，这张卡说的事就不成立了**——它与「某条事实变了」并列，
-  // 而不是二选一：Q25 那种（「明早开工时」）根本没有哪条 surface:key 会变。放在 settle 里是因为它随时间变，
-  // 与读数的 valid_until 同一处（上面那一段）。
-  for (const st of s.instructions.values()) {
-    if (st.stale_since || !st.valid_until) continue;
-    if (st.valid_until < nowIso) { st.stale_since = st.valid_until; st.stale_by = st.premise_by ?? st.instruction.id; }
-  }
   for (const id of s.pending) {
     const st = s.instructions.get(id)!;
     const i = st.instruction;
@@ -657,15 +623,6 @@ function invalidate(s: State, e: Event) {
     if (rs.reading.depends_on?.some((d) => hit.has(d))) {
       rs.valid = false;
       rs.invalidated_by = e.id;
-    }
-  }
-  // t-215：指令那一侧走同一条路，但结果不同——读数**失效**（不许再被引用），指令只是**被标出来**：
-  // 卡还在，人还能答。删掉一张人没答的卡是 t-190 定过的错。
-  for (const st of s.instructions.values()) {
-    if (st.stale_since || st.instruction.id === e.id) continue;
-    if (st.depends_on?.some((d) => hit.has(d))) {
-      st.stale_since = e.at;
-      st.stale_by = e.id;
     }
   }
 }
