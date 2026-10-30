@@ -556,6 +556,7 @@ export const KEY_SYMBOLS = [
   "STOOD_IN_PREFIX",
   "SURFACE_GATE_BLIND_SPOTS",
   "TWICE_GIVEN",
+  "UNANSWERED_HEAD",
   "UNKNOWN_FLAG",
   "UNSEEN_DROPPED",
   "UNSEEN_HEAD",
@@ -653,6 +654,7 @@ export const KEY_SYMBOLS = [
   "symbolsMeasured",
   "symbolsUnnamed",
   "taskHeading",
+  "unansweredRow",
   "unknownSpanReason",
   "until",
   "validate",
@@ -892,14 +894,32 @@ export const DEFAULT_RULE =
  */
 export const DEFAULT_LINES = {
   waiting: (at: string, option: string) => `不点的话，${at}到期，按 ${option} 执行。`,
-  stuck: () => "过期了，默认还没生效。",
-  applied: (option: string) => `你没点，已按默认 ${option} 执行。`,
+  /**
+   * t-292（pd 05:33 六，逐字）：这两句由 pd 改稿，原因写在它那条决策里，两重假话：
+   * ① 旧 `applied`「你没点，已按默认 X 执行。」**把服务做的事说成没有主语**，读起来像人自己做的；
+   * ② 它还暗示那件事发生在 ack_by 那一刻，而我们 09-07 量过：默认要么迟落、要么根本没落。
+   * 所以新 `applied` 说出主语（服务）、说出真正发生的时刻（<多久前>），并留一句出路；
+   * 新 `stuck` 把默认是哪一个也说出来——人要据它决定还改不改。
+   * **这两句同时出现在牌桌与命令行**：出处只有这一处，改它两边一起改（这是刻意的，不是顺手）。
+   */
+  stuck: (option: string) => `过期了，默认还没生效（默认是 ${option}）。`,
+  applied: (since: string, option: string) => `没人点，服务在 ${since} 按默认 ${option} 执行了。你现在改还来得及。`,
   /**
    * t-190（pd 10:40）：第四态。**不许悄悄改回**——人要看得见我们没执行过，所以这一句自己说出那件事，
    * 而不是把卡默默变回「等你答」。它不说「已按默认」，因为那没发生；也不说「过期了」，因为期限已经重算。
    */
   missed: (option: string) => `本该按默认执行，我们没有执行，现在仍在等你（默认是 ${option}）。`,
 };
+
+/**
+ * t-292（pd 05:33 六，逐字）：命令行「过期还没答」那一段的两句。
+ *
+ * 旧的是 `UNANSWERED (past ack_by, options still open)` 与每行 `(N past ack_by, <id>)`——**给人读的句子里出现了字段名**
+ * （`ack_by`）。pd 05:33 并定了通则：字段名只许出现在给机器的那一份（`board --json`、事件本身）。
+ */
+export const UNANSWERED_HEAD = "过期还没答（选项仍然开着）";
+export const unansweredRow = (to: string, from: string, body: string, past: string, event: string) =>
+  `${to} 还没答 ${from} 的「${body}」（过期 ${past}，${event}）`;
 
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";

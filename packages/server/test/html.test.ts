@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerKeyOf } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
@@ -554,13 +554,13 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     // ① 到期了、事件还没落：这是我们的故障，照实说
     b.instructions.push({ ...ask, chosen: { option: "B", by: "default", at: b.now } });
     const stuck = renderBoard(b, state, { human: HUMAN });
-    expect(stuck).toContain("<b>过期了，默认还没生效。</b>");
-    expect(stuck, "没有那条事件时，一个字都不许说成已经执行").not.toContain("已按默认 B 执行");
+    expect(stuck).toContain(`<b>${DEFAULT_LINES.stuck("B")}</b>`);   // t-292：出处在 core，断言不另抄一份
+    expect(stuck, "没有那条事件时，一个字都不许说成已经执行").not.toContain("按默认 B 执行了");
     // ② 事件真落下了：指得出那条记录，才说它执行了
     b.instructions[b.instructions.length - 1] = { ...ask, chosen: { option: "B", by: "default", at: b.now, note: "01EVT" } };
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain("<b>你没点，已按默认 B 执行。</b>");
-    expect(html).not.toContain("过期了，默认还没生效。");
+    expect(html).toContain(`<b>${DEFAULT_LINES.applied(AGO_JUST_NOW, "B")}</b>`);
+    expect(html).not.toContain(DEFAULT_LINES.stuck("B"));
     expect(html).not.toContain("你刚定了");
     expect(tokenPage({ then: "/decide", id: "x", option: '<"&>' })).toContain('<input type="hidden" name="option" value="&lt;&quot;&amp;&gt;">');
     /**

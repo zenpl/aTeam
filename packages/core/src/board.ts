@@ -94,12 +94,18 @@ export const atClock = (iso: string) => iso.slice(11, 16);
 export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefined {
   const i = st.instruction;
   if (i.default === undefined || !i.options?.length) return undefined;
-  if (st.chosen?.by === DEFAULT_DECIDER) return { state: "applied", line: DEFAULT_LINES.applied(st.chosen.option) };
+  if (st.chosen?.by === DEFAULT_DECIDER) {
+    // t-292：pd 新 `applied` 要说出真正执行的时刻。梯子对「此刻另一侧」答 null（t-200），而**由调用方决定说什么**——
+    // 这里把负数夹到 0，于是落在「刚刚」那一档：事件时刻比 b.now 晚只会是时钟偏移，夹 0 之后说的仍是真的。
+    // 夹 0 不是我新定的口径，html.ts 读相对时间时一直这么做（`Math.max(0, …)`）。
+    const since = ago(Math.max(0, now.getTime() - Date.parse(st.chosen.at))) ?? AGO_JUST_NOW;
+    return { state: "applied", line: DEFAULT_LINES.applied(since, st.chosen.option) };
+  }
   if (st.chosen) return undefined;                       // 有人真的点了：这张卡不再是「到期会怎样」的事
   // t-190：记过一次「本该执行没执行」就一直这么说，直到人真的点。**不许悄悄改回**——人要看得见我们没执行过，
   // 所以哪怕期限已经重算、这张卡此刻只是在等他，说的也是这一句，不是「不点的话…到期」。
   if (st.default_missed) return { state: "missed", line: DEFAULT_LINES.missed(i.default) };
-  if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck(i.default) };
   // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
   //
   // t-200：**期限已经过去时，这里不再说「不点的话…到期」。** 这是 qa 12:31 那张卡的落点：它 08:12 就到期了，
@@ -110,7 +116,7 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   // 还没生效。」是 pd 早就定过的，而它此刻说的正是真的——期限过了、默认没生效。这不是替 pd 写字，是把它已经
   // 写好的那一句用在它本来就该用的地方；deaf 那种「要不要另说一句新话」的问题不在这里。
   const left = until(Date.parse(i.ack_by) - now.getTime());
-  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck(i.default) };
   return { state: "waiting", line: DEFAULT_LINES.waiting(left, i.default) };
 }
 

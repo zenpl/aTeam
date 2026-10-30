@@ -3,7 +3,7 @@
  * overdue_by_presence), so a reader of either sees one picture of who has not answered and why.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, type NewEvent, type OwedNow } from "@ateam/core";
+import { MemoryStore, append, reduce, board, type NewEvent, type OwedNow, UNANSWERED_HEAD } from "@ateam/core";
 import * as fmt from "../src/format.js";
 
 const HUMAN = "human";
@@ -40,7 +40,7 @@ describe("t-140 · CLI 与牌桌说同一句", () => {
     const old = { ...b, overdue_by_presence: undefined } as unknown as typeof b;
     const out = fmt.board(old);
     // the card list still prints; the grouping block below it is simply skipped, not rendered as undefined
-    expect(out).toContain("UNANSWERED (past ack_by, options still open)");
+    expect(out).toContain(UNANSWERED_HEAD);   // t-292：pd 05:33 六改稿，段头的出处在 core
     expect(out).not.toContain("NOBODY HAS ACTED ON");
     expect(out).not.toContain("undefined");
   });
