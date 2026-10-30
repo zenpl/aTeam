@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { fieldNamesInHumanText, isHumanText, withoutPlaceholders, undeclaredFieldNames, wordingHash, FIELD_NAME_SCOPE, FIELD_NAMES_DECLARED } from "@ateam/core";
+import { fieldNamesInHumanText, isHumanText, withoutPlaceholders, undeclaredFieldNames, wordingHash, FIELD_NAME_SCOPE, FIELD_NAMES_DECLARED, DEADLINE_WORDS } from "@ateam/core";
 
 /**
  * 这道闸看不见的那几种。**清单住在这儿而不在 core**：它是写给改这道闸的人的话，不是人可见的文案——
@@ -27,15 +27,11 @@ const scope = () => Object.fromEntries(FIELD_NAME_SCOPE.map((f) => [f, read(f)])
  * 登记在案的四处，逐条是哪一处、为什么还在名单上。**理由住在这儿而不在 core**：它们是写给改这道闸的人
  * 的话，不是人可见的文案——放进 core 会白占四格 pd 的措辞名册（冻结那道闸的口径是产品源码里的中文字面量）。
  */
-const PENDING_PD = [
-  // format.ts 原来那两条（LATE 段头与每行）已由 pd 10:31 ③ 定稿落地，不在名单上了。
-  // frontend 11:3x 的更正：下面这两条我 10:2x 说成「住在 BOARD_SHAPE 里、是给机器那一份的说明书，所以合规」。
-  // **查错了。** 它们住在 DEADLINE_WORDS，而 DEADLINE_WORDS 由 cli 的 main.ts 印在 ateam --help 里，是人读的。
-  { hash: "36af0208032d", file: "packages/core/src/board.ts", field: "overdue_by_presence",
-    why: "DEADLINE_WORDS 第二句，印在 ateam --help 里。它是一份「字段 → 这一栏覆盖什么」的词条表，所以也可以说字段名正是它的题目——但那一步归 pd 判，我只摆着。" },
-  { hash: "4ae707eead07", file: "packages/core/src/board.ts", field: "ack_by",
-    why: "DEADLINE_WORDS 第三句，同上。" },
-] as const;
+const PENDING_PD: readonly { hash: string; file: string; field: string; why: string }[] = [
+  // **空的。** format.ts 那两条由 pd 10:31 ③ 换掉，board.ts 那两条（DEADLINE_WORDS）由 pd 12:57 换掉——
+  // 连那张表自己的段头一起，因为旧段头写「三个与期限有关的数」而表里第二句自己说「它不看期限」（pd 找出的）。
+  // 所以判据 4 此刻是真的成立：闸绿，而且没有一条挂在待办上。
+];
 
 describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
   it("口径内一句没被登记的都没有——有就是有人新造了一处", () => {
@@ -47,7 +43,7 @@ describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
   });
 
   it("core 里那份指纹名单，与这里逐条的理由对得上（一边加一条、另一边忘了，就红）", () => {
-    expect(PENDING_PD).toHaveLength(2);
+    expect(PENDING_PD).toHaveLength(0);
     expect([...FIELD_NAMES_DECLARED].sort()).toEqual(PENDING_PD.map((p) => p.hash).slice().sort());
     for (const d of PENDING_PD) expect(d.why, d.hash).toMatch(/[一-龥]/);   // 每一条都要说得出为什么它还在名单上
   });
@@ -62,14 +58,15 @@ describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
     }
   });
 
-  it("两条都在 --help 里那张期限词条表；LATE 那两条已经由 pd 定稿换掉了", () => {
-    // pd 10:31 ③ 的定稿落地之后，渲染器这一侧一条不剩——**名单缩短的依据是句子真的换了**
+  it("口径内此刻一条不剩：四处全部由 pd 定稿换掉了", () => {
+    // pd 10:31 ③ 换掉 format.ts 两条，pd 12:57 换掉 DEADLINE_WORDS 两条（连表的段头一起）
     expect(hits("packages/cli/src/format.ts")).toEqual([]);
-    const words = hits("packages/core/src/board.ts");
-    expect(words).toHaveLength(2);
-    // frontend 11:3x 的更正：这两条不是 BOARD_SHAPE（给机器那一份的说明书），是 DEADLINE_WORDS，
-    // 由 cli 的 main.ts 印在 ateam --help 里。我 10:2x 把它说成合规，查错了。
-    expect(words.some((h) => h.text.startsWith("late：")), "DEADLINE_WORDS 第三句").toBe(true);
+    expect(hits("packages/core/src/board.ts")).toEqual([]);
+    for (const f of FIELD_NAME_SCOPE) expect(hits(f), f).toEqual([]);
+    // 同时钉住「换掉了」而不是「删掉了」：那张表还在、三句还在印，只是键换成人看得见的词。
+    expect(DEADLINE_WORDS).toHaveLength(3);
+    for (const l of DEADLINE_WORDS) expect(l, l).not.toMatch(/\b[a-z][a-z0-9]*_[a-z0-9]+\b/);
+    expect(DEADLINE_WORDS[2].startsWith("过了该回的时间"), "第三句的键换成了第三栏的段头").toBe(true);
   });
 
   it("**该挡住的那一格**：往另一句人可见的话里塞一个字段名，当场抓到", () => {

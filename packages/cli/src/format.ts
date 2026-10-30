@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -136,7 +136,8 @@ export function board(b: Board, me: string): string {
   // address nobody had delivered to.
   const owed = b.overdue_by_presence;
   if (owed && Object.values(owed).some((g) => g.count)) {
-    out.push("", "NOBODY HAS ACTED ON");
+    // t-292（pd 12:57 二）：段头换成人看得见的词；括号那半句是 pd 要的，三栏并排而这一栏判法不同。
+    out.push("", NOBODY_ACTED_HEAD);
     for (const k of ["missing", "deaf", "listening"] as const) {
       const g = owed[k];
       if (g.count) out.push(`  ${g.roles.map(who).join(", ").padEnd(10)} ${g.line}`);

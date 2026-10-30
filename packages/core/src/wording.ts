@@ -813,6 +813,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "13e748602c7d",
   "156a26558e39",
   "213e4805d402",
+  "23205198b5f8",
   "256f71413076",
   "29b8734c42db",
   "2ce311506749",
@@ -823,6 +824,8 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "3da0f22d2c8c",
   "3ec57311ace7",
   "40a74b936978",
+  "475d6afbebcc",
+  "478ae02e254b",
   "4c1c99c69245",
   "4cd53c8b6a4b",
   "575f18229dc3",
@@ -853,6 +856,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "a5709eca9b4d",
   "a6e9d3b10ba9",
   "a7b0b5937cdc",
+  "aaa4e94542ea",
   "ad0a5a3ba4c3",
   "ba64612c290f",
   "c19cde0d8f41",
@@ -863,6 +867,8 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "cab0b2958753",
   "cb0ce90e2a02",
   "cc6f904be7c0",
+  "d2e6f2909c4a",
+  "d49a379990bf",
   "df6d4b016bfe",
   "e16e11f25c0f",
   "e583272a854f",
@@ -913,10 +919,9 @@ export const FIELD_NAME_SCOPE = [
  * **此刻四条全是等 pd 定稿，没有一条是我判成合规的**——判它合规就是替 pd 定措辞，那是判据 5 禁的。
  */
 export const FIELD_NAMES_DECLARED: readonly string[] = [
-  // frontend 12:4x：format.ts 那两条（LATE 段头与每行）已由 pd 10:31 ③ 定稿落地，从名单上去掉——
-  // **名单只许缩，缩的依据是那句话真的换了**，用例断言名单上每一条都还指向源码里活着的话。
-  "36af0208032d",
-  "4ae707eead07",
+  // **空的。** 四处全部由 pd 定稿换掉了：format.ts 那两条走 pd 10:31 ③，board.ts 那两条走 pd 12:57。
+  // 于是判据 4 那条通则此刻是真的成立，不是靠一张待办表才绿——**名单只许缩，缩的依据是句子真的换了**，
+  // 用例断言名单上每一条都还指向源码里活着的话，所以它也不可能靠留着死指纹变绿。
 ];
 /**
  * 口径内没被登记过的那几句。**空数组表示这道闸此刻没有新发现。**
