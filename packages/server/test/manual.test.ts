@@ -78,17 +78,31 @@ describe("t-039 · GET /manual/<role>", () => {
 describe("t-059 · the manual ends with what this project says the role holds", () => {
   it("default packing for a plain role list; the project's own {role: [ids]} when declared; a role with nothing says so", async () => {
     const post = (actor: string, body: unknown) => fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
-    let text = await (await fetch(`${base}/manual/qa`)).text();
+    /**
+     * t-308 判据⑦：**职责打包从此只给带钥匙的人**，所以这几次取说明书带上钥匙。
+     * 这条用例本来要钉的那件事一个字没变——它数的是「这个项目说这个角色持有什么」印不印得对；
+     * 变的是**谁看得见它**。无钥匙那一面另加在本条末尾，所以这一条此后钉的比原来多，不是少。
+     */
+    const keyed = (role: string) => fetch(`${base}/manual/${role}`, { headers: { authorization: "Bearer secret" } }).then((r) => r.text());
+    let text = await keyed("qa");
     expect(text).toContain("## 你在这个项目里持有的职责\n\n- **R6 验收**：");
-    text = await (await fetch(`${base}/manual/pm`)).text();
+    text = await keyed("pm");
     for (const id of ["R1 定方向", "R3 定验收标准", "R4 拆分派活", "R8 接缝与集成", "R11 改进工具", "R13 协作报告"]) expect(text).toContain(`- **${id}**：`);
     expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4", "R6"], dev: ["R5"], qa: [] } })).status).toBe(201);
-    text = await (await fetch(`${base}/manual/pm`)).text();
+    text = await keyed("pm");
     expect(text).toContain("- **R1 定方向**：");
     expect(text).toContain("- **R4 拆分派活**：");
     expect(text.trimEnd().endsWith(RESPONSIBILITY_DOING.R6)).toBe(true); // t-104 改了 R6 的说法；这里跟着源走，不再抄一份
-    text = await (await fetch(`${base}/manual/qa`)).text();
+    text = await keyed("qa");
     expect(text).toContain("这个项目没有为 qa 声明任何职责");
+    // t-308 判据⑦②③：无钥匙的人拿到与项目无关的那一份，而这两句都取决于这个项目，所以一句都不出现。
+    const anon = await (await fetch(`${base}/manual/qa`)).text();
+    expect(anon, "通用那一份照旧无钥匙可得（M1／S8）").toContain("第一句就是全部");
+    expect(anon, "而取决于这个项目的那一节不出现").not.toContain("## 你在这个项目里持有的职责");
+    expect(anon, "空名单那一句同样不出现——它也取决于这个项目").not.toContain("这个项目没有为 qa 声明任何职责");
+    // 判据⑦⑤（pm 18:20 的第三层）：**这一格自证活着，而它的自证就在同一条用例里**——上面那几次带钥匙的
+    // 取用已经断言过同样这两句**出现**。所以「无钥匙时不出现」不会在闸被摘掉时空着通过：闸一摘，
+    // 这三行里后两行当场红；而若是这两句整个消失了（打包坏了），上面带钥匙那几行先红。**两面互为对照。**
     // the page lists what nobody holds, in the dig layer, and nothing goes to 需要你
     const page = await (await fetch(`${base}/`, { headers: { accept: "text/html" } })).text();
     expect(page).toContain('<section id="coverage"><h3>没人管的事');
@@ -116,7 +130,8 @@ describe("t-066 · the manual says how to write an instruction to the human", ()
 
 describe("t-081 · any declared role has a manual, assembled from its responsibilities", () => {
   const post = (actor: string, body: unknown) => fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": actor, "content-type": "application/json" }, body: JSON.stringify(body) });
-  const get = (role: string) => fetch(`${base}/manual/${encodeURIComponent(role)}`);
+  // t-308 判据⑦：打包只给带钥匙的，所以这里带上钥匙。404 那几条带不带钥匙都一样（打包根本没出场）。
+  const get = (role: string) => fetch(`${base}/manual/${encodeURIComponent(role)}`, { headers: { authorization: "Bearer secret" } });
   it("names this repository never heard of work once declared, their content follows the ids, and an undeclared name is still 404", async () => {
     expect((await get("release-manager")).status).toBe(404);
     // t-292（pd 05:30 ②）：**全局**这个地址上没有项目，所以它不再说「去 project:roles 声明」——那是假话。

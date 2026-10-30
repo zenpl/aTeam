@@ -309,6 +309,24 @@ export function createApp(opts: ServerOptions) {
 
       // Global: the newcomer's manual, and the role manuals. Generic by construction, so they need no key.
       if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
+      const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
+      // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
+      // token is the default project's admin key. A key of another project is refused outright below, after the
+      // project is known — t-308 left that check where it was on purpose.
+      const presented = bearer(req) ?? cookie(req, cookieName);
+      const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
+      /**
+       * t-308 判据⑦：**无钥匙的人只拿得到与项目无关的那一份。**
+       *
+       * 判法是 pd 19:07 的一问：**把项目 id 换成另一个，这句话会不会变？会变，它就依赖那个项目。**
+       * 我按这一问逐行量过两个自建项目的输出：真正会变的只有 `responsibilityAppendix` 的整个输出
+       * （`/manual/dev` 变 3 行、`/manual/pd` 变 2 行，其余 113–116 行逐字相同）——**而那个函数的空名单
+       * 分支正是「这个项目没有为 X 声明任何职责」**，所以连它一起就齐了（pd 原先按「哪一段文字」划会漏掉它）。
+       *
+       * 这里不是「按名字挡住职责那一段」，是**按依赖挡住所有取决于这个项目的句子**，而此刻它们恰好全由
+       * 那一个函数产生。将来谁往这条路上加一句取决于项目的话，该做的是让它也走这道闸，不是再加一个名字。
+       */
+      const hasProjectKey = !!record && record.project === projectId;
       if (req.method === "GET" && path.startsWith("/manual/")) {
         const role = decodeURIComponent(path.slice("/manual/".length));
         // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
@@ -325,7 +343,8 @@ export function createApp(opts: ServerOptions) {
           ? { error: "not found", message: `这个项目没有 ${role} 这个角色；在事实 project:roles 里声明它（{"<角色>": ["R5"]}），就有说明书` }
           : { error: "not found", message: NO_PROJECT_AT_THIS_ADDRESS });
         // t-059: the project's own packing at the end, when the project exists
-        return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
+        // 判据⑦②③：会变的那些在无钥匙时不出现，而与项目无关的那一份**仍然无钥匙可得**（M1／S8）。
+        return markdown(res, packing && hasProjectKey ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
       // A new project: one board, one log, one key. The key is in this response and nowhere else.
@@ -411,17 +430,15 @@ export function createApp(opts: ServerOptions) {
       const project = await registry.get(projectId);
       if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
       const store = storeFor(projectId);
-      const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
       // t-212：这一请求是谁在发、往哪本账记，供统一出口用。牌桌那几个按钮是人点的，所以先按人算；
       // 走 API 那一路解析出 x-actor 之后会改写它。存储也要在这里留一份引用——统一出口在 catch 里，
       // 而 catch 看不见 try 里声明的那个 store。
       whoIsAsking = human;
       refusalStore = store;
 
-      // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
-      // token is the default project's admin key. A key of another project is refused outright.
-      const presented = bearer(req) ?? cookie(req, cookieName);
-      const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
+      // t-308 判据⑦：**上面那三行搬到了 /manual 之前**（原来在这儿），因为那条路也要知道来的人有没有钥匙。
+      // 而这一条「这把钥匙属于另一个项目」的 403 **留在原处没动**：把它一并提前，会让带着别项目钥匙去
+      // POST /invite/<code>/join 的请求从「加入」变成 403——那是另一件事，本件不碰。
       if (record && record.project !== projectId) return json(res, 403, { error: "forbidden", message: "这把钥匙属于另一个项目" });
       const isAdmin = !!record && record.role === null;
       const isOwner = !!record && record.role === human;
