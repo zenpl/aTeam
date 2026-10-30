@@ -825,6 +825,9 @@ async function main(argv: string[]) {
         }
         case "withdraw": return emit({ kind: "task", op, task: need(id, "<id>"), reason: str(a, "reason") ?? "" });
         case "obsolete": return emit({ kind: "task", op, task: need(id, "<id>"), decision: str(a, "by") ?? "", reason: str(a, "reason") });
+        // t-311: re-record the evidence sha without touching the verdict. Only the sha cell moves (criterion 5):
+        // status, criteria and verifications are not fields of this op, so the shape gate alone keeps it honest.
+        case "evidence": return emit({ kind: "task", op, task: need(id, "<id>"), sha: str(a, "sha") ?? "", why: str(a, "why") ?? "" });
         case "reopen": {
           const t = need(id, "<id>");
           const e = await emit({ kind: "task", op, task: t, reason: str(a, "reason") ?? "" });

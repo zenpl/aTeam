@@ -63,6 +63,13 @@ export interface TaskState {
   /** Set once a decision made the finished task moot (terminal). What was done and judged stays on record. */
   obsolete?: { by: string; at: string; decision: string; reason?: string };
   evidence?: string;
+  /**
+   * t-311：**闸读的那个 sha，当它被改记过。** 缺席时闸照旧从证据正文里读（`evidenceSha`）——
+   * 改记是例外，不是新的常规路径，所以这一格只有改记过的任务才有。
+   */
+  evidence_sha?: string;
+  /** t-311 判据④：每一次改记都留着，两个 sha 都在。只追加，不覆盖——改了两次的那一种要看得出两次。 */
+  evidence_recorded: { was: string | null; sha: string; by: string; at: string; why: string }[];
   /** How many times the owner has said done. Verifications belong to the round they were made in. */
   round: number;
   /** Every verification ever recorded, on every surface, in every round. Nothing is dropped. */
@@ -78,7 +85,8 @@ export interface TaskState {
 export type TaskHistoryEntry =
   | { op: "done"; id: string; by: string; at: string; round: number; evidence?: string }
   | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string }
-  | { op: "reopen"; id: string; by: string; at: string; round: number; reason: string };
+  | { op: "reopen"; id: string; by: string; at: string; round: number; reason: string }
+  | { op: "evidence"; id: string; by: string; at: string; round: number; sha: string; was: string | null; why: string };
 
 export interface TaskVerification { id: string; surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
 
@@ -783,7 +791,7 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
     case "create":
       s.tasks.set(e.task, {
         id: e.task, title: e.title, criteria: [...e.criteria], criteria_by: e.actor, criteria_added: [], criteria_moved: [], refs: e.refs ?? [],
-        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], history: [], notes: [], handovers: [],
+        created_at: e.at, updated_at: e.at, touches: [], touched_all: [], status: "open", round: 0, verifications: [], evidence_recorded: [], history: [], notes: [], handovers: [],
         from: e.from, label: e.label, // t-092, t-096
         // t-171: 建这件任务的时候承诺了什么。它与 done 时的 `shows` 是两件事：一个是说好要给人什么，
         // 一个是最后真给了什么。两个都留着，牌桌才看得出承诺和交付有没有对上。
@@ -836,6 +844,15 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
         indexTouches(s, t); detectSeams(s, t);
       }
       return;
+    case "evidence": {
+      // t-311 判据⑤：**这一支只许动一格。** 状态、判据、判决、轮次一个字都不碰——反向注入正是往这里加一行
+      // `t.status = …`，那时用例要红。闸读的那个 sha 换掉，而原证据正文留着（判据④：两个 sha 都在）。
+      const was = t.evidence_sha ?? evidenceShaOf(t.evidence);
+      t.evidence_sha = e.sha;
+      t.evidence_recorded.push({ was, sha: e.sha, by: e.actor, at: e.at, why: e.why });
+      t.history.push({ op: "evidence", id: e.id, by: e.actor, at: e.at, round: t.round, sha: e.sha, was, why: e.why });
+      return;
+    }
     case "reopen":
       // same owner, same touches; the next done starts a new round, so every surface must be judged again
       t.status = "working"; t.blocked_on = undefined;
@@ -1027,7 +1044,9 @@ function judgeSeam(s: State, seam: SeamState) {
   // t-073, named-sha form: judged from the log alone — the later side's evidence names the earlier side's sha
   if (!seam.resolution && doneA && doneB && absorbForm(s) === "named-sha") {
     const later = doneA > doneB ? a : b, earlier = later === a ? b : a;
-    const theirs = evidenceShaOf(earlier.evidence);
+    // t-311：闸读的是**改记之后**的那一格，缺席才回到证据正文。两处读法要一致，否则同一条接缝在
+    // 这里与 CLI 的 seamcheck 里会给出两个答案。
+    const theirs = earlier.evidence_sha ?? evidenceShaOf(earlier.evidence);
     if (theirs && namesSha(later.evidence ?? "", theirs)) seam.absorbed = { later: later.id, earlier: earlier.id, basis: `后者证据写明含前者 ${theirs.slice(0, 7)}（named-sha）` };
   }
 }

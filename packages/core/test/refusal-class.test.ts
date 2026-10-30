@@ -49,7 +49,14 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
  * **合起来：140 − 8 = 132**，而下面这个数是**量出来的、不是算出来的**——我把它调成量具报的值，
  * 再回头核它与 140 − 8 对不对得上。两者一致，所以两边的改动都在，没有谁被合掉。
  */
-const TOTAL = 132;
+/**
+ * **t-311：132 → 137。** 五处全在 `core/rules.ts` 的 `case "evidence"`（改记证据 sha），而**五处都属
+ * 「那件事没有发生」那一类**（不带 `{ at }`）：sha 不是 sha 的形状、没说来路、这件还没交过所以没有证据那一格、
+ * 不是 owner 也不是 pm、改成的是同一笔。它们都该留着、都该被重做——没有一条是「你已经做过了」。
+ *
+ * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 137），再回头核它与 132 + 5 对不对得上。
+ */
+const TOTAL = 137;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

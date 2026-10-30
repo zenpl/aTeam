@@ -1,7 +1,7 @@
-import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
-import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus } from "./board.js";
+import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus, evidenceSha } from "./board.js";
 
 /** t-098: has the human answered 对 on a migration check card? Nothing about finishing the move happens before that. */
 export function migrationApproved(s: State): boolean {
@@ -193,6 +193,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
   "task:withdraw": { task: "string", reason: "string" },
   "task:obsolete": { task: "string", decision: "string" },
   "task:reopen": { task: "string", reason: "string" },
+  "task:evidence": { task: "string", sha: "string", why: "string" },
   "task:criteria": { task: "string" },
   "task:seam": { tasks: "pair", resolution: "string" },
 };
@@ -573,6 +574,24 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (e.actor !== t.owner && e.actor !== PM_ACTOR && e.actor !== human)
         throw new Rejected("reopen", `only ${t.owner} (owner), ${PM_ACTOR} or ${human} can reopen ${t.id}, not ${e.actor}`);
       return;
+    /**
+     * t-311：**改记证据 sha。只动一格，而那一格此刻没有别的路可以改。**
+     *
+     * 判据⑤ 两条都在这里：谁可以改（只有 owner 与 pm——我按判据的字面实现，`human` 不在其中，
+     * 这一处与本文件其余每一条「owner／pm／human」的惯例不同，是判据写明的；若那是漏写，改规则不要改这里的注释），
+     * 以及不许拿它换别的——状态与判决不在这个 op 的字段里，形状闸只认 `task`／`sha`／`why` 三个。
+     */
+    case "evidence": {
+      if (!EVIDENCE_SHA_RE.test(e.sha)) throw new Rejected("evidence", EVIDENCE_SHA_FORM);
+      if (!e.why.trim()) throw new Rejected("evidence", REEVIDENCE_WHY);
+      // 没交过的任务没有证据那一格。**说出它此刻是什么状态**，否则人会以为是权限问题。
+      if (!["done", "failed", "verified"].includes(t.status)) throw new Rejected("evidence", reevidenceNothingYet(t.id, t.status));
+      if (e.actor !== t.owner && e.actor !== PM_ACTOR) throw new Rejected("evidence", reevidenceWho(t.id, t.owner));
+      // 改成同一笔不是改记，是一条什么也没说的记录；而人要的那一句（它此刻是哪一个）就在拒绝话里。
+      const now = t.evidence_sha ?? evidenceSha(t.evidence);
+      if (now && (now.startsWith(e.sha) || e.sha.startsWith(now))) throw new Rejected("evidence", reevidenceSame(t.id, now));
+      return;
+    }
     // R7: criteria can grow while the task is unfinished, only from those who own its scope; the adder then owns it too.
     case "criteria": {
       // t-166：一个 op 两件事——追加，或标注某一条已经搬到别的任务上。「两个都不给」由形状闸挡（EITHER）；

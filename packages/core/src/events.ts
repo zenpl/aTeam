@@ -201,6 +201,21 @@ export type TaskOp =
   | { op: "obsolete"; task: string; /** the decision note that took its place */ decision: string; reason?: string }
   /** Back to working after done or failed, same owner and touches: the owner has more to change (a review, a fail). */
   | { op: "reopen"; task: string; reason: string }
+  /**
+   * t-311：**改记一条证据 sha，而不丢掉已经给过的判决。**
+   *
+   * 闸测的是证据 sha 的**祖先关系**（`judgeAbsorb` 的 git-ancestor 形态），所以一条记在**另一条历史线**上的
+   * 证据 sha 永远验不出「已吸收」——t-025 的 `3683577` 只有 pd 那一支含它，而活着这条线上任何一笔交付都不含，
+   * 于是今天六次 `--no-seam-check-for` 全是这一笔税（pm 21:04：那道闸对活着那条线不是「免不免」，是满足不了）。
+   *
+   * **而此刻改不动它，这正是这个 op 要补的那一处**：`note "evidence: …"` 只改人在 `task show` 里读到的那段，
+   * 不改闸读的那一格；而再 `done` 一次会把 qa 已经给过的那张判决一起丢掉。
+   *
+   * 所以它只动一格——闸读的那个 sha。**状态、判据、判决一个字不变**（pm 16:40：不拿一张判决去换一格记录），
+   * 而两个 sha 都留着：`why` 要说清原证据在哪一支、主干上携带同样内容的是哪一笔，否则改记看起来就像
+   * 「原来就是这样」。
+   */
+  | { op: "evidence"; task: string; sha: string; why: string }
   /** More acceptance criteria, numbered after the existing ones. Whoever adds one becomes a criteria author. */
   /**
    * t-166：追加判据，或**标注某一条已经搬到别的任务上**。
@@ -227,6 +242,33 @@ export type TaskEvent = Base & { kind: "task" } & TaskOp;
 
 export type Event = Reading | Instruction | Ack | Untell | Disown | Note | TaskEvent | Premise;
 export type Kind = Event["kind"];
+
+/**
+ * t-311：一个证据 sha 长什么样。分支名不收——分支头随时会前进到另一笔。
+ *
+ * **这一组话是英文的，而那是一个选择，不是省事**：`WORDING_FROZEN` 此刻开着，而人可见的**中文**句子每多一句
+ * 就是 pd 要逐条裁的一条账（`humanSentences` 只认中文）。本件要的那几句都是结构性的标签与拒绝话，而
+ * `rules.ts` 里同类的拒绝（reopen／criteria／withdraw）与 `format.ts` 里紧邻的 `reopened:` 本来就是英文——
+ * **所以照邻居写，不新造人可见的中文**。要换成中文归 pd 定稿，我把原句摆给它，不自拟（见我交付时那条 note）。
+ */
+export const EVIDENCE_SHA_RE = /^[0-9a-f]{7,40}$/;
+export const EVIDENCE_SHA_FORM = "--sha takes a 7-40 char hex sha (the commit on the living line that carries the same content), not a branch name and not HEAD";
+export const REEVIDENCE_WHY = "--why: say where the original evidence lives, and which commit on the living line carries the same content";
+export const reevidenceNothingYet = (id: string, status: string): string =>
+  `${id} is ${status}: it has no evidence cell yet, so there is nothing to re-record. The cell exists after done`;
+export const reevidenceSame = (id: string, sha: string): string =>
+  `${id} already reads ${sha.slice(0, 7)}: re-recording points it at another commit, it does not record the same one twice`;
+export const reevidenceWho = (id: string, owner: string | undefined): string =>
+  `only ${owner ?? "its owner"} (owner) or ${PM_ACTOR} can re-record the evidence sha of ${id}`;
+/**
+ * t-311 判据④：**改记这件事本身要留痕，不许看起来像原来就是这样。** 两个 sha 都在，而且说得出来路。
+ * 原证据里压根没有 sha 的那一种也要说得出——那时留痕的是「原来没有」，不是一个空位。
+ */
+export const reevidenceLine = (was: string | null, sha: string, by: string, at: string, why: string): string =>
+  `evidence sha re-recorded: ${was ? was.slice(0, 7) : "no sha in the original evidence"} -> ${sha.slice(0, 7)} (by ${by}, ${at}): ${why}`;
+/** 同一句，给已经自带时刻与署名的那一行（`history` 里每条前面已经有 r几、时刻、谁）。 */
+export const reevidenceShort = (was: string | null, sha: string, why: string): string =>
+  `evidence sha re-recorded: ${was ? was.slice(0, 7) : "no sha in the original"} -> ${sha.slice(0, 7)}: ${why}`;
 
 export const INSTRUCTION_MAX_CHARS = 280;
 /**

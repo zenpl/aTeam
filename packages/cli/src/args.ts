@@ -29,7 +29,7 @@ const REPEATABLE = new Set(["criteria", "assumes", "option", "internal-only", "r
  * 三份名单合起来就是「这支 CLI 认得的全部」；`--X-file`（t-246）算认得，只要 X 在里面。
  * build.test.ts 里有一条闸守着这一份与 main.ts 里 `str()` 的用法一致——别手工对。
  */
-const VALUED = new Set(["ack-by", "after", "anyway", "body", "by", "default", "deploy", "evidence", "interval", "kind", "me", "measured-at", "method", "on", "push", "reason", "resolution", "rollback", "shape", "shows", "start", "step", "supersedes", "surface", "task", "to", "token", "url", "valid-for", "valid-until", "verdict", "wait"]);
+const VALUED = new Set(["ack-by", "after", "anyway", "body", "by", "default", "deploy", "evidence", "interval", "kind", "me", "measured-at", "method", "on", "push", "reason", "resolution", "rollback", "sha", "shape", "shows", "why", "start", "step", "supersedes", "surface", "task", "to", "token", "url", "valid-for", "valid-until", "verdict", "wait"]);
 
 /**
  * t-277：**这支命令行认得的全部名字，一处出。** `known()` 与「最接近的是哪个」读的必须是同一份，

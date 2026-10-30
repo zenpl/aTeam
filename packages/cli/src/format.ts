@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING, reachCountLine} from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING, reachCountLine, reevidenceLine, reevidenceShort} from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -297,6 +297,9 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
   else out.push(`evidence   ${t.evidence ?? "—"}`);
   const notes = t.notes ?? [];
   for (const n of notes.filter(isEvidenceUpdate)) out.push(`  + ${n.body.replace(EVIDENCE_PREFIX, "").trim()}  (${who(n.actor)} ${hhmm(n.at)})`);
+  // t-311 判据④：**改记过就说出来，而且两个 sha 都在。** 这一行紧跟证据，因为上面那一格印的已经是改记之后的那个 sha；
+  // 没有这一行，它看起来就像原来就是这样。
+  for (const r of t.evidence_recorded ?? []) out.push(`  ${reevidenceLine(r.was, r.sha, who(r.by), hhmm(r.at), r.why)}`);
   for (const o of t.overturned ?? []) out.push(`overturned ${o.surface} 验过（${o.passed_by}），后被 ${o.by} 推翻 ${hhmm(o.at)}${o.evidence ? `：${o.evidence}` : ""}`);
   out.push("verifications");
   if (left("verifications")) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${r.surface}`).join("  ") || "(none)"}`);
@@ -307,6 +310,7 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
     for (const h of t.history) {
       const line = h.op === "done" ? `done${h.evidence ? `: ${h.evidence}` : ""}`
         : h.op === "verify" ? `${h.pass ? "✓ pass" : "✗ fail"} ${h.surface}${h.evidence ? `: ${h.evidence}` : ""}`
+        : h.op === "evidence" ? reevidenceShort(h.was, h.sha, h.why)
         : `reopened: ${h.reason}`;
       out.push(`  r${h.round} ${hhmm(h.at)} ${who(h.by)}  ${line}`);
     }
