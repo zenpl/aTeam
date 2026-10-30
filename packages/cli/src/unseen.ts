@@ -26,19 +26,46 @@ export function stashUnseen(dir: string, me: string, lines: readonly string[]): 
   appendFileSync(unseenFile(dir, me), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
 }
 
-/** 这个节点此刻攒着多少行没人看过的。坏掉的行跳过——一行读不动不该让整叠都印不出来。 */
-export function unseenLines(dir: string, me: string): string[] {
+/**
+ * t-290／t-293：**这一叠里还有另一种行：我们对人说的话。** 它们不算进那个数。
+ *
+ * pd 07:39 定的口径，pm 07:35 批了：**一个数只许数一种东西。** 「还没人看过的」数的是日志里的事件；
+ * 通知是我们对人说的话，不是日志里的事件。两者混在一个数里之后，人拿那个数做的判断（我落下了多少）
+ * 就不再对应那个数算的东西（屏幕上有多少行）。
+ *
+ * 这不是一条新加的洁癖：`UNSEEN_DROPPED` 那一行从一开始就是通知，而它一直被数进去。
+ *
+ * 落盘的形状：事件照旧是一个 JSON 字符串（**老文件一个字节不用动**），通知是 `{"notice": "…"}`。
+ */
+export function stashNotice(dir: string, me: string, lines: readonly string[]): void {
+  if (!lines.length) return;
+  mkdirSync(join(dir, ".ateam"), { recursive: true });
+  appendFileSync(unseenFile(dir, me), lines.map((l) => JSON.stringify({ notice: l })).join("\n") + "\n");
+}
+
+/** 一叠里的两种行，按落盘顺序各自成一串。坏掉的行跳过——一行读不动不该让整叠都印不出来。 */
+export function unseenRows(dir: string, me: string): { notices: string[]; events: string[] } {
+  const out = { notices: [] as string[], events: [] as string[] };
   try {
     const p = unseenFile(dir, me);
-    if (!existsSync(p)) return [];
-    const out: string[] = [];
+    if (!existsSync(p)) return out;
     for (const raw of readFileSync(p, "utf8").split("\n")) {
       if (!raw.trim()) continue;
-      try { const v = JSON.parse(raw) as unknown; if (typeof v === "string") out.push(v); } catch { /* 跳过这一行 */ }
+      try {
+        const v = JSON.parse(raw) as unknown;
+        if (typeof v === "string") out.events.push(v);
+        else if (v && typeof v === "object" && typeof (v as { notice?: unknown }).notice === "string") out.notices.push((v as { notice: string }).notice);
+      } catch { /* 跳过这一行 */ }
     }
-    return out;
-  } catch { return []; }
+  } catch { /* 同上 */ }
+  return out;
 }
+
+/**
+ * 这个节点此刻攒着多少行没人看过的**事件**。通知不算（`unseenRows().notices` 另给）——
+ * 这个函数的返回值就是那个数的分母，所以它只许数一种东西。
+ */
+export const unseenLines = (dir: string, me: string): string[] => unseenRows(dir, me).events;
 
 /** 印完了才清——**与游标同一条规矩**：交付之后才算给出去了（t-240）。 */
 export function clearUnseen(dir: string, me: string): void {
@@ -48,10 +75,12 @@ export function clearUnseen(dir: string, me: string): void {
 /** 只留最后 `max` 行：没人来看的那几天里，这个文件不该一直长。丢掉多少会被说出来（`droppedLine`）。 */
 export function capUnseen(dir: string, me: string, max: number): number {
   try {
-    const lines = unseenLines(dir, me);
-    if (lines.length <= max) return 0;
-    const keep = lines.slice(lines.length - max);
-    writeFileSync(unseenFile(dir, me), keep.map((l) => JSON.stringify(l)).join("\n") + "\n");
-    return lines.length - max;
+    const { notices, events } = unseenRows(dir, me);
+    if (events.length <= max) return 0;
+    const keep = events.slice(events.length - max);
+    // 通知一条都不丢：上限管的是事件那一串（它是会长的那一串），而通知说的是「这一叠本身出了什么事」。
+    const rows = [...notices.map((n) => JSON.stringify({ notice: n })), ...keep.map((l) => JSON.stringify(l))];
+    writeFileSync(unseenFile(dir, me), rows.join("\n") + "\n");
+    return events.length - max;
   } catch { return 0; }
 }

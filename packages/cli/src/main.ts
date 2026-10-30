@@ -14,7 +14,7 @@ import { blockingLock, writeLock, removeLock } from "./lock.js";
 import { watchState, listeningNotices, pullIdle } from "./deaf.js";
 import { revise, baseAt, changedFiles, changedSymbols, type Diff } from "./touches.js";
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, type Refusal } from "./rejected.js";
-import { stashUnseen, unseenLines, clearUnseen, capUnseen } from "./unseen.js";
+import { stashUnseen, stashNotice, unseenRows, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
 import { tellPrecheck } from "./precheck.js";
 import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, type ShipOutcome } from "./refusalqueue.js";
@@ -498,15 +498,21 @@ async function main(argv: string[]) {
       const quiet = bool(a, "quiet");
       const dir = process.cwd();
       if (!quiet) {
-        const waiting = unseenLines(dir, cfg.me);
-        if (waiting.length) {
-          console.log(UNSEEN_HEAD(waiting.length));
-          for (const line of waiting) console.log(line);
+        // t-293 判据 7／pd 07:39：**通知先印、且不算进那个数。** 那一叠数的是事件；通知是我们对人说的话。
+        const { notices, events: waiting } = unseenRows(dir, cfg.me);
+        if (notices.length || waiting.length) {
+          for (const line of notices) console.log(line);
+          if (waiting.length) {
+            console.log(UNSEEN_HEAD(waiting.length));
+            for (const line of waiting) console.log(line);
+          }
           await flushOut();
           clearUnseen(dir, cfg.me);        // 印完了才清——与游标同一条规矩（t-240）
         }
       }
       const keep: string[] = [];
+      /** t-293 判据 7：`--quiet` 那一路也要留下通知——它不吵人，但不许把话吞掉。 */
+      const notices: string[] = [];
       // t-245（qa 22:21 判 fail 之后重做）：**`--quiet` 那一路的「交付」就是这一叠落盘**，所以它必须在推进游标
       // 之前发生、而且失败要把这条命令掀翻。第一版是「先推进、后写，写失败还默默吞掉」——磁盘写不进时
       // `sync --quiet` 退 0、一声不吭，那一批照样消失。**我刚在 t-240 修过同一形状的东西，转手又在自己的修法里
@@ -516,8 +522,10 @@ async function main(argv: string[]) {
         quiet
           ? async () => {
               stashUnseen(dir, cfg.me, keep);        // 抛就抛：没落盘就不推进游标，那一批下次还在
+              if (notices.length) stashNotice(dir, cfg.me, notices);   // t-293 判据 7：通知也留着，但不进那个数
               const dropped = capUnseen(dir, cfg.me, UNSEEN_MAX);
-              if (dropped) stashUnseen(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
+              // `UNSEEN_DROPPED` 从一开始就是一条通知，而它此前一直被数进那个数里——这一行是把它归位。
+              if (dropped) stashNotice(dir, cfg.me, [UNSEEN_DROPPED(dropped)]);
             }
           : flushOut,
         // t-274：**两条路都带上 `seen`，`--quiet` 也不例外。**
@@ -528,7 +536,8 @@ async function main(argv: string[]) {
         //
         // 它仍有本件的残留：那一叠是本地的，容器重启会连它一起带走，而 `seen` 已经推过去了。按判据 5
         // 点名在证据里，不在这一件里顺手改。
-        cursorForCommand(seenCursor(cfg.me, process.cwd(), nodeIo, serverKey(cfg.url))));
+        cursorForCommand(seenCursor(cfg.me, process.cwd(), nodeIo, serverKey(cfg.url))),
+        quiet ? (line) => notices.push(line) : console.log);
       await recordCliSha(client, cfg.me, distStamp);
       return;
     }

@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, morePagesLine, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, firstPullLine, morePagesLine, type PullResult } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -123,7 +123,7 @@ export async function pullBatch(client: Puller, cursor: CursorStore, waitMs: num
  * `print` null 是**调用方自己交付**（watch 那一路）或**明写的丢弃**（`--quiet` 的心跳）：前者由调用方在交付
  * 之后推进，后者是人自己要的，不是悄悄丢的。
  */
-export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>, seen?: CursorStore): Promise<PullResult> {
+export async function sync(client: Puller, me: string, cursor: CursorStore, waitMs: number, print: Print | null, behind?: Behind, flush?: () => Promise<void>, seen?: CursorStore, notice?: Print): Promise<PullResult> {
   // t-274：**从「有人读过了」那一处往下拉，而不是从「送到了」那一处。**
   //
   // 背景是 qa 14:10 亲历的那一幕（我 14:14 端到端复现过）：后台 `watch` 拉到一条给它的指令、印进一个管道，
@@ -140,6 +140,17 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // `seen` 不给就退回今天的行为（两者同一个位置）：那正是所有只走一条路的调用方与用例要的。
   const from = seen ?? cursor;
   const { after, r } = await pullBatch(client, from, waitMs);
+  /**
+   * t-293 判据 7：**这台机器此前没有读位置 ⇒ 这一批一印完就全被标成读过，所以先说清它是什么。**
+   *
+   * 在 `report` 之前，不在之后（pd 07:39 的第一条约束）：他丢的 92 条是印完被截断的，摆结尾的总结 `head` 照样
+   * 看不到。条数在印之前就已经知道（整批已经回来了），所以摆得到开头。
+   *
+   * 走 `notice` 而不是 `print`：**它不是日志里的一条事件**，所以 `--quiet` 那一叠不收它进那个数
+   * （pd 07:39、pm 07:35：一个数只许数一种东西）。不给 `notice` 就退回 `print`——只走一条路的调用方照旧。
+   */
+  const say = notice ?? print;
+  if (say && after === null && r.events.length) say(firstPullLine(r.events.length, r.events[0].id, r.events[r.events.length - 1].id));
   if (print) for (const line of report(r, me, after)) print(line);
   if (print) await flush?.();
   // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——

@@ -105,7 +105,12 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     const cursor = memoryCursor();
     const r = await sync(server([4]), ME, cursor, 0, (l) => out.push(l));
     expect(r.events).toHaveLength(4);
-    expect(out[0]).toContain("note t-007 priority");
+    // t-293 判据 7 改了这一行：第一行此后是「这台机器以前没在这儿读过日志…」那条通知
+    // （pd 07:39 明定「必须是第一行」，理由是 97 行那一批摆结尾的总结 head -60 看不到）。
+    // **断言的意思没变**——这条用例要钉的是「sync 自己照旧把事件印出来」，所以它找那一条事件，
+    // 并顺手钉住通知确实在它之前。
+    expect(out[0], "第一行是那条通知").toContain("以前没在这儿读过日志");
+    expect(out[1]).toContain("note t-007 priority");
     expect(out.filter((l) => l.includes("FOR YOU"))).toHaveLength(1);
     expect(cursor.read()).toBe("01D");
     const quiet: string[] = [];

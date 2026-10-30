@@ -520,6 +520,21 @@ export const unknownParamLine = (param: string, legal: readonly string[] = EVENT
   return `我不认识参数 ${param}。${guess}这个地址认的参数只有 ${legal.join("、")}。`;
 };
 
+/**
+ * t-293 判据 7：**这台机器第一次在这儿读日志时，先说清这一批是什么、而且只送一次。**
+ *
+ * pd 06:21 的现场：92 条被标成读过而他一个字没看见（含解除叫停与三张新单），于是他照着一份 34 分钟前的
+ * FOCUS 去抬一个一小时前就抬了的闸，在日志上多下了一个决策。读数 repo:init.consumed.silently = 92。
+ *
+ * **措辞是 pd 07:39 的定稿，三条约束跟着它一起进来**（他的原话，不是我的转述）：
+ * · **必须是第一行。** 理由是实测的：97 行、17,008 字节的一批，摆在结尾的总结 `head -60` 看不到。
+ * · **第二句不许删。**「只送一次」是这一句存在的全部理由；**只报条数的版本救不了 06:21 那次，因为他当时
+ *   看见了条数**。
+ * · 不许在这一句里加任何「要不要现在看」的选项——它说的是一件已经发生的事，不是一个问法。
+ */
+export const firstPullLine = (n: number, first: string, last: string) =>
+  `这台机器以前没在这儿读过日志，所以下面是从头开始的 ${n} 条（${first} 到 ${last}）。这一批只送一次：读完这一次，游标就停在最后一条，下一次 sync 不会再给你它们。`;
+
 /** t-212：这本账数出来的样子。`null` 是这个存储答不出来——「不知道」不是「零次」。 */
 export interface RefusalCount {
   total: number;
@@ -726,6 +741,7 @@ export const KEY_SYMBOLS = [
   "exitCodeLine",
   "factCannotPlace",
   "factPredatesThirdBucket",
+  "firstPullLine",
   "fixWhere",
   "followReduction",
   "followUps",
