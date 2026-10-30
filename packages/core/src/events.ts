@@ -485,6 +485,7 @@ export const KEY_SYMBOLS = [
   "ALERT_FAILED",
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
+  "APART_LINES",
   "BATCH_LINES",
   "BODY_FILE_HELP",
   "BOTH_BODY_AND_FILE",
@@ -1051,6 +1052,46 @@ export const MOVED_MARK = "→";
  * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
  */
 export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/**
+ * t-292 判据 2（pd 05:33 五）：**「落后」与「分叉」是两件事，一句话只说得了一件。**
+ *
+ * 上面那一句结尾是「跑 git pull && pnpm build」。落后时它是对的；**分叉时它给的是错的动作**——两边各走了
+ * 一段，拉一下接不上，直接推也会被拒（release 17:25 撞到的那个 non-fast-forward）。而它分不出自己落在哪一种：
+ * 它数的是「上线名单里我这棵树没有的那几次」，那个数在落后和分叉两种情形下长得一模一样。
+ *
+ * frontend 08:45 的现场就是分叉那一种：同一句提醒说「比生产旧 2 次上线，跑 git pull」，而两个方向各数一遍是
+ * 生产 2 条、我 49 条——拉一下接不上，也推不上去。
+ *
+ * pd 的判据是**读者读完就知道该做哪一个动作**，所以一句话只给一个动作：落后给「拉一下」，分叉给「先并一次」。
+ */
+export type ApartFromLive =
+  | { kind: "behind"; theirs: number }
+  | { kind: "diverged"; mine: number; theirs: number };
+
+export const APART_LINES = {
+  behind: (theirs: number) => `你这份比线上旧了 ${theirs} 条。拉一下就能接上。`,
+  diverged: (mine: number, theirs: number) => `你这份和线上各走了一段：你 ${mine} 条、线上 ${theirs} 条。要先并一次，不能直接推。`,
+};
+
+/**
+ * 两个方向都要数，才分得出这两种。**一个方向只答得出「不是祖先」，而「不是祖先」里混着「我落后」和
+ * 「各走了一段」**——frontend 09-13 在 09256fd 上就是这样把「落后」读成了「分叉」，qa 当场纠正。
+ *
+ * `null` 是「说不出」，不是「你是最新的」：数不出来就一个字都不说（与 `behindDeploys` 同一条规矩，t-147）。
+ * 线上那边一条都不多（`theirs` 为 0）时这一句也没有话要说：领先与同版都不是毛病。
+ */
+export function apartFromLive(counts: { mine: number; theirs: number } | null | undefined): ApartFromLive | null {
+  if (!counts) return null;
+  const { mine, theirs } = counts;
+  if (!Number.isInteger(mine) || !Number.isInteger(theirs) || mine < 0 || theirs < 0) return null;
+  if (theirs === 0) return null;
+  return mine > 0 ? { kind: "diverged", mine, theirs } : { kind: "behind", theirs };
+}
+
+/** 那一句本身，没有话要说时给 null。 */
+export const apartLine = (a: ApartFromLive | null): string | null =>
+  a === null ? null : a.kind === "behind" ? APART_LINES.behind(a.theirs) : APART_LINES.diverged(a.mine, a.theirs);
 
 /**
  * t-211 第二种旧法，qa 16:02 量出来的：**只 git pull 不重编，那句「旧 N 次上线」当场消失，而跑着的还是旧的。**

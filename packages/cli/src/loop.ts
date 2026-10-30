@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, morePagesLine, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -135,8 +135,14 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // 是唯一会主动告诉人「你手上这份不是上线那一版」的地方。说不出就一个字都不说（behindDeploys 返回 null）：
   // 「不知道」不等于「你是最新的」，报平安比不说话更坏。
   if (print && behind) {
-    const n = behindDeploys(behind.head(), r.deploys, behind.has, r.sha);
-    if (n !== null && n > 0) print(cliBehindLine(n));
+    // t-292 判据 2（pd 05:33 五）：**先问「落后还是分叉」。** 数得出两个方向就说 pd 那一对里对的那一句，
+    // 一句一个动作；数不出来才退回按上线次数算的那一句——它分不出这两种，但它是我们此刻唯一还答得出的话。
+    const line = apartLine(apartFromLive(r.sha ? behind.apart?.(r.sha) : null));
+    if (line) print(line);
+    else {
+      const n = behindDeploys(behind.head(), r.deploys, behind.has, r.sha);
+      if (n !== null && n > 0) print(cliBehindLine(n));
+    }
     // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
     if (behind.built?.() === false) print(cliStaleBuildLine);
@@ -152,6 +158,11 @@ export interface Behind {
   has(sha: string): boolean | null;
   /** t-211：dist 跟得上源码吗。null 是说不出（没有 dist、读不到时间）。 */
   built?(): boolean | null;
+  /**
+   * t-292 判据 2：相对线上那一版，两边各自多出几条提交。**两个方向都要数**，因为只数一个方向分不出
+   * 「我落后」和「各走了一段」。答不上来给 null（git 不在、本地没有那个对象、不是检出）。
+   */
+  apart?(live: string): { mine: number; theirs: number } | null;
 }
 
 /**
