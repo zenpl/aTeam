@@ -124,3 +124,46 @@ describe("t-311 判据⑤ · 谁可以改，以及不许拿它换别的", () => 
     expect(err.message).toContain("t-9 is working");
   });
 });
+
+/**
+ * **qa 21:3x 在 t-311 的判决里点出的那一格：两边各测一半，中间那一格没人站。**
+ *
+ * 它说得对，而我核了它指的是哪一行：`reduce.ts` 的 settle 在 **named-sha** 形态下自己判「后者有没有吸收前者」，
+ * 那一行也改成了「改记过的优先」，**而本件此前没有一格碰它**——`cli/test/reevidence-gate.test.ts` 量的是
+ * git-ancestor 形态（`seamCheck`），既有的 named-sha 用例又住在别的文件里、夹具里没有 `evidence_sha`。
+ *
+ * **这一格是判决之后补的，不在 `0790894` 里**（我在日志上说明了这件事）：它不改判决覆盖的任何一条，
+ * 只是把那一行从「没人站」变成「有一格站着」。对照就在同一条里：后者写旧 sha 的那一支必须**仍然开着**。
+ */
+describe("t-311 · named-sha 形态：settle 自己判吸收时，读的也是改记之后那个 sha", () => {
+  const WHY2 = "原证据在 pd 支；主干上携带同样内容的是 530eb9e";
+  /** 两件撞在同一处、都已交；`later` 的证据里写哪个 sha 由参数给。 */
+  async function collide(laterNames: string, reRecord: boolean) {
+    const store = new MemoryStore();
+    let at = Date.parse("2026-10-30T06:00:00Z");
+    const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((at += 60_000)) });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
+    await emit({ kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "named-sha" });
+    for (const [id, who] of [["t-025", "dev"], ["t-9", "qa"]] as const) {
+      await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["一条"], no_human_impact: true });
+      await emit({ kind: "task", op: "claim", actor: who, task: id, touches: ["packages/core/src/rules.ts"] });
+    }
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-025", evidence: `${WAS}：pd 那一支`, no_human_impact: true });
+    if (reRecord) await emit({ kind: "task", op: "evidence", actor: "dev", task: "t-025", sha: NOW, why: WHY2 });
+    await emit({ kind: "task", op: "done", actor: "qa", task: "t-9", evidence: `00e6282：我这一笔，含 ${laterNames}`, no_human_impact: true });
+    return (await state(store)).seams.get("seam:t-025+t-9")!;
+  }
+
+  it("改记之后，后者写**新** sha ⇒ settle 落下「已吸收」", async () => {
+    expect(await collide(NOW, true)).toMatchObject({ absorbed: { later: "t-9", earlier: "t-025" } });
+  });
+
+  it("**对照**：同一条接缝，后者写**旧** sha ⇒ 仍然开着（否则这一格对任何输入都说「吸收了」）", async () => {
+    const seam = await collide(WAS, true);
+    expect(seam.absorbed, "闸要的是改记之后那一个；写旧的那个不算").toBeUndefined();
+  });
+
+  it("**而没改记过时，写旧 sha 是算的**——这一格自证它看见的是改记，不是「写新 sha 才算」", async () => {
+    expect(await collide(WAS, false)).toMatchObject({ absorbed: { later: "t-9", earlier: "t-025" } });
+  });
+});
