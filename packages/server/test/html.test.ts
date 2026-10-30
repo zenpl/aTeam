@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW, PAGE_HISTORY_LINE} from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerKeyOf } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
@@ -139,7 +139,7 @@ describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句�
      * t-1 的这些字此刻在 `/task/t-1` 上（本文件下面 t-065 那两条用例去那里核它们还在）。
      */
     for (const gone of ["cookie is SameSite=Lax", esc("no <script> on the page"), "sha 1234567", "2 条留言"]) expect(rest).not.toContain(gone);
-    expect(rest).toContain("已经完结的 1 件任务");
+    expect(rest).toContain(PAGE_HISTORY_LINE);
     expect(rest).not.toContain("+ also on the default branch as 7654321");
     // t-4 是 done 而还没验——它还活着（人推一把就上线），所以它的证据照旧在这一页上
     expect(rest).toContain("b6228e3 on the dev branch");
@@ -801,7 +801,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       // t-307 判据①：t-1 验在生产上＝完结，它一行都不印（当年这里是一条 brief 短行）。**那句「不随日志长」
       // 没有被放弃，是被做到了底**：少印的那几条由这一页自己说出来，而不是由读的人去发现。
       expect(rest).not.toContain('<li class="brief"><a href="/task/t-1">登录修复</a>');
-      expect(rest).toContain("已经完结的 1 件任务");
+      expect(rest).toContain(PAGE_HISTORY_LINE);
       for (const gone of ["登录修复", "能登录", "记住我", "提交 1234567", "线上登录成功", "无痕窗口"]) expect(rest).not.toContain(gone);
       expect(rest).toContain('<span class="tag warn">未解决</span> <a href="/task/t-3"><code>t-3</code></a> + <a href="/task/t-2"><code>t-2</code></a> 都涉及 <code>src/io.ts</code>');
       expect(rest).not.toContain("另有");
@@ -869,7 +869,7 @@ describe("t-065 · 挖层只带本版判据；GET /task/<id>", () => {
       // t-307 判据①②：**60 件完结的任务在这一页上占 0 行**，而这一页说得出它们存在。
       // 这一条用例的名字（「不随日志长」）此刻比当年成立得更彻底：当年是 60 条短行随日志长，现在是一句话。
       expect(rest.match(/<li class="brief">/g)).toBeNull();
-      expect(rest).toContain("已经完结的 60 件任务");
+      expect(rest).toContain(PAGE_HISTORY_LINE);
       expect(rest).not.toContain("这是一段很长的判据或证据文字");
       // the log is long; the task page still has everything
       const tp = await (await fetch(`${v.base}/task/t-60`, { headers: { accept: "text/html" } })).text();

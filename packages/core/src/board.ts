@@ -745,7 +745,13 @@ export interface Board {
    * **数的是整份，不是这一页印出来的那几条**：`livingBoard` 砍掉的是已关闭的那些，这个数在砍之前算，
    * 于是这一页说得出它自己没印什么——少给而不自知是这几天数了二十多次的那一族。
    */
-  reach_counts: { open: number; unread: number; read: number; acted: number };
+  reach_counts: ReachCounts & {
+    /**
+     * pd 18:15 把这一句的读者定成**节点自己**（「发给你的还开着 N 条」），所以按收件人也分一份。
+     * 它随角色数长，不随日志长——此刻七个角色。总数那一份留着：pm 17:27 要它当 T15 的上界。
+     */
+    by_to: Record<string, ReachCounts>;
+  };
   /**
    * t-307 判据①：**这一页砍掉了多少历史。** 只在人那两页用的那一份上有（`livingBoard`）；完整板没有这个字段，
    * 因为它什么也没砍。`omitted` 说的是「哪一栏砍了」，这两个数说的是「一共几条」——页面要印的是后者。
@@ -1363,7 +1369,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
     gate_honesty: [],
     instructions: [],
-    reach_counts: { open: 0, unread: 0, read: 0, acted: 0 },
+    reach_counts: { open: 0, unread: 0, read: 0, acted: 0, by_to: {} },
     readings: [],
     tasks: {},
     in_flight: {},
@@ -2301,14 +2307,20 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
  * **只数开着的**：已关闭的那些（撤回、签收过且不带选项、已决）不在分母里——把它们算进去，`read` 那一桶
  * 就不再是上界，而是一个把历史也数进去的数。
  */
+export interface ReachCounts { open: number; unread: number; read: number; acted: number }
+
 export function reachCounts(instructions: Board["instructions"]): Board["reach_counts"] {
-  const c = { open: 0, unread: 0, read: 0, acted: 0 };
+  const zero = (): ReachCounts => ({ open: 0, unread: 0, read: 0, acted: 0 });
+  const c: Board["reach_counts"] = { ...zero(), by_to: {} };
   for (const i of instructions) {
     if (isPageClosed(i)) continue;
-    c.open++;
-    if (i.reach === "acted") c.acted++;
-    else if (i.reach === "read") c.read++;
-    else c.unread++;
+    const mine = (c.by_to[i.to] ??= zero());
+    for (const x of [c, mine]) {
+      x.open++;
+      if (i.reach === "acted") x.acted++;
+      else if (i.reach === "read") x.read++;
+      else x.unread++;
+    }
   }
   return c;
 }

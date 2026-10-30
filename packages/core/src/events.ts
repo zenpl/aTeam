@@ -686,6 +686,7 @@ export const KEY_SYMBOLS = [
   "OWED_LEGACY_HELP",
   "OWNER_URL_LOCKED",
   "OWNER_URL_NEEDS_SECRET",
+  "PAGE_HISTORY_LINE",
   "PARAM_FORM",
   "PART_NAMES",
   "PASSTHROUGH_IS_NOT_A_LITERAL",
@@ -811,7 +812,6 @@ export const KEY_SYMBOLS = [
   "owedSentences",
   "owedThirdWay",
   "owedUnpulledLine",
-  "pageHistoryLine",
   "partsSkipped",
   "precheckFailedLine",
   "presenceClocks",
@@ -1142,26 +1142,28 @@ export const DEFAULT_LINES = {
 /**
  * t-307（pm 17:27 要的那个计数）：**开着的指令按 `reach` 分三桶，每次都印。**
  *
- * 三桶的名字不许照搬字段（`unread`／`read`／`acted`）：人读的是「到哪一步了」。中间那一桶是这一句存在的
- * 理由——一条指令落在那里，意思是**收件人自己拉过它，而没有任何一条事件引用过它**，所以「办了没回来引用」
- * 与「看见了什么也没做」在那一桶里长得一模一样。**那个数就是「可能已经办了而账上没清」的上界**（T15）。
- * 印出它的作用正是这一条：一旦每次都印，T15 就再也藏不住。
+ * **pd 18:15 定稿，逐字**，并连它的读者与位置一起定了：**读者是节点，不是人——这一句不上人那一页**
+ * （除非它挡住了人要拍的板）。所以它只印在 `ateam board` 上，按**读它那个节点自己**的三桶。
  *
- * **措辞占位，定稿归 pd（t-307 判据⑥：上线前必须换成定稿，未换不算完成）。**
+ * **中间那一桶必须写成「办没办看不出来」，而这是 pd 第一次不把两种情形拆开**：`read` 这一桶同时装着
+ * 「办了但没引用」和「看见了什么也没做」，而这一侧没有任何独立信号能分开它们（`reduce.ts:637-643`，我 17:18 核的）。
+ * pd 早上立的是「动作相反的两种情形不许共用一句话」，这里补的是它的另一半：**两种相反的情形若真的分不开，
+ * 句子要说出「分不开」，不许替其中一种说话**——把 `read` 印成「没动」是替一种说话，而那一种恰好是责备人的那一种。
  */
 export const reachCountLine = (open: number, unread: number, read: number, acted: number): string =>
-  cn`${PD_PLACEHOLDER}还开着 ${open} 条：没送到眼前 ${unread}、拉过了没人引用 ${read}、有人引用过 ${acted}。中间那个数是「可能已经办完、只是账上没清」的上限。`;
+  cn`发给你的还开着 ${open} 条：${unread} 条你还没拉过，${read} 条你拉过了但办没办看不出来，${acted} 条办了。`;
 
 /**
  * t-307 判据①：**这一页不印已经完结的事，而它说出自己没印什么。**
  *
- * 「少给而不自知」是这几天数了二十多次的那一族，所以砍了多少要在页面上，不只在 `omitted` 里。
- * 两个数分开说，因为它们去的地方不同：完结的任务在它自己的详情页，关上的指令在日志里。
+ * **pd 18:15 定稿，逐字，而它比我的占位少了两样：数，和那个链接。**
  *
- * **措辞占位，定稿归 pd（t-307 判据⑥）。**
+ * 我的占位写的是「已经完结的 N 件任务、已经关上的 N 条指令不在这一页上」，并本来打算补一句「要看某一件，
+ * 用 `/task/<id>`」。**pd 两处都不要**：那一问正是「得先知道 id」，而**一句指向一个到不了的地方的话，
+ * 比不指路更坏——它让人以为路在那儿，是自己没找到**。所以这一页自己说出这个缺口，直到入口真的存在。
+ * 砍了多少仍然说得出来，在 `omitted` 与 `page_cut` 里（那是给机器的那一份）。
  */
-export const pageHistoryLine = (tasks: number, instructions: number): string =>
-  cn`${PD_PLACEHOLDER}这一页只印还在动的事。已经完结的 ${tasks} 件任务、已经关上的 ${instructions} 条指令不在这一页上。`;
+export const PAGE_HISTORY_LINE = "这一页只放还没完的事。已经完结的不在这里——而此刻还没有按名字找回它的入口，要看某一件得先有它的链接。";
 
 /**
  * t-292（pd 05:33 六，逐字）：命令行「过期还没答」那一段的两句。

@@ -1,4 +1,4 @@
-import { contactRow, missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch , reachCountLine, pageHistoryLine, RECENT_ANSWER_MS } from "@ateam/core";
+import { contactRow, missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch , PAGE_HISTORY_LINE, RECENT_ANSWER_MS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -537,7 +537,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   // t-307 判据①：**这一页不印已经完结的事，而它说出自己没印什么。**没砍过就不印这一行（完整板没有 `page_cut`）。
   if (b.page_cut && (b.page_cut.tasks || b.page_cut.instructions))
-    d.push(`<p class="meta history-cut">${esc(pageHistoryLine(b.page_cut.tasks, b.page_cut.instructions))}</p>`);
+    d.push(`<p class="meta history-cut">${esc(PAGE_HISTORY_LINE)}</p>`);
 
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
@@ -565,9 +565,8 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const openCut = cut(open);
   d.push(open.length ? `<ul class="plain">${openCut.vis.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(moreLine(openCut.hidden));
-  // t-307（pm 17:27）：**三桶的数每次都印。** 数的是整份里开着的那些（`board()` 在 `livingBoard` 砍之前算的），
-  // 不是上面这张名单印出来的几条——这一行的用处正是说出这一页之外还有什么。句子在 core，这里只印。
-  d.push(`<p class="meta reach">${esc(reachCountLine(b.reach_counts.open, b.reach_counts.unread, b.reach_counts.read, b.reach_counts.acted))}</p>`);
+  // t-307：三桶那一行**不在这一页上**。pd 18:15 连它的读者一起定了：读者是节点，不是人——除非它挡住了人
+  // 要拍的板。所以它只印在 `ateam board` 上（`packages/cli/src/format.ts`），按读它那个节点自己的三桶。
   const decided = b.instructions.filter((i) => i.chosen);
   /**
    * t-189：这一行原来只看 `chosen.by === "default"` 就印「已按默认「X」执行（你仍可改）」——**时间过了就当它发生了**。

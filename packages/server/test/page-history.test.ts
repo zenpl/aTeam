@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
-import { MemoryStore, append, type NewEvent } from "@ateam/core";
+import { MemoryStore, append, PAGE_HISTORY_LINE, type NewEvent } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerCookie, TEST_OWNER_SECRET } from "./owner.js";
 
@@ -81,9 +81,20 @@ describe("t-307 判据① · 这一页里历史的占比是 0", () => {
     expect(rest).not.toContain("（第 20 条）");
   });
 
-  it("这一页自己说出它少印了什么——少给而不自知是这几天数了二十多次的那一族", () => {
-    expect(html).toContain("已经完结的 20 件任务");
-    expect(html).toContain("已经关上的 20 条指令");
+  /**
+   * pd 18:15 定稿，而它比我的占位少了两样：**数，和那个链接**。
+   *
+   * 我的占位印的是「已经完结的 N 件任务、已经关上的 N 条指令」，并本来要补一句「要看某一件，用 `/task/<id>`」。
+   * pd 两处都不要：那一问正是「得先知道 id」，而**一句指向一个到不了的地方的话比不指路更坏**——它让人以为
+   * 路在那儿，是自己没找到。所以这一页说出的是**缺口本身**，直到入口真的存在。
+   * 砍了几条仍然说得出来，在 `page_cut` 与 `omitted` 里——那是给机器的那一份（`living-board.test.ts` 钉它）。
+   */
+  it("这一页自己说出那个缺口：pd 的定稿一个字不改，而且它不指向一个人到不了的地方", () => {
+    expect(html).toContain(PAGE_HISTORY_LINE);
+    const rest = html.slice(html.indexOf('<details class="rest"'));
+    // 这一段里不许出现一个要人先知道 id 才用得上的链接当作「去那儿看」的指路
+    expect(PAGE_HISTORY_LINE).not.toContain("/task/");
+    expect(rest).not.toContain("已经完结的 20 件任务");
   });
 
   it("人要答的那一张卡一个字不动：砍的全在挖层，首屏是这一页存在的理由（t-235 的口径）", () => {
@@ -91,11 +102,11 @@ describe("t-307 判据① · 这一页里历史的占比是 0", () => {
   });
 });
 
-describe("t-307（pm 17:27）· 三桶的数每次都印在这一页上", () => {
-  it("开着的指令按 reach 分三桶，而数的是整份——不是这一页印出来的那几条", async () => {
+describe("t-307 · 三桶那一行不在人那一页上（pd 18:15 连读者一起定了）", () => {
+  it("人那一页上一个字都没有：读者是节点，不是人——它印在 `ateam board` 上（`packages/cli/test/reach-line.test.ts` 钉它）", async () => {
     const html = await page(5);
-    expect(html).toMatch(/还开着 \d+ 条：没送到眼前 \d+、拉过了没人引用 \d+、有人引用过 \d+/);
-    expect(html, "`read` 那一桶的意思要说出来，否则它只是一个数").toContain("可能已经办完、只是账上没清");
+    expect(html).not.toContain("发给你的还开着");
+    expect(html, "三桶的字段名更不许上这一页").not.toMatch(/unread|acted/);
   });
 });
 
