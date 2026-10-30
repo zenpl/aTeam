@@ -895,6 +895,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "4cd53c8b6a4b",
   "575f18229dc3",
   "582e5c8a0e9f",
+  "5a83cb81c3c5",
   "5bcd68644bd8",
   "5c430e6f0f0c",
   "60ab743988bb",
@@ -943,6 +944,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "eb939c64feaf",
   "ee35d6915a83",
   "ef541cd8c1bf",
+  "f2cb07bcb979",
   "f9c7daf8d850",
 ];
 

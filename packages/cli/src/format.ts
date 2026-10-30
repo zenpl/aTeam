@@ -162,6 +162,13 @@ export function board(b: Board, me: string): string {
     }
   }
 
+  // t-307（pm 17:27）：**开着的指令按 reach 分三桶，每次都印。** 这一份是给 agent 读的板，所以照它自己的
+  // 口径印三个数，不印人那一页的那句话（出处在 core 的 `reachCountLine`，页面印它）。
+  // 中间那一桶是要它的理由：`read` ＝ 收件人拉过它、而没有任何事件引用过它，所以它的大小就是
+  // 「可能办完了而账上没清」的上界（T15）。一条老服务不发 `reach_counts`，那就不印——不替它编一个。
+  const rc = b.reach_counts;
+  if (rc) out.push("", `REACH  open ${rc.open}: unread ${rc.unread}, read ${rc.read}, acted ${rc.acted}  (read = upper bound of done-but-never-referenced, T15)`);
+
   const decided = b.instructions.filter((i) => i.chosen);
   if (decided.length) {
     out.push("", "DECIDED");

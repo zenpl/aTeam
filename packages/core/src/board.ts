@@ -734,6 +734,32 @@ export interface Board {
     /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话。 */
     says_default?: DefaultSay;
   }[];
+  /**
+   * t-307（pm 17:27）：**开着的指令按 `reach` 分三桶，每次都印。**
+   *
+   * 三桶的输入已经算完了（`reduce.ts:623` 的 `reach(s)` 每次 reduce 都在算），所以这个计数是现成的，
+   * 不是新加的一条路。要它的理由是 `read` 这一桶：一条指令落在 `read` 里，意思是**收件人的游标越过了它、
+   * 而没有任何一条事件引用过它**——「办了没回来引用」与「看见了什么也没做」在这一桶里长得一样。
+   * 所以 **`read` 的大小就是「可能已经办了而账上没清」的上界**，而那正是 T15。
+   *
+   * **数的是整份，不是这一页印出来的那几条**：`livingBoard` 砍掉的是已关闭的那些，这个数在砍之前算，
+   * 于是这一页说得出它自己没印什么——少给而不自知是这几天数了二十多次的那一族。
+   */
+  reach_counts: { open: number; unread: number; read: number; acted: number };
+  /**
+   * t-307 判据①：**这一页砍掉了多少历史。** 只在人那两页用的那一份上有（`livingBoard`）；完整板没有这个字段，
+   * 因为它什么也没砍。`omitted` 说的是「哪一栏砍了」，这两个数说的是「一共几条」——页面要印的是后者。
+   */
+  page_cut?: {
+    tasks: number; instructions: number;
+    /**
+     * t-307 判据②：「这一版里已经在生产上验过的」那两张名单也砍（`live.recent`／`live.earlier`）。
+     * **它们是同一批历史走另一条路上来的**：不在 `b.tasks` 里，而印出来的是同一批完结任务的标题，
+     * 于是 1 倍／4 倍历史那一量上，涨的 510 字节全在这里。那两个数不进上面那句话（同一件事数两遍是假话），
+     * 它们喂的是名单后面那句既有的「还有 N 件」。
+     */
+    live_recent: number; live_earlier: number;
+  };
   readings: {
     id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[];
     /** When the world was measured (equal to `at` unless the reading said otherwise), and how long after it was written down. */
@@ -1337,6 +1363,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     overdue_by_presence: { missing: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, deaf: { roles: [], count: 0, away_s: null, instructions: [], line: "" }, listening: { roles: [], count: 0, away_s: null, instructions: [], line: "" } },
     gate_honesty: [],
     instructions: [],
+    reach_counts: { open: 0, unread: 0, read: 0, acted: 0 },
     readings: [],
     tasks: {},
     in_flight: {},
@@ -1429,6 +1456,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
   b.late.acted = b.late.instructions.filter((x) => x.acted).length;
   b.late.untouched = b.late.count - b.late.acted;
   b.late.oldest_s = b.late.instructions[0]?.age_s ?? null;
+  b.reach_counts = reachCounts(b.instructions);
 
   for (const rs of [...s.readings.values()].sort(byId((x) => x.reading.id))) {
     const r = rs.reading;
@@ -2267,6 +2295,117 @@ export function inFlightGroups(b: Board): { key: string; total: number; items: F
   return groups.map((x) => ({ ...x, total: x.items.length }));
 }
 
+/**
+ * t-307（pm 17:27 要的那个计数）：开着的指令按 `reach` 分三桶。
+ *
+ * **只数开着的**：已关闭的那些（撤回、签收过且不带选项、已决）不在分母里——把它们算进去，`read` 那一桶
+ * 就不再是上界，而是一个把历史也数进去的数。
+ */
+export function reachCounts(instructions: Board["instructions"]): Board["reach_counts"] {
+  const c = { open: 0, unread: 0, read: 0, acted: 0 };
+  for (const i of instructions) {
+    if (isPageClosed(i)) continue;
+    c.open++;
+    if (i.reach === "acted") c.acted++;
+    else if (i.reach === "read") c.read++;
+    else c.unread++;
+  }
+  return c;
+}
+
+/**
+ * t-307 判据①：**一条指令什么时候算关上了。**
+ *
+ * 一条也是 `slimBoard` 原来写在一行里的那个判断，现在只有一份：撤回了、或者签收过而不带选项、或者
+ * 已经有人（或它的默认）决了。**带选项而还没决的不算关上**，哪怕签收过——t-193 判据 6：一次签收不替人
+ * 把问题从桌上收走。
+ */
+export function isPageClosed(i: Board["instructions"][number]): boolean {
+  if (i.status === "withdrawn") return true;
+  if (i.chosen) return true;
+  return i.status === "acked" && !i.options?.length;
+}
+
+/**
+ * t-307 判据①：**一件事什么时候变成历史——没有任何人还能对它做一件事。**
+ *
+ * 不按状态名切（`verified` 不等于完了）：一件验过而**还没上生产**的活，人推一把就上线了，那是一个杠杆，
+ * 所以它还活着（这正是 `inFlightGroups` 里「验过了，等上线」那一组）。撤回与作废没有杠杆；验过且在生产上
+ * 走过的也没有——pd 06:53 定的那条：**只会涨、谁也动不了的那一栏离开每一个界面。**
+ */
+export function isPageHistory(t: BoardTask): boolean {
+  if (t.status === "withdrawn" || t.status === "obsolete" || t.withdrawn || t.obsolete) return true;
+  return t.status === "verified" && !!t.verified_on?.includes(HUMAN_SURFACE);
+}
+
+/**
+ * t-307：**人刚答过的卡在这一页上还留多久。**
+ *
+ * 页面那一行（「你刚点了：…」）与 `livingBoard` 的保留窗口是同一个判断，所以是同一个常数：
+ * 页面留着它而这一份砍掉它，人点完按钮就看不见自己点了什么——那是一个只在「刚点完」那一刻出现的毛病，
+ * 而那正是没人会去复查的那一刻。
+ */
+export const RECENT_ANSWER_MS = 60 * 60_000;
+
+/**
+ * t-307：**人那一页由什么组成。**
+ *
+ * 判据①要的是「那一页里历史的占比是 0」，而今天的基线（qa 16:29）是 **80% 是历史**：tasks 53.7% ＋
+ * instructions 26.4%。判据⑤不许把成因说成缓存：`GET /` 早就走增量缓存（`stateFor`），**而缓存不封顶回包**，
+ * 回包仍随历史线性长。所以动的是这一份里**有什么**，不是外面再套一层。
+ *
+ * 砍两样，判断都在上面两条里，一处定义：
+ * · 已经关上的指令——只留最近 `SLIM_DECIDED` 条已决的（人刚点过的那几条是反馈，不是历史）；
+ * · 已经变成历史的任务。
+ *
+ * **`reach_counts` 不动**：它在砍之前就算好了，所以这一页说得出整份有多少开着的、其中 `read` 那一桶多大。
+ * **`omitted` 如实说砍了什么**（`tasks.verified[207 of 213]` 这种形状），于是「少给」与「本来就没有」分得开。
+ *
+ * 这一份不给 agent（`GET /board` 走 `slimBoard`，它另有一个绝对上限），只给人那两页。
+ */
+/** t-307：挖层里一张名单最多印几条。砍的那几条由名单后面那句既有的「还有 N 件」说出来。 */
+export const PAGE_LIST_SHOWN = 5;
+
+export function livingBoard(b: Board, human: string): Board {
+  const decided = new Set(b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED).map((i) => i.id));
+  // **人自己刚答过的那张卡留着。** 它已经关上了，而那一行（「你刚点了：…」）是他确认自己点对了的唯一凭据——
+  // 砍掉它，人点完按钮回到这一页，什么也看不见。这个窗口是一小时，与页面那一行用的是同一个常数
+  // （`RECENT_ANSWER_MS`，页面 import 它），**两处各写一个小时，就是下一次这一行悄悄消失。**
+  // 它不随历史长：一小时内人能点的卡就那么几张。
+  const now = Date.parse(b.now);
+  const justAnswered = (i: Board["instructions"][number]): boolean => {
+    if (i.to !== human) return false;
+    const at = i.chosen?.at ?? i.acked;
+    return !!at && Number.isFinite(now) && now - Date.parse(at) < RECENT_ANSWER_MS;
+  };
+  const instructions = b.instructions.filter((i) => !isPageClosed(i) || decided.has(i.id) || justAnswered(i));
+  const omitted: string[] = [];
+  const tasks: Board["tasks"] = {};
+  let cutTasks = 0;
+  for (const [status, list] of Object.entries(b.tasks)) {
+    const living = list.filter((t) => !isPageHistory(t));
+    if (living.length) tasks[status] = living;
+    if (living.length < list.length) { omitted.push(`tasks.${status}[${list.length - living.length} of ${list.length}]`); cutTasks += list.length - living.length; }
+  }
+  if (instructions.length < b.instructions.length) omitted.push(`instructions[${b.instructions.length - instructions.length} of ${b.instructions.length}]`);
+  // 「这一版里已经在生产上验过的」与「更早的」：同一批历史，另一条路。**从最近的一条往回留**（与瘦身板同一个方向）。
+  // `verified_on_production` 一条不动：它只被印成一个数，砍它就是把那个数改小——那不是少印，是说假话。
+  const list = <T,>(xs: T[]): T[] => (xs.length <= PAGE_LIST_SHOWN ? xs : xs.slice(xs.length - PAGE_LIST_SHOWN));
+  const recent = list(b.live.recent), earlier = list(b.live.earlier);
+  for (const [k, cut, all] of [["recent", recent, b.live.recent], ["earlier", earlier, b.live.earlier]] as const)
+    if (cut.length < all.length) omitted.push(`live.${k}[${all.length - cut.length} of ${all.length}]`);
+  // **`omitted` 这里是手写的，不走 `omittedPaths`**：那一个是深度对比两份板，代价本身就随历史长——
+  // 在一件名叫「代价不许随项目活过多久增长」的事里用它，是把这件事要治的毛病搬进它自己的实现（t-227 那一族）。
+  // 砍的是整行，不是字段，所以两个数（砍了几条／原来几条）就是全部要说的，形状与 `omittedPaths` 的一样。
+  return {
+    ...b, instructions, tasks, live: { ...b.live, recent, earlier }, omitted: omitted.sort(),
+    page_cut: {
+      tasks: cutTasks, instructions: b.instructions.length - instructions.length,
+      live_recent: b.live.recent.length - recent.length, live_earlier: b.live.earlier.length - earlier.length,
+    },
+  };
+}
+
 export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
   const tasks: Board["tasks"] = {};
   for (const [status, list] of Object.entries(b.tasks)) {
@@ -2280,8 +2419,10 @@ export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {
       surfaces: t.surfaces, overturned: t.overturned, verified_on: t.verified_on, era: t.era, summary: t.summary,
     }));
   }
+  // t-307：这一行原来自己写一遍「什么算关上了」，而人那一页要用同一个判断——两处各写一遍，就是下一次
+  // 两张板对同一条指令给出不同答案。判断搬去 `isPageClosed`，这里只留「留最近几条已决的」。
   const decided = b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED);
-  const instructions = b.instructions.filter((i) => i.status !== "acked" && i.status !== "withdrawn" && !i.chosen || (i.options?.length && !i.chosen) || decided.includes(i));
+  const instructions = b.instructions.filter((i) => !isPageClosed(i) || decided.includes(i));
   // seams: open ones in full (someone must own them); resolved and stacked ones as ids and flags while a side can still be
   // done (the seam check needs them); once both sides are final they are history, and GET /task/<id> still has them
   const final = new Set(Object.values(b.tasks).flat().filter((t) => t.status === "verified" || t.status === "withdrawn" || t.status === "obsolete").map((t) => t.id));

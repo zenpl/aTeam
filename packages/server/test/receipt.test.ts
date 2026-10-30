@@ -90,7 +90,9 @@ describe("t-306 判据② · 读取那一侧整个坏掉，人说的话照旧落
   /** 读取那一侧必抛：`read()` 是牌桌与整日志那条路用的；写入走 `readSince`，两条分得开。 */
   class ReadBroken extends MemoryStore {
     broken = false;
+    reads = 0;
     override async read(): Promise<Log> {
+      this.reads++;
       if (this.broken) throw new Error("读取那一侧坏了（注入）");
       return super.read();
     }
@@ -100,10 +102,33 @@ describe("t-306 判据② · 读取那一侧整个坏掉，人说的话照旧落
   beforeAll(async () => { r = await rig(store); });
   afterAll(() => r.close());
 
-  it("注入真的生效：坏掉之后 `GET /release` 这条全量重放的路确实答不出", async () => {
+  /**
+   * **这一格换了形状，而换它的是 t-307，不是这件事的判决松了。** 原来它拿 `GET /release` 当对照：那一页走
+   * `reduce(await store.read())`，所以把 `read()` 打坏它必 500，用来证明「注入是真的」。t-307 判据④ 把
+   * `/release` 从全量重放改成了同一个增量缓存（`stateFor`），**于是人碰得到的路里再没有一条叫 `read()`**，
+   * 这个对照格就失去了它的对照对象。
+   *
+   * **t-306 判据② 本身没有变松，而证它的那一跑不在这个文件里**：qa 17:50 的判决是把 `board()` 改成必抛
+   * 量出来的——同一跑里牌桌 500、`/say` 仍 200 ＋ 回执 ＋ 那句话进了日志。这个文件里的 `read()` 注入，
+   * 从一开始就只是那件事的一个代理。
+   *
+   * 所以这一格改成一个**正面**的量，而它比原来那个代理更接近判据本身要说的话：
+   * **把全量重放整个打坏之后，人碰到的三条路一条都没少**（牌桌、线上那一页、说一句），
+   * 而「注入是真的」由 `read()` 一次都没被叫过来证（它若被叫过，这三条就都是 500 了）。
+   */
+  it("把 `read()` 整个打坏：牌桌、`/release`、`/say` 三条路一条都不受影响——人碰到的路里再没有全量重放（t-307 判据④）", async () => {
     store.broken = true;
-    const res = await fetch(`${r.base}/release`, { headers: { accept: HTML, cookie: r.cookie } });
-    expect(res.status, "它走的是 reduce(await store.read())，所以它该坏").toBeGreaterThanOrEqual(500);
+    const before = store.reads;
+    for (const path of ["/", "/release"]) {
+      const res = await fetch(`${r.base}${path}`, { headers: { accept: HTML, cookie: r.cookie } });
+      expect(res.status, `${path} 不该再依赖全量重放`).toBe(200);
+    }
+    const said = await press(r.base, r.cookie, "/say", { text: "读取那一侧坏着我也要说这一句" });
+    expect(said.status).toBe(200);
+    expect(await said.text()).toContain(UI.receipt.landed);
+    // 注入是真的：它一次都没被叫过。若被叫过，上面三条全是 500——这就是这一格的对照。
+    expect(store.reads, "人碰到的路里一次 read() 都不许有").toBe(before);
+    store.broken = false;
   });
 
   it("**而 `/say` 仍然成**：回执出得来，那句话进了日志，再读一次日志看得见它", async () => {

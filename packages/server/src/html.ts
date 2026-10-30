@@ -1,4 +1,4 @@
-import { contactRow, missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch } from "@ateam/core";
+import { contactRow, missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch , reachCountLine, pageHistoryLine, RECENT_ANSWER_MS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -15,7 +15,8 @@ export const SAID_SHOWN = 5;
 /** t-265：不再另写一个 30——与 core 的 `TITLE_MAX_CHARS` 同源，两处不会各自漂移。 */
 export const TITLE_MAX = TITLE_MAX_CHARS;
 /** How long 「你刚定了」 stays on the page after the human answered. */
-const JUST_MS = 60 * 60_000;
+// t-307：这个窗口 `livingBoard` 也要用（它决定人刚答过的卡留不留在这一份里），所以出处只有 core 那一个。
+const JUST_MS = RECENT_ANSWER_MS;
 
 /** `base` is the project prefix (t-041): "" for the default project, "/p/<id>" for the others; every form posts under it. */
 export interface RenderOptions { sha?: string; refresh?: number; canDecide?: boolean; human?: string; base?: string; /** `?ask=alert`: show the contact card again (t-069) */ ask?: string | null; /** t-235：这一页的绝对上限，默认 `PAGE_BYTES`；用例给小一点的数来测「装不下时它怎么办」。 */ limit?: number }
@@ -375,12 +376,16 @@ function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): str
       b.live.checked_by ? UI.checkedBy(who(b.live.checked_by), when) : "",
     ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
     out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
-    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
+    // t-307 判据②：这两张名单按 `livingBoard` 砍到最近几条，而**砍了几条说出来**——用的是这一页已经有的
+    // 那句「还有 N 件」（`UI.moreItems`），不新写一句话。砍的那两个数不进「已经完结的 N 件任务」那一句：
+    // 同一批历史在那一句里已经数过一遍了。
+    const cutMore = (n?: number) => (n ? `<p class="meta">${esc(UI.moreItems(n))}</p>` : "");
+    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length + (b.page_cut?.live_earlier ?? 0)))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${cutMore(b.page_cut?.live_earlier)}</details>` : "";
     // t-242 ②：标题改成说出这份名单是什么（core 的 `VERIFIED_ON_THIS_VERSION`，措辞待 pd 定稿）。
     // 名单一个字没动：它是真信息，而且命令行读的也是同一份（`b.live.recent`）。改的是那句**说大了**的标题——
     // 「这一版带来了什么」比「在生产上验过的那几件」大一圈，而「验过几件」那句话就在上面那一行。
     if (b.live.recent.length) {
-      out.push(`<details class="more-list"><summary>${esc(VERIFIED_ON_THIS_VERSION)}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
+      out.push(`<details class="more-list"><summary>${esc(VERIFIED_ON_THIS_VERSION)}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${cutMore(b.page_cut?.live_recent)}${earlierFold}</details>`);
     } else {
       // Nothing verified on production since this sha was deployed: say so in words (t-060), never an empty heading.
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
@@ -530,6 +535,10 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
 
   d.push(`<details class="rest" id="rest"><summary>${UI.rest} <span class="meta">${esc(UI.restSummary(open.length, b.overdue.length, openSeams.length, shownValid.length))}</span></summary>`);
 
+  // t-307 判据①：**这一页不印已经完结的事，而它说出自己没印什么。**没砍过就不印这一行（完整板没有 `page_cut`）。
+  if (b.page_cut && (b.page_cut.tasks || b.page_cut.instructions))
+    d.push(`<p class="meta history-cut">${esc(pageHistoryLine(b.page_cut.tasks, b.page_cut.instructions))}</p>`);
+
   // The latest collaboration report (pd 14:50 ③): one line in the dig layer, never above the fold.
   const report = latestReport(s, b);
   d.push(`<p class="meta report">${UI.collabReport}${report ? (report.href ? `<a href="${esc(report.href)}">${esc(report.when)}</a>` : esc(report.when)) + ` <code>${esc(report.path)}${report.sha ? ` @ ${esc(report.sha)}` : ""}</code>` : UI.collabNone}</p>`);
@@ -556,6 +565,9 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
   const openCut = cut(open);
   d.push(open.length ? `<ul class="plain">${openCut.vis.map((i) => `<li><span class="tag">${esc(REACH_WORDS[i.reach] ?? i.reach)}</span> ${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <span class="meta">${t(i.sent)}${i.delivered ? "" : ` · ${UI.notPulled}`} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>` : `<p class="quiet">${UI.none}</p>`);
   d.push(moreLine(openCut.hidden));
+  // t-307（pm 17:27）：**三桶的数每次都印。** 数的是整份里开着的那些（`board()` 在 `livingBoard` 砍之前算的），
+  // 不是上面这张名单印出来的几条——这一行的用处正是说出这一页之外还有什么。句子在 core，这里只印。
+  d.push(`<p class="meta reach">${esc(reachCountLine(b.reach_counts.open, b.reach_counts.unread, b.reach_counts.read, b.reach_counts.acted))}</p>`);
   const decided = b.instructions.filter((i) => i.chosen);
   /**
    * t-189：这一行原来只看 `chosen.by === "default"` 就印「已按默认「X」执行（你仍可改）」——**时间过了就当它发生了**。
