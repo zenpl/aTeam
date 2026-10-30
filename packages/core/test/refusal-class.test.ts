@@ -35,7 +35,15 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
 }
 
 /** 冻结：此刻一共多少处，其中标成「已经发生过了」的是哪几处（文件＋规则名，不写行号——行号一改就失真）。 */
-const TOTAL = 138;
+/**
+ * t-292 的口径变更，按 pd 10:34 的规矩并排写两个数：**138 → 130**。
+ *
+ * 少的 8 处全在 `core/rules.ts` 的 `checkShape` 里，**不是少了八条拒绝，是八条拒绝合成了一次抛出**：
+ * pd 05:30 ④ 要「一次把全部违规都报出来」，所以那八处从各自 `throw` 改成往 `bad` 里累积，末尾 `stop()` 抛一次。
+ * **拒绝的条数没变，变的是出口的个数**——同一个输入现在一次把三条都说出来，而不是让人来回三趟。
+ * 用新尺子量旧树仍是 138（那八处还各自是一个 throw），用新尺子量此刻是 130：差额 8 与合并掉的出口数恰好相等。
+ */
+const TOTAL = 130;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",
