@@ -71,7 +71,12 @@ describe("t-070 · GET /board is slim by default", () => {
     expect(slim.instructions.every((i) => i.status !== "acked" || i.chosen)).toBe(true);
     expect(slim.instructions.filter((i) => i.chosen)).toHaveLength(5);
     expect(slim.instructions.filter((i) => i.status !== "acked").length).toBe(full.instructions.filter((i) => i.status !== "acked").length);
-    for (const k of ["undelivered", "overdue", "presence", "roles", "coverage", "allocation", "live", "said", "focus", "now", "alert"] as (keyof Board)[]) expect(slim[k]).toEqual(full[k]);
+    for (const k of ["undelivered", "overdue", "presence", "roles", "coverage", "allocation", "said", "focus", "now", "alert"] as (keyof Board)[]) expect(slim[k]).toEqual(full[k]);
+    // t-223：live 里多了一样只在完整板上的——上线过的 sha 列表（`ateam release --rollback` 认目标用的那份事实）。
+    // 它每上线一次长一条，而瘦身板是发给人的那一份。其余每个字段照旧一模一样，少了哪个由 omitted 说。
+    expect({ ...slim.live, deploys: undefined }).toEqual({ ...full.live, deploys: undefined });
+    expect(slim.live.deploys, "瘦身板不带它").toBeUndefined();
+    expect(slim.omitted, "少了什么不是手写的，是两块板比出来的").toContain("live.deploys");
     expect(slim.needs_human.map((c) => [c.id, c.summary, c.title])).toEqual(full.needs_human.map((c) => [c.id, c.summary, c.title]));
     expect(slim.needs_human.every((c) => !("detail" in c))).toBe(true);
     expect(Object.values(slim.in_flight).map((g) => [g.total, g.all.length])).toEqual(Object.values(full.in_flight).map((g) => [g.total, g.all.length]));

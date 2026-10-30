@@ -64,7 +64,9 @@ describe("t-212 · 人点按钮被挡住，也要被数进去", () => {
     expect((await form("/decide", { id: card, option: "B" })).status).toBe(409);
     const c = countRefusals(await store.refusals!());
     expect(c.total).toBe(before + 1);
-    expect(c.by_rule.find((x) => x.rule === "decide")!.n).toBeGreaterThanOrEqual(2);
+    // qa 16:43：**期望值写等号，不写「至少」**——这一轮的虚高正是被等号抓出来的；写成「至少」的话，
+    // 同一次拒绝记两遍今天就漏过去了。
+    expect(c.by_rule.find((x) => x.rule === "decide")!.n).toBe(2);
   });
 });
 

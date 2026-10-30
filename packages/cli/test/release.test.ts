@@ -271,7 +271,7 @@ describe("t-093 · the deploy entry refuses a sha that adds unverified work", ()
  * 这是 t-203 同一个形状的第二例：分母漏了一类。那次漏的是「量不出」那一桶，这次漏的是「不是任务的提交」。
  */
 describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
-  const orphanWorld = async () => {
+  const orphanWorld = async (evidence: string = B) => {
     const store = new MemoryStore();
     let t = Date.now() - 3600_000;
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 1000)) });
@@ -279,7 +279,7 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "题", criteria: ["x"], no_human_impact: true });
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["a"] });
     // t-209：done 记下这一轮的起点。生产在 A，这件从 A 开始做，证据是 B ⇒ 它声称的产出是 (A, B]
-    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${B} 完成`, base_sha: A, no_human_impact: true });
+    await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${evidence} 完成`, base_sha: A, no_human_impact: true });
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true });
     return board(reduce(await store.read()), HUMAN);
   };
@@ -312,8 +312,10 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
    * 我把它们当成了闸，其实是自我描述。这一条造的是唯一能分开两者的形状：**孤儿夹在生产头与某件任务的起点之间。**
    */
   it("判据 6：孤儿夹在中间时也点得出来——这正是「可达」口径看不见的那一格", async () => {
-    const b = await orphanWorld();
-    // 生产在 A；B 是那条没人认领的提交；任务从 B 开始做，证据是 D ⇒ 它声称的产出是 (B, D] = {C, D}
+    // t-222：这件的 history 里那一轮的证据也要跟着改成 D。原来只改 evidence_sha 与 base_sha，
+    // 而 history 仍写着「这件的产出是 B」——**那等于这件任务自己认领了 B**，再判它是孤儿就自相矛盾。
+    // 从 t-222 起区间按每一轮的证据算，这处矛盾才显出来；用例的本意（孤儿夹在中间）一个字没改。
+    const b = await orphanWorld(D);
     const mid = JSON.parse(JSON.stringify(b)) as Board;
     for (const t of Object.values(mid.tasks).flat()) if (t.id === "t-1") { t.evidence_sha = D; t.base_sha = B; }
     const p = plan(mid, D, fakeGit().isAncestor, A, fakeGit().revList);
@@ -325,15 +327,24 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     expect(reachable, "可达口径把 B 也算成被盖住了").toContain(B);
   });
 
-  it("判据 7：有一件任务没记起点，整个答案就说不清——不猜，也不诬告", async () => {
+  /**
+   * **t-222 把这一条的后半收窄了，理由是量出来的，写在这里免得下一个人以为是退化。**
+   *
+   * t-209 定的是「只要有一件任务说不清，整个答案就说不清（null）」——当时对：那时的选择是诬告还是不答。
+   * 但 t-222 量到**先提交、后跑 claim／reopen 是常态**（生产头 d57acbc 到 31b92ae 的 12 条提交里，四件任务有
+   * 三件的起点与自己的证据是同一个 sha），于是几乎每一批都有一件说不清的任务，而它一出现这道闸就对整批闭眼。
+   * 现在说不清只圈住它自己那一段：`(生产头, 它的证据]` 既不算覆盖也不算孤儿，**那一段之上照旧点名**。
+   * 不诬告这一半一个字没变。
+   */
+  it("判据 7（t-222 收窄）：一件任务说不清，只让它那一段说不清——不猜、不诬告，也不再整批闭眼", async () => {
     const b = await orphanWorld();
     const noBase = JSON.parse(JSON.stringify(b)) as Board;
     for (const t of Object.values(noBase.tasks).flat()) if (t.id === "t-1") delete (t as { base_sha?: string }).base_sha;
     const p = plan(noBase, C, fakeGit().isAncestor, A, fakeGit().revList);
     expect(p.unknown_span, "说不清的是哪几件，要点得出名字").toEqual(["t-1"]);
-    expect(p.orphans, "它的提交没有区间盖着，若照算就会被诬告成孤儿").toBeNull();
-    expect(p.reasons.join("\n")).toContain("没记下自己这一轮从哪儿开始");
-    expect(p.ok, "说不清不拦车——一道挡住一切的闸，下一步就是被整个关掉").toBe(true);
+    expect(p.orphans, "它自己那一段（A..B）不诬告").toEqual([C]);
+    expect(p.reasons.join("\n")).toContain("拿不出可信的起点");
+    expect(p.ok, "C 在它的证据之上，与它无关，照旧拦").toBe(false);
   });
 
   it("问不出来答 null，不是空数组——「没问出来」与「一条都没有」是两件事", async () => {
