@@ -202,12 +202,14 @@ export function taskIdLiterals(src: string): { line: number; id: string }[] {
 }
 
 /**
- * **这道闸看不见什么，说在明处**（同 SURFACE_GATE_BLIND_SPOTS 与 LITERAL_CHECK_BLIND_SPOTS 那条规矩）。
- * 每一条在 no-hardcoded-task-id.test.ts 里都有一个会红的用例钉着：哪天它们被收进来了，那些用例会告诉
- * 下一个人闸的范围变宽了，而不是让人以为一直如此。
+ * **这道闸看不见什么，说在明处**——而那份清单住在它的用例里（`packages/core/test/no-hardcoded-task-id.test.ts`
+ * 的 `TASK_ID_GATE_BLIND_SPOTS`），不在这儿。
+ *
+ * pd 15:45 的决策（C 当默认）：**这不是让作者自判「我这句不算给人看的」，是让冻结那道闸自己的口径回答**
+ * ——它的范围是 `sourceFiles(SECOND_HOMES_ROOT).filter(isProductSource)`，用例不在里面。**一个靠位置回答的
+ * 问题，比一个靠声明回答的问题可靠**，而那正是这道闸自己立足的原则，所以同一条也该用在它自己的盲点清单上。
+ *
+ * pd 同时给了一个出口（清单留在产品源码里、计入基线、不等它过目），说的是「搬进用例不值得」的情形。
+ * **我没有走那个出口**：它给的前提是「`scan.ts` 就是闸的实现，搬清单要连断言一起搬」，而断言本来就在用例里
+ * （`scan.ts` 一个断言都没有），所以这里搬的只是一个常量。前提在我这件上不成立，就按默认走。
  */
-export const TASK_ID_GATE_BLIND_SPOTS = [
-  "经变量绕一手：`const id = \"t-\" + n`——拼出来的 id 不是一个字面量，配不到。",
-  "标识符含 sample 的值整段放过：`function sampleFoo() { ... }` 里即便真写死了一个开关，闸也不看——判据定的就是按这个结构放过，代价写在这儿。",
-  "只扫 core 与 server 的 src：命令行不在范围里（它本来就跑在某一个项目的检出里），测试与 .d.ts 也不在。",
-] as const;

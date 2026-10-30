@@ -22,7 +22,23 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { sourceFiles, isProductSource, taskIdLiterals, sampleExtents, stripComments, TASK_ID_GATE_BLIND_SPOTS } from "../src/index.js";
+import { sourceFiles, isProductSource, taskIdLiterals, sampleExtents, stripComments } from "../src/index.js";
+
+/**
+ * **这道闸看不见的那几种。清单住在这儿而不在 core**（pd 15:45 的决策 01M66QT6GVAAP7BXFCX7F34TWE 选 C 当默认）：
+ * 它是写给改这道闸的人的话，不是人可见的文案——而**这一条不靠我声明，靠冻结那道闸自己的口径回答**：
+ * 它的范围是 `sourceFiles(SECOND_HOMES_ROOT).filter(isProductSource)`，用例不在里面。
+ * 一个靠位置回答的问题比一个靠声明回答的问题可靠，而那正是这道闸自己立足的原则。
+ * 与 `packages/cli/test/no-field-names.test.ts` 的 `FIELD_NAME_GATE_BLIND_SPOTS` 同形、同理由。
+ *
+ * 三条都不是理论上的，每一条下面都有一个会红的断言钉着：哪天它们被收进来了，那条断言会告诉下一个人
+ * 闸的范围变宽了，而不是让人以为一直如此。
+ */
+export const TASK_ID_GATE_BLIND_SPOTS = [
+  "经变量绕一手：`const id = \"t-\" + n`——拼出来的 id 不是一个字面量，配不到。",
+  "标识符含 sample 的值整段放过：`function sampleFoo() { ... }` 里即便真写死了一个开关，闸也不看——判据定的就是按这个结构放过，代价写在这儿。",
+  "只扫 core 与 server 的 src：命令行不在范围里（它本来就跑在某一个项目的检出里），测试与 .d.ts 也不在。",
+] as const;
 
 const repo = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 /** 平台代码：判据点名的那两处。命令行不在判据里（它本来就跑在某一个项目的检出里）。 */
