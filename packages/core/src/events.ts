@@ -515,6 +515,7 @@ export const KEY_SYMBOLS = [
   "INJECT_USAGE",
   "INVITE_SENT_PREFIX",
   "INVITE_URL_LABEL",
+  "LATE_HEAD",
   "LITERAL_CHECK_BLIND_SPOTS",
   "MIGRATION_ASK_TITLE",
   "MIGRATION_FINISH",
@@ -619,6 +620,7 @@ export const KEY_SYMBOLS = [
   "joinNotAsHuman",
   "judgeSeam",
   "lateLine",
+  "lateRow",
   "lightSeamLine",
   "manual",
   "manualFor",
@@ -895,8 +897,35 @@ export const DEFAULT_RULE =
  *   而不是为了描述一种正常状态。之前牌桌在这一态说的是「已经按 A 了」——那正是我们对人说的那句不为真的话。
  * · `applied`：事件落下了。主语是人：他没点，于是按了默认。
  */
+/**
+ * t-292（pd 10:31 ②）：**中西文之间那一个空格的规则，住在这一处。**
+ *
+ * pd 定的是「中文占位两侧不留，数字西文两侧各留一个」。**它不能写死在模板里**，因为该不该留取决于占位
+ * 此刻的值：同一句话里 `刚刚` 两侧不留，而 `3 小时前` 的左侧要留——梯子给哪一个，写句子的人事先不知道。
+ *
+ * 判准落在**汉字**上，不落在中文标点上：`（默认是 B）` 的右括号前不该多一个空格，而 `默认是 B` 的 B 前该有。
+ */
+const HAN = /[\u4e00-\u9fff]/;
+const ALNUM_FOR_GAP = /[0-9A-Za-z]/;
+/** 两个字之间该不该有一个空格。任一侧已经是空白就不再加——模板里原有的空格照旧算数，不会变成两个。 */
+export function gap(left: string, right: string): string {
+  const a = left.slice(-1), b = right.slice(0, 1);
+  if (!a || !b || /\s/.test(a) || /\s/.test(b)) return "";
+  return (HAN.test(a) && ALNUM_FOR_GAP.test(b)) || (ALNUM_FOR_GAP.test(a) && HAN.test(b)) ? " " : "";
+}
+/** 按上面那条规则拼一句话：占位两侧的空格由值算出来，不由写句子的人记得。 */
+export function cn(strings: TemplateStringsArray, ...values: unknown[]): string {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    const v = String(values[i]);
+    const next = strings[i + 1] ?? "";
+    out += gap(out, v) + v + gap(v, next) + next;
+  }
+  return out;
+}
+
 export const DEFAULT_LINES = {
-  waiting: (at: string, option: string) => `不点的话，${at}到期，按 ${option} 执行。`,
+  waiting: (at: string, option: string) => cn`不点的话，${at}到期，按${option}执行。`,
   /**
    * t-292（pd 05:33 六，逐字）：这两句由 pd 改稿，原因写在它那条决策里，两重假话：
    * ① 旧 `applied`「你没点，已按默认 X 执行。」**把服务做的事说成没有主语**，读起来像人自己做的；
@@ -905,13 +934,15 @@ export const DEFAULT_LINES = {
    * 新 `stuck` 把默认是哪一个也说出来——人要据它决定还改不改。
    * **这两句同时出现在牌桌与命令行**：出处只有这一处，改它两边一起改（这是刻意的，不是顺手）。
    */
-  stuck: (option: string) => `过期了，默认还没生效（默认是 ${option}）。`,
-  applied: (since: string, option: string) => `没人点，服务在 ${since} 按默认 ${option} 执行了。你现在改还来得及。`,
+  stuck: (option: string) => cn`过期了，默认还没生效（默认是${option}）。`,
+  // t-292（pd 10:31 ①）：**去掉「在」。** pd 自己找出的真毛病——「在」要求后面是一个时间点，而梯子给的是
+  // 「刚刚」。所以「服务在 刚刚 按默认」别扭不在空格，在那个字；去掉它，空格交给 `cn` 按值算。
+  applied: (since: string, option: string) => cn`没人点，服务${since}按默认${option}执行了。你现在改还来得及。`,
   /**
    * t-190（pd 10:40）：第四态。**不许悄悄改回**——人要看得见我们没执行过，所以这一句自己说出那件事，
    * 而不是把卡默默变回「等你答」。它不说「已按默认」，因为那没发生；也不说「过期了」，因为期限已经重算。
    */
-  missed: (option: string) => `本该按默认执行，我们没有执行，现在仍在等你（默认是 ${option}）。`,
+  missed: (option: string) => cn`本该按默认执行，我们没有执行，现在仍在等你（默认是${option}）。`,
 };
 
 /**
@@ -920,6 +951,20 @@ export const DEFAULT_LINES = {
  * 旧的是 `UNANSWERED (past ack_by, options still open)` 与每行 `(N past ack_by, <id>)`——**给人读的句子里出现了字段名**
  * （`ack_by`）。pd 05:33 并定了通则：字段名只许出现在给机器的那一份（`board --json`、事件本身）。
  */
+/**
+ * t-292 判据 3／4（pd 10:31 ③）：**LATE 那一段的段头与每一行。**
+ *
+ * 旧的两句是英文，而且句子里印着 `ack_by`——判据 4 那条通则的第四处就在这儿，`humanSentences` 只认中文，
+ * 所以冻结那道闸从来没看见过它。pd 把段头改成中文之后，**屏幕上再没有 `LATE` 这个词**，于是 `--help` 里
+ * 那张词条表还在解释一个不存在的词：pd 11:40 自己点出这一件，定稿下一轮给，不在这里顺手改。
+ *
+ * 每行用的是**第二把梯子**（`span`，「晚了 25 分钟」），不是第一把（`ago`，「25 分钟前」）：这里说的是
+ * 一段长度，不是一个距今多久。
+ */
+export const LATE_HEAD = "过了该回的时间，还没回（角色之间，不含给人的卡）";
+export const lateRow = (from: string, to: string, body: string, late: string, instruction: string): string =>
+  `${from} → ${to}: ${body}  ${cn`（晚了${late}，${instruction}）`}`;
+
 export const UNANSWERED_HEAD = "过期还没答（选项仍然开着）";
 export const unansweredRow = (to: string, from: string, body: string, past: string, event: string) =>
   `${to} 还没答 ${from} 的「${body}」（过期 ${past}，${event}）`;
@@ -1233,10 +1278,20 @@ export const PD_PLACEHOLDER = "（措辞待定）";
  * **一句话的全部用意是「你不用做任何事」，它就不许以要人做一件事结尾。** 所以这一句不带划掉的办法——
  * 提醒显示一次就自己退场（`sayIfRefused` 那一侧）。
  */
+/**
+ * t-292 判据 7（qa 07:14 的活体 ＋ pd 10:31 ④ 的定稿）：**在一台把成功报成失败的服务器上，重发是正确的反应。**
+ *
+ * qa 量出的那一对：读的方向，解不开的 200 被报成成功；写的方向，落了的 ack 被报成失败。于是人看到「失败」
+ * 就会重发，而重发必然撞上这条消息——**这条消息不该把一个正确的反应说成一次多余的操作。**
+ *
+ * pd 10:31 ④ 把 qa 原来的说法「你这一次可能是重发」改掉了，理由是**不许暗示是谁的错**，改成条件句：
+ * 「如果你上一次看到的是失败，那个失败不准。」它不要人做任何事，所以仍然守着 pd 06:42 那条
+ * （一句话的全部用意是「你不用做任何事」，就不许以要人做一件事结尾）。
+ */
 export const alreadyDoneNotice = (since: string | null, at: string | null): string =>
   since && at
-    ? `这件事已经办好了，${since}（${at}）。你这一次是多余的，不用重做——再发一次会被同样挡回来。`
-    : "这件事已经办好了（我说不出是什么时候，这一条规则没留下那一刻）。你这一次是多余的，不用重做。";
+    ? `这件事已经办好了，${since}（${at}）。你这一次是多余的，不用重做——再发一次会被同样挡回来。如果你上一次看到的是失败，那个失败不准。`
+    : "这件事已经办好了（我说不出是什么时候，这一条规则没留下那一刻）。你这一次是多余的，不用重做。如果你上一次看到的是失败，那个失败不准。";
 
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
 

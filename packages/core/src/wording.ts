@@ -804,22 +804,27 @@ export const WORDING_AT_FREEZE: readonly string[] = [
  * 逐条的原文不在这里（见 `bin/wording` 的输出）：快照存指纹不存原文，理由写在文件头上。
  */
 export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
+  "00a292bbda27",
   "019cd25acaa8",
   "01e3e0bb0de7",
   "066df4edc1f9",
   "0c0a1516e53f",
   "10a4975d377f",
+  "13e748602c7d",
   "156a26558e39",
   "213e4805d402",
   "256f71413076",
   "29b8734c42db",
   "2ce311506749",
+  "2ee51f97d20a",
   "355bc3cf8d9c",
   "36222751e552",
+  "38b908e4bd58",
   "3da0f22d2c8c",
   "3ec57311ace7",
   "40a74b936978",
   "4c1c99c69245",
+  "4cd53c8b6a4b",
   "575f18229dc3",
   "582e5c8a0e9f",
   "5bcd68644bd8",
@@ -837,6 +842,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "828a39b0f30d",
   "82cde5e523b4",
   "8449ce32b5b6",
+  "8491dd770aac",
   "84c602253ad8",
   "904c1897c641",
   "91fff0af64c0",
@@ -848,6 +854,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "a6e9d3b10ba9",
   "a7b0b5937cdc",
   "ad0a5a3ba4c3",
+  "ba64612c290f",
   "c19cde0d8f41",
   "c6408c8b22b2",
   "c6ce25921dfa",
@@ -861,6 +868,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "e583272a854f",
   "eb939c64feaf",
   "ee35d6915a83",
+  "ef541cd8c1bf",
   "f9c7daf8d850",
 ];
 
@@ -905,8 +913,8 @@ export const FIELD_NAME_SCOPE = [
  * **此刻四条全是等 pd 定稿，没有一条是我判成合规的**——判它合规就是替 pd 定措辞，那是判据 5 禁的。
  */
 export const FIELD_NAMES_DECLARED: readonly string[] = [
-  "159209abc081",
-  "1d33c0a6656f",
+  // frontend 12:4x：format.ts 那两条（LATE 段头与每行）已由 pd 10:31 ③ 定稿落地，从名单上去掉——
+  // **名单只许缩，缩的依据是那句话真的换了**，用例断言名单上每一条都还指向源码里活着的话。
   "36af0208032d",
   "4ae707eead07",
 ];

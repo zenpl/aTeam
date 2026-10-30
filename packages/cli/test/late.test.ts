@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { MemoryStore, append, reduce, board, lateLine, DEADLINE_WORDS, LATE_SHOWN, type NewEvent } from "@ateam/core";
+import { MemoryStore, append, reduce, board, lateLine, DEADLINE_WORDS, LATE_SHOWN, type NewEvent, LATE_HEAD } from "@ateam/core";
 import * as fmt from "../src/format.js";
 
 const HUMAN = "human";
@@ -30,7 +30,7 @@ describe("t-229 · 命令行把那个数印出来", () => {
 
   it("一条都没有就一个字都不印——空栏目是噪音", async () => {
     const text = fmt.board(await boardWith(0), "dev");
-    expect(text).not.toContain("LATE (");
+    expect(text).not.toContain(LATE_HEAD);
   });
 
   it("名单多的时候只印头几条：数已经在那一句里了", async () => {
@@ -38,7 +38,8 @@ describe("t-229 · 命令行把那个数印出来", () => {
     const text = fmt.board(b, "dev");
     expect(text).toContain(lateLine(b.late));
     const lines = text.split("\n");
-    const from = lines.findIndex((l) => l.startsWith("LATE ("));
+    // t-292（pd 10:31 ③）：段头是 pd 定的中文了，所以这里引 core 的常量而不是旧那个英文前缀
+    const from = lines.findIndex((l) => l === LATE_HEAD);
     const section = lines.slice(from, from + lines.slice(from).findIndex((l, i) => i > 0 && l === ""));
     const shown = section.filter((l) => l.includes("pm → dev: 第"));
     expect(shown).toHaveLength(LATE_SHOWN);

@@ -28,10 +28,7 @@ const scope = () => Object.fromEntries(FIELD_NAME_SCOPE.map((f) => [f, read(f)])
  * 的话，不是人可见的文案——放进 core 会白占四格 pd 的措辞名册（冻结那道闸的口径是产品源码里的中文字面量）。
  */
 const PENDING_PD = [
-  { hash: "159209abc081", file: "packages/cli/src/format.ts", field: "ack_by",
-    why: "LATE 段头。pd 05:33 定稿了同形状的三处（过期还没答那一段），这是第四处，它没写。" },
-  { hash: "1d33c0a6656f", file: "packages/cli/src/format.ts", field: "ack_by",
-    why: "LATE 每一行，同上。" },
+  // format.ts 原来那两条（LATE 段头与每行）已由 pd 10:31 ③ 定稿落地，不在名单上了。
   // frontend 11:3x 的更正：下面这两条我 10:2x 说成「住在 BOARD_SHAPE 里、是给机器那一份的说明书，所以合规」。
   // **查错了。** 它们住在 DEADLINE_WORDS，而 DEADLINE_WORDS 由 cli 的 main.ts 印在 ateam --help 里，是人读的。
   { hash: "36af0208032d", file: "packages/core/src/board.ts", field: "overdue_by_presence",
@@ -50,6 +47,7 @@ describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
   });
 
   it("core 里那份指纹名单，与这里逐条的理由对得上（一边加一条、另一边忘了，就红）", () => {
+    expect(PENDING_PD).toHaveLength(2);
     expect([...FIELD_NAMES_DECLARED].sort()).toEqual(PENDING_PD.map((p) => p.hash).slice().sort());
     for (const d of PENDING_PD) expect(d.why, d.hash).toMatch(/[一-龥]/);   // 每一条都要说得出为什么它还在名单上
   });
@@ -64,10 +62,9 @@ describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
     }
   });
 
-  it("四条分别在哪：两条 LATE、两条 --help 里那张期限词条表", () => {
-    const late = hits("packages/cli/src/format.ts");
-    expect(late).toHaveLength(2);
-    expect(late.some((h) => h.text.includes("LATE"))).toBe(true);
+  it("两条都在 --help 里那张期限词条表；LATE 那两条已经由 pd 定稿换掉了", () => {
+    // pd 10:31 ③ 的定稿落地之后，渲染器这一侧一条不剩——**名单缩短的依据是句子真的换了**
+    expect(hits("packages/cli/src/format.ts")).toEqual([]);
     const words = hits("packages/core/src/board.ts");
     expect(words).toHaveLength(2);
     // frontend 11:3x 的更正：这两条不是 BOARD_SHAPE（给机器那一份的说明书），是 DEADLINE_WORDS，

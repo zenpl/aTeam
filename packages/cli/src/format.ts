@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -124,9 +124,11 @@ export function board(b: Board, me: string): string {
   // t-229：**角色间那条期限过了之后，从这里起有人说话。** 句子是 core 的（`lateLine`），这里只印；
   // 名单按「最久的在前」给，印头三条——判据 1 要的是那个数，而三条样本足够让人知道该去问谁。
   if (b.late?.count) {
-    out.push("", "LATE (role-to-role, past ack_by, not acked)");
+    // t-292（pd 10:31 ③）：段头与每行都换成 pd 定的中文；句子在 core 一处，这里只印。
+    out.push("", LATE_HEAD);
     out.push(`  ${lateLine(b.late)}`);
-    for (const o of b.late.instructions.slice(0, LATE_SHOWN)) out.push(`  ${who(o.from)} → ${who(o.to)}: ${o.body}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+    for (const o of b.late.instructions.slice(0, LATE_SHOWN))
+      out.push(`  ${lateRow(who(o.from), who(o.to), o.body, span(Math.max(0, now - Date.parse(o.ack_by))) ?? "", o.instruction)}`);
   }
 
   // t-139 + t-147: what nobody has acted on, split by whether the one who owes it is even there. The sentences are
