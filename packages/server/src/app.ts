@@ -350,7 +350,12 @@ export function createApp(opts: ServerOptions) {
           : { error: "not found", message: NO_PROJECT_AT_THIS_ADDRESS });
         // t-059: the project's own packing at the end, when the project exists
         // 判据⑦②③：会变的那些在无钥匙时不出现，而与项目无关的那一份**仍然无钥匙可得**（M1／S8）。
-        return markdown(res, packing && hasProjectKey ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
+        //
+        // **这里原来还写着 `&& hasProjectKey`，我把它去掉了，而去掉它的理由是我自己的反向注入**：摘掉那一半
+        // 之后 19 条用例全绿——因为闸真正生效的地方在上面那一行（无钥匙时连 `registry.get` 都不做，于是
+        // `packing` 本来就是 null）。**一个摘掉也不红的守卫，不是双保险，是一处说不出自己守住了什么的代码**；
+        // 而它若留着，下一个人会以为这里有一道闸，从而放心去改上面那一行。闸只留一处，而那一处有注入证过。
+        return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
       // A new project: one board, one log, one key. The key is in this response and nowhere else.
