@@ -705,6 +705,7 @@ export const KEY_SYMBOLS = [
   "VERIFIED_ON_THIS_VERSION",
   "VERIFY_ASK",
   "WATCH_LINES",
+  "WATCH_STOPPED",
   "WHOLE_GATE_OFF",
   "advance",
   "ago",

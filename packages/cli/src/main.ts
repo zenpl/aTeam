@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, owedSentences, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
+import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, owedSentences, WATCH_STOPPED, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -561,7 +561,15 @@ async function main(argv: string[]) {
       beat();
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
-      for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
+      /**
+       * t-300 判据 4：**现场被中断时那一句印在这里。**
+       *
+       * `watch` 自己那条 `signal.aborted` 的路在生产上走不到——这个调用处不传 AbortSignal，人按 Ctrl-C
+       * 走的就是这个 handler。pd 把这件事立成了判据：**一句话印在哪，由它在现场会不会被执行到决定，
+       * 不由它在用例里好不好测决定**；一句只在用例里出现的话比没有它更坏，因为用例会证明它好用。
+       * 走 stdout（判据 4③）：只盯管道的看守读不到 stderr。
+       */
+      for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { console.log(WATCH_STOPPED.interrupted(sig)); release(); process.exit(130); });
       await watch(client, cfg.me, deferredCursor(fileCursor(cfg.me, process.cwd(), nodeIo, "cursor", serverKey(cfg.url))), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
       release();
       return;
@@ -1015,16 +1023,23 @@ main(ARGV).then(async () => {
   //
   // 所以退出前在 stdout 上留一行，不取代 stderr 那一行（人盯着终端时两处都看得见，管道只看得见这一处）。
   const lastWords = (line: string) => console.log(`ateam: ${line}`);
+  /**
+   * t-300 判据 4：**看守抛错退出时那一句，也走 stdout。**
+   *
+   * 它替掉 `ateam: <原文>` 那一行而不是叠在它上面：pd 的定稿里 `<原文>` 就在句子里，两行等于说两遍。
+   * 不是 `watch` 的命令照旧走原来那一行——这一句说的是「没人会再叫醒你」，而那只对看守成立。
+   */
+  const stoppedOrPlain = (line: string) => (ARGV[0] === "watch" ? console.log(WATCH_STOPPED.failed(line)) : lastWords(line));
   if (err instanceof BadResponse) {
     console.error(err.message);
-    lastWords(err.message);
+    stoppedOrPlain(err.message);
     // 游标一个字节没动（advance 只收字符串或 null），退出码不是 1——好让看守分得清「坏响应」和「它自己崩了」
     return bye(3);
   }
   if (err instanceof ClientError) {
     const line = err.status === 409 ? `REJECTED (${err.body.rule}): ${err.body.message}` : `server ${err.status}: ${err.message}`;
     console.error(line);
-    lastWords(line);
+    stoppedOrPlain(line);
     return bye(err.status === 409 ? 2 : 1, err.status === 409 ? err.body.rule : undefined, false, err.body.already);
   }
   if (err instanceof ShapeError) { console.error(err.message); lastWords(err.message); return bye(2); } // t-080: a newer server, said plainly
@@ -1032,6 +1047,6 @@ main(ARGV).then(async () => {
   if (err instanceof UsageError) { console.error(`usage: ${err.message}`); lastWords(`usage: ${err.message}`); return bye(2, "usage", true); }
   const what = err instanceof Error ? err.message : String(err);
   console.error(what);
-  lastWords(what);
+  stoppedOrPlain(what);
   return bye(1);
 });

@@ -59,8 +59,12 @@ describe("t-007 · ateam watch prints the instruction it woke on", () => {
     expect(text).not.toContain("ateam ack");
     expect(text).not.toContain("Ack each with");
     expect(text).not.toContain("不办：<原因>");
-    expect(out[out.length - 1]).toBe("\ninstruction received");
+    // t-300 判据 4 改了这一行：`--once` 命中之后多印一句「看守按 --once 停了：…」（pd 10:0x 定稿），
+    // 所以「instruction received」不再是最后一行。**这条用例要钉的是顺序**（它的标题就写着 before
+    // 'instruction received'），顺序一个字没动；原来写成「它是最后一行」是**顺手把顺序断言成了位置断言**，
+    // 而位置会被任何一句后续输出推翻。现在两条都判顺序：事件在它之前，而那句临终话在它之后。
     expect(out.indexOf("\ninstruction received")).toBeGreaterThan(out.findIndex((l) => l.includes("01C")));
+    expect(out.findIndex((l) => l.includes("看守按 --once 停了"))).toBeGreaterThan(out.indexOf("\ninstruction received"));
     // quiet rounds print nothing
     expect(out.some((l) => l === "nothing new" || l === "log is empty")).toBe(false);
   });
@@ -147,7 +151,9 @@ describe("t-015 · ateam watch survives transient fetch errors", () => {
     expect(sleeps).toEqual([1_000, 2_000]);
     expect(out[0]).toBe("watch: fetch failed (ECONNRESET); retrying in 1s (attempt 1)");
     expect(out[1]).toBe("watch: server 502: Bad Gateway; retrying in 2s (attempt 2)");
-    expect(out[out.length - 1]).toBe("\ninstruction received");
+    // 同上：`--once` 之后多了那句临终话，所以这里也从「最后一行」改成顺序。
+    expect(out.indexOf("\ninstruction received")).toBeGreaterThan(-1);
+    expect(out.findIndex((l) => l.includes("看守按 --once 停了"))).toBeGreaterThan(out.indexOf("\ninstruction received"));
     // the failed pulls never moved the cursor; the good pull moved it once
     expect(cursor.writes).toEqual(["01D"]);
     expect(srv.pulls).toEqual([null, null, null]);

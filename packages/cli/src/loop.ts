@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, firstPullLine, morePagesLine, type PullResult } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, firstPullLine, morePagesLine, WATCH_STOPPED, type PullResult } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -234,7 +234,13 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
   let failures = 0;
   let last: PullResult = { events: [], for_me: [], cursor: cursor.read() };
   for (;;) {
-    if (opts.signal?.aborted) return last;
+    if (opts.signal?.aborted) {
+      // t-300 判据 4：这一路是**用例／调用方自己中断**。现场按 Ctrl-C 走的是 main 里的 SIGINT handler，
+      // 到不了这里——所以那一句的归属地是 handler，不是这里（pd 立的判据：一句话印在哪，由它在现场
+      // 会不会被执行到决定，不由它在用例里好不好测决定）。这里照旧说一句，是为了调用方也听得见。
+      print(WATCH_STOPPED.interrupted("abort"));
+      return last;
+    }
     opts.heartbeat?.();
     let after: string | null;
     let r: PullResult;
@@ -259,7 +265,10 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
     cursor.commit?.();                    // t-293 判据 8②：这一轮就是它的「命令结束」——长跑进程没有别的那一刻
     if (r.for_me.length) {
       print("\ninstruction received");
-      if (opts.once) return r;
+      if (opts.once) {
+        print(WATCH_STOPPED.once());   // t-300 判据 4：不是故障，所以这一句不劝重挂
+        return r;
+      }
     }
   }
 }
