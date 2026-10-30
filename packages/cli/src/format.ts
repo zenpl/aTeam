@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING } from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING, reachCountLine} from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -162,12 +162,13 @@ export function board(b: Board, me: string): string {
     }
   }
 
-  // t-307（pm 17:27）：**开着的指令按 reach 分三桶，每次都印。** 这一份是给 agent 读的板，所以照它自己的
-  // 口径印三个数，不印人那一页的那句话（出处在 core 的 `reachCountLine`，页面印它）。
-  // 中间那一桶是要它的理由：`read` ＝ 收件人拉过它、而没有任何事件引用过它，所以它的大小就是
-  // 「可能办完了而账上没清」的上界（T15）。一条老服务不发 `reach_counts`，那就不印——不替它编一个。
-  const rc = b.reach_counts;
-  if (rc) out.push("", `REACH  open ${rc.open}: unread ${rc.unread}, read ${rc.read}, acted ${rc.acted}  (read = upper bound of done-but-never-referenced, T15)`);
+  // t-307：**开着的指令按 reach 分三桶，而这一句的读者是读这块板的那个节点自己**（pd 18:15 定稿，逐字：
+  // 「发给你的还开着 N 条……」）。pd 同时定了它**不上人那一页**。中间那一桶写成「办没办看不出来」，
+  // 因为这一侧确实分不开「办了没引用」与「看见了什么也没做」（`reduce.ts:637-643`）——替其中一种说话，
+  // 说出的恰好是责备人的那一种。
+  // 一条老服务不发 `reach_counts`，那就不印：不替它编一个。零条也不印——没有开着的事，就没有要说的。
+  const mine = b.reach_counts?.by_to?.[me];
+  if (mine?.open) out.push("", reachCountLine(mine.open, mine.unread, mine.read, mine.acted));
 
   const decided = b.instructions.filter((i) => i.chosen);
   if (decided.length) {
