@@ -459,10 +459,22 @@ export const FIELD_NAME = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/;
  */
 export const isHumanText = (t: string): boolean => /[一-龥]/.test(t) || /\S\s\S/.test(t);
 
-/** 一处源码里，给人读的句子中出现的字段名。`literals` 已经把注释、正则、`${…}` 都处理掉了。 */
+/**
+ * `{{watch_interval}}` 这样的模板占位**在渲染之前就被替换掉了**，人读不到那个名字——所以它不算
+ * 「出现在给人读的句子里」。说明书整份是占位搭的，不剥掉它，这道闸会把六处占位报成六处违规。
+ */
+export const withoutPlaceholders = (t: string): string => t.replace(/\{\{[^}]*\}\}/g, "");
+
+/**
+ * 一处源码里，给人读的句子中出现的字段名。`literals` 已经把注释、正则、`${…}` 都处理掉了。
+ *
+ * **整份文件一次词法，不按声明切片。** 切完再逐片词法是不成立的：一片可能从模板串中间开始，词法从那里
+ * 就跑飞了——我第一版这么做，于是把 `interface` 里的 `key: string;` 报成了字符串字面量。
+ */
 export function fieldNamesInHumanText(src: string): { text: string; names: string[] }[] {
   const out: { text: string; names: string[] }[] = [];
-  for (const t of literals(src)) {
+  for (const t0 of literals(src)) {
+    const t = withoutPlaceholders(t0);
     if (!isHumanText(t)) continue;
     const names = [...new Set(t.match(new RegExp(FIELD_NAME, "g")) ?? [])];
     if (names.length) out.push({ text: t, names });
@@ -470,20 +482,11 @@ export function fieldNamesInHumanText(src: string): { text: string; names: strin
   return out;
 }
 
-/**
- * 此刻还欠 pd 定稿的那几处——**存位置与字段名，不存原文**（存原文就给那句话造了第二个出处，
- * `SECOND_HOME_FROZEN` 那道闸正管这件事）。pd 写完 LATE 那一段，这张表就空了。
- *
- * 它为什么不是空的：判据 3 那三处 pd 05:33 已经定稿，这第四处 pd 没写，而**措辞归 pd**——
- * 落地时顺手造一句，正是判据 5 禁的那件事。
- */
-export const FIELD_NAMES_PENDING_PD: readonly { file: string; name: string; count: number }[] = [
-  { file: "packages/cli/src/format.ts", name: "ack_by", count: 2 },
-];
 
 /**
  * 这道闸看不见的那几种，照实写下来——**一道说不出自己盲在哪儿的闸，下一个人会以为它管得比实际宽**
- * （和 SAYINGS 的盲点清单同一个用法）。清单本身住在那道闸的用例里（`cli/test/no-field-names.test.ts`
- * 的 FIELD_NAME_GATE_BLIND_SPOTS），不住在这儿：它是写给改这道闸的人的话，不是人可见的文案，
- * 放进 core 会白占一格 pd 的措辞名册。
+ * （和 SAYINGS 的盲点清单同一个用法）。清单与口径住在 `wording.ts`
+ * （`FIELD_NAME_SCOPE`、`FIELD_NAMES_DECLARED`、`undeclaredFieldNames`），因为判在不在名单里要按指纹，
+ * 而 `wordingHash` 在那边；盲点清单住在用例里（`cli/test/no-field-names.test.ts`）——它是写给改这道闸
+ * 的人的话，不是人可见的文案，放进 core 会白占一格 pd 的措辞名册。
  */

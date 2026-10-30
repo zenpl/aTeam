@@ -18,7 +18,7 @@
  * 又仍然说得出「新增的是哪几句」：拿当下源码里那几句原样印出来，指纹只用来判它在不在名单里。
  */
 import { createHash } from "node:crypto";
-import { humanSentences } from "./sayings.js";
+import { humanSentences, fieldNamesInHumanText } from "./sayings.js";
 
 /** 一句人可见的话的指纹。取 12 位十六进制：够长到不会撞，够短到快照读得下去。 */
 export const wordingHash = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 12);
@@ -876,4 +876,52 @@ export type NewWording = Wording;
 export function newWording(sources: Record<string, string>, known: readonly string[] = [...WORDING_AT_FREEZE, ...WORDING_ADDED_DURING_FREEZE]): NewWording[] {
   const seen = new Set(known);
   return measureWording(sources).filter((w) => !seen.has(w.hash));
+}
+
+/**
+ * t-292 判据 4（pd 05:33 的通则）：**哪几份源码在这道闸的口径内。**
+ *
+ * 两处渲染器（命令行印的、人打开的那一页），加上 core 里句子住的三处与服务端的 i18n。
+ * **`rules.ts` 不在口径内，而这是一条有理由的排除、不是盲点**：拒绝话要说出是哪个字段不合格，人才改得动它，
+ * 而 pd 05:30 ④ 自己定稿的那一句就带着 `ack_by`（「ack_by is required：收 30m、4h 这样的时长，也收 ISO 时刻」）。
+ */
+export const FIELD_NAME_SCOPE = [
+  "packages/cli/src/format.ts",
+  "packages/server/src/html.ts",
+  "packages/core/src/events.ts",
+  "packages/core/src/board.ts",
+  "packages/core/src/manual.ts",
+  "packages/server/src/i18n.ts",
+] as const;
+
+/**
+ * 口径内每一处「给人读的句子里带字段名」的话，**按指纹登记，不存原文**——和 `WORDING_AT_FREEZE` 同一条
+ * 理由：存原文就给那句话造了第二个出处（`SECOND_HOME_FROZEN` 正管这件事）。
+ *
+ * **逐条是哪一处、为什么还在名单上，写在那道闸的用例里**（`cli/test/no-field-names.test.ts` 的 `PENDING_PD`），
+ * 不写在这儿：那几句理由是给改这道闸的人读的，不是人可见的文案，放进 core 会白占四格 pd 的措辞名册。
+ * 用例自己断言那张表与这份指纹名单逐条对得上。
+ *
+ * **此刻四条全是等 pd 定稿，没有一条是我判成合规的**——判它合规就是替 pd 定措辞，那是判据 5 禁的。
+ */
+export const FIELD_NAMES_DECLARED: readonly string[] = [
+  "159209abc081",
+  "1d33c0a6656f",
+  "36af0208032d",
+  "4ae707eead07",
+];
+/**
+ * 口径内没被登记过的那几句。**空数组表示这道闸此刻没有新发现。**
+ *
+ * `known` 是参数而不是写死的，和 `newWording` 同一个形状：名单是口径，口径该由调用方摆出来。
+ */
+export function undeclaredFieldNames(sources: Record<string, string>, known: readonly string[] = FIELD_NAMES_DECLARED): { file: string; hash: string; field: string; text: string }[] {
+  const seen = new Set(known);
+  const out: { file: string; hash: string; field: string; text: string }[] = [];
+  for (const [file, src] of Object.entries(sources))
+    for (const h of fieldNamesInHumanText(src)) {
+      const hash = wordingHash(h.text);
+      if (!seen.has(hash)) out.push({ file, hash, field: h.names.join(","), text: h.text });
+    }
+  return out.sort((a, b) => (a.hash < b.hash ? -1 : 1));
 }

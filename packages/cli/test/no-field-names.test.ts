@@ -7,38 +7,72 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { fieldNamesInHumanText, isHumanText, FIELD_NAMES_PENDING_PD } from "@ateam/core";
+import { fieldNamesInHumanText, isHumanText, withoutPlaceholders, undeclaredFieldNames, wordingHash, FIELD_NAME_SCOPE, FIELD_NAMES_DECLARED } from "@ateam/core";
 
 /**
  * 这道闸看不见的那几种。**清单住在这儿而不在 core**：它是写给改这道闸的人的话，不是人可见的文案——
  * 放进 core 会白占三格 pd 的措辞名册（冻结那道闸的口径是产品源码里的中文字面量，不含用例）。
  */
 export const FIELD_NAME_GATE_BLIND_SPOTS = [
-  "core 里的句子不在口径内：BOARD_SHAPE 就住在 board.ts，而它正是「给机器的那一份」的说明书，里面出现字段名是对的。要连 core 一起扫，得先按声明把 BOARD_SHAPE 切出去。",
+  "整份文件一次词法，所以同一份文件里「给机器那一份的说明书」和给人读的句子分不开：判一条命中是不是例外，只能靠 FIELD_NAMES_DECLARED 里一条人写的理由。按声明切片能分开，但切完再逐片词法会从模板串中间开始跑飞（量过）。",
   "驼峰写法的字段名抓不到：这个项目的字段一律下划线连写，但哪天有人加一个 ackBy，这条正则看不见它。",
   "拼出来的字段名抓不到：`${\"ack\"}_by` 在字面量里是两段，闸只看得见单个字面量。",
 ] as const;
 
-/** 人可见的两处渲染器：命令行印的那一份、人打开的那一页。 */
-const RENDERERS = ["packages/cli/src/format.ts", "packages/server/src/html.ts"];
 const read = (f: string) => readFileSync(new URL(`../../../${f}`, import.meta.url), "utf8");
 const hits = (f: string) => fieldNamesInHumanText(read(f));
+const scope = () => Object.fromEntries(FIELD_NAME_SCOPE.map((f) => [f, read(f)]));
+
+/**
+ * 登记在案的四处，逐条是哪一处、为什么还在名单上。**理由住在这儿而不在 core**：它们是写给改这道闸的人
+ * 的话，不是人可见的文案——放进 core 会白占四格 pd 的措辞名册（冻结那道闸的口径是产品源码里的中文字面量）。
+ */
+const PENDING_PD = [
+  { hash: "159209abc081", file: "packages/cli/src/format.ts", field: "ack_by",
+    why: "LATE 段头。pd 05:33 定稿了同形状的三处（过期还没答那一段），这是第四处，它没写。" },
+  { hash: "1d33c0a6656f", file: "packages/cli/src/format.ts", field: "ack_by",
+    why: "LATE 每一行，同上。" },
+  // frontend 11:3x 的更正：下面这两条我 10:2x 说成「住在 BOARD_SHAPE 里、是给机器那一份的说明书，所以合规」。
+  // **查错了。** 它们住在 DEADLINE_WORDS，而 DEADLINE_WORDS 由 cli 的 main.ts 印在 ateam --help 里，是人读的。
+  { hash: "36af0208032d", file: "packages/core/src/board.ts", field: "overdue_by_presence",
+    why: "DEADLINE_WORDS 第二句，印在 ateam --help 里。它是一份「字段 → 这一栏覆盖什么」的词条表，所以也可以说字段名正是它的题目——但那一步归 pd 判，我只摆着。" },
+  { hash: "4ae707eead07", file: "packages/core/src/board.ts", field: "ack_by",
+    why: "DEADLINE_WORDS 第三句，同上。" },
+] as const;
 
 describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
-  it("两处渲染器此刻只剩待 pd 定稿的那几处，一处不多", () => {
-    const found = RENDERERS.flatMap((file) => hits(file).flatMap((h) => h.names.map((name) => ({ file, name }))));
-    const pending = FIELD_NAMES_PENDING_PD.flatMap((p) => Array.from({ length: p.count }, () => ({ file: p.file, name: p.name })));
-    expect(found.slice().sort((a, b) => `${a.file}${a.name}`.localeCompare(`${b.file}${b.name}`)),
-      `给人读的句子里出现了字段名：\n${found.map((f) => `  ${f.file}  ${f.name}`).join("\n")}\n` +
-      "措辞归 pd：要么 pd 写一句不带字段名的，要么它进 FIELD_NAMES_PENDING_PD；不许在落地时顺手造一句。",
-    ).toEqual(pending.slice().sort((a, b) => `${a.file}${a.name}`.localeCompare(`${b.file}${b.name}`)));
+  it("口径内一句没被登记的都没有——有就是有人新造了一处", () => {
+    const left = undeclaredFieldNames(scope());
+    expect(left,
+      `给人读的句子里出现了没登记过的字段名：\n${left.map((x) => `  ${x.file}  ${x.hash}  ${x.field}\n    ${x.text.slice(0, 90)}`).join("\n")}\n` +
+      "措辞归 pd：要么 pd 写一句不带字段名的，要么它进 FIELD_NAMES_DECLARED；不许在落地时顺手造一句。",
+    ).toEqual([]);
   });
 
-  it("那一处确实是 LATE 那一段，而不是别的什么（待办要说得出在说哪一处）", () => {
+  it("core 里那份指纹名单，与这里逐条的理由对得上（一边加一条、另一边忘了，就红）", () => {
+    expect([...FIELD_NAMES_DECLARED].sort()).toEqual(PENDING_PD.map((p) => p.hash).slice().sort());
+    for (const d of PENDING_PD) expect(d.why, d.hash).toMatch(/[一-龥]/);   // 每一条都要说得出为什么它还在名单上
+  });
+
+  it("名单上的指纹确实指向此刻源码里那四句（名单不许指向已经不存在的话）", () => {
+    const all = new Map(FIELD_NAME_SCOPE.flatMap((f) => fieldNamesInHumanText(read(f)).map((h) => [wordingHash(h.text), { f, h }])));
+    for (const d of PENDING_PD) {
+      const got = all.get(d.hash);
+      expect(got, `${d.hash} 指向的话不在源码里了：${d.why}`).toBeTruthy();
+      expect(got!.f, d.hash).toBe(d.file);
+      expect(got!.h.names, d.hash).toContain(d.field);
+    }
+  });
+
+  it("四条分别在哪：两条 LATE、两条 --help 里那张期限词条表", () => {
     const late = hits("packages/cli/src/format.ts");
     expect(late).toHaveLength(2);
-    for (const h of late) expect(h.names).toEqual(["ack_by"]);
     expect(late.some((h) => h.text.includes("LATE"))).toBe(true);
+    const words = hits("packages/core/src/board.ts");
+    expect(words).toHaveLength(2);
+    // frontend 11:3x 的更正：这两条不是 BOARD_SHAPE（给机器那一份的说明书），是 DEADLINE_WORDS，
+    // 由 cli 的 main.ts 印在 ateam --help 里。我 10:2x 把它说成合规，查错了。
+    expect(words.some((h) => h.text.startsWith("late：")), "DEADLINE_WORDS 第三句").toBe(true);
   });
 
   it("**该挡住的那一格**：往另一句人可见的话里塞一个字段名，当场抓到", () => {
@@ -53,8 +87,14 @@ describe("t-292 判据 4 · 给人读的句子里不许有字段名", () => {
     expect(fieldNamesInHumanText('b.overdue_by_presence.instructions')).toEqual([]); // 根本不是字面量
     expect(fieldNamesInHumanText('// 过了 ack_by 还没 ack')).toEqual([]);            // 注释写给读代码的人
     expect(fieldNamesInHumanText('const re = /[a-z]_[a-z]/g;')).toEqual([]);         // 正则整段跳过
-    // 拒绝话里带字段名是对的：pd 05:30 ④ 自己定稿的那一句就带着 ack_by（人要知道改哪个字段）
-    expect(hits("packages/core/src/rules.ts" as string).length).toBeGreaterThan(0);
+    // 拒绝话里带字段名是对的：pd 05:30 ④ 自己定稿的那一句就带着 ack_by（人要知道改哪个字段）。
+    // 所以 rules.ts 不在口径内，而这是有理由的排除，不是忘了——它确实有命中。
+    expect(hits("packages/core/src/rules.ts").length).toBeGreaterThan(0);
+    expect(FIELD_NAME_SCOPE).not.toContain("packages/core/src/rules.ts");
+    // 说明书整份是占位搭的：`{{watch_interval}}` 在渲染前就被换掉，人读不到那个名字
+    expect(withoutPlaceholders("每 {{watch_interval}} 探一次")).toBe("每  探一次");
+    expect(fieldNamesInHumanText('const m = "每 {{watch_interval}} 探一次";')).toEqual([]);
+    expect(hits("packages/core/src/manual.ts")).toEqual([]);
   });
 
   it("命令名、开关、路径、sha 都不是字段名（CLAUDE.md 说它们原样保留）", () => {
