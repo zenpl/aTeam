@@ -139,6 +139,41 @@ describe("t-307 判据④ · 范围里含 `/release`，而不只 `GET /`", () =>
   });
 });
 
+/**
+ * pm 18:50 在我的交付上报的形状，而立这条规矩的是 dev（它为 t-308 自己立的，判据没要）：
+ * **`Reduction` 原地 settle，所以那一份 `state` 不许跨 `await` 拿着。** 跨了，那两个 `await` 期间别的请求
+ * 可以把同一份 reduction 重新 settle 到另一个时刻，于是 await 之前算好的 `b` 与渲染时才读的 `state`
+ * 可能在说两个不同的时刻。
+ *
+ * **这个形状比 t-307 早**（t-307 只把 `board(...)` 换成 `livingBoard(board(...))`），而它在我的触点上。
+ * 修法是把要 `await` 的两样先取完。钉它的是源码的形状，因为这类缺陷**在单线程的用例里几乎不可能复现**：
+ * 要两个请求在那两个 `await` 之间交错，而一条行为用例看不见它——所以这里量的是「有没有这个形状」。
+ */
+describe("t-307 · 那一份 state 不许跨 await 拿着（pm 18:50 的形状，dev 为 t-308 立的规矩）", () => {
+  it("`GET /` 里，取到 state 与把它交给 renderBoard 之间一个 await 都没有", () => {
+    const src = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+    const open = src.indexOf('req.method === "GET" && path === "/"');
+    const body = src.slice(open, src.indexOf("renderBoard(", open));
+    const got = body.lastIndexOf("const state = await stateFor");
+    expect(got, "这一页还是得先有 state").toBeGreaterThan(0);
+    const between = body.slice(got + "const state = await stateFor".length)
+      .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(between, "要 await 的东西先取完，不许夹在 state 与渲染之间").not.toContain("await ");
+  });
+
+  it("`/release` 与 `/task/<id>` 同样：取到 state 之后直奔渲染", () => {
+    const src = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+    for (const [route, render] of [['path === "/release"', "renderRelease("], ['path.startsWith("/task/")', "renderTask("]] as const) {
+      const open = src.indexOf(route);
+      const body = src.slice(open, src.indexOf(render, open));
+      const got = body.lastIndexOf("await stateFor");
+      expect(got, `${route} 还是得先有 state`).toBeGreaterThan(0);
+      const between = body.slice(got + "await stateFor".length).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+      expect(between, `${route}：state 与渲染之间不许有 await`).not.toContain("await ");
+    }
+  });
+});
+
 describe("t-307 判据② · 大小与项目活过多久无关", () => {
   it("历史涨四倍，这一页一个字节都不涨（完结的任务 ＋ 签收过的指令）", async () => {
     const one = await page(10);

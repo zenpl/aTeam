@@ -522,13 +522,21 @@ export function createApp(opts: ServerOptions) {
           await store.setCursor({ actor: human, last_event_id: before.read_upto.get(human) ?? null, at: real().toISOString() });
         }
         await remind();
+        // pm 18:50 报的形状，dev 为 t-308 立的那条规矩：**`Reduction` 原地 settle，所以这一份 state 不许跨
+        // `await` 拿着**——而这一行的 `state` 正要交给 `renderBoard`，中间隔着两个 `await`（邀请链接、主人钥匙）。
+        // 那两个 `await` 期间，别的请求可以把同一份 reduction 重新 settle 到另一个时刻，于是 `b`（await 之前算好
+        // 的快照）与 `state`（渲染时才读）可能在说两个不同的时刻。
+        // **这个形状比 t-307 早**（我只把 `board(...)` 换成了 `livingBoard(board(...))`），而它在我的触点上、
+        // 由 pm 在我的交付上报出来，所以我在这里修：要 `await` 的两样先取完，此后到渲染为止一个 `await` 都没有。
+        const inviteUrl = isAdmin ? `${origin}/invite/${(await registry.currentInvite(projectId)).code}` : undefined;
+        const ownerKey = await ownerKeyState();
         const state = await stateFor(projectId, store);
         // t-307 判据①：**人那一页只由活着的事组成。** 基线（qa 16:29）是 80% 是历史——tasks 53.7% ＋
         // instructions 26.4%。判据⑤：不许把成因说成缓存——这一行上面的 `stateFor` 就是那层缓存，它早就在了，
         // **而缓存不封顶回包**：回包仍随历史线性长。所以动的是这一份里有什么（`livingBoard`），不是外面再套一层。
         const b = livingBoard(board(state, human, now()), human);
-        if (isAdmin) b.invite_url = `${origin}/invite/${(await registry.currentInvite(projectId)).code}`;
-        b.owner_key = await ownerKeyState();
+        if (inviteUrl) b.invite_url = inviteUrl;
+        b.owner_key = ownerKey;
         return html(res, 200, renderBoard(b, state, { sha, canDecide: mayActAsHuman, human, base, ask: url.searchParams.get("ask") }));
       }
 
