@@ -128,7 +128,23 @@ describe("t-306 判据② · 读取那一侧整个坏掉，人说的话照旧落
     expect(await said.text()).toContain(UI.receipt.landed);
     // 注入是真的：它一次都没被叫过。若被叫过，上面三条全是 500——这就是这一格的对照。
     expect(store.reads, "人碰到的路里一次 read() 都不许有").toBe(before);
+    /**
+     * **下面四行是 dev 合并时加的（t-308 的接缝义务），不是 frontend 写的**——我 18:14 把缺口报给它、
+     * 说「若它没补，我合的时候补上并在证据里写明是我加的」，此刻就是那一刻。
+     *
+     * 缺口：上面那一格靠「reads 没有增加」来对照，而这只在那个 override 真的还覆盖着基类方法时才说明
+     * 问题。我量过两件：packages/server/tsconfig.json 只 include ["src"]，**用例文件从不被类型检查**
+     * （vitest 用 esbuild 抹类型、不检查）；而把 MemoryStore.read 改名会让 core 自己编译红 6 处——
+     * **所以这一次挡住它的不是这一格，是 core 里别处在调 read()**。换一个 core 能容忍的改动，这一格会
+     * 一次都不叫 read()、计数恒为 0、测试全绿，而它什么也没守。
+     *
+     * 所以按 pm 18:20 立的第三层：**对照格要自证活着。** 下面三行把它从「它没被叫过」升成
+     * 「它没被叫过，**而且我证明了我叫得动它**」。
+     */
     store.broken = false;
+    const live = store.reads;
+    await store.read();
+    expect(store.reads, "计数器与 override 都得是活的，否则上面那一格空着也能过").toBe(live + 1);
   });
 
   it("**而 `/say` 仍然成**：回执出得来，那句话进了日志，再读一次日志看得见它", async () => {

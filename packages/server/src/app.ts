@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
+import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, receiptPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -309,18 +309,52 @@ export function createApp(opts: ServerOptions) {
 
       // Global: the newcomer's manual, and the role manuals. Generic by construction, so they need no key.
       if (req.method === "GET" && (path === "/manual" || (path === "/" && !wantsHtml && !m))) return markdown(res, welcome(origin));
+      const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
+      // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
+      // token is the default project's admin key. A key of another project is refused outright below, after the
+      // project is known — t-308 left that check where it was on purpose.
+      const presented = bearer(req) ?? cookie(req, cookieName);
+      const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
+      /**
+       * t-308 判据⑦：**无钥匙的人只拿得到与项目无关的那一份。**
+       *
+       * 判法是 pd 19:07 的一问：**把项目 id 换成另一个，这句话会不会变？会变，它就依赖那个项目。**
+       * 我按这一问逐行量过两个自建项目的输出：真正会变的只有 `responsibilityAppendix` 的整个输出
+       * （`/manual/dev` 变 3 行、`/manual/pd` 变 2 行，其余 113–116 行逐字相同）——**而那个函数的空名单
+       * 分支正是「这个项目没有为 X 声明任何职责」**，所以连它一起就齐了（pd 原先按「哪一段文字」划会漏掉它）。
+       *
+       * 这里不是「按名字挡住职责那一段」，是**按依赖挡住所有取决于这个项目的句子**，而此刻它们恰好全由
+       * 那一个函数产生。将来谁往这条路上加一句取决于项目的话，该做的是让它也走这道闸，不是再加一个名字。
+       */
+      const hasProjectKey = !!record && record.project === projectId;
       if (req.method === "GET" && path.startsWith("/manual/")) {
         const role = decodeURIComponent(path.slice("/manual/".length));
         // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
-        const known = await registry.get(projectId);
-        const packing = known ? roleResponsibilities(reduce(await storeFor(projectId).read(), undefined, human)) : null;
+        // t-309 判据③（pd 19:39）：**无钥匙时连这次 registry 查询都不做。** 定稿的原话是「状态码必须在不查那个
+        // 项目的情况下算出来」——所以这里不是「算出来之后抹掉差别」，是**压根不去问那个项目**。两者对外一样，
+        // 而后者让「它会不会泄露」变成读一行代码就能回答的事，不必再去比两个回包。
+        const known = hasProjectKey ? await registry.get(projectId) : null;
+        // t-308 判据①：**这一行此前每次请求都把整本日志重放一遍**（`reduce(await …read())`），而它上面那句注释写着
+        // 「generic by construction, so they need no key」——**不要钥匙 ＋ 每次重算整本日志，叠在一处才是那张单的内容**。
+        // 改走与 `GET /` 同一个增量缓存。原来那个 `undefined` 不是「跳过 settle」：`reduce` 的签名是
+        // `now: Date = new Date()`，所以它本来就等于「此刻」——**换过来不改行为，只是不再从头折叠一次**。
+        const packing = known ? roleResponsibilities(await stateFor(projectId, storeFor(projectId))) : null;
         const text = manualFor(role, packing?.[role]);
         // t-292（pd 05:30 ②）：**全局那个地址上没有项目**，所以不能说「这个项目没有 X 这个角色」。
         // 两条路分开：带 `/p/<id>` 的照旧说项目里没这个角色；不带的说 pd 改稿那一句（出处在 core）。
+        // t-309 判据③⑦⑧：无钥匙时三样可观测量（句子、状态码、长度）都不许依赖项目，所以这一支与项目无关；
+        // 带钥匙的那两支一个字没动（`/p/<id>` 照旧指 project:roles，全局照旧是 pd 05:30 那一句）。
+        if (text === null && !hasProjectKey) return json(res, 404, { error: "not found", message: MANUAL_ONLY_GENERIC });
         if (text === null) return json(res, 404, m
           ? { error: "not found", message: `这个项目没有 ${role} 这个角色；在事实 project:roles 里声明它（{"<角色>": ["R5"]}），就有说明书` }
           : { error: "not found", message: NO_PROJECT_AT_THIS_ADDRESS });
         // t-059: the project's own packing at the end, when the project exists
+        // 判据⑦②③：会变的那些在无钥匙时不出现，而与项目无关的那一份**仍然无钥匙可得**（M1／S8）。
+        //
+        // **这里原来还写着 `&& hasProjectKey`，我把它去掉了，而去掉它的理由是我自己的反向注入**：摘掉那一半
+        // 之后 19 条用例全绿——因为闸真正生效的地方在上面那一行（无钥匙时连 `registry.get` 都不做，于是
+        // `packing` 本来就是 null）。**一个摘掉也不红的守卫，不是双保险，是一处说不出自己守住了什么的代码**；
+        // 而它若留着，下一个人会以为这里有一道闸，从而放心去改上面那一行。闸只留一处，而那一处有注入证过。
         return markdown(res, packing ? text + responsibilityAppendix(role, packing[role] ?? []) : text);
       }
 
@@ -357,8 +391,16 @@ export function createApp(opts: ServerOptions) {
           if (caps instanceof Error) return json(res, 400, { error: "capabilities", message: caps.message });
           const pstore = storeFor(owner.id);
           const result = await serialize(async () => {
-            const state = reduce(await pstore.read(), now(), human);
+            // t-308 判据②：同样不再重放整本日志。
+            //
+            // **而换成增量缓存之后多一条必须守的规矩，它是 `Reduction` 自己写着的**：那一份 state 是**原地 settle 的
+            // 共享对象**，所以「不许把它跨 await 拿着」。此前这里是 `reduce()` 现折一份私有的，跨 await 拿着没事；
+            // 换成共享那一份之后，下面每一个 `await`（registry、append）期间都可能有另一个请求把它重新 settle。
+            // 所以**要用的三样在第一个 await 之前一次性取完**，此后一次都不再碰 state。
+            const state = await stateFor(owner.id, pstore);
             const roles = projectRoles(state);
+            const missingNow = new Set(roles.filter((r) => isMissing(state, r, now())));
+            const resp = roleResponsibilities(state);
             const nodes = await registry.nodes(owner.id);
             const mine = nodes.find((n) => n.agent_id === agentId);
             let role = mine?.role ?? (typeof body.role === "string" ? body.role.trim() : "");
@@ -371,7 +413,7 @@ export function createApp(opts: ServerOptions) {
               // the first node is pm (Q15); after that, the first role nobody present holds
               // 自动分配也不许分到人身上（判据 4：不许只堵显式指定那一半）
               const assignable = roles.filter((r) => r !== human);
-              role = first && assignable.includes("pm") ? "pm" : assignable.find((r) => isMissing(state, r, now())) ?? "";
+              role = first && assignable.includes("pm") ? "pm" : assignable.find((r) => missingNow.has(r)) ?? "";
               if (!role) return { status: 409, body: { error: "full", message: "角色都在场；要顶替谁就指定 role", available: roles } };
             }
             const { key, created } = await registry.nodeKey(owner.id, agentId, role);
@@ -389,7 +431,7 @@ export function createApp(opts: ServerOptions) {
               // decision after the human said 外呼地址先不做; the moment the fact is set, the follow-up above sends it.
             }
             for (const e of out) bus.emit("append", { project: owner.id, e });
-            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, roleResponsibilities(state)[role] ?? []) : "", first, created } };
+            return { status: created ? 201 : 200, body: { role, node_key: key, project: owner.id, project_url: `${origin}/p/${encodeURIComponent(owner.id)}`, board_url: `${origin}/p/${encodeURIComponent(owner.id)}/`, manual: manual(role) ? manual(role)! + responsibilityAppendix(role, resp[role] ?? []) : "", first, created } };
           });
           return json(res, result.status, result.body);
         }
@@ -399,17 +441,15 @@ export function createApp(opts: ServerOptions) {
       const project = await registry.get(projectId);
       if (!project) return json(res, 404, { error: "not found", message: `没有项目 ${projectId}` });
       const store = storeFor(projectId);
-      const cookieName = projectId === defaultProject ? COOKIE : `${COOKIE}_${projectId}`;
       // t-212：这一请求是谁在发、往哪本账记，供统一出口用。牌桌那几个按钮是人点的，所以先按人算；
       // 走 API 那一路解析出 x-actor 之后会改写它。存储也要在这里留一份引用——统一出口在 catch 里，
       // 而 catch 看不见 try 里声明的那个 store。
       whoIsAsking = human;
       refusalStore = store;
 
-      // Who is speaking: the presented key (Bearer or cookie) resolved against the registry. The legacy shared
-      // token is the default project's admin key. A key of another project is refused outright.
-      const presented = bearer(req) ?? cookie(req, cookieName);
-      const record: KeyRecord | null = presented ? await registry.lookup(presented) : null;
+      // t-308 判据⑦：**上面那三行搬到了 /manual 之前**（原来在这儿），因为那条路也要知道来的人有没有钥匙。
+      // 而这一条「这把钥匙属于另一个项目」的 403 **留在原处没动**：把它一并提前，会让带着别项目钥匙去
+      // POST /invite/<code>/join 的请求从「加入」变成 403——那是另一件事，本件不碰。
       if (record && record.project !== projectId) return json(res, 403, { error: "forbidden", message: "这把钥匙属于另一个项目" });
       const isAdmin = !!record && record.role === null;
       const isOwner = !!record && record.role === human;
