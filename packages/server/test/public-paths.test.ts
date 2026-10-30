@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, append, type Log } from "@ateam/core";
+import { MemoryStore, append, MANUAL_ONLY_GENERIC, type Log } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { MemoryRegistry } from "../src/projects.js";
 import { TEST_OWNER_SECRET } from "./owner.js";
@@ -86,5 +86,61 @@ describe("t-308 判据② · `POST /invite/<code>/join` 不再重放整本日志
     expect(body.node_key, "并且拿到钥匙").toBeTruthy();
     expect(store.reads, "一次整本读取都不许有").toBe(before);
     await provesItCanSee("判据②");
+  });
+});
+
+/**
+ * t-309 判据③⑦⑧（pd 19:39 定稿、pm 19:43 合成一句）：**无钥匙时，三样可观测量都不许依赖项目——句子、状态码、长度。**
+ *
+ * 前两样我 19:20 量出来过，第三样是 qa 19:31 量的：真项目 13,907 B／不存在的项目 13,453 B，
+ * **那两个字节数本身就回答了「这个项目存不存在」**。按「哪一段文字」划闸看不见它，按「依赖什么」划就看得见。
+ */
+describe("t-309 · 无钥匙的调用者分不出项目：句子、状态码、长度三样都一样", () => {
+  const anon = (path: string) => fetch(`${base}${path}`, { headers: { accept: "text/markdown" } });
+  const read = async (path: string) => { const r = await anon(path); const t = await r.text(); return { status: r.status, bytes: Buffer.byteLength(t, "utf8"), text: t }; };
+  let real = "";
+
+  beforeAll(async () => {
+    store.broken = false;
+    real = (await (await fetch(`${base}/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "真的项目" }) })).json() as { project: string }).project;
+    await append(store, { kind: "reading", actor: "pm", surface: "project", key: "roles", value: { dev: ["R5", "R9"], legal: ["R9"] } }, { human: HUMAN });
+  });
+
+  it("**长度**：真项目与两个不存在的项目，无钥匙拿到的回包逐字节一样长（判据⑦①②）", async () => {
+    const a = await read(`/p/${real}/manual/dev`);
+    const b = await read("/p/没这个项目/manual/dev");
+    const c = await read("/p/也没有这个/manual/dev");
+    expect(a.status).toBe(200);
+    expect(b.bytes, "两个不同的假 id 之间先得一样").toBe(c.bytes);
+    expect(a.bytes, `真项目 ${a.bytes} B ／ 假项目 ${b.bytes} B——这两个数本身不许回答「这个项目存不存在」`).toBe(b.bytes);
+    expect(a.text, "连正文也逐字相同").toBe(b.text);
+  });
+
+  it("**状态码**：声明过的自定义角色与没声明的，无钥匙都是 404，而且是同一句（判据③）", async () => {
+    const declared = await read(`/p/${real}/manual/legal`);     // 这个项目真声明了 legal
+    const nowhere = await read("/p/没这个项目/manual/legal");
+    expect(declared.status, "声明过也不许因此变成 200——那正是泄露").toBe(404);
+    expect(nowhere.status).toBe(404);
+    expect(JSON.parse(declared.text).message).toBe(MANUAL_ONLY_GENERIC);
+    expect(declared.text, "连字节都一样").toBe(nowhere.text);
+  });
+
+  it("**通用那一份照旧无钥匙可得**（判据②后半：不许顺手收紧 M1／S8）", async () => {
+    const a = await read("/manual/dev");
+    expect(a.status).toBe(200);
+    expect(a.text).toContain("第一句就是全部");
+    expect(a.text, "而依赖项目的那一节不出现").not.toContain("## 你在这个项目里持有的职责");
+  });
+
+  it("判据⑧那张表：五行里无钥匙的那几行再也分不出项目，而带钥匙的照旧分得出——**对照就在同一条里**", async () => {
+    const keyed = async (path: string) => { const r = await fetch(`${base}${path}`, { headers: { accept: "text/markdown", authorization: `Bearer ${TOKEN}` } }); return { status: r.status, text: await r.text() }; };
+    // 无钥匙：真项目与假项目，两问两样都一致
+    expect((await read(`/p/${real}/manual/dev`)).text).toBe((await read("/p/没这个项目/manual/dev")).text);
+    expect((await read(`/p/${real}/manual/legal`)).status).toBe((await read("/p/没这个项目/manual/legal")).status);
+    // 带钥匙：同一个地址分得出来——**这就是这一格的自证**：若闸被摘掉，上面两行会红；若闸把带钥匙的也挡了，这两行会红。
+    const k1 = await keyed(`/manual/dev`);
+    expect(k1.text, "带钥匙看得见这个项目给 dev 的那一节").toContain("## 你在这个项目里持有的职责");
+    const k2 = await keyed(`/manual/legal`);
+    expect(k2.status, "带钥匙时这个项目声明过的自定义角色照旧 200").toBe(200);
   });
 });

@@ -137,7 +137,13 @@ describe("t-081 · any declared role has a manual, assembled from its responsibi
     // t-292（pd 05:30 ②）：**全局**这个地址上没有项目，所以它不再说「去 project:roles 声明」——那是假话。
     // 两边都钉：全局说 pd 改稿那一句；带 `/p/<id>` 的那条路照旧指 project:roles（下面一条）。
     expect((await (await get("release-manager")).json()).message).toBe(NO_PROJECT_AT_THIS_ADDRESS);
-    const inProject = await fetch(`${base}/p/${encodeURIComponent("default")}/manual/release-manager`);
+    // t-309 判据③（pd 19:39）：**无钥匙时这条路不再问那个项目**，所以这一问要带钥匙才看得见项目那一支。
+    // 这条用例本来钉的那件事一个字没变（带项目的那条路要指 project:roles，而不是说「这个地址上没有项目」）；
+    // 变的是**谁看得见它**。无钥匙那一面在 public-paths.test.ts 里另有一格专钉。
+    // 另外一处也跟着对：原来写的是 `/p/default`，而这台服务的默认项目 id 是 `ateam`（createApp 的默认值），
+    // 于是那把共享钥匙属于 `ateam`、不属于 `default`——**无钥匙那条路此刻不问项目，所以它会走通用那一句**。
+    // 改成问真正的那个项目，这一条钉的「带项目的那条路要指 project:roles」才落在它该落的地方。
+    const inProject = await fetch(`${base}/p/${encodeURIComponent("ateam")}/manual/release-manager`, { headers: { authorization: "Bearer secret" } });
     if (inProject.status === 404) expect((await inProject.json()).message, "带项目的那条路仍该指 project:roles").toContain("project:roles");
     expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4"], be: ["R5", "R9"], fe: ["R5"], "release-manager": ["R9"], "ux-scanner": ["R12"] } })).status).toBe(201);
     for (const [role, must, mustNot] of [
@@ -200,7 +206,9 @@ describe("t-090 · the 搬家 section, and every name in it really exists", () =
     expect(s).toContain("他回答之前，不要动旧渠道");
     // criterion 4: assembled the same way for a role this repository never heard of
     await fetch(`${base}/events`, { method: "POST", headers: { authorization: "Bearer secret", "x-actor": "pm", "content-type": "application/json" }, body: JSON.stringify({ kind: "reading", surface: "project", key: "roles", value: { pm: ["R1"], "release-manager": ["R9"] } }) });
-    const other = await (await fetch(`${base}/manual/release-manager`)).text();
+    // t-309 判据③：自定义角色名无钥匙时一律 404（同一句、不问项目），所以这一问带上钥匙。
+    // 这条用例钉的是「搬家那一节对任何声明过的角色都在」，一个字没变。
+    const other = await (await fetch(`${base}/manual/release-manager`, { headers: { authorization: "Bearer secret" } })).text();
     expect(section(other)).toBe(s);
     for (const re of OVERFIT) expect(s, `搬家 leaks ${re}`).not.toMatch(re);
   });

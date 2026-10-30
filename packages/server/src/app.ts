@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
+import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, receiptPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -330,7 +330,10 @@ export function createApp(opts: ServerOptions) {
       if (req.method === "GET" && path.startsWith("/manual/")) {
         const role = decodeURIComponent(path.slice("/manual/".length));
         // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
-        const known = await registry.get(projectId);
+        // t-309 判据③（pd 19:39）：**无钥匙时连这次 registry 查询都不做。** 定稿的原话是「状态码必须在不查那个
+        // 项目的情况下算出来」——所以这里不是「算出来之后抹掉差别」，是**压根不去问那个项目**。两者对外一样，
+        // 而后者让「它会不会泄露」变成读一行代码就能回答的事，不必再去比两个回包。
+        const known = hasProjectKey ? await registry.get(projectId) : null;
         // t-308 判据①：**这一行此前每次请求都把整本日志重放一遍**（`reduce(await …read())`），而它上面那句注释写着
         // 「generic by construction, so they need no key」——**不要钥匙 ＋ 每次重算整本日志，叠在一处才是那张单的内容**。
         // 改走与 `GET /` 同一个增量缓存。原来那个 `undefined` 不是「跳过 settle」：`reduce` 的签名是
@@ -339,6 +342,9 @@ export function createApp(opts: ServerOptions) {
         const text = manualFor(role, packing?.[role]);
         // t-292（pd 05:30 ②）：**全局那个地址上没有项目**，所以不能说「这个项目没有 X 这个角色」。
         // 两条路分开：带 `/p/<id>` 的照旧说项目里没这个角色；不带的说 pd 改稿那一句（出处在 core）。
+        // t-309 判据③⑦⑧：无钥匙时三样可观测量（句子、状态码、长度）都不许依赖项目，所以这一支与项目无关；
+        // 带钥匙的那两支一个字没动（`/p/<id>` 照旧指 project:roles，全局照旧是 pd 05:30 那一句）。
+        if (text === null && !hasProjectKey) return json(res, 404, { error: "not found", message: MANUAL_ONLY_GENERIC });
         if (text === null) return json(res, 404, m
           ? { error: "not found", message: `这个项目没有 ${role} 这个角色；在事实 project:roles 里声明它（{"<角色>": ["R5"]}），就有说明书` }
           : { error: "not found", message: NO_PROJECT_AT_THIS_ADDRESS });
