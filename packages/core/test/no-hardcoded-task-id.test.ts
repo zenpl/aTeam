@@ -57,6 +57,20 @@ describe("t-290 判据 1 · 平台代码里不许写死本项目任务 id", () =
     ]) expect([...src.matchAll(HARDCODED)], src).toHaveLength(0);
   });
 
+  /**
+   * **这道闸看不见什么，说在明处**（同 LITERAL_CHECK_BLIND_SPOTS 那条规矩）：判据点名的形状是「常量」，
+   * 所以把 id 直接写成实参的那种它抓不到——`ruleLiveAt(s, "t-147")` 一样是写死，而闸是绿的。
+   * 我反向注入时撞到了这一点：那次注入红的是分桶那条用例，不是这道闸。
+   *
+   * 不顺手收紧，理由有二：① 收紧就必须放过 `fixture.ts` 的 `t-1` 与 `READING_SAYINGS` 的 `sample`，
+   * 那又回到一份「哪几处放过」的名单（要么误伤要么被绕）；② 判据怎么收归 pm，不归我顺手。
+   * **缺口写下来，下一个人不必再撞一次。**
+   */
+  it("看不见的那一种：id 直接当实参写死时闸是绿的——缺口在这儿，不在别处", () => {
+    expect([...`const since = ruleLiveAt(s, "t-147");`.matchAll(HARDCODED)], "它抓不到").toHaveLength(0);
+    expect([...`const ACTED = "t-147";`.matchAll(HARDCODED)], "这一种抓得到").toHaveLength(1);
+  });
+
   it("范围是走出来的，不是一份名单：这两个目录底下真的有文件被扫到", () => {
     const n = PLATFORM.reduce((a, d) => a + sourceFiles(`${repo}/${d}`, d).filter(isProductSource).length, 0);
     expect(n, "一个文件都没扫到的闸是绿的，但它什么也没守").toBeGreaterThan(10);
