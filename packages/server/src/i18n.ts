@@ -1,4 +1,4 @@
-import { SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
+import { RECEIPT, SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -236,6 +236,10 @@ export const UI = {
   shapeNoKeyAnywhere: "这一整段里没有 k=。",
   unauthorized: "这个页面需要项目 token。请打开一次",
   unauthorizedTail: "，之后会保存在 cookie 里。",
+
+  // t-306：**那一组话住在 core 的 `RECEIPT`**，不住在这里——这里是第二个家，而 `SECOND_HOME_FROZEN`
+  // 那道棘轮写着「新增的人可见的话一律进 core」。我第一版写在这儿，闸当场红在 344 vs 336。
+  receipt: RECEIPT,
 
   /**
    * Relative time, in words — core's ladder, not a second one (t-180). The page used to round and to run its

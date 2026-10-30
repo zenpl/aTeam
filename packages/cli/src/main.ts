@@ -17,7 +17,7 @@ import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, identityOf, ty
 import { stashUnseen, stashNotice, unseenRows, clearUnseen, capUnseen } from "./unseen.js";
 import { seamAbsorbName } from "./seamparts.js";
 import { tellPrecheck } from "./precheck.js";
-import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, type ShipOutcome } from "./refusalqueue.js";
+import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadShipState, saveShipState, shipSilenceNotice, markSaid, shouldShip, type ShipOutcome } from "./refusalqueue.js";
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { titleAsShown, cardTitleLine, type InstructionIntent } from "@ateam/core";
@@ -965,12 +965,41 @@ function sayIfDeaf(argv: string[]): void {
  * ② 队空就一个请求都不发；③ 服务回 `counted: false`（那个存储没有这本账）时一条都不划——
  * **「其实没记下却当成记下了」正是这件任务在修的那个病**。
  */
+/**
+ * t-296 判据 1：**纯本地命令不为捎这本账等服务端。**
+ *
+ * t-218 立的规矩是「在**下一次通信**里捎给服务」，而 `help`、`fixture`、以及打错字印用法那一次**根本不是
+ * 一次通信**——它们一个请求都不该发。此前它们照样发：于是生产上 `POST /refusals` 回 404（而那一次 404 要
+ * 58.2 秒）时，`ateam help` 在这棵树里量到 **47,063 毫秒**，在空目录里 **127 毫秒**——差的那 47 秒全是替
+ * 一本账等一台服务。**队列长度不该改变一条纯本地命令的用时**，这是判据（pm 08:44 ②）要钉的那一句。
+ *
+ * 打错字那一路不在这张名单上，而它同样不发请求：用法错是抛 `UsageError`，走顶层的 `catch`，**那一路从来
+ * 不叫 `shipRefusals`**（它只往队里追一行）。我量过才这么写，没有照名字猜。
+ */
+export const LOCAL_ONLY: readonly string[] = ["help", "fixture"];
+
+/** 这一条命令该不该捎这本账。**纯函数**，这样「跳过」这件事能被直接指着测，而不是只能靠计时推断。 */
+export function shipsOn(argv: readonly string[]): boolean {
+  if (argv.includes("--help")) return false;          // 任何命令带 --help 印的都是 HELP，不通信
+  const cmd = argv.find((a) => !a.startsWith("-"));
+  if (!cmd) return false;                             // 一个参数都没有，印的也是 HELP
+  return !LOCAL_ONLY.includes(cmd);
+}
+
 async function shipRefusals(): Promise<void> {
   try {
+    // 判据 1：先问这条命令该不该通信。**放在最前**——`meOf`/`pendingRefusals` 都要读盘，而纯本地命令
+    // 连这几次读盘都不必为它付。
+    if (!shipsOn(ARGV)) return;
     const me = meOf();
     if (!me) return;
     const queued = pendingRefusals(process.cwd(), me);
     if (!queued.length) return;
+    const now = new Date();
+    const before = loadShipState(process.cwd(), me);
+    // 判据（pm 08:44 ①）：**退避。** 还没到下一次该试的时刻就一个请求都不发——此前是每条命令各重试一次、
+    // 零退避，于是一台不可达的服务让这台机器后面每一条命令都各付一次超时的钱。
+    if (!shouldShip(before, now)) return;
     const cfg = loadConfig();
     let outcome: ShipOutcome = "ok";
     try {
@@ -979,10 +1008,13 @@ async function shipRefusals(): Promise<void> {
       // （id 或规则名不成形），那是队里那几行的毛病，不是这条路捎不过去——不该算进这个连续失败。
       if (counted === false) outcome = "not-counted";
       clearRefusals(process.cwd(), me, recorded);
-    } catch { outcome = "unreachable"; }   // 没捎成就还在队里，下一条命令再捎（t-218，这一条一个字没改）
+    } catch (err) {
+      // 判据（pm 12:43 ①③）：**404 是「这台服务没有这条路」，那是永久的，不是「暂时不可达」。**
+      // 按这件事在说什么判，不按形状判（同 t-300 判据 1）；它有自己一格，也有自己那一档退避（一天一次）。
+      outcome = err instanceof ClientError && err.status === 404 ? "no-route" : "unreachable";
+    }   // 没捎成就还在队里，下一条命令再捎（t-218，这一条一个字没改）
     // t-284：**这一次的沉默照旧，长期的沉默不照旧。** 一句话走 stderr，退出码与 stdout 一个字不动。
-    const now = new Date();
-    let st = afterShip(loadShipState(process.cwd(), me), outcome, now);
+    let st = afterShip(before, outcome, now);
     const line = outcome === "ok" ? null : shipSilenceNotice(st, pendingRefusals(process.cwd(), me), now);
     if (line) { console.error(line); st = markSaid(st, now); }
     saveShipState(process.cwd(), me, st);

@@ -241,8 +241,10 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
 
     // t-234：token 小页面收的是**人自己那条地址上的钥匙**；管理钥匙进得来牌桌，但按不动他的按钮
     const right = await w.form("/token", { then: "/decide", id: ask.id, option: "公开", token: w.owner });
-    expect(right.status).toBe(303);
-    expect(right.headers.get("location")).toBe("/");
+    // t-306：**这里原来断言 303 跳回牌桌**。那一跳没了（成功之后给一页回执），所以这一条改成 200。
+    // 这条用例本来要钉的那件事一个字没变——它数的是「这一下落下去了、牌桌随后怎么变」，而不是「服务用哪种方式把人送回去」。
+    expect(right.status).toBe(200);
+    expect(right.headers.get("location"), "t-306：办了事之后是一页回执，不再跳回牌桌").toBeNull();
     const cookie = right.headers.get("set-cookie") ?? "";
     expect(cookie).toMatch(/^ateam_token=/);
     expect(cookie).toMatch(/HttpOnly/);
@@ -261,7 +263,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     const cookie = await w.cookie();
     const before = (await (await w.api("/log")).json()).events.length;
     const defer = await w.form("/ack", { id: doIt.id, note: "点了「先不做」，没写原因" }, { cookie, accept: "text/html" });
-    expect(defer.status).toBe(303);
+    expect(defer.status).toBe(200);
     const events = (await (await w.api("/log")).json()).events.slice(before);
     expect(events.map((e: { kind: string; actor: string }) => [e.kind, e.actor])).toEqual([["ack", HUMAN], ["note", HUMAN]]);
     expect(events[1]).toMatchObject({ body: "先不做：点了「先不做」，没写原因", refs: [doIt.id] });
@@ -269,7 +271,7 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(bd.instructions.find((i: { id: string }) => i.id === doIt.id).deferred).toMatchObject({ body: "点了「先不做」，没写原因" });
 
     const ack = await w.form("/ack", { id: tell.id }, { cookie, accept: "text/html" });
-    expect(ack.status).toBe(303);
+    expect(ack.status).toBe(200);
     const html = await w.page({ cookie });
     expect(section(html, "needs-you", "say")).toContain("没有等你的事。");
     expect(html).toMatch(/<p class="recent">你刚点了：今天不再部署了 → <b>知道了<\/b>/);
@@ -451,13 +453,13 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     expect((await fetch(`${w.base}/board?full=1`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(400);
   });
 
-  it("说一句 end to end: with the cookie, say → 303 → 已收到; a task --refs it → 已成为任务：<标题>; the input box sits between 需要你 and 现在", async () => {
+  it("说一句 end to end: with the cookie, say → 回执 → 已收到; a task --refs it → 已成为任务：<标题>; the input box sits between 需要你 and 现在", async () => {
     const v = server();
     await v.start();
     try {
       const cookie = await v.cookie();
       const say = await v.form("/say", { text: "登录页太慢了" }, { cookie, accept: "text/html" });
-      expect(say.status).toBe(303);
+      expect(say.status).toBe(200);
       let html = await v.page({ cookie });
       const s = section(html, "say", "now");
       expect(html).toMatch(/<section class="say" id="say">\n<form class="" method="post" action="\/say"><input type="text" name="text" maxlength="500" placeholder="跟团队说一句：想要什么、什么坏了"/);
@@ -911,7 +913,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect((await v.form("/decide", { id, option: "填写", value: "  " }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await (await v.api("/events")).json()).events.length).toBe(before);
       const r = await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" });
-      expect(r.status).toBe(303);
+      expect(r.status).toBe(200);
       html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain('<p class="recent">你刚定了：<b>找你用 https://hooks.example/me</b>');
@@ -928,7 +930,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
     try {
       const { id } = await ask(v);
       const cookie = await v.cookie();
-      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(200);
       let html = await v.page({ cookie });
       expect(html).not.toContain('data-kind="do"');
       expect(html).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
@@ -947,14 +949,14 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       expect((await v.form("/fact", { key: "alert.webhook", value: "not an address" }, { cookie, accept: "text/html" })).status).toBe(400);
       expect((await v.form("/fact", { key: "alert.webhook", value: "me@example.org" }, { cookie, accept: "text/html" })).status).toBe(400); // only a webhook can be called
       expect((await v.form("/fact", { key: "deployed.sha", value: "https://h.example/x" }, { cookie, accept: "text/html" })).status).toBe(400);
-      expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/fact", { key: "alert.webhook", value: "https://hooks.example/abc" }, { cookie, accept: "text/html" })).status).toBe(200);
       html = await v.page({ cookie });
       expect(html).toContain('<p class="meta contact-line">记下了外呼地址，还没真发成功过——不知道你收不收得到。</p>');
       // reopened with an address: the input is prefilled
       html = await (await fetch(`${v.base}/?ask=alert`, { headers: { accept: "text/html", cookie } })).text();
       expect(html).toContain('autocomplete="off" value="https://hooks.example/abc">');
       // the token page carries the address the anonymous human typed (then=/fact)
-      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: v.owner })).status).toBe(303);
+      expect((await v.form("/token", { then: "/fact", key: "alert.webhook", value: "https://hooks.example/xyz", token: v.owner })).status).toBe(200);
       expect((await v.page({ cookie })).includes("记下了外呼地址，还没真发成功过——不知道你收不收得到。")).toBe(true);
     } finally { await v.stop(); }
   });
@@ -979,7 +981,7 @@ describe("t-069 · 起项目第二张卡：你不在时怎么找你（pd 21:08�
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       html = await v.page({ cookie });
       expect(html).toContain("<p class=\"q\">你不在时怎么找你？</p>");
-      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(200);
       expect(await v.page({ cookie })).toContain("记下了外呼地址，还没真发成功过——不知道你收不收得到。");
       // an address recorded any other way also counts as on
       const u = server();
@@ -1131,7 +1133,7 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
       const note = await migrate(v);
       const id = JSON.parse(await (await v.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
       const cookie = await v.cookie();
-      expect((await v.form("/decide", { id, option: "对" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "对" }, { cookie, accept: "text/html" })).status).toBe(200);
       let html = await v.page({ cookie });
       expect(card(html)).toBe("");
       expect(html).toContain('<p class="recent">你刚定了：<b>清单对</b>');
@@ -1144,7 +1146,7 @@ describe("t-095 · S9/M4 核对卡：搬过来了，对吗？", () => {
         await migrate(w);
         const id2 = JSON.parse(await (await w.api("/board")).text()).needs_human.find((n: { body: string }) => n.body.startsWith("搬过来了"))!.id;
         const c2 = await w.cookie();
-        expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(303);
+        expect((await w.form("/decide", { id: id2, option: "有漏" }, { cookie: c2, accept: "text/html" })).status).toBe(200);
         const h2 = await w.page({ cookie: c2 });
         expect(card(h2)).toBe("");
         expect(h2).toContain('<p class="recent">你刚定了：<b>清单有漏，已让 dev 回去补</b>');
@@ -1314,7 +1316,7 @@ describe("t-111 · 按钮说出后果", () => {
       // the one-off card is untouched
       expect(html).toContain('>先不做</button>');
 
-      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(200);
       const after = await v.page({ cookie });
       expect(after).toContain("你刚定了：你不在时怎么找你？ → <b>不要了</b>");
       // pd 00:39: the reason is invited, never required, and no new control appears
@@ -1335,7 +1337,7 @@ describe("t-111 · 按钮说出后果", () => {
       const { id } = await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_OLD, intent: "ask", options: ["填写", "先不要"], ack_by: soon() });
       const cookie = await v.cookie();
       expect(card(await v.page({ cookie }))).toContain('value="先不要">先不要</button>'); // its own word, not today's
-      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(200);
       const after = await v.page({ cookie });
       expect(card(after)).toBe(""); // answered and gone
       expect(after).toContain('<p class="meta contact-line">你不在时，我们找不到你。</p>'); // and it counts as skipped
@@ -1508,7 +1510,7 @@ describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
       expect(card(await v.page({ cookie }))).toContain("不想要就点不要了，之后不再问你。");
       expect(card(await v.page({ cookie }))).toContain('value="不要了">不要了</button>');
 
-      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "不要了" }, { cookie, accept: "text/html" })).status).toBe(200);
       // every path that could put the card back: the page, a fresh append, a pull by a node
       expect(card(await v.page({ cookie }))).toBe("");
       await v.post("pm", { kind: "note", body: "随便记一句，让服务再跑一遍 follow-ups" });
@@ -1528,7 +1530,7 @@ describe("t-117 · 外呼卡的正文与按钮读起来是同一件事", () => {
       const cookie = await v.cookie();
       // it keeps its own words and its own input box — it is the contact card, not a generic one
       expect(card(await v.page({ cookie }))).toContain('name="value"');
-      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "先不要" }, { cookie, accept: "text/html" })).status).toBe(200);
       await v.post("pm", { kind: "note", body: "让服务再跑一遍 follow-ups" });
       await v.api("/pull?since=");
       // answering the old card is answering the question: the service must not send today's card on top of it
@@ -1582,7 +1584,7 @@ describe("t-125 · 按钮的标签就是它送出的值", () => {
       for (const { value, label } of buttons) expect(label, `button value=${value}`).toBe(value);
       expect(buttons.map((b) => b.value)).toEqual(expect.arrayContaining(["填写", "先不要"]));
       // 判据 3: answering it with its own word works, and it is not asked again
-      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(303);
+      expect((await v.form("/decide", { id, option: "填写", value: "https://hooks.example/me" }, { cookie, accept: "text/html" })).status).toBe(200);
       const after = await v.page({ cookie });
       expect(after).not.toContain(CONTACT_ASK);
     } finally { await v.stop(); }

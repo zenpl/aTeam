@@ -46,9 +46,21 @@ describe("t-229 · 命令行把那个数印出来", () => {
     expect(shown[0], "最久的在前").toContain("第 8 件");
   });
 
+  /**
+   * t-296 判据 4：**这条用例曾经随服务端健康状况随机红，此刻它的红有确定的成因。**
+   *
+   * 成因不在这个文件里：`ateam help` 此前在末尾替那本捎不掉的拒绝账发一次请求，于是生产上
+   * `POST /refusals` 回 404（而那一次 404 要 58.2 秒）时，`help` 在这棵树里量到 47,063 毫秒——
+   * 而这条用例没有写 vitest 的超时，走的是默认的 **5 秒上限**，于是它红在一件与期限措辞毫无关系的事上。
+   *
+   * **修的不是这条用例**：`help` 从此一个请求都不发（`shipsOn` 把它排除），本机实测 91/100/91 毫秒、
+   * 与空目录的 95 毫秒同量级，而「一个连接都不建」在 `local-fast.test.ts` 里被直接钉住。
+   * 这里只把 `execFile` 的 20 秒**降到**与那道 5 秒上限一致——**没有抬任何上限**（pm 的判据禁的正是抬它），
+   * 降下来是为了超时的那一刻红在 `help` 本身，而不是红在一个比它宽四倍的壳上。
+   */
   it("`ateam help` 里三个数各自覆盖什么，逐句印得出来（判据 3）", async () => {
     const out = await new Promise<string>((done) => {
-      execFile(process.execPath, [resolve(__dirname, "..", "dist", "main.js"), "help"], { encoding: "utf8", timeout: 20_000 }, (_e, stdout, stderr) => done(`${stdout}\n${stderr}`));
+      execFile(process.execPath, [resolve(__dirname, "..", "dist", "main.js"), "help"], { encoding: "utf8", timeout: 5_000 }, (_e, stdout, stderr) => done(`${stdout}\n${stderr}`));
     });
     for (const line of DEADLINE_WORDS) expect(out).toContain(line);
   });

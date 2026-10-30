@@ -64,11 +64,17 @@ describe("t-284 判据 3 · 出声的门槛，三个条件都要", () => {
 });
 
 describe("t-284 判据 5 · 两种失败分开数、分开说", () => {
-  it("两句话不一样：一句说「没到服务」，一句说「服务收下了但没有这本账」", () => {
+  it("两句话不一样：一句说「请求没到服务端」，一句说「服务端收下了却没有这本账」", () => {
     const a = shipSilenceNotice(streak("unreachable", 3), q(2, ago(2 * DAY)), NOW)!;
     const b = shipSilenceNotice(streak("not-counted", 3), q(2, ago(2 * DAY)), NOW)!;
-    expect(a).toContain("那台服务没有这条路");
-    expect(b).toContain("counted: false");
+    // t-296 改了这两句的字，而**这条用例要钉的「两种失败分开说」一个字没变**。改的是：
+    // ① 原句里「请求没到服务**或那台服务没有这条路**」那半句搬进了新的第三格（404 自己一格）——
+    //    pd 14:28 定稿的理由是我写的那句：两件事要人做的事相反，合着说等于让读的人分不出该等还是该找人。
+    // ② 「counted: false」按 pd 第 ⑮ 条改成「回包里的 counted 是 false」：那个词读它的节点在回包里看得见，
+    //    加三个字把一个不透明的词变成一条可查的指路。
+    // 断言跟着真句子改，不是反过来；三格互不相同那一条在 ship-backoff.test.ts 里另有一条专钉。
+    expect(a).toContain("请求没到服务端");
+    expect(b).toContain("回包里的 counted 是 false");
     expect(a).not.toBe(b);
   });
 
@@ -104,7 +110,12 @@ const CLI = resolve(__dirname, "..", "dist", "main.js");
 let server: Server;
 let base = "";
 /** 这台服务怎么对 POST /refusals：404（没有这条路，今晚生产那一族）／counted:false／正常记下。 */
-let mode: "no-route" | "not-counted" | "ok" = "no-route";
+/**
+ * t-296 多了 \`dead\`：**连接当场断掉**（请求没到服务端）。原来这一段用 404 当「捎不上去」的现场，而 404
+ * 此刻归第三格、第一条命令就出声，会把「连续 3 次才说」这条判据测成反的。\`dead\` 只断 \`/refusals\` 这一条路，
+ * 其余照旧 200——这样跑的那条命令自己是成功的（退出码 0），只有顺带捎的那一下失败，正是真现场的形状。
+ */
+let mode: "no-route" | "not-counted" | "ok" | "dead" = "no-route";
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -112,6 +123,7 @@ beforeAll(async () => {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", () => {
+        if (mode === "dead") { req.socket.destroy(); return; }
         if (mode === "no-route") { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "not found" })); return; }
         const rs = (JSON.parse(body) as { refusals: Refused[] }).refusals;
         res.writeHead(200, { "content-type": "application/json" });
@@ -127,14 +139,24 @@ beforeAll(async () => {
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-/** 一个装着「六天前就卡在这儿」的队列的检出——**日期是造的，形状是真的**（逐字照真文件那几行）。 */
-function stuck(days = 6): string {
+/**
+ * 一个装着「六天前就卡在这儿」的队列的检出——**日期是造的，形状是真的**（逐字照真文件那几行）。
+ *
+ * t-296 之后多了两样，各有理由：
+ * · `url`：可以指到一个**没人在听**的端口。404 从此是另一族（`no-route`），而这一段原本要钉的
+ *   「连续 3 次才出声」说的是**可能自己好**的那一族，所以它要一条真的连不上的路，不是一条回 404 的路。
+ * · `st`：预置状态文件。退避之后「连跑三条命令」不再等于「连续失败三次」——第 2 次失败就要等 1 分钟，
+ *   第 3 条命令会跳过不发。预置状态与「真的等过了」是同一件事：那个文件就是这台机器记住这件事的唯一地方。
+ *   **我没有为了让用例好跑去抬退避或绕过它**，那会把判据本身测没了。
+ */
+function stuck(days = 6, opts: { url?: string; st?: ShipState } = {}): string {
   const dir = mkdtempSync(join(tmpdir(), "t284-"));
   mkdirSync(join(dir, ".ateam"));
-  writeFileSync(join(dir, ".ateam", "config.json"), JSON.stringify({ me: "dev", url: base, token: "k" }));
+  writeFileSync(join(dir, ".ateam", "config.json"), JSON.stringify({ me: "dev", url: opts.url ?? base, token: "k" }));
   const at = new Date(Date.now() - days * DAY).toISOString();
   writeFileSync(join(dir, ".ateam", "refused-queue.dev.jsonl"),
     q(3, at).map((r) => JSON.stringify(r)).join("\n") + "\n");
+  if (opts.st) writeFileSync(shipStateFile(dir, "dev"), JSON.stringify(opts.st));
   return dir;
 }
 const run = (dir: string, ...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> =>
@@ -145,12 +167,22 @@ const run = (dir: string, ...args: string[]): Promise<{ status: number | null; s
 
 describe("t-284 判据 4 · 真路：第三条命令出声，而它不掀翻任何东西", () => {
   it("头两条一声不吭，第三条说了；退出码与 stdout 一个字不变", async () => {
-    mode = "no-route";
-    const dir = stuck();
-    const a = await run(dir, "log");
-    const b = await run(dir, "log");
-    const c = await run(dir, "log");
-    for (const [i, r] of [a, b, c].entries()) {
+    // t-296 之后这条用例换了两处，判的那件事没换：
+    // ① `/refusals` 这一条路换成「连接当场断掉」（mode = "dead"）。原来用的是回 404 的那台——而 404
+    //    此刻归第三格、**第一条命令就出声**，那会把「连续 3 次才说」这条判据测成反的。这一族要的是
+    //    「请求没到服务端」。只断这一条路，所以跑的那条命令自己照旧成功（退出码 0）。
+    // ② 预置 nextTryAt = null，让这三条命令真的各发一次。退避是 t-296 新加的，而本条判的是出声门槛；
+    //    两件事各有各的用例（退避那条在 ship-backoff.test.ts），不许一条用例同时数两样。
+    mode = "dead";
+    const dir = stuck(6);
+    const runs: { status: number | null; stdout: string; stderr: string }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const st = readShipState(existsSync(shipStateFile(dir, "dev")) ? readFileSync(shipStateFile(dir, "dev"), "utf8") : null);
+      writeFileSync(shipStateFile(dir, "dev"), JSON.stringify({ ...st, nextTryAt: null }));
+      runs.push(await run(dir, "log"));
+    }
+    const [a, b, c] = runs;
+    for (const [i, r] of runs.entries()) {
       expect(r.status, `第 ${i + 1} 条命令的退出码`).toBe(0);
       expect(r.stdout, `第 ${i + 1} 条命令的 stdout`).toBe(a.stdout);
     }
@@ -158,20 +190,24 @@ describe("t-284 判据 4 · 真路：第三条命令出声，而它不掀翻任�
     expect(b.stderr).not.toContain("捎不上去");
     expect(c.stderr, "第三条：连续 3 次、最早一条 6 天、今天没说过").toContain("捎不上去");
     expect(c.stderr).toContain("6 天");
+    const st3 = readShipState(readFileSync(shipStateFile(dir, "dev"), "utf8"));
+    writeFileSync(shipStateFile(dir, "dev"), JSON.stringify({ ...st3, nextTryAt: null }));
     const d = await run(dir, "log");
     expect(d.stderr, "说过了就一天之内不再说").not.toContain("捎不上去");
-    expect(JSON.parse(readFileSync(shipStateFile(dir, "dev"), "utf8")).unreachable.n).toBe(4);
-  });
+    expect(readShipState(readFileSync(shipStateFile(dir, "dev"), "utf8")).unreachable.n).toBe(4);
+  }, 90_000);
 
   it("counted:false 那一族说的是另一句，而队照旧一条不划（t-218 那条本件不碰）", async () => {
     mode = "not-counted";
-    const dir = stuck();
-    let last = { stderr: "", status: 0 as number | null };
-    for (let i = 0; i < SHIP_FAIL_STREAK; i++) last = await run(dir, "log");
+    // 预置「已经连续两次」：退避之后第 3 条命令本来会跳过不发，而本条判的是第 3 次失败说什么。
+    const seed: ShipState = { unreachable: { n: 0, since: null }, notCounted: { n: SHIP_FAIL_STREAK - 1, since: new Date(Date.now() - 60_000).toISOString() }, noRoute: { n: 0, since: null }, saidAt: null, nextTryAt: null };
+    const dir = stuck(6, { st: seed });
+    const last = await run(dir, "log");
     expect(last.status).toBe(0);
-    expect(last.stderr).toContain("counted: false");
+    expect(last.stderr).toContain("回包里的 counted 是 false");
+    expect(readShipState(readFileSync(shipStateFile(dir, "dev"), "utf8")).notCounted.n).toBe(SHIP_FAIL_STREAK);
     expect(readFileSync(join(dir, ".ateam", "refused-queue.dev.jsonl"), "utf8").trim().split("\n"), "一条都不许划").toHaveLength(3);
-  });
+  }, 60_000);
 
   it("捎成了就一句话都没有，队也空了——出声只发生在真的捎不上去时", async () => {
     mode = "ok";
@@ -179,8 +215,8 @@ describe("t-284 判据 4 · 真路：第三条命令出声，而它不掀翻任�
     for (let i = 0; i < SHIP_FAIL_STREAK + 1; i++) {
       const r = await run(dir, "log");
       expect(r.stderr).not.toContain("捎不上去");
-      expect(r.stderr).not.toContain("counted: false");
+      expect(r.stderr).not.toContain("counted");
     }
     expect(existsSync(join(dir, ".ateam", "refused-queue.dev.jsonl")), "捎成了就不留着").toBe(false);
-  });
+  }, 60_000);
 });

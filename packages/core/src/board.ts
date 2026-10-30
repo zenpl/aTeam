@@ -1,4 +1,4 @@
-import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
+import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -750,7 +750,16 @@ export interface Board {
    * t-307 判据①：**这一页砍掉了多少历史。** 只在人那两页用的那一份上有（`livingBoard`）；完整板没有这个字段，
    * 因为它什么也没砍。`omitted` 说的是「哪一栏砍了」，这两个数说的是「一共几条」——页面要印的是后者。
    */
-  page_cut?: { tasks: number; instructions: number };
+  page_cut?: {
+    tasks: number; instructions: number;
+    /**
+     * t-307 判据②：「这一版里已经在生产上验过的」那两张名单也砍（`live.recent`／`live.earlier`）。
+     * **它们是同一批历史走另一条路上来的**：不在 `b.tasks` 里，而印出来的是同一批完结任务的标题，
+     * 于是 1 倍／4 倍历史那一量上，涨的 510 字节全在这里。那两个数不进上面那句话（同一件事数两遍是假话），
+     * 它们喂的是名单后面那句既有的「还有 N 件」。
+     */
+    live_recent: number; live_earlier: number;
+  };
   readings: {
     id: string; key: string; surface: string; value: unknown; at: string; by: string; valid: boolean; why?: string; assumptions?: string[];
     /** When the world was measured (equal to `at` unless the reading said otherwise), and how long after it was written down. */
@@ -1013,6 +1022,32 @@ export function alertContact(s: State, now: Date = new Date()): Board["alert"] {
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
   const skipped = [...s.instructions.values()].some((st) => isContactAsk(st.instruction.body) && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
+}
+
+/**
+ * t-306 判据②：**写入不许依赖读取算得出来。**
+ *
+ * `/fact`（人在「线上」那一行下面填外呼地址的那个按钮）此前要先 `board()` 一整张牌桌，只为回答「这个功能
+ * 开着没有」（`app.ts` 的 `contactEnabled(board(…))`）。于是**人填一个地址这件事，要等整张牌桌算得出来**
+ * ——而牌桌正是打不开的那一页。这里按 `State` 直接答同一个问题：**两次 map 查，不扫、不建板。**
+ *
+ * 判据②的原话只点了 `/say`（而 `/say` 本来就干净）。这一处是我核码时撞上的同族：**同一个缺陷，另一个按钮。**
+ *
+ * 规则只写一次（`contactRow`），牌桌那一侧与写入那一侧共用它——**想让它们说法不一致，得先把这个函数改坏**。
+ * 这是这仓库付过好几次的那笔账（一份名单与它描述的东西分开维护必然漂移）。
+ */
+export const contactRow = (r: { valid: boolean; expired?: boolean; surface: string; key: string; value: unknown }): boolean =>
+  r.valid && !r.expired && r.surface === PROJECT_SURFACE && (r.key === ALERT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY)
+  && r.value !== false && r.value !== null && r.value !== "";
+
+/** 同一条规则，从 State 问：`latestReading` 直接给到那两个键此刻是哪一条，不扫全部读数。 */
+export function contactEnabledIn(s: State): boolean {
+  for (const key of [ALERT_ASK_KEY, ALERT_WEBHOOK_KEY]) {
+    const id = s.latestReading.get(`${PROJECT_SURFACE}:${key}`);
+    const r = id ? s.readings.get(id) : undefined;
+    if (r && contactRow({ valid: r.valid, expired: r.expired, surface: r.reading.surface, key: r.reading.key, value: r.reading.value })) return true;
+  }
+  return false;
 }
 
 /** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
@@ -2328,6 +2363,9 @@ export const RECENT_ANSWER_MS = 60 * 60_000;
  *
  * 这一份不给 agent（`GET /board` 走 `slimBoard`，它另有一个绝对上限），只给人那两页。
  */
+/** t-307：挖层里一张名单最多印几条。砍的那几条由名单后面那句既有的「还有 N 件」说出来。 */
+export const PAGE_LIST_SHOWN = 5;
+
 export function livingBoard(b: Board, human: string): Board {
   const decided = new Set(b.instructions.filter((i) => i.chosen).slice(-SLIM_DECIDED).map((i) => i.id));
   // **人自己刚答过的那张卡留着。** 它已经关上了，而那一行（「你刚点了：…」）是他确认自己点对了的唯一凭据——
@@ -2350,10 +2388,22 @@ export function livingBoard(b: Board, human: string): Board {
     if (living.length < list.length) { omitted.push(`tasks.${status}[${list.length - living.length} of ${list.length}]`); cutTasks += list.length - living.length; }
   }
   if (instructions.length < b.instructions.length) omitted.push(`instructions[${b.instructions.length - instructions.length} of ${b.instructions.length}]`);
+  // 「这一版里已经在生产上验过的」与「更早的」：同一批历史，另一条路。**从最近的一条往回留**（与瘦身板同一个方向）。
+  // `verified_on_production` 一条不动：它只被印成一个数，砍它就是把那个数改小——那不是少印，是说假话。
+  const list = <T,>(xs: T[]): T[] => (xs.length <= PAGE_LIST_SHOWN ? xs : xs.slice(xs.length - PAGE_LIST_SHOWN));
+  const recent = list(b.live.recent), earlier = list(b.live.earlier);
+  for (const [k, cut, all] of [["recent", recent, b.live.recent], ["earlier", earlier, b.live.earlier]] as const)
+    if (cut.length < all.length) omitted.push(`live.${k}[${all.length - cut.length} of ${all.length}]`);
   // **`omitted` 这里是手写的，不走 `omittedPaths`**：那一个是深度对比两份板，代价本身就随历史长——
   // 在一件名叫「代价不许随项目活过多久增长」的事里用它，是把这件事要治的毛病搬进它自己的实现（t-227 那一族）。
   // 砍的是整行，不是字段，所以两个数（砍了几条／原来几条）就是全部要说的，形状与 `omittedPaths` 的一样。
-  return { ...b, instructions, tasks, omitted: omitted.sort(), page_cut: { tasks: cutTasks, instructions: b.instructions.length - instructions.length } };
+  return {
+    ...b, instructions, tasks, live: { ...b.live, recent, earlier }, omitted: omitted.sort(),
+    page_cut: {
+      tasks: cutTasks, instructions: b.instructions.length - instructions.length,
+      live_recent: b.live.recent.length - recent.length, live_earlier: b.live.earlier.length - earlier.length,
+    },
+  };
 }
 
 export function slimBoard(b: Board, limit: number = BOARD_BYTES): Board {

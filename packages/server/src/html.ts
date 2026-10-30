@@ -1,4 +1,4 @@
-import { missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch, reachCountLine, pageHistoryLine, RECENT_ANSWER_MS} from "@ateam/core";
+import { contactRow, missingRoleOf, tooLongTitle, TITLE_MAX_CHARS, type Board, type BoardSaid, type State, type TaskState, boardTask, ambiguousLabels, taskHeading, roleNamer, nameRoles, deployHistory, releaseUnits, CONTACT_ASK, isContactAsk, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_SKIP, ALERT_WEBHOOK_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, MIGRATION_ASK_TITLE, MIGRATION_OK, MIGRATION_PATCH, SERVICE_ACTOR, seamFiles, REACH_WORDS, inFlightGroups, blockedWhy, BATCH_LINES, batchesEmptyLine, unpackedCount, INVITE_URL_LABEL, exampleLine, MOVED_MARK, until, DEFAULT_LINES, PAGE_BYTES, waitingOnLine, VERIFIED_ON_THIS_VERSION, SAID_LABEL, type FlightItem, type BoardBatch , reachCountLine, pageHistoryLine, RECENT_ANSWER_MS } from "@ateam/core";
 import { UI } from "./i18n.js";
 
 /**
@@ -43,8 +43,13 @@ export function isContactCard(i: { body: string }): boolean {
  * line, no reopen path; turning it on later is one fact, not a release.
  */
 export const CONTACT_ASK_KEY = "alert.ask";
+/**
+ * t-306：**规则搬进 core 的 `contactRow`，这里只是牌桌那一侧的入口。**
+ * 此前这条规则在这里写了一份，而写入那一侧（`/fact`）靠 `board()` 走它——于是人填一个地址要等整张牌桌。
+ * 现在两侧共用同一个函数（另一侧是 `contactEnabledIn(State)`），**想让它们说法不一致，得先把它改坏**。
+ */
 export function contactEnabled(b: Board): boolean {
-  return b.readings.some((r) => r.valid && r.surface === PROJECT_SURFACE && (r.key === CONTACT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY) && r.value !== false && r.value !== null && r.value !== "");
+  return b.readings.some(contactRow);
 }
 
 /**
@@ -371,12 +376,16 @@ function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): str
       b.live.checked_by ? UI.checkedBy(who(b.live.checked_by), when) : "",
     ].filter(Boolean).map((x) => ` <span class="meta">· ${esc(x)}</span>`).join("");
     out.push(`<div class="line"><code class="sha">${esc(sha)}</code>${onProd ? ` <span class="ok">${esc(UI.verifiedCount(onProd))}</span>` : ""}${source}</div>`);
-    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul></details>` : "";
+    // t-307 判据②：这两张名单按 `livingBoard` 砍到最近几条，而**砍了几条说出来**——用的是这一页已经有的
+    // 那句「还有 N 件」（`UI.moreItems`），不新写一句话。砍的那两个数不进「已经完结的 N 件任务」那一句：
+    // 同一批历史在那一句里已经数过一遍了。
+    const cutMore = (n?: number) => (n ? `<p class="meta">${esc(UI.moreItems(n))}</p>` : "");
+    const earlierFold = b.live.earlier.length ? `<details class="more-list"><summary>${esc(UI.earlier(b.live.earlier.length + (b.page_cut?.live_earlier ?? 0)))}</summary><ul class="plain">${b.live.earlier.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${cutMore(b.page_cut?.live_earlier)}</details>` : "";
     // t-242 ②：标题改成说出这份名单是什么（core 的 `VERIFIED_ON_THIS_VERSION`，措辞待 pd 定稿）。
     // 名单一个字没动：它是真信息，而且命令行读的也是同一份（`b.live.recent`）。改的是那句**说大了**的标题——
     // 「这一版带来了什么」比「在生产上验过的那几件」大一圈，而「验过几件」那句话就在上面那一行。
     if (b.live.recent.length) {
-      out.push(`<details class="more-list"><summary>${esc(VERIFIED_ON_THIS_VERSION)}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${earlierFold}</details>`);
+      out.push(`<details class="more-list"><summary>${esc(VERIFIED_ON_THIS_VERSION)}${since ? ` <span class="meta">${esc(UI.sinceLast(since))}</span>` : ""}</summary><ul class="plain">${b.live.recent.map((x) => `<li>${esc(x.shows ?? x.title)}</li>`).join("")}</ul>${cutMore(b.page_cut?.live_recent)}${earlierFold}</details>`);
     } else {
       // Nothing verified on production since this sha was deployed: say so in words (t-060), never an empty heading.
       out.push(`<div class="line"><span class="quiet">${UI.thisVersionUnverified}</span></div>${earlierFold}`);
@@ -885,6 +894,33 @@ export function notFoundPage(base = ""): string {
 
 export function unauthorizedPage(): string {
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>${UI.title}</title></head><body style="font:15px/1.7 system-ui;padding:2rem"><h1>${UI.title}</h1><p>${UI.unauthorized} <code>/?token=&lt;ATEAM_TOKEN&gt;</code>${UI.unauthorizedTail}</p></body></html>`;
+}
+
+/**
+ * t-306 判据①：**人点完按钮之后的那一页回执。**
+ *
+ * 它取代的是成功之后那一跳 303 → 牌桌（`app.ts` 的 `back()`）。**写入在那之前早就落了，而人的浏览器挂在
+ * 跳转上，于是他看到的是失败**——今天打不开的那一页同时就是收不了话的那一页。
+ *
+ * **它只由两样东西算出来：人点的是哪个动作，以及那次写入回来的事件 id。**（判据②：这一页不许包含任何要把
+ * 整本日志算一遍才得出的东西。）所以它接的是 `act()` 的返回，不接 `Board`、不接 `State`——**想让它变贵，
+ * 得先给它一个它拿不到的参数**。
+ *
+ * 字是占位，定稿待 pd（判据⑤）；形状不是占位。
+ */
+export function receiptPage(then: string, body: unknown, base = ""): string {
+  const r = UI.receipt;
+  const what = r.what[then] ?? "";
+  // 回包里那条事件的 id——免费（它就在手上），而且是「我真落了吗」唯一的硬凭据。印不印归 pd（我 16:5x 的 note）。
+  const id = body && typeof body === "object" && typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : null;
+  return `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${r.title} · ${UI.title}</title>
+<style>${CSS}</style></head>
+<body><main class="token-page"><header><h1>${UI.header}</h1></header>
+<section class="now"><h2>${r.landed}</h2>${what ? `<p>${what}</p>` : ""}
+<p class="why"><a href="${esc(base)}/">${r.back}</a></p>${id ? `<p class="why">${r.numbered(esc(id))}</p>` : ""}
+</section></main></body></html>
+`;
 }
 
 /** The token page: the only thing on it is a token box; the hidden fields carry the action the human clicked. */

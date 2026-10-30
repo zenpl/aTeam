@@ -9,7 +9,7 @@
  * 页面那一端（真字节、`/release`）在 `packages/server/test/page-history.test.ts`。
  */
 import { describe, it, expect } from "vitest";
-import { reduce, board, livingBoard, isPageHistory, isPageClosed, reachCounts, RECENT_ANSWER_MS, SLIM_DECIDED, type Event } from "../src/index.js";
+import { reduce, board, livingBoard, isPageHistory, isPageClosed, reachCounts, RECENT_ANSWER_MS, SLIM_DECIDED, PAGE_LIST_SHOWN, type Event } from "../src/index.js";
 
 const HUMAN = "human";
 const NOW = new Date("2026-10-30T18:00:00.000Z");
@@ -80,15 +80,36 @@ describe("t-307 判据① · 人那一页里历史的占比是 0", () => {
     expect(bodies(living)).toEqual(["先发哪个？", "复核限流"]);
   });
 
-  it("砍了多少说得出来：`page_cut` 两个数，`omitted` 按 core 一直在用的那个形状", () => {
+  it("砍了多少说得出来：`page_cut` 四个数，`omitted` 按 core 一直在用的那个形状", () => {
     const { living } = boards();
-    expect(living.page_cut).toEqual({ tasks: 1, instructions: 1 });
+    // 「这一版里已经在生产上验过的」那两张名单是同一批历史走另一条路上来的，所以它们各有一个数，
+    // 而**不并进上面那两个**：同一件事数两遍是假话（这里一件完结任务，recent 名单只有一条，没到上限）。
+    expect(living.page_cut).toEqual({ tasks: 1, instructions: 1, live_recent: 0, live_earlier: 0 });
     expect(living.omitted).toContain("instructions[1 of 3]");
     expect(living.omitted).toContain("tasks.verified[1 of 2]");
   });
 
   it("完整板上没有 `page_cut`——它什么也没砍，所以它不许说自己砍了 0 条", () => {
     expect(boards().full.page_cut).toBeUndefined();
+  });
+
+  it("那两张名单超过 `PAGE_LIST_SHOWN` 就砍，而砍了几条自己有一个数——不并进「已经完结的 N 件任务」那一句", () => {
+    const events = log();
+    const extra: Event[] = [];
+    for (let i = 10; i < 20; i++) {
+      extra.push(ev({ kind: "task", actor: "pm", op: "create", task: `t-${i}`, title: `完结${i}`, criteria: ["成立"], no_human_impact: true }, at(30)));
+      extra.push(ev({ kind: "task", actor: "dev", op: "claim", task: `t-${i}`, touches: [`src/${i}.ts`] }, at(29)));
+      extra.push(ev({ kind: "task", actor: "dev", op: "done", task: `t-${i}`, evidence: `提交 ${i}`, no_human_impact: true }, at(28)));
+      extra.push(ev({ kind: "task", actor: "qa", op: "verify", task: `t-${i}`, surface: "production", pass: true, evidence: "线上看到" }, at(27)));
+    }
+    const { full, living } = boards([...events, ...extra]);
+    expect(full.live.recent.length).toBe(11);
+    expect(living.live.recent).toHaveLength(PAGE_LIST_SHOWN);
+    expect(living.page_cut!.live_recent).toBe(11 - PAGE_LIST_SHOWN);
+    expect(living.page_cut!.tasks, "完结的任务数是它自己那一个，不含名单里砍掉的那几条").toBe(11);
+    expect(living.omitted).toContain(`live.recent[${11 - PAGE_LIST_SHOWN} of 11]`);
+    // `verified_on_production` 一条不动：它只被印成一个数，砍它就是把那个数改小
+    expect(living.live.verified_on_production).toEqual(full.live.verified_on_production);
   });
 
   it("一栏整栏都是历史时，那一栏不留一个空数组：空数组读起来是「一件都没有」，而真相是「都不在这一页上」", () => {

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery, livingBoard} from "@ateam/core";
-import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
+import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
+import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, receiptPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
 import { runAlerts } from "./alerts.js";
@@ -550,7 +550,18 @@ export function createApp(opts: ServerOptions) {
         return out ? html(res, 200, out) : html(res, 404, notFoundPage(base));
       }
 
+      /**
+       * t-306 判据①：**成功之后不许跳回牌桌。**
+       *
+       * 这一跳此前是 303 → `${base}/`，而牌桌正是今天打不开的那一页：**写入早就落了，人的浏览器挂在跳转上，
+       * 于是他看到的是失败。** 换成一页回执——它只由「点的是哪个动作」与「那次写入回来的事件 id」算出来，
+       * 代价与日志长度无关（判据②）。
+       *
+       * `back()` 留着，而它只剩一个合法用处：**换钥匙进门而没有要办的事**（`/token` 那一路 `then` 为空时），
+       * 那时人要的就是牌桌本身。办了事的那一路不走它。
+       */
       const back = () => { res.writeHead(303, { location: `${base}/` }); res.end(); };
+      const receipt = (then: string, body: unknown) => html(res, 200, receiptPage(then, body, base));
       const emitAll = (events: unknown[]) => { for (const e of events) bus.emit("append", { project: projectId, e }); };
 
       // The board's buttons. Each is one form POST as the human; `act` does the writing so the token page can
@@ -632,7 +643,9 @@ export function createApp(opts: ServerOptions) {
           // t-069: the address changed from the grey line under 线上: the fact alone, in the human's name.
           const key = form.get("key") ?? "", value = (form.get("value") ?? "").trim();
           // The feature is fact-gated (pm 22:39): with it off there is no entrance, so no route either.
-          if (!contactEnabled(board(await stateFor(projectId, store), human, now()))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
+          // t-306 判据②：**这一行此前是 `contactEnabled(board(…))`**——人填一个外呼地址，要等整张牌桌算得出来。
+          // 同一个问题按 State 直接答（`contactEnabledIn`，两次 map 查），规则与牌桌那一侧共用一个函数。
+          if (!contactEnabledIn(await stateFor(projectId, store))) return { status: 404, body: { error: "not found", message: "这个项目没有开启外呼地址" } };
           if (key !== ALERT_WEBHOOK_KEY) return { status: 400, body: { error: "key", message: `牌桌上只能填 ${ALERT_WEBHOOK_KEY}` } };
           if (!/^https?:\/\/\S+$/.test(value)) return { status: 400, body: { error: "value", message: "填一个 https:// 开头的 webhook 地址" } };
           const reading = await serialize(() => append(store, { kind: "reading", actor: human, surface: PROJECT_SURFACE, key, value, method: "牌桌上改的（线上一行下的灰字）" }, { human, now: real() }));
@@ -660,7 +673,7 @@ export function createApp(opts: ServerOptions) {
           return json(res, 403, { error: "forbidden", rule: "owner-key", message: OWNER_ONLY(human) });
         }
         const r = await actAndCount(path, new URLSearchParams(body));
-        if (r.status < 300 && wantsHtml) return back();
+        if (r.status < 300 && wantsHtml) return receipt(path, r.body);
         return json(res, r.status, r.body);
       }
 
@@ -693,6 +706,13 @@ export function createApp(opts: ServerOptions) {
         const then = fields.then ?? "";
         const r = ACTIONS.has(then) ? await actAndCount(then, new URLSearchParams(fields)) : { status: 204, body: null };
         if (r.status >= 300) { res.writeHead(r.status, { "content-type": "application/json", "set-cookie": setCookie }); return res.end(JSON.stringify(r.body)); }
+        // t-306：**同一个缺陷的第二扇门，判据里没点到它，是我核码时撞上的。** 这一页拿到钥匙之后会紧接着把
+        // `then` 那个动作真的执行（t-234 那一段注释写着），而它执行完同样 303 跳回牌桌——于是人从这扇门办事，
+        // 落进的也是那个打不开的页。**只有「换钥匙进门而没有要办的事」那一路该回牌桌**，那时人要的就是它。
+        if (ACTIONS.has(then)) {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": setCookie });
+          return res.end(receiptPage(then, r.body, base));
+        }
         res.writeHead(303, { location: `${base}/`, "set-cookie": setCookie });
         return res.end();
       }

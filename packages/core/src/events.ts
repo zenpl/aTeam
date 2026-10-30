@@ -467,10 +467,29 @@ export const cliRefusalDropped = (n: number) => cliRefusalOp(`(dropped ${n})`);
  * 没有这本账」（`counted: false`，t-218 写死了不许假装记下了，这一句只是把它从沉默变成出声）。
  */
 export const shipTriesLine = (n: number) => `连续 ${n} 次没捎成`;
-export const shipUnreachableLine = (queued: number, days: number, tries: number) =>
-  `⚠ 这台机器上有 ${queued} 条被拒记录捎不上去，最早的一条已经 ${days} 天（${shipTriesLine(tries)}，请求没到服务或那台服务没有这条路）。它们此刻只活在这里，那本账是缺的。`;
-export const shipNotCountedLine = (queued: number, days: number, tries: number) =>
-  `⚠ 服务收下了请求但没有这本账（counted: false），这台机器上 ${queued} 条被拒记录一条都没记下，最早的一条已经 ${days} 天（${shipTriesLine(tries)}）。不划掉是对的，但它不会自己好。`;
+/**
+ * t-296 判据（pm 12:43 ②③）：**三种坏法，三句话，而第三种此前根本没有自己的话。**
+ *
+ * 旧的那句把两件事合着说——`请求没到服务或那台服务没有这条路`。**这两件事要人做的事相反**：请求没到服务是
+ * 等一等（网回来就好），而那台服务没有这条路是**等不会好**，要有人把那条路发上线。我这台机器就是现场：
+ * `POST /refusals` 在生产上回 404（那一次 404 还花了 58.2 秒），而本机状态是 `unreachable: n=95`——
+ * **95 次失败，一句话都没说过**，因为那句话的条件写成「队里最早那条 ≥ 24 小时」而最早那条才 8 小时。
+ *
+ * 「已经 N 天」也跟着换成 `span` 那道梯子（t-233）：出声条件从「只按年龄」改成「次数 ＋ 形状」之后，
+ * **这句话从此会在不到一天的时候被说出来**，而旧句那一刻只会说「已经 0 天」。时长怎么说由 `span` 一处定，
+ * 这里只收它算好的那几个字——**梯子不许在这儿长出第二份**。
+ *
+ * 措辞：三句由 **pd 14:28 定稿**（决策 01M66KBXFP8BM7KZ3KYV6PR78Q），逐字照抄。pd 在我草稿上动了三件，各有理由：
+ * 远端一律「服务端」、本地一律「这台机器」（两个「这台」并排，读的人分不出哪个在远处）；**每一句都要说出谁能让它消失**
+ * ——读它的那台机器三件都办不了，不点出来人只会反复重试，而我那 95 次正是这么来的；「不会自己好」与「自己恢复」分开说
+ * （前者是没人动它就永远这样，后者是那条路上线之后不用人再来收尾）。
+ */
+export const shipUnreachableLine = (queued: number, waited: string, tries: number) =>
+  `⚠ 这台机器上有 ${queued} 条被拒记录捎不上去，最早的一条已经等了 ${waited}（${shipTriesLine(tries)}，请求没到服务端）。它们此刻只活在这里，那本账是缺的。网通了会自己补上，你不用做什么。`;
+export const shipNotCountedLine = (queued: number, waited: string, tries: number) =>
+  `⚠ 服务端收下了请求，却没有这本账（回包里的 counted 是 false）。这台机器上 ${queued} 条被拒记录一条都没记下，最早的一条已经等了 ${waited}（${shipTriesLine(tries)}）。这几条不划掉——划掉就等于假装记上了。它不会自己好：要有人去修服务端那本账。`;
+export const shipNoRouteLine = (queued: number, tries: number) =>
+  `⚠ 服务端没有收被拒记录的那条路（POST /refusals 回 404）。这台机器上 ${queued} 条一条都捎不上去，${shipTriesLine(tries)}——而且不会自己好：要有人把那条路发上线。我已经停止重试；路上线之后这台机器自己恢复，你不用做什么。`;
 
 /**
  * t-291：**这个地址认哪些查询参数，一处表。**
@@ -681,6 +700,7 @@ export const KEY_SYMBOLS = [
   "REACH_WORDS",
   "READING_SAYINGS",
   "REAL_OVERLAP_PREFIX",
+  "RECEIPT",
   "REFS_SHAPE",
   "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING",
@@ -809,6 +829,7 @@ export const KEY_SYMBOLS = [
   "seamWaiveOtherNotDone",
   "seamWaived",
   "selfCorrections",
+  "shipNoRouteLine",
   "shipNotCountedLine",
   "shipTriesLine",
   "shipUnreachableLine",

@@ -36,14 +36,16 @@ describe("t-030 · POST /say", () => {
     expect((await boardJson()).said).toEqual([]);
   });
 
-  it("with the token it lands as a note from the human, prefixed; a browser is sent back to /", async () => {
+  it("with the token it lands as a note from the human, prefixed; a browser gets a receipt page (t-306: no longer sent back to /)", async () => {
     const r = await say("登录后应该回到我刚才那页");
     expect(r.status).toBe(201);
     const note = await r.json();
     expect(note).toMatchObject({ kind: "note", actor: HUMAN, body: `${SAID_PREFIX}登录后应该回到我刚才那页` });
     const html = await say("再说一句", { authorization: `Bearer ${OWNER}`, accept: "text/html" });
-    expect(html.status).toBe(303);
-    expect(html.headers.get("location")).toBe("/");
+    // t-306：**这里原来断言 303 跳回牌桌**。那一跳没了（成功之后给一页回执），所以这一条改成 200。
+    // 这条用例本来要钉的那件事一个字没变——它数的是「这一下落下去了、牌桌随后怎么变」，而不是「服务用哪种方式把人送回去」。
+    expect(html.status).toBe(200);
+    expect(html.headers.get("location"), "t-306：成功之后不再跳回牌桌，改成一页回执").toBeNull();
     const b = await boardJson();
     expect(b.said.map((x: { body: string; label: string }) => [x.body, x.label])).toEqual([["再说一句", "已收到"], ["登录后应该回到我刚才那页", "已收到"]]);
   });
