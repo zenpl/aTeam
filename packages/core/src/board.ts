@@ -1,4 +1,4 @@
-import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, ACTED_RULE_TASK, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
+import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -1932,7 +1932,7 @@ export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswere
   // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
   // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
   // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
-  const since = ruleLiveAt(s, ACTED_RULE_TASK);
+  const since = actedRuleLiveAt(s);
   for (const st of owedTo(s, to)) {
     const i = st.instruction;
     if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
@@ -1940,6 +1940,27 @@ export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswere
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;
+}
+
+/**
+ * t-290 判据 2：**「引用才算办了」这条规矩在这个项目里从哪一刻开始管事——由这个项目自己的日志算，一个任务 id 都不认。**
+ *
+ * 取的是**这个项目第一条 `batch.*` 读数的时刻**，也就是它第一次发车。理由：这条规矩是随代码到的，而代码到
+ * 一个项目只能靠发车；在它第一次发车之前，我们说不出那里的规矩是哪一版，所以那之前的指令照当时的做法算
+ * （签收就算办了），进旁桶。
+ *
+ * **一条 `batch.*` 都没有的项目退回第一条事件的时刻**（判据 2 明写），于是旁桶是空的——一个从没发车过的项目，
+ * 它的历史里没有「旧规矩」那一段。退回而不是返回 undefined，是因为 undefined 会让分桶整段静默失效，
+ * 而那正是写死 `t-147` 时第二个租户的样子。连一条事件都没有时给空串：**空串比任何 ISO 时刻都小**，
+ * 于是一条都不进旁桶——而那时也没有任何指令要分桶。安全的那一头是「不进旁桶」，不是「全进」。
+ *
+ * pm 07:46 裁定本条（A 而不是 B），并点明：本项目的旁桶因此从 315 变大是**修对了，不是回归**——
+ * 那个数量的是旧行为，判据要的是「该进旁桶的进旁桶」，不是数不变。
+ */
+export function actedRuleLiveAt(s: State): string {
+  const firsts: string[] = [];
+  for (const rs of s.readings.values()) if (rs.reading.key.startsWith(BATCH_PREFIX)) firsts.push(rs.reading.at);
+  return firsts.sort()[0] ?? s.first_event_at ?? "";
 }
 
 /**

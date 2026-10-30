@@ -222,6 +222,12 @@ export interface State {
   /** Every event id in the log: a ref must name one of them. */
   ids: Set<string>;
   /**
+   * t-290 判据 2：**这个项目的日志从哪一刻开始。** 旁桶的起算点算不出来时退回这里，而不是返回 undefined——
+   * 一个「算不出来」的起算点会让整条分桶逻辑静默失效（那正是 t-147 写死在代码里时第二个租户的样子）。
+   * 日志一条事件都没有时它不存在，而那时也没有任何指令要分桶。
+   */
+  first_event_at?: string;
+  /**
    * t-196: 每条事件署的是谁。署名更正要判「是不是本人自报」，就得知道那条事件本来署谁——而 State 只留 id，
    * 不留事件本身。一个 id -> actor 的映射，`disown` 那条规则读它。
    */
@@ -508,6 +514,7 @@ export function advance(s: State, log: Log, human = "human"): State {
   for (const [of, c] of claims) s.contested.set(of, { ...c, actor: s.actorOf.get(of) ?? "" });
   for (const e of log.events) {
     if (s.ids.has(e.id)) continue;
+    if (s.first_event_at === undefined) s.first_event_at = e.at;   // t-290 判据 2
     s.ids.add(e.id);
     s.actorOf.set(e.id, e.actor);
     // t-196: 一条被署名更正过的事件不再计入状态——历史不改，但它不再算数。放在折叠的最前面，是因为

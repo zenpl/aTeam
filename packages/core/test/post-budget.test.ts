@@ -8,7 +8,11 @@
  * 回包里两样东西抢同一个预算**。共同形状：**一个装不下的包，而谁被挤掉是偶然决定的。**
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, postReply, owedNow, POST_REPLY_BYTES, OWED_SHARE, ACTED_RULE_TASK, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, postReply, owedNow, POST_REPLY_BYTES, OWED_SHARE, type NewEvent } from "../src/index.js";
+
+/** t-290 判据 1：`THAT_BATCH_TASK` 没了（平台代码不许写死本项目任务 id）。起算点此后看「有没有一批」，不看那一批装了谁，所以这里写成普通字面量——**夹具里的 id 是夹具自己的，不是平台常量**。 */
+const THAT_BATCH_TASK = "t-147";
+
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-12T12:00:00.000Z");

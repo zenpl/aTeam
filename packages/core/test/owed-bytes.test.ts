@@ -7,7 +7,11 @@
  * `owedSentences` 只说前两个桶，页面一处都没取过它。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, owedNow, owedFull, owedSentences, capOwed, postReply, ACTED_RULE_TASK, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, owedNow, owedFull, owedSentences, capOwed, postReply, type NewEvent } from "../src/index.js";
+
+/** t-290 判据 1：`THAT_BATCH_TASK` 没了（平台代码不许写死本项目任务 id）。起算点此后看「有没有一批」，不看那一批装了谁，所以这里写成普通字面量——**夹具里的 id 是夹具自己的，不是平台常量**。 */
+const THAT_BATCH_TASK = "t-147";
+
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-12T12:00:00.000Z");
@@ -20,7 +24,7 @@ async function world(n: number, live: number) {
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -600);
   for (let i = 0; i < n; i++) await put({ kind: "instruction", actor: "pm", to: "dev", body: `旧的第 ${i} 条：${"很长的正文".repeat(20)}`, ack_by: at(-500).toISOString() }, -500);
   // 那条规矩上线：**起算点由日志算出来**（t-193 判据 7）——它随哪一批到的生产，`batch.*` 的 contains 说了算
-  await put({ kind: "reading", actor: "release", surface: "repo", key: "batch.14", value: { sha: "736967c", base: "b23b325", contains: [ACTED_RULE_TASK] } }, -400);
+  await put({ kind: "reading", actor: "release", surface: "repo", key: "batch.14", value: { sha: "736967c", base: "b23b325", contains: [THAT_BATCH_TASK] } }, -400);
   for (let i = 0; i < live; i++) await put({ kind: "instruction", actor: "pm", to: "dev", body: `新的第 ${i} 条：${"很长的正文".repeat(20)}`, ack_by: at(-100).toISOString() }, -300);
   return { s, put };
 }

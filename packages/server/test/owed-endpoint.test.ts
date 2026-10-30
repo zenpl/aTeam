@@ -4,7 +4,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, ACTED_RULE_TASK } from "@ateam/core";
+import { MemoryStore } from "@ateam/core";
+
+/** t-290 判据 1：`THAT_BATCH_TASK` 没了（平台代码不许写死本项目任务 id）。起算点此后看「有没有一批」，不看那一批装了谁，所以这里写成普通字面量——**夹具里的 id 是夹具自己的，不是平台常量**。 */
+const THAT_BATCH_TASK = "t-147";
+
 import { createApp } from "../src/app.js";
 
 const TOKEN = "secret-token";
@@ -21,7 +25,7 @@ beforeAll(async () => {
   await post("pm", { kind: "reading", surface: "project", key: "roles", value: ["pm", "dev", "qa"] });
   for (let i = 0; i < 30; i++) await post("pm", { kind: "instruction", to: "dev", body: `旧的第 ${i} 条：${"很长的正文".repeat(20)}`, ack_by: new Date(Date.now() + 6e5).toISOString() });
   // 这一批到生产，「引用才算办了」从此生效：它之前那些进旁桶（t-193 判据 7）
-  await post("release", { kind: "reading", surface: "repo", key: "batch.14", value: { sha: "736967c", base: "b23b325", contains: [ACTED_RULE_TASK] } });
+  await post("release", { kind: "reading", surface: "repo", key: "batch.14", value: { sha: "736967c", base: "b23b325", contains: [THAT_BATCH_TASK] } });
   await post("pm", { kind: "instruction", to: "dev", body: "新的一条：这条是活欠账", ack_by: new Date(Date.now() + 6e5).toISOString() });
 });
 afterAll(() => new Promise<void>((r) => app.close(() => r())));

@@ -9,7 +9,11 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, owedSentences, ruleLiveAt, ACTED_RULE_TASK, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event , owedFull } from "../src/index.js";
+import { MemoryStore, append, empty, advance, settle, reduce, board, owedNow, owedTo, owedSentences, ruleLiveAt, REACH_STATES, REACH_WORDS, REACH_RULE, DECLINE_PREFIX, type NewEvent, type Event , owedFull } from "../src/index.js";
+
+/** t-290 判据 1：`THAT_BATCH_TASK` 没了（平台代码不许写死本项目任务 id）。起算点此后看「有没有一批」，不看那一批装了谁，所以这里写成普通字面量——**夹具里的 id 是夹具自己的，不是平台常量**。 */
+const THAT_BATCH_TASK = "t-147";
+
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -276,16 +280,16 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
 
   it("起算点由日志算出来，不写死：那一批到生产的时刻就是它", async () => {
     const w = await world();
-    expect(ruleLiveAt(await st(w.s), ACTED_RULE_TASK), "还没有那一批，就没有起算点").toBeUndefined();
-    const b = await batchAt(w, -30, ["t-140", ACTED_RULE_TASK, "t-154"]);
-    expect(ruleLiveAt(await st(w.s), ACTED_RULE_TASK)).toBe(b.at);
+    expect(ruleLiveAt(await st(w.s), THAT_BATCH_TASK), "还没有那一批，就没有起算点").toBeUndefined();
+    const b = await batchAt(w, -30, ["t-140", THAT_BATCH_TASK, "t-154"]);
+    expect(ruleLiveAt(await st(w.s), THAT_BATCH_TASK)).toBe(b.at);
     expect(ruleLiveAt(await st(w.s), "t-999"), "不在任何一批里的任务没有起算点").toBeUndefined();
   });
 
   it("旧的进旁桶、新的进活欠账；那句话数的是活欠账", async () => {
     const w = await world();
     const old = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
-    await batchAt(w, -30, [ACTED_RULE_TASK]);
+    await batchAt(w, -30, [THAT_BATCH_TASK]);
     const fresh = await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "上线之后的一条", ack_by: at(15).toISOString() }, -10);
     await w.s.setCursor({ actor: "dev", last_event_id: fresh.id, at: at(-5).toISOString() });   // 两条都读到了，都没动
     const owed = owedNow(await st(w.s), "dev");
@@ -299,7 +303,7 @@ describe("t-193 判据 7 · 旧的进具名旁桶，活欠账只从那条规矩�
   it("旁桶不归零，也不会再长：起算点之后的指令按定义进不来", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pm", to: "dev", body: "很久以前的一条", ack_by: at(15).toISOString() }, -60);
-    await batchAt(w, -30, [ACTED_RULE_TASK]);
+    await batchAt(w, -30, [THAT_BATCH_TASK]);
     const before = owedNow(await st(w.s), "dev").legacy_before_acted_rule_count;
     const news = [];
     for (let i = 0; i < 3; i++) news.push(await w.put({ kind: "instruction", actor: "pm", to: "dev", body: `新的第 ${i} 条`, ack_by: at(15).toISOString() }, -5));
