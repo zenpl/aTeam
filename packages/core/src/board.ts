@@ -1,4 +1,4 @@
-import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
+import { stalledLine, CLI_SHA_KEY, PD_ACTOR, SAID_PREFIX, DECLINE_PREFIX, DEFER_PREFIX, TITLE_MAX_CHARS, ROLES_KEY, PROJECT_SURFACE, HUMAN_SURFACE, REPO_SURFACE, DEFAULT_ROLES, PRESENCE_WINDOW_MS, LISTEN_WINDOW_MS, UNDELIVERED_AFTER_MS, SERVICE_ACTOR, FAIL_NOTICE, VERIFY_ASK, CONTACT_ASK, isContactAsk, CONTACT_SKIP, CONTACT_SKIP_WAS, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, ALERT_REACHED_KEY, ALERT_NOTE_PREFIX, ALERT_FAILED, DEPLOYED_TASKS_KEY, BATCH_PREFIX, BATCH_SURFACE, STOOD_IN_PREFIX, STAND_IN_DAY_MS, type BatchValue, BOARD_SHAPE, PUSH_LEVELS, NODE_SURFACE, capabilityKey, RESPONSIBILITIES, DEFAULT_RESPONSIBILITIES, VERIFY_RESPONSIBILITY, type PushLevel, type Reading, type Instruction, type InstructionIntent, type Reach, type Gate, GATES, gateFixKey, SHOWS_GATE_BLIND, DEFAULT_LINES, factCannotPlace, factPredatesThirdBucket, denominatorIs, denominatorUnknown, countRefusals, PD_PLACEHOLDER, type Refused, type RefusalCount } from "./events.js";
 import { lastSeen, overturnedOn, DEFAULT_DECIDER } from "./reduce.js";
 import { allocation, allocationSummary, type AllocationWarning } from "./allocation.js";
 import { surfaceResults, criteriaAuthors, type State, type TaskState, type InstructionState, type ReadingState, type SeamState, type TaskHistoryEntry } from "./reduce.js";
@@ -996,6 +996,32 @@ export function alertContact(s: State, now: Date = new Date()): Board["alert"] {
   // t-111: a card sent before the wording changed was answered with the old word; it means the same thing.
   const skipped = [...s.instructions.values()].some((st) => isContactAsk(st.instruction.body) && (st.chosen?.option === CONTACT_SKIP || st.chosen?.option === CONTACT_SKIP_WAS));
   return { status: skipped ? "skipped" : "unanswered" };
+}
+
+/**
+ * t-306 判据②：**写入不许依赖读取算得出来。**
+ *
+ * `/fact`（人在「线上」那一行下面填外呼地址的那个按钮）此前要先 `board()` 一整张牌桌，只为回答「这个功能
+ * 开着没有」（`app.ts` 的 `contactEnabled(board(…))`）。于是**人填一个地址这件事，要等整张牌桌算得出来**
+ * ——而牌桌正是打不开的那一页。这里按 `State` 直接答同一个问题：**两次 map 查，不扫、不建板。**
+ *
+ * 判据②的原话只点了 `/say`（而 `/say` 本来就干净）。这一处是我核码时撞上的同族：**同一个缺陷，另一个按钮。**
+ *
+ * 规则只写一次（`contactRow`），牌桌那一侧与写入那一侧共用它——**想让它们说法不一致，得先把这个函数改坏**。
+ * 这是这仓库付过好几次的那笔账（一份名单与它描述的东西分开维护必然漂移）。
+ */
+export const contactRow = (r: { valid: boolean; expired?: boolean; surface: string; key: string; value: unknown }): boolean =>
+  r.valid && !r.expired && r.surface === PROJECT_SURFACE && (r.key === ALERT_ASK_KEY || r.key === ALERT_WEBHOOK_KEY)
+  && r.value !== false && r.value !== null && r.value !== "";
+
+/** 同一条规则，从 State 问：`latestReading` 直接给到那两个键此刻是哪一条，不扫全部读数。 */
+export function contactEnabledIn(s: State): boolean {
+  for (const key of [ALERT_ASK_KEY, ALERT_WEBHOOK_KEY]) {
+    const id = s.latestReading.get(`${PROJECT_SURFACE}:${key}`);
+    const r = id ? s.readings.get(id) : undefined;
+    if (r && contactRow({ valid: r.valid, expired: r.expired, surface: r.reading.surface, key: r.reading.key, value: r.reading.value })) return true;
+  }
+  return false;
 }
 
 /** t-069: the contact card is answered by the fact itself: once project:alert.webhook is set (by anyone, any way), it has nothing to ask. */
