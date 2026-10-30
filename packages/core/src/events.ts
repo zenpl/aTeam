@@ -1180,8 +1180,22 @@ export const PART_NAMES = {
  * 免得它靠谁记得。
  */
 export const PD_PLACEHOLDER = "（措辞待定）";
-export const alreadyDoneNotice = (what: string, at: string | null, clearWith: string): string =>
-  `⚠ ${PD_PLACEHOLDER}你那次「${what}」被拒，是因为它${at ? `已经在 ${at} 办好了` : "已经办过了"}——这一次是多余的，**不用重做**。这条提醒说完就划掉；要自己划：${clearWith}`;
+/**
+ * t-292 判据 7（pd 06:42「一」，定稿照抄）。
+ *
+ * 约束是 dev 的判据 1、3：不许说「没有落下去」、不许给「重做」、要印出已经发生的那一刻。pd 两处都答了：
+ * **相对在前、绝对进括号**——牌桌上正文放相对、title 放绝对，而命令行没有 title 可挂，所以绝对那串进括号；
+ * 读相对那半句就够判断「我不用再做了」，要去日志对账的，括号里那串是他的钥匙。**说不出时刻就说不出，
+ * 并且把原因写进那一句**，否则人会以为是坏了。
+ *
+ * pd 还删掉了占位里最后那半句（「要自己划：ateam sync --clear-refused」），并定下一条通则：
+ * **一句话的全部用意是「你不用做任何事」，它就不许以要人做一件事结尾。** 所以这一句不带划掉的办法——
+ * 提醒显示一次就自己退场（`sayIfRefused` 那一侧）。
+ */
+export const alreadyDoneNotice = (since: string | null, at: string | null): string =>
+  since && at
+    ? `这件事已经办好了，${since}（${at}）。你这一次是多余的，不用重做——再发一次会被同样挡回来。`
+    : "这件事已经办好了（我说不出是什么时候，这一条规则没留下那一刻）。你这一次是多余的，不用重做。";
 
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
 

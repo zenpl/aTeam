@@ -75,6 +75,7 @@ export function refusalNotice(st: RefusalState, now: Date, clearWith = "ateam sy
   const { at, rule, cmd, what, already, part } = st.refusal;
   // t-233：两类各说各的。**「已经办好了」那一类不说「没有落下去」，也不给「重做」**——真样本是 qa 16:55 那次，
   // 拒绝话逐字写着 already acked at 16:54:51.880Z，而这里照旧叫人重做一遍。句子在 core（措辞待 pd 定稿）。
-  if (already) return alreadyDoneNotice(what, already.at, clearWith);
+  // t-292 判据 7：⚠ 与行首的格式留在这一侧，pd 定的那句话原样从 core 取——相对在前、绝对进括号。
+  if (already) return `⚠ ${alreadyDoneNotice(already.at ? ago(now.getTime() - Date.parse(already.at)) : null, already.at)}`;
   return `⚠ 你${howLong(now.getTime() - Date.parse(at))}有一次写入被拒（${rule}）：${part ?? what} 没有落下去。重做：${cmd}；确实不做了就划掉：${clearWith}`;
 }

@@ -30,12 +30,12 @@ export async function sendAll<T>(
   send: (e: T) => Promise<{ id: string; line: string }>,
   out: (line: string) => void,
   err: (line: string) => void,
-): Promise<{ ok: number; bad: number; exit: number; failed: { what: string; rule: string; why: string }[] }> {
+): Promise<{ ok: number; bad: number; exit: number; failed: { what: string; rule: string; why: string; already?: { at: string | null } }[] }> {
   let ok = 0, bad = 0;
   // t-241：**被拒的那几件要报出去，不只是印出来。** 印在终端上只活一秒（t-116 那一条），而这几条命令
   // 恰好是「一次发多件」的那几条——一件被拒时，本地那本「你上一条被拒了」的账此前一条都不记，
   // **于是事后查不到**。这里只把事实带出去，记不记、怎么记是调用方的事。
-  const failed: { what: string; rule: string; why: string }[] = [];
+  const failed: { what: string; rule: string; why: string; already?: { at: string | null } }[] = [];
   for (const [i, it] of items.entries()) {
     try {
       // **成功那一件的结果行就是事件行本身**：它已经带着 id 与「发生了什么」（`01M…  task t-226 done — …`、
@@ -50,7 +50,12 @@ export async function sendAll<T>(
         : e instanceof Error ? e.message : String(e);
       out(partRefused(it.what, why));
       err(partRefused(it.what, why));
-      failed.push({ what: it.what, rule: e instanceof ClientError && e.status === 409 ? (e.body.rule ?? "rejected") : "error", why });
+      // t-292 判据 7 ①：**409 正文里的 already 要带过去**。它是 t-233 加的那个字段，加它的理由原话是
+      // 「客户端此前只拿得到 rule 与一句话，要分辨『那件事已经发生过了』只能去匹配话里的字」。服务端照做了，
+      // 而这一路在离人最近的那一步把它丢了——于是提醒只会说「没有落下去。重做：<同一条命令>」，照它重做
+      // 必然再拿到同一条 already，提醒永远留在那里。
+      const already = e instanceof ClientError && e.status === 409 ? (e.body as { already?: { at: string | null } }).already : undefined;
+      failed.push({ what: it.what, rule: e instanceof ClientError && e.status === 409 ? (e.body.rule ?? "rejected") : "error", why, ...(already ? { already } : {}) });
       bad += 1;
       if (it.stopOnFail) {
         const rest = items.length - (i + 1);

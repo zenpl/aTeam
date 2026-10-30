@@ -282,11 +282,11 @@ async function main(argv: string[]) {
    *
    * 一处就够：`sendAll` 的那几条命令与 `import` 走的是同一个它。
    */
-  const recordParts = (failed: { what: string; rule: string; why: string }[]): void => {
+  const recordParts = (failed: { what: string; rule: string; why: string; already?: { at: string | null } }[]): void => {
     if (!failed.length) return;
     const f = failed[0];
     const shell = (x: string) => (/[\s"'$`\\]/.test(x) ? `"${x.replace(/(["\\$`])/g, "\\$1")}"` : x);
-    noteRefusal(ARGV, { at: new Date().toISOString(), rule: f.rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), part: f.what });
+    noteRefusal(ARGV, { at: new Date().toISOString(), rule: f.rule, cmd: `ateam ${ARGV.map(shell).join(" ")}`, what: actionOf(ARGV), part: f.what, ...(f.already ? { already: f.already } : {}) });
   };
 
   const sendAll = async (items: { what: string; event: ClientEvent; stopOnFail?: boolean }[]): Promise<void> => {
