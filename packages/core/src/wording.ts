@@ -845,6 +845,7 @@ export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
   "c19cde0d8f41",
   "c6408c8b22b2",
   "c6f81159c6bc",
+  "c96ff5cdc3a9",
   "cab0b2958753",
   "cb0ce90e2a02",
   "cc6f904be7c0",
