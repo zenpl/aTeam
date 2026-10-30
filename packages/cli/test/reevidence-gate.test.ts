@@ -79,9 +79,16 @@ describe("t-311 判据③ · 接缝闸拿改记之后的那个 sha 去问", () =
 describe("t-311 判据③④ · task show 上判决仍在，而两个 sha 都看得见", () => {
   const shown = (b: Board) => fmt.task(boardTask(b, "t-025")!, b.seams, b.omitted);
 
-  it("改记之后：证据那一格是新 sha，紧跟一行说清从哪一笔改到哪一笔、谁改的、为什么", async () => {
+  /** 第几行——「紧跟证据」这件事只有按位置断言才算断言过（见本文件末尾那条注入的账）。 */
+  const lineOf = (text: string, needle: string) => text.split("\n").findIndex((l) => l.includes(needle));
+
+  it("改记之后：证据那一格是新 sha，**紧跟证据**一行说清从哪一笔改到哪一笔、谁改的、为什么", async () => {
     const text = shown(await fixture(true));
     expect(text).toContain("evidence sha re-recorded");
+    // **位置也是判据的一部分**：history 那一节本来就会印同一句，所以只断言「页上有这句话」的用例
+    // 在「紧跟证据那一行被整行删掉」时照旧全绿——我用反向注入量到过，这两行是那次的产物。
+    expect(lineOf(text, "evidence sha re-recorded"), "它在 evidence 与 verifications 之间，不是只在 history 里")
+      .toBeLessThan(lineOf(text, "verifications"));
     expect(text, "旧那一笔在同一页上").toContain(WAS);
     expect(text, "新那一笔也在").toContain(NOW);
     expect(text, "来路那句话原样印出来").toContain("主干上携带同样内容的是 530eb9e");
