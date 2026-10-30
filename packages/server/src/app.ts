@@ -329,7 +329,10 @@ export function createApp(opts: ServerOptions) {
       const hasProjectKey = !!record && record.project === projectId;
       if (req.method === "GET" && path.startsWith("/manual/")) {
         const role = decodeURIComponent(path.slice("/manual/".length));
-        // t-081: any role this project declared has a manual, assembled from its responsibilities; only an undeclared name is 404
+        // t-081: any role this project declared has a manual, assembled from its responsibilities; with a key for this
+        // project, only an undeclared name is 404 — **keyless, a declared custom role is 404 too** (t-309 ③: the status
+        // code itself must not answer "does this project have that role"). qa 21:22 reported this line as half-true
+        // after t-309 passed; the three lines below always said it, this one did not.
         // t-309 判据③（pd 19:39）：**无钥匙时连这次 registry 查询都不做。** 定稿的原话是「状态码必须在不查那个
         // 项目的情况下算出来」——所以这里不是「算出来之后抹掉差别」，是**压根不去问那个项目**。两者对外一样，
         // 而后者让「它会不会泄露」变成读一行代码就能回答的事，不必再去比两个回包。
