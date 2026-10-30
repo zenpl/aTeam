@@ -1841,6 +1841,23 @@ export function gateHonesty(s: State, gate: Gate): GateHonesty | null {
  */
 export interface OwedNow {
   unanswered: { instruction: string; from: string; body: string; sent: string; options?: string[]; default?: string; ack_by?: string; overdue: boolean }[];
+  /**
+   * t-290 判据 4：**`unseen` 是还没送到收件人眼前的**——这个节点的游标还没走过它，所以没有任何证据表明
+   * 有谁看见过这几个字。
+   *
+   * 它此前与下面那一格混在一起，而那一格印出来的那句话是「你读过还没动的有 N 条」。**对一条根本没送到的
+   * 指令，那句话是假的**，而且是最坏的那种假：它把「我们没送到」说成「你看过了不办」。量过
+   * （读数 repo:owed.untouched.counts-unseen = yes）：一条都没送到的合成日志上，8 条指令 reach 全是 unread，
+   * 而 untouched 仍然是 8。
+   */
+  unseen: { instruction: string; from: string; body: string; sent: string }[];
+  /**
+   * t-290 判据 4：**`untouched` 是已送到、他看过、还没动的**——游标走过它（所以证得出送到了），
+   * 而 `didAct` 认的那几条动作一条都没出现。
+   *
+   * 两格的差别是「谁欠谁」：`unseen` 欠的是我们（还没递到他手上），`untouched` 欠的是他。
+   * 把两者算成一格，等于把我们的欠账记在他头上。
+   */
   untouched: { instruction: string; from: string; body: string; sent: string }[];
   /**
    * t-193 判据 7：**t-147 上线之前的那一批，进这个具名的旁桶，不进任何人的活欠账。**
@@ -1877,6 +1894,15 @@ export interface OwedNow {
  */
 export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
   if (!owed) return [];
+  /**
+   * t-290 判据 4：**每一格都当「可能没有」处理。**
+   *
+   * 这一条是写完判据 4 当场被用例打出来的，而它不是用例的毛病：这份 `owed` 可能来自**一台还没上这一版的
+   * 服务端**（t-080 立的那条规矩：新客户端对着旧服务端不许崩）。我加 `unseen` 那一格之后直接读它的 `.length`，
+   * 于是六个文件的用例一起抛 `Cannot read properties of undefined`——其中几个假服务的回包里本来就没有 `owed`
+   * 的全部格子。**一个只会在旧服务端上触发的崩溃，在本地用例里看起来像用例坏了。**
+   */
+  const bucket = <T>(xs: T[] | undefined): T[] => xs ?? [];
   const mins = (iso: string) => Math.max(1, Math.round((now.getTime() - Date.parse(iso)) / 60_000));
   type Item = { body: string; sent: string; instruction: string };
   const oldest = (xs: Item[]) => xs.reduce((a, b) => (a.sent < b.sent ? a : b));
@@ -1891,13 +1917,19 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
    */
   const first = (x: Item) => `${splitTitle(x.body).title || x.body.trim().slice(0, 30)}（${x.instruction}）`;
   const out: string[] = [];
-  if (owed.unanswered.length) {
-    const o = oldest(owed.unanswered);
-    out.push(`有 ${owed.unanswered.length} 条在等你答，最久的 ${mins(o.sent)} 分钟：${first(o)}`);
+  if (bucket(owed.unanswered).length) {
+    const o = oldest(bucket(owed.unanswered));
+    out.push(`有 ${bucket(owed.unanswered).length} 条在等你答，最久的 ${mins(o.sent)} 分钟：${first(o)}`);
   }
-  if (owed.untouched.length) {
-    const o = oldest(owed.untouched);
-    out.push(`你读过还没动的有 ${owed.untouched.length} 条，最久 ${mins(o.sent)} 分钟：${first(o)}。办了它，或者写一句「${DECLINE_PREFIX}原因」。${owedThirdWay(o.instruction)}`);
+  // t-290 判据 4：排在 unanswered 之后、untouched 之前。一个还没拉的节点该先拉——而它那份 untouched
+  // 按定义是它拉之前算出来的，先让它拉，那一份才是真的。
+  if (bucket(owed.unseen).length) {
+    const o = oldest(bucket(owed.unseen));
+    out.push(owedUnpulledLine(bucket(owed.unseen).length, span(now.getTime() - Date.parse(o.sent)) ?? SPAN_UNDER_A_MINUTE));
+  }
+  if (bucket(owed.untouched).length) {
+    const o = oldest(bucket(owed.untouched));
+    out.push(`你读过还没动的有 ${bucket(owed.untouched).length} 条，最久 ${mins(o.sent)} 分钟：${first(o)}。办了它，或者写一句「${DECLINE_PREFIX}原因」。${owedThirdWay(o.instruction)}`);
   }
   return out;
 }
@@ -1916,19 +1948,52 @@ export function owedSentences(owed: OwedNow | undefined, now: Date): string[] {
  * **这里只补上那条系统本来就认的路，并把命令写成可以照抄的一行**；`didAct`／`owedTo`／`reach` 一个字没动。
  * **措辞待 `pd`**：这一版是事实层面的补，不是定稿文案（t-281 判据 4）。
  */
+/**
+ * t-290 判据 4：**对一个还没把指令拉到眼前的节点说的那一句。** 措辞是 pd 07:57 的定稿，四条约束是他的原话：
+ *
+ * **① 主语是「你还没拉」，不是「还没送到你眼前」。** 我默认那句照 untouched 的形状写成后者，他改掉了，
+ * 理由不是好听：被动语态把这件事说成投递失败了，而真相是这个节点没有来要。**说错了主语，读的人就会去查
+ * 错的那一边**——一个被告知「没送到」的节点会去怀疑通道，而它该做的只是拉一次。
+ * **② 必须带最久那条的时长**，用的是同一把梯子（`span`）。N 条本身不说明急不急：三条等了 20 秒和三条等了
+ * 25 分钟是两件事，而节点要靠它决定现在拉还是写完手上这件再拉。那个 25 分钟是 field-report F1／F2 的真数。
+ * **③ 动作写成那条命令本身**——这是对 agent 说话，一个动词短语不如一行能直接跑的命令。
+ * **④ 不许加「一下就好」的暗示。** 我原来写「拉一次就拿得到」，他保留意思去掉暗示：如果这个节点从来没拉过
+ * 而日志很长，这一次拉取就是一次全量回放。那一头由 t-293 判据 7 的第一句接住（「这一批只送一次」），
+ * **两句必须接得上，不许各自成立、合起来误导**。
+ *
+ * 去掉的那半句也记着：不要对节点说「你一直在写，但没有拉」——那是牌桌给别人判断它用的句子，
+ * **对一个节点说话，不要把别人用来判断它的那句话还给它。**
+ */
+export const owedUnpulledLine = (n: number, oldest: string) =>
+  `有 ${n} 条指令在等你，你还没拉过它们；最久的一条等了 ${oldest}。跑 ateam sync 就拿得到。`;
+
 export const owedThirdWay = (id: string) => `已经办过、没有动作可办的，引用它就算了结：ateam note --refs ${id} "<它是怎么了结的>"。`;
 
 export function owedNow(s: State, to: string): OwedNow {
   const full = owedFull(s, to);
-  return { unanswered: full.unanswered, untouched: full.untouched, legacy_before_acted_rule_count: full.legacy_before_acted_rule.length };
+  return { unanswered: full.unanswered, unseen: full.unseen, untouched: full.untouched, legacy_before_acted_rule_count: full.legacy_before_acted_rule.length };
 }
 
 /**
  * t-239：三个桶的**全量**，只给专门来要它的那条路（`GET /owed`）用。每次拉取带的是 `owedNow`——
  * 那一份里历史只剩一个数。**两份由同一段代码算出来**，不是两处各数一遍。
  */
-export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswered"]; untouched: OwedNow["untouched"]; legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[] } {
-  const out = { unanswered: [] as OwedNow["unanswered"], untouched: [] as OwedNow["untouched"], legacy_before_acted_rule: [] as { instruction: string; from: string; body: string; sent: string }[] };
+/**
+ * t-290 判据 4：**这条指令有没有任何证据到过收件人眼前。** 三样都算证据，任一成立即可：
+ *
+ * ① 游标走过它（`reach !== "unread"`，由日志算，t-147）；② **他自己 ack 过**；③ 投递表记着服务把它交出去过。
+ *
+ * ②不是多余的那一条，它是被一条既有用例当场证伪我的第一版才补上的：`owed-third-way.test.ts` 里 pm 收到一条
+ * 指令、**48 秒就 ack 了**，而那条夹具从不设游标。我第一版只看 `reach`，于是它落进 unseen——
+ * **把「他 48 秒就签收了」说成「还没到他眼前」，比它原来那句假话更假。** 一条 ack 是最强的证据：
+ * 那是他本人说的「我看见了」。
+ *
+ * ③同理：游标记的是「它走过它」，投递表记的是「服务把它交出去过」，两样各证一半，谁也不替谁（t-274 的分法）。
+ */
+const wasSeen = (st: InstructionState): boolean => st.reach !== "unread" || !!st.acked_at || !!st.delivered_at;
+
+export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswered"]; unseen: OwedNow["unseen"]; untouched: OwedNow["untouched"]; legacy_before_acted_rule: { instruction: string; from: string; body: string; sent: string }[] } {
+  const out = { unanswered: [] as OwedNow["unanswered"], unseen: [] as OwedNow["unseen"], untouched: [] as OwedNow["untouched"], legacy_before_acted_rule: [] as { instruction: string; from: string; body: string; sent: string }[] };
   // t-193 判据 7：起算点由日志算出来（那一批到生产的时刻），不写死一个时间戳——写死的那种，是同一条毛病的
   // 又一次：一个数与它描述的东西分开维护。算不出来时 `since` 是 undefined，那就一条都不进旁桶：**宁可把
   // 历史算进活欠账，也不要因为算不出起算点而悄悄把今天的欠账藏起来。**
@@ -1937,6 +2002,8 @@ export function owedFull(s: State, to: string): { unanswered: OwedNow["unanswere
     const i = st.instruction;
     if (i.options?.length) out.unanswered.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at, options: i.options, default: i.default, ack_by: i.ack_by, overdue: !!st.overdue });
     else if (since && i.at < since) out.legacy_before_acted_rule.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
+    // t-290 判据 4：**有没有任何证据表明它到过他眼前，决定它算谁的欠账。**
+    else if (!wasSeen(st)) out.unseen.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
     else out.untouched.push({ instruction: i.id, from: i.actor, body: i.body, sent: i.at });
   }
   return out;

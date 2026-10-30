@@ -1,4 +1,4 @@
-import { BOARD_SHAPE, badResponseLine, type Refused, type Event, type ClientEvent, type Board, type BoardTask, type PullResult } from "@ateam/core";
+import { BOARD_SHAPE, badResponseLine, type Refused, type Event, type ClientEvent, type Board, type BoardTask, type PullResult, type OwedNow } from "@ateam/core";
 
 /** t-080: the server speaks a newer shape than this CLI knows. One sentence, exit 2; never a field error. */
 export class ShapeError extends Error {
@@ -75,7 +75,15 @@ export class Client {
     return data as T;
   }
 
-  emit(e: ClientEvent): Promise<Event> { return this.call("POST", "/events", e); }
+  /**
+   * t-290 判据 4／位置：**回包里那两样要带回来。**
+   *
+   * 服务端从 t-227 起就在回包里送 `for_me` 与 `owed`，而这里的返回类型写的是 `Event`——**于是它们在类型层面
+   * 就被扔掉了，一次都没有到过任何调用方手里。** pd 07:57 点的正是这件：一个不拉的节点，`sync` 的出口对它
+   * 永远不存在；它在写，所以每一次写都是唯一能对它说话的信道。放在 `sync` 里的话，这句话永远送不到它要找的
+   * 那个节点。
+   */
+  emit(e: ClientEvent): Promise<Event & { for_me?: unknown[]; owed?: OwedNow }> { return this.call("POST", "/events", e); }
   pull(after: string | null, waitMs = 0): Promise<PullResult> {
     const q = new URLSearchParams();
     if (after) q.set("after", after);

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
+import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, owedSentences, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
 import { parse, fromFiles, str, list, bool, duration, exact, measuredAtOf, UsageError, type Args } from "./args.js";
 import { sendAll as sendParts, partSender, releaseEmitters } from "./send.js";
 import { Client, ClientError, ShapeError, BadResponse, seen } from "./client.js";
@@ -419,6 +419,15 @@ async function main(argv: string[]) {
     // 更要紧的一句写在这里：**没有任何回执抓得住 shell 吃字**——它发生在命令行看见这段字之前，
     // 命令行拿到的就是被吃过的那份。抓得住它的是 `--X-file`（判据 1 那一半）。
     console.log(`${ev.id}  ${fmt.event(ev, cfg.me)}`);
+    /**
+     * t-290 判据 4／位置（pd 07:57，外部 Y-F1-1 三件里的第一件）：**写入的回包是对一个不拉的节点唯一能说话的
+     * 地方。** 它不拉，所以 `sync` 的出口对它永远不存在；而它在写。服务端从 t-227 起就在回包里送这两样，
+     * 到此刻为止**没有任何调用方读过它们**（`client.emit` 的返回类型把它们扔掉了）。
+     *
+     * 只印句子，不印那两样的内容：句子由 core 算（`owedSentences`），它本来就只说这个节点自己的账（判据 3）。
+     * 一个字都说不出来时一行都不印——**没有账要还的那一次，写入的回执不该多出一行**。
+     */
+    for (const line of owedSentences(ev.owed, new Date())) console.log(line);
   };
   /**
    * t-246：**正文可以走 `--body-file <路径>`**（经 `fromFiles` 变成 `--body`）。给了它，位置参数上就不该再有

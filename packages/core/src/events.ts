@@ -781,6 +781,7 @@ export const KEY_SYMBOLS = [
   "overturnedLine",
   "owedSentences",
   "owedThirdWay",
+  "owedUnpulledLine",
   "partsSkipped",
   "precheckFailedLine",
   "presenceClocks",

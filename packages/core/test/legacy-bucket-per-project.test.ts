@@ -32,7 +32,8 @@ describe("t-290 判据 2、3 · 旁桶起算点按项目算", () => {
   it("判据 3：第二租户的旧指令进旁桶，不再全部落进活欠账", async () => {
     const owed = await owedNow(await tenant({ before: 5, after: 3, batchAt: -400 }), "dev");
     expect(owed.legacy_before_acted_rule_count, "发车之前那 5 条进旁桶（改之前这里是 0）").toBe(5);
-    expect(owed.untouched, "发车之后那 3 条才是活欠账").toHaveLength(3);
+    // 这份夹具不设游标，所以那 3 条属 unseen（判据 4 的那一格）——活欠账的总数仍是 3。
+    expect(owed.unseen.length + owed.untouched.length, "发车之后那 3 条才是活欠账").toBe(3);
   });
 
   it("判据 2：起算点就是它第一条 batch.* 的时刻，不看那一批装了谁", async () => {
@@ -46,7 +47,7 @@ describe("t-290 判据 2、3 · 旁桶起算点按项目算", () => {
     expect(typeof actedRuleLiveAt(s)).toBe("string");
     const owed = owedNow(s, "dev");
     expect(owed.legacy_before_acted_rule_count, "从没发过车的项目，历史里没有「旧规矩」那一段").toBe(0);
-    expect(owed.untouched, "四条都还欠着，一条都没被藏起来").toHaveLength(4);
+    expect(owed.unseen.length + owed.untouched.length, "四条都还欠着，一条都没被藏起来").toBe(4);
   });
 
   it("两批时取最早那一条，不是最后一条——规矩是第一次发车带到的", async () => {
