@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { SEAM_WAIVE_NOT_HERE, WATCH_INTERVAL, CLI_REFUSAL_BATCH_MAX, CLI_SHA_KEY, DEADLINE_WORDS, OWED_LEGACY_HELP, QUIET_HELP, BODY_FILE_HELP, UNSEEN_HEAD, UNSEEN_DROPPED, UNSEEN_MAX, roleNamer, boardTask, Rejected, type ClientEvent, SAID_PREFIX, SAID_MAX_CHARS, PUSH_LEVELS, NODE_SURFACE, CLI_SHA_METHOD, capabilityKey, SEAM_VERDICTS, overlapOf, alsoHere, nobodyElse, symbolsMeasured, symbolsUnnamed, WHOLE_GATE_OFF, cannotMeasureHere, partRefused, PART_NAMES, EXIT_PARTIAL, exitCodeLine, type Board, type SeamVerdict} from "@ateam/core";
@@ -21,7 +21,8 @@ import { queueRefusal, pendingRefusals, clearRefusals, cliOpOf, afterShip, loadS
 import { deploy, rollback, realGit, realBehind, containment, containmentFact } from "./release.js";
 import { fixtureText } from "./fixture.js";
 import { titleAsShown, cardTitleLine, type InstructionIntent } from "@ateam/core";
-import { sync, watch, type CursorStore } from "./loop.js";
+import { createHash } from "node:crypto";
+import { advance, sync, watch, type CursorStore } from "./loop.js";
 import { decide } from "./decide.js";
 import { runImport, type Written } from "./import.js";
 
@@ -118,14 +119,49 @@ export interface CursorIo {
   mkdirSync(p: string, o: { recursive: true }): void;
   writeFileSync(p: string, data: string): void;
   renameSync(from: string, to: string): void;
+  /**
+   * t-293 判据 8：**这个检出跟几台服务器说过话。** 可以不给——给不出时按「只跟一台」处理（见 `fileCursor.read`），
+   * 那正是今天的行为，所以一个老的 `CursorIo` 替身不会因为少这一项而改变任何既有用例的结论。
+   */
+  readdirSync?(p: string): string[];
 }
-const nodeIo: CursorIo = { existsSync, readFileSync: (p, e) => readFileSync(p, e), mkdirSync: (p, o) => { mkdirSync(p, o); }, writeFileSync, renameSync };
+const nodeIo: CursorIo = { existsSync, readFileSync: (p, e) => readFileSync(p, e), mkdirSync: (p, o) => { mkdirSync(p, o); }, writeFileSync, renameSync, readdirSync: (p) => readdirSync(p) };
 
-function cursorFile(me: string, root: string, name = "cursor") { return join(root, ".ateam", `${name}.${me}`); }
-export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, name = "cursor"): CursorStore {
+/**
+ * t-293 判据 8：**一台服务器的身份，缩成文件名里认得出的一小段。**
+ *
+ * 取的是**规范化之后的地址**的指纹：末尾的斜杠与大小写不该把同一台服务器算成两台（`https://X.fly.dev` 与
+ * `https://x.fly.dev/` 是同一台）。指纹而不是地址本身，是因为地址里有斜杠、冒号，还可能带路径——那不是一个文件名。
+ */
+export const serverKey = (url: string): string =>
+  createHash("sha256").update(url.trim().replace(/\/+$/, "").toLowerCase()).digest("hex").slice(0, 8);
+
+function cursorFile(me: string, root: string, name = "cursor", key?: string) {
+  return join(root, ".ateam", key ? `${name}.${me}.${key}` : `${name}.${me}`);
+}
+/**
+ * t-293 判据 8①：**读位置按「服务器＋角色」隔离。**
+ *
+ * qa 06:33 量出的第四种静默改写：这个文件原来只按角色命名，于是**另一台服务器一个格式完全正确的回包**就能
+ * 把它改写成那本日志里的 id。`advance` 的单调闸挡不住——它只要求「更大」，而两本日志的 ULID 之间没有可比性，
+ * 「更大」在这里不是「更新」。
+ *
+ * 旧文件（`cursor.<me>`，没有服务器那一段）仍然认，但**只在这个检出看起来只跟一台服务器说过话时才认**：
+ * 目录里已经有另一台服务器的位置文件，就说明它不止一台，那个旧值是谁的说不出来——**说不出就不猜**，
+ * 这台服务器从 null 起算（代价是重放一次，在 t-226 的上限之内、截断可见；而猜错的代价正是本件要修的那一种）。
+ */
+export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, name = "cursor", key?: string): CursorStore {
+  const dir = join(root, ".ateam");
+  const text = (f: string) => (io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null);
   return {
     // 空文件仍然读成 null：修之前留下来的那些 0 字节游标还在各人机器上，这一支要认得它们。
-    read() { const f = cursorFile(me, root, name); return io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null; },
+    read() {
+      const mine = text(cursorFile(me, root, name, key));
+      if (mine !== null || !key) return mine;
+      // 本服务器还没有位置。旧文件可以接过来，前提是这个检出只跟一台服务器说过话。
+      const others = io.readdirSync?.(dir)?.filter((f) => f.startsWith(`${name}.${me}.`) && f !== `${name}.${me}.${key}` && !f.endsWith(".tmp")) ?? [];
+      return others.length ? null : text(cursorFile(me, root, name));
+    },
     /**
      * t-254：**先写同目录的临时文件，再 rename。**
      *
@@ -141,14 +177,50 @@ export function fileCursor(me: string, root: string = process.cwd(), io: CursorI
     write(c) {
       const v = c?.trim();
       if (!v) return;
-      const dir = join(root, ".ateam");
       io.mkdirSync(dir, { recursive: true });
-      const tmp = join(dir, `${name}.${me}.tmp`);
+      // 临时文件也带上服务器那一段：两台服务器各自崩在两步之间时，留下的也是各自一个，互不覆盖。
+      const tmp = join(dir, key ? `${name}.${me}.${key}.tmp` : `${name}.${me}.tmp`);
       io.writeFileSync(tmp, v);
-      io.renameSync(tmp, cursorFile(me, root, name));
+      io.renameSync(tmp, cursorFile(me, root, name, key));
     },
   };
 }
+
+/**
+ * t-293 判据 8②：**凡命令以非零码结束，游标一律不动。**
+ *
+ * qa 06:33 那一格里，被改写的游标还有后半句：**那次命令随后崩了，而游标已经改掉**——一次失败移动了读位置。
+ * 所以写入不再当场落盘，而是攒着，由命令在**确认自己要以 0 结束**的那一刻提交（`main` 末尾那一处）；
+ * `watch` 是长跑进程，没有「命令结束」那一刻，它每一轮交付完自己提交一次（t-240 的「先交付后推进」因此一个字不动）。
+ *
+ * 两处保住不变：① 同一个进程里 `read()` 看得见还没落盘的那个值，所以 `sync` 内部的先后一个字没变；
+ * ② 提交时拿文件里的值再比一次单调（`advance`），所以两个进程抢同一个文件时，旧值仍然盖不掉新值（t-049）。
+ *
+ * 失败时丢弃待写的位置，方向与 t-240 一致：**重放是安全的那一头，丢失不是。**
+ */
+export function deferredCursor(inner: CursorStore): CursorStore & { commit(): void } {
+  let pending: string | null | undefined;
+  return {
+    read: () => (pending !== undefined ? pending : inner.read()),
+    write(c) { pending = c; },
+    commit() {
+      if (pending === undefined) return;
+      const v = pending;
+      pending = undefined;
+      advance(inner, v);
+    },
+  };
+}
+
+/** 本次命令里攒着的那几个读位置。命令以 0 结束时一起提交；非零就一个都不提交。 */
+const deferredCursors: { commit(): void }[] = [];
+/** 建一个「等命令成功再落盘」的读位置，并记在上面那一叠里。 */
+export function cursorForCommand(inner: CursorStore): CursorStore {
+  const d = deferredCursor(inner);
+  deferredCursors.push(d);
+  return d;
+}
+export function commitCursors(): void { for (const d of deferredCursors) d.commit(); }
 
 /**
  * t-274：**「有人读过了」那一处，与「送到了」分开存。**
@@ -165,8 +237,8 @@ export function fileCursor(me: string, root: string = process.cwd(), io: CursorI
  * 代价说在明处：老节点升级后第一次 `sync` 会重放一次（t-226 的上限之内、截断可见）。换来的是被咬的那一批真的
  * 回得来。新节点不付这个代价——`join` 本来就跑一次 `sync`，那一次就把 `seen` 落下了。
  */
-export function seenCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo): CursorStore {
-  const own = fileCursor(me, root, io, "seen");
+export function seenCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, key?: string): CursorStore {
+  const own = fileCursor(me, root, io, "seen", key);
   return {
     read: () => own.read(),
     write: (c) => own.write(c),
@@ -322,7 +394,7 @@ async function main(argv: string[]) {
       const e = await client.emit({ kind: "reading", key: capabilityKey(eff.me), value: { push }, surface: NODE_SURFACE, method: "ateam join --push 自报" } as ClientEvent);
       console.log(`${e.id}  ${fmt.event(e, eff.me)}`);   // t-206：第五处，与其余四处一致——印事件就带上它的 id
     }
-    await sync(client, eff.me, fileCursor(eff.me), 0, console.log, undefined, undefined, seenCursor(eff.me)).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
+    await sync(client, eff.me, cursorForCommand(fileCursor(eff.me, process.cwd(), nodeIo, "cursor", serverKey(eff.url))), 0, console.log, undefined, undefined, cursorForCommand(seenCursor(eff.me, process.cwd(), nodeIo, serverKey(eff.url)))).catch((err) => console.error(`sync: ${err instanceof Error ? err.message : err}`));
     console.log("");
     console.log(joinOutput(eff.me, await client.manual(eff.me)));
     return;
@@ -432,7 +504,7 @@ async function main(argv: string[]) {
       // 之前发生、而且失败要把这条命令掀翻。第一版是「先推进、后写，写失败还默默吞掉」——磁盘写不进时
       // `sync --quiet` 退 0、一声不吭，那一批照样消失。**我刚在 t-240 修过同一形状的东西，转手又在自己的修法里
       // 做了一遍**：交付与推进之间有缝，缝里丢的东西不留痕。现在它走的是同一个屏障参数（`flush`）。
-      await sync(client, cfg.me, fileCursor(cfg.me), str(a, "wait") ? duration(str(a, "wait")!) : 0,
+      await sync(client, cfg.me, cursorForCommand(fileCursor(cfg.me, process.cwd(), nodeIo, "cursor", serverKey(cfg.url))), str(a, "wait") ? duration(str(a, "wait")!) : 0,
         quiet ? (line) => keep.push(line) : console.log, behind,
         quiet
           ? async () => {
@@ -449,7 +521,7 @@ async function main(argv: string[]) {
         //
         // 它仍有本件的残留：那一叠是本地的，容器重启会连它一起带走，而 `seen` 已经推过去了。按判据 5
         // 点名在证据里，不在这一件里顺手改。
-        seenCursor(cfg.me));
+        cursorForCommand(seenCursor(cfg.me, process.cwd(), nodeIo, serverKey(cfg.url))));
       await recordCliSha(client, cfg.me, distStamp);
       return;
     }
@@ -465,7 +537,7 @@ async function main(argv: string[]) {
       const release = () => removeLock(lockPath, process.pid);
       process.on("exit", release);
       for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { release(); process.exit(130); });
-      await watch(client, cfg.me, fileCursor(cfg.me), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
+      await watch(client, cfg.me, deferredCursor(fileCursor(cfg.me, process.cwd(), nodeIo, "cursor", serverKey(cfg.url))), interval, console.log, { once: bool(a, "once"), heartbeat: beat, flush: flushOut });
       release();
       return;
     }
@@ -890,6 +962,8 @@ main(ARGV).then(async () => {
   // （被拒不再掀翻整条命令，t-228），于是这一行会把刚刚记下的那条当场划掉——**记了等于没记**。
   // 退出码是这件事唯一的真凭据：非 0 就是「有东西没落下去」。
   if (!process.exitCode) noteRefusal(ARGV, null);
+  // t-293 判据 8②：**这一刻才落盘。** 非零码的命令一个位置都不提交——失败不许移动读位置。
+  if (!process.exitCode) commitCursors();
   await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV);
 }).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure

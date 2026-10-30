@@ -6,6 +6,11 @@ import * as fmt from "./format.js";
 export interface CursorStore {
   read(): string | null;
   write(cursor: string | null): void;
+  /**
+   * t-293 判据 8②：把攒着的位置真的落盘。可以不给——不给就是「写即落盘」，那是今天的行为。
+   * 一次性命令由 `main` 在确认自己以 0 结束时提交；`watch` 没有那一刻，所以它每一轮交付完自己调一次。
+   */
+  commit?(): void;
 }
 
 /** The one call `sync` and `watch` need from the server. */
@@ -208,6 +213,7 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
     if (r.events.length) for (const line of report(r, me, after)) print(line);
     if (r.events.length) await opts.flush?.();
     advance(cursor, r.cursor);            // t-240：交付之后才推进——写出去、而且真的流出去了，这一批才算给出去了
+    cursor.commit?.();                    // t-293 判据 8②：这一轮就是它的「命令结束」——长跑进程没有别的那一刻
     if (r.for_me.length) {
       print("\ninstruction received");
       if (opts.once) return r;
