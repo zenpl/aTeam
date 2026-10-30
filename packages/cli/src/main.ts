@@ -221,6 +221,13 @@ export function cursorForCommand(inner: CursorStore): CursorStore {
   return d;
 }
 export function commitCursors(): void { for (const d of deferredCursors) d.commit(); }
+/**
+ * t-293 判据 8②：**落盘与否只看这一个数。**
+ *
+ * 单拎出来是为了它判得到：抛到顶层那一条路本来就走不到收尾那一段，所以**那条路靠的是「到不了」，不是这道闸**；
+ * 这道闸管的是另一半——命令没抛，但自己把退出码设成了非零（部分成功那几条路）。两半各有用例，不许只测一半。
+ */
+export function commitCursorsIfOk(exitCode: number | string | null | undefined): void { if (!exitCode) commitCursors(); }
 
 /**
  * t-274：**「有人读过了」那一处，与「送到了」分开存。**
@@ -963,7 +970,7 @@ main(ARGV).then(async () => {
   // 退出码是这件事唯一的真凭据：非 0 就是「有东西没落下去」。
   if (!process.exitCode) noteRefusal(ARGV, null);
   // t-293 判据 8②：**这一刻才落盘。** 非零码的命令一个位置都不提交——失败不许移动读位置。
-  if (!process.exitCode) commitCursors();
+  commitCursorsIfOk(process.exitCode);
   await shipRefusals(); sayIfRefused(ARGV); sayIfDeaf(ARGV);
 }).catch((err) => {
   // the reminders go last, after whatever this command had to say — including its failure

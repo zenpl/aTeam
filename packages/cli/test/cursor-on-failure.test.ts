@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { serverKey, deferredCursor } from "../src/main.js";
+import { serverKey, deferredCursor, cursorForCommand, commitCursorsIfOk } from "../src/main.js";
 import type { CursorStore } from "../src/loop.js";
 
 const CLI = resolve(__dirname, "..", "dist", "main.js");
@@ -120,5 +120,43 @@ describe("t-293 判据 8② · 失败的命令不许移动读位置", () => {
     d.commit();
     d.commit();
     expect(inner.writes).toBe(1);
+  });
+});
+
+/**
+ * 另一半：**命令没抛，但自己把退出码设成了非零。**
+ *
+ * 上面那条真命令走的是「抛到顶层」，而那条路本来就到不了收尾那一段——**它证的是「到不了」，不是那道闸**。
+ * 部分成功那几条路（`task done` 的 refused／failed、`tell` 的 exit 4）会设退出码而不抛，这道闸管的是它们。
+ *
+ * 这几条共用模块里那一叠待提交的位置，而 `commit` 是幂等的、每条用例只断言自己那个 inner——所以互不干扰。
+ */
+describe("t-293 判据 8② · 退出码非零而没抛的那一半", () => {
+  it("退出码非零 ⇒ 一个位置都不落盘", () => {
+    const inner = mem(null);
+    cursorForCommand(inner).write("01M30000000000000000000003");
+    commitCursorsIfOk(2);
+    expect([inner.value, inner.writes], "非零就一个都不提交").toEqual([null, 0]);
+  });
+
+  it("退出码 0 或 undefined ⇒ 落盘", () => {
+    const a = mem(null);
+    cursorForCommand(a).write("01M40000000000000000000004");
+    commitCursorsIfOk(0);
+    expect(a.value).toBe("01M40000000000000000000004");
+
+    const b = mem(null);
+    cursorForCommand(b).write("01M50000000000000000000005");
+    commitCursorsIfOk(undefined);
+    expect(b.value, "没设过退出码就是成功").toBe("01M50000000000000000000005");
+  });
+
+  it("先非零、后被重试成功：待写的那个还在，这一次提交得了（不提交不等于丢弃）", () => {
+    const inner = mem(null);
+    cursorForCommand(inner).write("01M60000000000000000000006");
+    commitCursorsIfOk(4);
+    expect(inner.value).toBeNull();
+    commitCursorsIfOk(0);
+    expect(inner.value).toBe("01M60000000000000000000006");
   });
 });
