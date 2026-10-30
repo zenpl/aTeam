@@ -118,3 +118,96 @@ export const SURFACE_GATE_BLIND_SPOTS = [
   "字段名不叫 surface：`verify(\"qa\", \"t-1\", \"repo\", true)` 这样按位置传的表面名，闸看不出第三个参数是个表面。",
   "默认值写法：`opts.surface ?? \"repo\"`——引号前面不是 surface 那个字段名，而它确实是一个表面位置。",
 ] as const;
+
+/**
+ * t-301：**不许把一个本项目的任务 id 写死在平台代码里——不分它写成常量还是实参。**
+ *
+ * 出处与边界是 qa 09:37 验 t-290 时量出来的，比「闸有缺口」说得准：那道闸按**形状**挡住「常量」那一种
+ * （`const ACTED_RULE_TASK = "t-147"`），而写成实参（`ruleLiveAt(s, "t-147")`）闸绿；真正没有人挡住的是
+ * **在别处新写死一个别的本项目 id**——它既不是常量形状，也不改任何已有行为，所以没有任何东西会红。
+ *
+ * 为什么一个写死的 id 是洞（t-290 付过的账）：第二个租户的日志里永远不会有一批含着 `t-147`，于是起算点恒算
+ * 不出来，`owedFull` 据此「一条都不进旁桶」，**他们的全部历史落进活欠账**。一个写死的本项目 id，在别人的租户上
+ * 是一个**静默失效的开关**。
+ *
+ * 所以这里不按名单、也不按文件名判，**按结构判**：任何整个值就是一个任务 id 的字符串字面量都算，除掉两种——
+ * 注释里的例子（`stripComments` 抹掉），以及**落在标识符含 `sample` 的值里**的那些。
+ */
+
+/** 从 `at` 处开始的那一个「值」占到哪里（不含）。开头是 `{`/`[`/`(` 就配对到闭合，否则到同层的 `,`/`;`/换行。 */
+function valueEnd(src: string, at: number): number {
+  const open = "{[(", close = "}])";
+  let i = at;
+  while (i < src.length && (src[i] === " " || src[i] === "\t")) i++;
+  const first = open.indexOf(src[i] ?? "");
+  const stack: string[] = [];
+  let quote: string | null = null;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === "\\") { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+    const o = open.indexOf(c);
+    if (o >= 0) { stack.push(close[o]); continue; }
+    if (stack.length && c === stack[stack.length - 1]) {
+      stack.pop();
+      if (!stack.length && first >= 0) return i + 1;      // 配对闭合，值到这儿结束
+      continue;
+    }
+    if (!stack.length && first < 0 && (c === "," || c === ";" || c === "\n")) return i;
+  }
+  return src.length;
+}
+
+/**
+ * 每一个「标识符含 `sample` 的值」占的那几段，按字符下标。两种起点都算，因为两种都是「某个叫 sample… 的东西
+ * 的值」：① `sample: {...}` / `const sampleX = [...]`（赋值与属性）；② `function sampleBuilder(...) {...}`
+ * （函数名也是标识符，它的体就是它的值——`core/src/fixture.ts` 那份样本日志整个落在这一种里）。
+ *
+ * **为什么是「含 sample」而不是等于 `sample`**：pm 08:48 先定的是命名规则，而我 09:0x 量出它会拆掉
+ * `fixture.ts:29` 那条不变量（声明与样本写在同一处，所以加一条声明就自动多一条样本，不会漂移）；
+ * pm 据此把判据改成按结构，并写明那条不变量比它那条命名规则值钱。
+ */
+export function sampleExtents(src: string): { from: number; to: number }[] {
+  const out: { from: number; to: number }[] = [];
+  const add = (name: string, from: number) => {
+    if (/sample/i.test(name)) out.push({ from, to: valueEnd(src, from) });
+  };
+  for (const m of src.matchAll(/(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*[:=](?![=>])\s*/g)) add(m[1], m.index! + m[0].length);
+  for (const m of src.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::[^{;]*)?(?=\{)/g)) add(m[1], m.index! + m[0].length);
+  return out;
+}
+
+/** 整个值就是一个任务 id 的字符串字面量：`"t-147"`、`'t-9'`。前后多一个字都不算（`"t-1 done"` 不是一个 id）。 */
+const TASK_ID_LITERAL = /(["'])(t-\d+)\1/g;
+
+/**
+ * 这份源码里每一处写死的本项目任务 id，按行号。**注释与样本之外一处都不放过**：常量、实参、数组元素、
+ * 对象属性值，写在哪儿都算——判据要的正是「不分常量还是实参」。
+ */
+export function taskIdLiterals(src: string): { line: number; id: string }[] {
+  // `stripComments` 等长替换（注释变空格、换行保留），所以下标与行号都还对得上原文。
+  const code = stripComments(src);
+  const skip = sampleExtents(code);
+  const out: { line: number; id: string }[] = [];
+  for (const m of code.matchAll(TASK_ID_LITERAL)) {
+    const at = m.index!;
+    if (skip.some((s) => at >= s.from && at < s.to)) continue;
+    out.push({ line: code.slice(0, at).split("\n").length, id: m[2] });
+  }
+  return out;
+}
+
+/**
+ * **这道闸看不见什么，说在明处**（同 SURFACE_GATE_BLIND_SPOTS 与 LITERAL_CHECK_BLIND_SPOTS 那条规矩）。
+ * 每一条在 no-hardcoded-task-id.test.ts 里都有一个会红的用例钉着：哪天它们被收进来了，那些用例会告诉
+ * 下一个人闸的范围变宽了，而不是让人以为一直如此。
+ */
+export const TASK_ID_GATE_BLIND_SPOTS = [
+  "经变量绕一手：`const id = \"t-\" + n`——拼出来的 id 不是一个字面量，配不到。",
+  "标识符含 sample 的值整段放过：`function sampleFoo() { ... }` 里即便真写死了一个开关，闸也不看——判据定的就是按这个结构放过，代价写在这儿。",
+  "只扫 core 与 server 的 src：命令行不在范围里（它本来就跑在某一个项目的检出里），测试与 .d.ts 也不在。",
+] as const;
