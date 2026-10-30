@@ -140,6 +140,6 @@ describe("t-200 · 负数不是最小的那一档，是另一侧", () => {
     expect(said.line, "过期四小时说「还有不到 1 分钟」，那是这件事的原样").not.toContain("还有不到 1 分钟");
     // 这里用的是 pd 早就定过的那一句（stuck），不是新写的——「已经过去」要不要另说一句新话，归 pd
     expect(said.state).toBe("stuck");
-    expect(said.line).toBe("过期了，默认还没生效。");
+    expect(said.line).toBe("过期了，默认还没生效（默认是 B）。");   // t-292：pd 05:33 六改稿，把默认是哪一个也说出来
   });
 });

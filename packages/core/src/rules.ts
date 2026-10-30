@@ -229,46 +229,65 @@ const holds = (v: unknown, k: FieldKind): boolean =>
 const SHAPE_OF: Record<FieldKind, string> = { string: "一个非空字符串", boolean: "true 或 false", strings: "一个字符串数组", pair: "两个任务 id 的数组，例如 [\"t-1\", \"t-2\"]", count: "一个非负整数" };
 
 /** Throws Rejected — never a TypeError — when an event is missing a field a rule is about to read, or has it wrong. */
+/**
+ * t-292（pd 05:30 ④，逐字）：refs 被拒时跟的那一句合法形状。
+ *
+ * 旧的拒收只说「不是本日志里的事件」，没说该怎么写，于是人拿着一个外部编号反复试。
+ */
+export const REFS_SHAPE = "只收本日志里的事件 id；外部编号写进正文";
+
+/**
+ * t-292（pd 05:30 ④）：**一次把全部违规都报出来，每条跟一句合法形状。**
+ *
+ * 旧的每一处都 `throw`，所以只报第一条：一个字段名写错三个的人要来回三趟，而每一趟只知道一个。
+ *
+ * **两处仍然必须当场停**，不是偷懒：`kind` 与 `task` 的 `op` 决定了「这条事件该有哪些字段」（`slot`）。
+ * 它们不对的时候，后面每一条都是拿错的清单去核的，报出来只会是噪音。所以这两条报完就停，其余累积。
+ */
 export function checkShape(e: NewEvent): void {
-  if (e.refs !== undefined && !holds(e.refs, "strings")) throw new Rejected("shape", `refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}`);
+  const bad: string[] = [];
+  const stop = () => { throw new Rejected("shape", bad.join("\n")); };
+  // t-292（pd 05:30 ④）：refs 的拒收要说清它收什么。pd 定的原话，逐字。
+  if (e.refs !== undefined && !holds(e.refs, "strings")) bad.push(`refs 要是${SHAPE_OF.strings}，收到 ${valueForm(e.refs)}。${REFS_SHAPE}`);
   const kinds = ["reading", "instruction", "ack", "untell", "disown", "note", "task", "premise"];
-  if (!kinds.includes(e.kind as string)) throw new Rejected("shape", `kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`);
+  if (!kinds.includes(e.kind as string)) { bad.push(`kind ${JSON.stringify(e.kind)} 不是事件种类之一：${kinds.join("、")}`); stop(); }
   let slot: string = e.kind;
   if (e.kind === "task") {
     const op = (e as { op?: unknown }).op;
     const ops = Object.keys(REQUIRED).filter((k) => k.startsWith("task:")).map((k) => k.slice(5));
-    if (typeof op !== "string" || !ops.includes(op)) throw new Rejected("shape", `task 事件要带 op，${op === undefined ? "这条没带" : `${JSON.stringify(op)} 不是其中之一`}：${ops.join("、")}`);
+    if (typeof op !== "string" || !ops.includes(op)) { bad.push(`task 事件要带 op，${op === undefined ? "这条没带" : `${JSON.stringify(op)} 不是其中之一`}：${ops.join("、")}`); stop(); }
     slot = `task:${op}`;
   }
   const rec = e as unknown as Record<string, unknown>;
   for (const [field, kind] of Object.entries(REQUIRED[slot] ?? {})) {
     if (!holds(rec[field], kind)) {
       const what = rec[field] === undefined ? "这条没带它" : `收到 ${valueForm(rec[field])}`;
-      throw new Rejected("shape", `${slot} 要带 ${field}（${SHAPE_OF[kind]}），${what}。字段名写错了也会走到这里——按 ${slot} 该有的字段核一遍：${Object.keys(REQUIRED[slot]).join("、")}`);
+      bad.push(`${slot} 要带 ${field}（${SHAPE_OF[kind]}），${what}。字段名写错了也会走到这里——按 ${slot} 该有的字段核一遍：${Object.keys(REQUIRED[slot]).join("、")}`);
     }
   }
   for (const [field, kind] of Object.entries(OPTIONAL[slot] ?? {})) {
-    if (rec[field] !== undefined && !holds(rec[field], kind)) throw new Rejected("shape", `${slot} 的 ${field} 可以不带，带了就要是${SHAPE_OF[kind]}，收到 ${valueForm(rec[field])}`);
+    if (rec[field] !== undefined && !holds(rec[field], kind)) bad.push(`${slot} 的 ${field} 可以不带，带了就要是${SHAPE_OF[kind]}，收到 ${valueForm(rec[field])}`);
   }
   const either = EITHER[slot];
   if (either && either.every((f) => rec[f] === undefined))
-    throw new Rejected("shape", `${slot} 要带 ${either.join(" 或 ")} 之一，这条一个都没带：${either.join("、")} 各自可以不写，但两个都不写这条事件就什么也没说`);
+    bad.push(`${slot} 要带 ${either.join(" 或 ")} 之一，这条一个都没带：${either.join("、")} 各自可以不写，但两个都不写这条事件就什么也没说`);
   // t-166: the one nested shape the criteria rule reaches into — its meaning is checked there, its type here.
   const mv = (e as { moved?: unknown }).moved;
   if (mv !== undefined) {
     const o = mv as { index?: unknown; to?: unknown };
     if (!mv || typeof mv !== "object" || Array.isArray(mv) || typeof o.index !== "number" || !holds(o.to, "string"))
-      throw new Rejected("shape", `task:criteria 的 moved 要是 {index: <判据序号，从 1 起>, to: "<任务 id>"}，收到 ${valueForm(mv)}`);
+      bad.push(`task:criteria 的 moved 要是 {index: <判据序号，从 1 起>, to: "<任务 id>"}，收到 ${valueForm(mv)}`);
   }
   // one nested shape a rule reaches into: a note that decides an instruction
   const d = (e as { decides?: unknown }).decides;
   if (d !== undefined) {
     const o = d as { of?: unknown; option?: unknown };
     if (!d || typeof d !== "object" || Array.isArray(d) || !holds(o.of, "string") || !holds(o.option, "string"))
-      throw new Rejected("shape", `note 的 decides 要是 {of: "<指令 id>", option: "<选项>"}，收到 ${valueForm(d)}`);
+      bad.push(`note 的 decides 要是 {of: "<指令 id>", option: "<选项>"}，收到 ${valueForm(d)}`);
   }
   const sh = (e as { shape?: unknown }).shape;
-  if (sh !== undefined && (!sh || typeof sh !== "object" || Array.isArray(sh))) throw new Rejected("shape", `reading 的 shape 要是 {regex?, enum?} 这样的对象，收到 ${valueForm(sh)}`);
+  if (sh !== undefined && (!sh || typeof sh !== "object" || Array.isArray(sh))) bad.push(`reading 的 shape 要是 {regex?, enum?} 这样的对象，收到 ${valueForm(sh)}`);
+  if (bad.length) stop();
 }
 
 /**
@@ -287,7 +306,7 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
 
   // R0: you may not build on a reading that is no longer true, nor on an event that is not in the log.
   for (const ref of e.refs ?? []) {
-    if (!state.ids.has(ref)) throw new Rejected("ref", `${ref} is not an event in this log`);
+    if (!state.ids.has(ref)) throw new Rejected("ref", `${ref} is not an event in this log。${REFS_SHAPE}`);
     const rs = state.readings.get(ref);
     if (!rs) continue;
     if (!rs.valid || rs.expired) {
@@ -364,7 +383,8 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
       // CLI 总会填 15m，所以这道闸防的是别的客户端与直接调 API 的情形，拒绝话要说清怎么补。
       if (!e.ack_by) throw new Rejected("instruction", e.default !== undefined
         ? `带默认的卡必须有 ack_by：默认的意思是「到期按 ${e.default}」，没有到期时刻它永远不会生效。加上 ack_by（CLI 是 --ack-by 15m）`
-        : "ack_by is required");
+        // t-292（pd 05:30 ④）：拒收要跟一句合法形状。pd 定的原话，逐字。
+        : "ack_by is required：收 30m、4h 这样的时长，也收 ISO 时刻");
       if (e.intent !== undefined) {
         if (e.to !== human) throw new Rejected("instruction", `kind is for the human's board; ${e.to} just acts`);
         if (!INSTRUCTION_INTENTS.includes(e.intent)) throw new Rejected("instruction", `kind must be one of ${INSTRUCTION_INTENTS.join(" | ")}, not "${e.intent}"`);

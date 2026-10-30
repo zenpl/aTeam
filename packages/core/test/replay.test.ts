@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, missingRoleOf, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, AGO_JUST_NOW, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, missingRoleOf, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -481,7 +481,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     // 到期了，但没人落事件：卡还在人手里，牌桌说的是故障态那一句，不是「已经按 private 了」
     expect(b.instructions[0].chosen).toBeUndefined();
     expect(b.needs_human.map((n) => n.id)).toEqual([q.id]);
-    expect(b.needs_human[0].says_default).toEqual({ state: "stuck", line: DEFAULT_LINES.stuck() });
+    expect(b.needs_human[0].says_default).toEqual({ state: "stuck", line: DEFAULT_LINES.stuck("private") });
     expect(b.overdue.map((o) => o.instruction)).toEqual([q.id]);
   });
 
@@ -500,7 +500,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
     // t-189：投影现在把 `note` 一起带出来——**那条事件的 id 就是「这件真的发生过」的凭据**。
     // 原来投影把它丢了，于是牌桌只能按「时间过了」印「已按默认 X 执行」，替一件没发生的事作证。
     expect(b.instructions[0].chosen).toEqual({ option: "private", by: "default", at: landed[0].at, note: landed[0].id });
-    expect(b.instructions[0].says_default).toEqual({ state: "applied", line: DEFAULT_LINES.applied("private") });
+    expect(b.instructions[0].says_default).toEqual({ state: "applied", line: DEFAULT_LINES.applied(AGO_JUST_NOW, "private") });
     // 幂等：再扫一次不会落第二条（`default_due` 落完就是 false）
     expect(await runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now())).toHaveLength(0);
   });

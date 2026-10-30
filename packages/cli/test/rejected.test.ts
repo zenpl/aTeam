@@ -4,6 +4,7 @@
  * the refusal to the two "it's finished" messages that followed it.
  */
 import { describe, it, expect } from "vitest";
+import { alreadyDoneNotice } from "@ateam/core";
 import { readRefusal, refusalNotice, clearsAfterNotice, actionOf, type Refusal } from "../src/rejected.js";
 
 const NOW = new Date(Date.parse("2026-09-07T01:20:00Z"));
@@ -80,16 +81,24 @@ describe("t-233 · 两类拒绝，提醒各说各的", () => {
     expect(line).not.toContain("没有落下去");
     expect(line).not.toContain("重做：");
     expect(line).not.toContain("ateam ack 01M2B");          // 那条命令不该再出现在这里：再跑一次只会再被拒一次
-    expect(line).toContain("2026-09-07T01:14:51.880Z");
+    expect(line).toContain("2026-09-07T01:14:51.880Z");     // 绝对时刻进括号
+    expect(line).toContain("5 分钟前");                      // 相对时长在前
     expect(line).toContain("不用重做");
-    expect(line).toContain("ateam sync --clear-refused");     // 自己划的办法还在
+    // pd 06:42 的通则：**一句话的全部用意是「你不用做任何事」，它就不许以要人做一件事结尾。**
+    // 所以这一句里连划掉的办法都没有——一条命令也不该出现。提醒说过一次就自己退场（clearsAfterNotice）。
+    expect(line).not.toContain("ateam");
+    // 整句原样取自 core：措辞改一处就全改，这一行不再抄字面。
+    expect(line).toBe(`⚠ ${alreadyDoneNotice("5 分钟前", "2026-09-07T01:14:51.880Z")}`);
   });
 
-  it("说不出时刻时不编一个：说「已经办过了」，其余照旧（缺席与空要分得开）", () => {
+  it("说不出时刻时不编一个：照说「已经办好了」，其余照旧（缺席与空要分得开）", () => {
     const line = notice(done({ already: { at: null } }))!;
-    expect(line).toContain("已经办过了");
-    expect(line).not.toMatch(/20\d\d-/);
+    expect(line).toBe(`⚠ ${alreadyDoneNotice(null, null)}`);
+    expect(line).toContain("已经办好了");
+    expect(line).toContain("不用重做");
+    expect(line).not.toMatch(/20\d\d-/);                   // 没留下那一刻，就不编一个时刻
     expect(line).not.toContain("重做：");
+    expect(line).not.toContain("ateam");
   });
 
   it("另一类一个字没变：照旧说「没有落下去」、照旧给「重做」", () => {

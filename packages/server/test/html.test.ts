@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board } from "@ateam/core";
+import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW } from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerKeyOf } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
@@ -89,6 +89,13 @@ beforeAll(async () => {
   await w.post("dev", { kind: "note", body: "evidence: also on the default branch as 7654321", task: "t-1" });
 });
 afterAll(() => w.stop());
+
+/**
+ * t-292（pd 10:31 ②）：那句「不点的话…」的空格由 core 的 `cn` 按占位的值算——中文选项两侧不留、
+ * 数字西文两侧各留一个。所以这里**不抄字面，从 `DEFAULT_LINES` 现算**，下次 pd 再改字这几行跟着变。
+ */
+const waitingRe = (option: string) =>
+  new RegExp(DEFAULT_LINES.waiting("还有 § 分钟", option).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("§", "\\d+"));
 
 describe("验收 1 · 首屏只有：需要你的卡、你刚定了、说一句、现在；其余折叠", () => {
   it("is text/html, in Chinese, with the sections in board.md order and everything else under 其余", async () => {
@@ -182,7 +189,9 @@ describe("验收 3 · 每张卡有种类与对应按钮；匿名点击走 token 
     expect(a).toContain('<span class="kind">问你</span>');
     expect(a).toContain('<p class="q">看板认证选私有还是公开？</p>');         // the board's title drops the mark; the page puts 「？」 back
     expect(a).toMatch(/<details class="detail"><summary>细节<\/summary><p>细节：私有要每次带 token，公开谁都能看。<\/p><\/details>/);
-    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">不点的话，还有 \d+ 分钟到期，按 公开 执行。<\/span><\/form>/);   // pd 10:39：绝对时刻只进 title
+    // 结构照旧逐字钉住；那一句本身交给 waitingRe 现算（pd 10:31 ② 之后它是「按公开执行」，中文占位不留空格）
+    expect(a).toMatch(/<form class="actions" method="post" action="\/decide"><input type="hidden" name="id" value="[^"]+"><button class="btn" type="submit" name="option" value="私有">私有<\/button><button class="btn primary" type="submit" name="option" value="公开">公开 <small>默认<\/small><\/button><span class="hint">[^<]*<\/span><\/form>/);   // pd 10:39：绝对时刻只进 title
+    expect(a).toMatch(waitingRe("公开"));
     expect(d).toContain('<span class="kind">请你做</span>');
     expect(d).toContain('<p class="q">请把第 3 批推到 production</p>');
     expect(d).toContain("<summary>细节</summary><p>claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。</p>");
@@ -554,13 +563,13 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     // ① 到期了、事件还没落：这是我们的故障，照实说
     b.instructions.push({ ...ask, chosen: { option: "B", by: "default", at: b.now } });
     const stuck = renderBoard(b, state, { human: HUMAN });
-    expect(stuck).toContain("<b>过期了，默认还没生效。</b>");
-    expect(stuck, "没有那条事件时，一个字都不许说成已经执行").not.toContain("已按默认 B 执行");
+    expect(stuck).toContain(`<b>${DEFAULT_LINES.stuck("B")}</b>`);   // t-292：出处在 core，断言不另抄一份
+    expect(stuck, "没有那条事件时，一个字都不许说成已经执行").not.toContain("按默认 B 执行了");
     // ② 事件真落下了：指得出那条记录，才说它执行了
     b.instructions[b.instructions.length - 1] = { ...ask, chosen: { option: "B", by: "default", at: b.now, note: "01EVT" } };
     const html = renderBoard(b, state, { human: HUMAN });
-    expect(html).toContain("<b>你没点，已按默认 B 执行。</b>");
-    expect(html).not.toContain("过期了，默认还没生效。");
+    expect(html).toContain(`<b>${DEFAULT_LINES.applied(AGO_JUST_NOW, "B")}</b>`);
+    expect(html).not.toContain(DEFAULT_LINES.stuck("B"));
     expect(html).not.toContain("你刚定了");
     expect(tokenPage({ then: "/decide", id: "x", option: '<"&>' })).toContain('<input type="hidden" name="option" value="&lt;&quot;&amp;&gt;">');
     /**
@@ -1673,7 +1682,7 @@ describe("t-188 · 没有默认的卡也说得出什么时候到期", () => {
     const card = (id: string) => { const i = html.indexOf(`value="${id}"`); return html.slice(html.lastIndexOf("<article", i), html.indexOf("</article>", i)); };
     // pd 10:39：正文用相对，绝对只进 title——两种卡说的都是「还有多久」，不是一个光秃秃的 11:52
     expect(card(plain.id), "没有默认的卡一句期限都没说").toMatch(/期限 还有 \d+ 分钟/);
-    expect(card(withDefault.id)).toMatch(/不点的话，还有 \d+ 分钟到期，按 丁 执行。/);
+    expect(card(withDefault.id)).toMatch(waitingRe("丁"));
     expect(card(withDefault.id), "带默认的卡不该把期限印两遍").not.toContain("期限 ");
     expect(card(plain.id), "正文里不该出现绝对时刻").not.toContain(due.toISOString().slice(11, 16));
   });

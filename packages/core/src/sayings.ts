@@ -505,3 +505,54 @@ export function manualCopies(cores: Record<string, string>, manuals: Record<stri
  * `manualCopies()` 现算，不另存一份名单：一份名单与它描述的东西分开维护，正是这件任务的由来。
  */
 export const MANUAL_COPIES_FROZEN: number = 10;
+
+/**
+ * t-292 判据 4（pd 05:33 的通则）：**给人读的句子里不出现字段名；字段名只许留在给机器的那一份**
+ * （`board --json`、事件本身）。
+ *
+ * 判据 3 那三处是同一个毛病的三个实例（旧的印着 `ack_by`、`chosen` 这样的字），而 pd 把它写成了通则——
+ * 一条通则要么有闸，要么过两天又长出第四处。**这一处就是第四处**：`format.ts` 的 LATE 那一段。
+ *
+ * 字段名的形状取这个项目的实际写法：下划线连写的小写词（`ack_by`、`says_default`、`overdue_by_presence`）。
+ * 命令名、开关、文件路径、sha 一概不是字段名（CLAUDE.md 说它们原样保留），而它们都不是这个形状。
+ */
+export const FIELD_NAME = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/;
+
+/**
+ * 一个字面量算不算「给人读的句子」。**光是一个字段名本身不算**——`"needs_human"` 作为代码里的键出现时，
+ * 它不是一句话，而这道闸管的是话。判准：含中文，或者含空格（英文的人可见文案也要管，那正是 `humanSentences`
+ * 只认中文时抓不到的那一类，SAYINGS 的盲点清单里写着）。
+ */
+export const isHumanText = (t: string): boolean => /[一-龥]/.test(t) || /\S\s\S/.test(t);
+
+/**
+ * `{{watch_interval}}` 这样的模板占位**在渲染之前就被替换掉了**，人读不到那个名字——所以它不算
+ * 「出现在给人读的句子里」。说明书整份是占位搭的，不剥掉它，这道闸会把六处占位报成六处违规。
+ */
+export const withoutPlaceholders = (t: string): string => t.replace(/\{\{[^}]*\}\}/g, "");
+
+/**
+ * 一处源码里，给人读的句子中出现的字段名。`literals` 已经把注释、正则、`${…}` 都处理掉了。
+ *
+ * **整份文件一次词法，不按声明切片。** 切完再逐片词法是不成立的：一片可能从模板串中间开始，词法从那里
+ * 就跑飞了——我第一版这么做，于是把 `interface` 里的 `key: string;` 报成了字符串字面量。
+ */
+export function fieldNamesInHumanText(src: string): { text: string; names: string[] }[] {
+  const out: { text: string; names: string[] }[] = [];
+  for (const t0 of literals(src)) {
+    const t = withoutPlaceholders(t0);
+    if (!isHumanText(t)) continue;
+    const names = [...new Set(t.match(new RegExp(FIELD_NAME, "g")) ?? [])];
+    if (names.length) out.push({ text: t, names });
+  }
+  return out;
+}
+
+
+/**
+ * 这道闸看不见的那几种，照实写下来——**一道说不出自己盲在哪儿的闸，下一个人会以为它管得比实际宽**
+ * （和 SAYINGS 的盲点清单同一个用法）。清单与口径住在 `wording.ts`
+ * （`FIELD_NAME_SCOPE`、`FIELD_NAMES_DECLARED`、`undeclaredFieldNames`），因为判在不在名单里要按指纹，
+ * 而 `wordingHash` 在那边；盲点清单住在用例里（`cli/test/no-field-names.test.ts`）——它是写给改这道闸
+ * 的人的话，不是人可见的文案，放进 core 会白占一格 pd 的措辞名册。
+ */

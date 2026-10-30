@@ -25,7 +25,12 @@ export interface Part<T> {
  * 两种行都走 stdout：看它的进程只把 stdout 当事件流（t-225）。被拒的那一行同时写一份到 stderr，人盯着终端时
  * 两处都看得见。
  */
-export interface PartTally { ok: number; bad: number; exit: number; failed: { what: string; rule: string; why: string }[] }
+/**
+ * t-292 判据 7 ① 并进 t-261 的结构：`failed` 每一件多带一个可选的 `already`。
+ * 它是 t-233 给 409 加的那个字段，加它的理由原话是「客户端此前只拿得到 rule 与一句话，要分辨
+ * 『那件事已经发生过了』只能去匹配话里的字」——而那正是那件任务不许的做法。
+ */
+export interface PartTally { ok: number; bad: number; exit: number; failed: { what: string; rule: string; why: string; already?: { at: string | null } }[] }
 
 /**
  * t-261：**一件一件地发，规则与 `sendAll` 同一套。**
@@ -41,7 +46,7 @@ export function partSender<T>(
   err: (line: string) => void,
 ): { one(what: string, event: T): Promise<boolean>; tally(): PartTally } {
   let ok = 0, bad = 0;
-  const failed: { what: string; rule: string; why: string }[] = [];
+  const failed: { what: string; rule: string; why: string; already?: { at: string | null } }[] = [];
   return {
     async one(what, event) {
       try {
@@ -55,7 +60,11 @@ export function partSender<T>(
           : e instanceof Error ? e.message : String(e);
         out(partRefused(what, why));
         err(partRefused(what, why));
-        failed.push({ what, rule: e instanceof ClientError && e.status === 409 ? (e.body.rule ?? "rejected") : "error", why });
+        // t-292 判据 7 ①：**409 正文里的 already 要带过去**，否则本机那句提醒只会说「没有落下去。重做：
+        // <同一条命令>」，而照它重做必然再拿到同一条 already，提醒永远留在那里。搬进 partSender 之后
+        // 两条路（sendAll 与 release 那几件）一起拿到它，不是只补一处。
+        const already = e instanceof ClientError && e.status === 409 ? (e.body as { already?: { at: string | null } }).already : undefined;
+        failed.push({ what, rule: e instanceof ClientError && e.status === 409 ? (e.body.rule ?? "rejected") : "error", why, ...(already ? { already } : {}) });
         bad += 1;
         return false;
       }

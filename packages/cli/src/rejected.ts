@@ -115,10 +115,10 @@ export function refusalNotice(st: RefusalState, now: Date, clearWith = "ateam sy
   const { at, rule, cmd, what, already, part } = st.refusal;
   // t-233：两类各说各的。**「已经办好了」那一类不说「没有落下去」，也不给「重做」**——真样本是 qa 16:55 那次，
   // 拒绝话逐字写着 already acked at 16:54:51.880Z，而这里照旧叫人重做一遍。句子在 core（措辞待 pd 定稿）。
-  if (already) return alreadyDoneNotice(what, already.at, clearWith);
-  // t-283 判据 6：**这两句随事实一起改，不等 pd**——这段字只出现在 agent 的命令行输出里，人看不到。
-  // 我核过前提：`.ateam/refused.<me>` 只由 `packages/cli/src/main.ts` 读写（`refusalFile` 三处），从不发往服务端；
-  // `core/src/store.ts` 里那个 `refused` 是服务端那本账（`POST /refusals` 收的），两回事。
-  // 改的是「重做」那半：旧话叫人把原样那条再跑一遍，而这一类被拒的成因就是正文超长——**原样重跑只会再被拒一次**。
+  // t-292 判据 7：⚠ 与行首的格式留在这一侧，pd 定的那句话原样从 core 取——相对在前、绝对进括号。
+  // 合并 dev aea4c8f：already 这一支取我这边（dev 那边仍是 09-12 的占位版，带 PD_PLACEHOLDER 与
+  // 「要自己划」——而「要自己划」正是 pd 06:42 删掉的那半句，理由是一句话不许以要人做一件事结尾）。
+  if (already) return `⚠ ${alreadyDoneNotice(already.at ? ago(now.getTime() - Date.parse(already.at)) : null, already.at)}`;
+  // 下面这一句取 dev 的加厚版（t-283 判据 6）：被拒成因是正文超长时，原样重跑必然再被拒一次。
   return `⚠ 你${howLong(now.getTime() - Date.parse(at))}有一次写入被拒（${rule}）：${part ?? what} 没有落下去。重做：${cmd}（正文改短也算：指纹只认对谁做哪件事）；确实不做了就划掉：${clearWith}`;
 }

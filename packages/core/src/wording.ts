@@ -18,7 +18,7 @@
  * 又仍然说得出「新增的是哪几句」：拿当下源码里那几句原样印出来，指纹只用来判它在不在名单里。
  */
 import { createHash } from "node:crypto";
-import { humanSentences } from "./sayings.js";
+import { humanSentences, fieldNamesInHumanText } from "./sayings.js";
 
 /** 一句人可见的话的指纹。取 12 位十六进制：够长到不会撞，够短到快照读得下去。 */
 export const wordingHash = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 12);
@@ -860,51 +860,81 @@ export const WORDING_AT_FREEZE: readonly string[] = [
  * 逐条的原文不在这里（见 `bin/wording` 的输出）：快照存指纹不存原文，理由写在文件头上。
  */
 export const WORDING_ADDED_DURING_FREEZE: readonly string[] = [
+  "00a292bbda27",
   "019cd25acaa8",
   "01e3e0bb0de7",
+  "066df4edc1f9",
   "0c0a1516e53f",
   "10a4975d377f",
+  "13e748602c7d",
   "156a26558e39",
   "213e4805d402",
+  "23205198b5f8",
   "256f71413076",
   "29b8734c42db",
+  "2bcc058a7ce2",
+  "2ce311506749",
+  "2ee51f97d20a",
   "355bc3cf8d9c",
   "36222751e552",
+  "38b908e4bd58",
   "3da0f22d2c8c",
   "3ec57311ace7",
   "40a74b936978",
+  "475d6afbebcc",
+  "478ae02e254b",
   "4c1c99c69245",
+  "4cd53c8b6a4b",
+  "575f18229dc3",
+  "582e5c8a0e9f",
   "5bcd68644bd8",
   "5c430e6f0f0c",
   "60ab743988bb",
+  "63d871d8c9d6",
   "66ad62d98ce0",
+  "67e2d721f3ba",
   "68ec390fec9d",
   "6973b0efedea",
   "77502f167c02",
   "7974ffe0a5e1",
   "7d82e561882c",
+  "7e96d6c698b7",
+  "7f64e5ec7ab3",
   "828a39b0f30d",
   "82cde5e523b4",
   "8449ce32b5b6",
+  "8491dd770aac",
+  "84c602253ad8",
   "904c1897c641",
   "91fff0af64c0",
+  "932235bbc270",
+  "936e3fd21c65",
   "95973c090259",
+  "9a4c9ee4964f",
+  "9a64a304fe8b",
   "9c749a8c484c",
   "a5709eca9b4d",
   "a6e9d3b10ba9",
   "a7b0b5937cdc",
+  "aaa4e94542ea",
   "ad0a5a3ba4c3",
+  "ba64612c290f",
   "c19cde0d8f41",
   "c6408c8b22b2",
+  "c6ce25921dfa",
   "c6f81159c6bc",
+  "c96ff5cdc3a9",
   "cab0b2958753",
   "cb0ce90e2a02",
   "cc6f904be7c0",
+  "d2e6f2909c4a",
+  "d49a379990bf",
   "df6d4b016bfe",
   "e16e11f25c0f",
   "e583272a854f",
   "eb939c64feaf",
   "ee35d6915a83",
+  "ef541cd8c1bf",
   "f9c7daf8d850",
 ];
 
@@ -920,4 +950,51 @@ export type NewWording = Wording;
 export function newWording(sources: Record<string, string>, known: readonly string[] = [...WORDING_AT_FREEZE, ...WORDING_ADDED_DURING_FREEZE]): NewWording[] {
   const seen = new Set(known);
   return measureWording(sources).filter((w) => !seen.has(w.hash));
+}
+
+/**
+ * t-292 判据 4（pd 05:33 的通则）：**哪几份源码在这道闸的口径内。**
+ *
+ * 两处渲染器（命令行印的、人打开的那一页），加上 core 里句子住的三处与服务端的 i18n。
+ * **`rules.ts` 不在口径内，而这是一条有理由的排除、不是盲点**：拒绝话要说出是哪个字段不合格，人才改得动它，
+ * 而 pd 05:30 ④ 自己定稿的那一句就带着 `ack_by`（「ack_by is required：收 30m、4h 这样的时长，也收 ISO 时刻」）。
+ */
+export const FIELD_NAME_SCOPE = [
+  "packages/cli/src/format.ts",
+  "packages/server/src/html.ts",
+  "packages/core/src/events.ts",
+  "packages/core/src/board.ts",
+  "packages/core/src/manual.ts",
+  "packages/server/src/i18n.ts",
+] as const;
+
+/**
+ * 口径内每一处「给人读的句子里带字段名」的话，**按指纹登记，不存原文**——和 `WORDING_AT_FREEZE` 同一条
+ * 理由：存原文就给那句话造了第二个出处（`SECOND_HOME_FROZEN` 正管这件事）。
+ *
+ * **逐条是哪一处、为什么还在名单上，写在那道闸的用例里**（`cli/test/no-field-names.test.ts` 的 `PENDING_PD`），
+ * 不写在这儿：那几句理由是给改这道闸的人读的，不是人可见的文案，放进 core 会白占四格 pd 的措辞名册。
+ * 用例自己断言那张表与这份指纹名单逐条对得上。
+ *
+ * **此刻四条全是等 pd 定稿，没有一条是我判成合规的**——判它合规就是替 pd 定措辞，那是判据 5 禁的。
+ */
+export const FIELD_NAMES_DECLARED: readonly string[] = [
+  // **空的。** 四处全部由 pd 定稿换掉了：format.ts 那两条走 pd 10:31 ③，board.ts 那两条走 pd 12:57。
+  // 于是判据 4 那条通则此刻是真的成立，不是靠一张待办表才绿——**名单只许缩，缩的依据是句子真的换了**，
+  // 用例断言名单上每一条都还指向源码里活着的话，所以它也不可能靠留着死指纹变绿。
+];
+/**
+ * 口径内没被登记过的那几句。**空数组表示这道闸此刻没有新发现。**
+ *
+ * `known` 是参数而不是写死的，和 `newWording` 同一个形状：名单是口径，口径该由调用方摆出来。
+ */
+export function undeclaredFieldNames(sources: Record<string, string>, known: readonly string[] = FIELD_NAMES_DECLARED): { file: string; hash: string; field: string; text: string }[] {
+  const seen = new Set(known);
+  const out: { file: string; hash: string; field: string; text: string }[] = [];
+  for (const [file, src] of Object.entries(sources))
+    for (const h of fieldNamesInHumanText(src)) {
+      const hash = wordingHash(h.text);
+      if (!seen.has(hash)) out.push({ file, hash, field: h.names.join(","), text: h.text });
+    }
+  return out.sort((a, b) => (a.hash < b.hash ? -1 : 1));
 }

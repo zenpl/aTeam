@@ -94,12 +94,18 @@ export const atClock = (iso: string) => iso.slice(11, 16);
 export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefined {
   const i = st.instruction;
   if (i.default === undefined || !i.options?.length) return undefined;
-  if (st.chosen?.by === DEFAULT_DECIDER) return { state: "applied", line: DEFAULT_LINES.applied(st.chosen.option) };
+  if (st.chosen?.by === DEFAULT_DECIDER) {
+    // t-292：pd 新 `applied` 要说出真正执行的时刻。梯子对「此刻另一侧」答 null（t-200），而**由调用方决定说什么**——
+    // 这里把负数夹到 0，于是落在「刚刚」那一档：事件时刻比 b.now 晚只会是时钟偏移，夹 0 之后说的仍是真的。
+    // 夹 0 不是我新定的口径，html.ts 读相对时间时一直这么做（`Math.max(0, …)`）。
+    const since = ago(Math.max(0, now.getTime() - Date.parse(st.chosen.at))) ?? AGO_JUST_NOW;
+    return { state: "applied", line: DEFAULT_LINES.applied(since, st.chosen.option) };
+  }
   if (st.chosen) return undefined;                       // 有人真的点了：这张卡不再是「到期会怎样」的事
   // t-190：记过一次「本该执行没执行」就一直这么说，直到人真的点。**不许悄悄改回**——人要看得见我们没执行过，
   // 所以哪怕期限已经重算、这张卡此刻只是在等他，说的也是这一句，不是「不点的话…到期」。
   if (st.default_missed) return { state: "missed", line: DEFAULT_LINES.missed(i.default) };
-  if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  if (st.default_due) return { state: "stuck", line: DEFAULT_LINES.stuck(i.default) };
   // pd 10:39：正文用相对，绝对只进 title。改前这里印的是 `atClock(i.ack_by)`，也就是一个光秃秃的 `11:52`。
   //
   // t-200：**期限已经过去时，这里不再说「不点的话…到期」。** 这是 qa 12:31 那张卡的落点：它 08:12 就到期了，
@@ -110,7 +116,7 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   // 还没生效。」是 pd 早就定过的，而它此刻说的正是真的——期限过了、默认没生效。这不是替 pd 写字，是把它已经
   // 写好的那一句用在它本来就该用的地方；deaf 那种「要不要另说一句新话」的问题不在这里。
   const left = until(Date.parse(i.ack_by) - now.getTime());
-  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck() };
+  if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck(i.default) };
   return { state: "waiting", line: DEFAULT_LINES.waiting(left, i.default) };
 }
 
@@ -338,11 +344,44 @@ export const storedLine = (field: string, text: string): string => {
 };
 
 export const LATE_SHOWN = 3;
+/**
+ * t-292（pd 12:57 定稿）：**这张表的键一律换成人在屏幕上看得见的那个词，连表的段头一起。**
+ *
+ * 旧的三句里两句印着字段名（`overdue_by_presence`、`ack_by`），第一句印着 `overdue`——三个人在任何地方
+ * 都看不见的名字。pd 11:40 的判准是：词条表是字段名的合法住处，**但只对「人在别处看得见的名字」合法**。
+ *
+ * pd 读这张表时还找出第五处，而它是这张表自己的标题：旧段头写「三个**与期限有关**的数」，
+ * **而第二句自己写着「它不看期限」**——一张表的标题对它三行里的一行是假的。
+ *
+ * 连带的那一条（pd 11:4x）：**改一个人看得见的名字，要改所有解释它的地方。** 所以这三句与 `format.ts`
+ * 的三处段头必须同时落地，不许只落一半——这是那条规矩第一次被执行。
+ */
+// t-292（pd 14:19 二）：标题跟着简化。原来那句「其中两栏看期限，一栏不看」是 pd 为了修「标题对一行为假」
+// 加的，而现在第二条的键自己带着「（不看期限）」，标题不必再说一遍。
+export const DEADLINE_WORDS_HEAD = "牌桌上那三栏各自覆盖什么：";
+/**
+ * t-292（pd 14:19 二、三）：**词条表里的解释不许复述它的键**（pd 新立的第 ⑰ 条通则）。
+ *
+ * pd 12:57 为了让键对上段头，把三条的解释写成了段头的同义句——于是「发给人的那几张卡，带选项、过了期限
+ * 还没答案」只是把键再说一遍。**一张词条表里的解释复述了它的键，就什么都没教给人**：读的人会以为自己
+ * 读懂了，而他拿不到任何新东西。
+ *
+ * 所以键逐字照段头（`UNANSWERED_HEAD` / `NOBODY_ACTED_HEAD` / `LATE_HEAD`），解释只说**键说不出的那一件**
+ * ——谁欠谁、它不看什么、读的人最容易弄反的那一点。用例把「键与段头逐字相同」钉住（pd 11:4x 的判准）。
+ */
 export const DEADLINE_WORDS: string[] = [
-  "overdue：发给人的那几张卡，带选项、过了期限还没答案。带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
-  "NOBODY HAS ACTED ON（overdue_by_presence）：角色收到之后一直没有动作的那几条，按对方在不在场分三桶。**它不看期限**。",
-  "late：角色间指令，过了 ack_by 还没 ack。期限从 t-229 起是一道看得见的闸，不再是一句印着好看的话。",
+  "过期还没答（选项仍然开着）：带选项的卡只发得给人，所以这一栏说的全是人欠的答案。",
+  "收到了没动（不看期限）：按对方在不在场分三桶。它问的是有没有动，不是晚没晚——**所以一条刚发出去、对方还没拉过的，也在这里。**",
+  "过了该回的时间，还没回（角色之间，不含给人的卡）：期限从 t-229 起是一道看得见的闸，不再是一句印着好看的话。给人的卡不在这里——**人欠的是一个答案，角色欠的是一句回话，催法不同。**",
 ];
+
+/**
+ * t-292（pd 12:57 二）：牌桌第二栏的段头。`format.ts` 此前印的是 `NOBODY HAS ACTED ON`。
+ *
+ * 括号那半句是 pd 要求的，理由原话：**它旁边两栏都看期限，三栏并排而其中一栏的判法不同，不写出来就会被
+ * 当成同一类。**
+ */
+export const NOBODY_ACTED_HEAD = "收到了没动（不看期限）";
 
 /**
  * 第三把梯子：**还有多久**（pd 10:39）。

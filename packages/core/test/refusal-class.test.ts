@@ -35,14 +35,21 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
 }
 
 /** 冻结：此刻一共多少处，其中标成「已经发生过了」的是哪几处（文件＋规则名，不写行号——行号一改就失真）。 */
-// t-253 加了一处：`core/rules.ts claim`——「这件活在别人手里，而那个人此刻还在」。
-// 它属**「那件事没有发生」那一类**（不带 `{ at }`）：等那个人真的缺人了，同一条命令就会通过，
-// 所以它要留着、要被重做，不能说完就划掉。138 → 139。
-// t-291 又加一处：`core/rules.ts rule`——那是 `badRequest()` 里唯一那个 `new Rejected(`（规则名是参数，所以
-// 这道闸量到的是变量名 `rule`）。此刻只有一条拒绝走它：GET /events 收到认不出来的查询参数。
-// 它属**「那件事没有发生」那一类**（不带 `{ at }`）：那一次拉取确实没发生，把参数改对了同一条请求就通，
-// 所以它要被重做，不能说完就划掉。139 → 140。
-const TOTAL = 140;
+/**
+ * 两边各动过这个数，而动的是不同的东西；按 pd 10:34 的规矩，三个数并排写出来。
+ *
+ * **我这一支（t-292）：138 → 130。** 少的 8 处全在 `core/rules.ts` 的 `checkShape` 里，**不是少了八条拒绝，
+ * 是八条拒绝合成了一次抛出**：pd 05:30 ④ 要「一次把全部违规都报出来」，所以那八处从各自 `throw` 改成往
+ * `bad` 里累积，末尾 `stop()` 抛一次。拒绝的条数没变，变的是出口的个数。
+ *
+ * **dev 那一支（aea4c8f）：138 → 140。** t-253 加一处（`claim`：这件活在别人手里，而那个人此刻还在）、
+ * t-291 加一处（`badRequest()` 里那个 `new Rejected(`，规则名是参数，所以量到的是变量名 `rule`）。
+ * 两处都属「那件事没有发生」那一类（不带 `{ at }`），要留着、要被重做。
+ *
+ * **合起来：140 − 8 = 132**，而下面这个数是**量出来的、不是算出来的**——我把它调成量具报的值，
+ * 再回头核它与 140 − 8 对不对得上。两者一致，所以两边的改动都在，没有谁被合掉。
+ */
+const TOTAL = 132;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

@@ -636,6 +636,7 @@ export const KEY_SYMBOLS = [
   "ALERT_FAILED",
   "ALERT_NOTE_PREFIX",
   "ALLOCATION_PATTERNS",
+  "APART_LINES",
   "ASK_EVIDENCE_WRAP",
   "BATCH_LINES",
   "BODY_FILE_HELP",
@@ -649,6 +650,7 @@ export const KEY_SYMBOLS = [
   "CONTACT_SKIP",
   "CONTACT_SKIP_WAS",
   "DEADLINE_WORDS",
+  "DEADLINE_WORDS_HEAD",
   "DECLINE_PREFIX",
   "DEFAULT_APPLIED_PREFIX",
   "DEFAULT_LINES",
@@ -668,15 +670,18 @@ export const KEY_SYMBOLS = [
   "INJECT_USAGE",
   "INVITE_SENT_PREFIX",
   "INVITE_URL_LABEL",
+  "LATE_HEAD",
   "LITERAL_CHECK_BLIND_SPOTS",
   "MIGRATION_ASK_TITLE",
   "MIGRATION_FINISH",
   "MIGRATION_MISSING",
   "MIGRATION_OK",
   "MIGRATION_PATCH",
+  "NOBODY_ACTED_HEAD",
   "NOBODY_WAITING",
   "NO_HUMAN_IMPACT",
   "NO_OUTPUT_PREFIX",
+  "NO_PROJECT_AT_THIS_ADDRESS",
   "NO_SYMBOL_MEANS_UNCLEAR",
   "OWED_LEGACY_HELP",
   "OWNER_URL_LOCKED",
@@ -695,6 +700,7 @@ export const KEY_SYMBOLS = [
   "REACH_WORDS",
   "READING_SAYINGS",
   "REAL_OVERLAP_PREFIX",
+  "REFS_SHAPE",
   "RESPONSIBILITIES",
   "RESPONSIBILITY_DOING",
   "ROLLBACK_LINES",
@@ -717,6 +723,7 @@ export const KEY_SYMBOLS = [
   "SURFACE_GATE_BLIND_SPOTS",
   "TITLE_MAX_CHARS",
   "TWICE_GIVEN",
+  "UNANSWERED_HEAD",
   "UNKNOWN_FLAG",
   "UNSEEN_DROPPED",
   "UNSEEN_HEAD",
@@ -784,6 +791,7 @@ export const KEY_SYMBOLS = [
   "joinNotAsHuman",
   "judgeSeam",
   "lateLine",
+  "lateRow",
   "lightSeamLine",
   "manual",
   "manualFor",
@@ -835,6 +843,7 @@ export const KEY_SYMBOLS = [
   "taskHeading",
   "titleAsShown",
   "tooLongLine",
+  "unansweredRow",
   "unknownParamLine",
   "unknownSpanReason",
   "until",
@@ -1079,16 +1088,77 @@ export const DEFAULT_RULE =
  *   而不是为了描述一种正常状态。之前牌桌在这一态说的是「已经按 A 了」——那正是我们对人说的那句不为真的话。
  * · `applied`：事件落下了。主语是人：他没点，于是按了默认。
  */
+/**
+ * t-292（pd 10:31 ②）：**中西文之间那一个空格的规则，住在这一处。**
+ *
+ * pd 定的是「中文占位两侧不留，数字西文两侧各留一个」。**它不能写死在模板里**，因为该不该留取决于占位
+ * 此刻的值：同一句话里 `刚刚` 两侧不留，而 `3 小时前` 的左侧要留——梯子给哪一个，写句子的人事先不知道。
+ *
+ * 判准落在**汉字**上，不落在中文标点上：`（默认是 B）` 的右括号前不该多一个空格，而 `默认是 B` 的 B 前该有。
+ */
+const HAN = /[\u4e00-\u9fff]/;
+const ALNUM_FOR_GAP = /[0-9A-Za-z]/;
+/** 两个字之间该不该有一个空格。任一侧已经是空白就不再加——模板里原有的空格照旧算数，不会变成两个。 */
+export function gap(left: string, right: string): string {
+  const a = left.slice(-1), b = right.slice(0, 1);
+  if (!a || !b || /\s/.test(a) || /\s/.test(b)) return "";
+  return (HAN.test(a) && ALNUM_FOR_GAP.test(b)) || (ALNUM_FOR_GAP.test(a) && HAN.test(b)) ? " " : "";
+}
+/** 按上面那条规则拼一句话：占位两侧的空格由值算出来，不由写句子的人记得。 */
+export function cn(strings: TemplateStringsArray, ...values: unknown[]): string {
+  let out = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    const v = String(values[i]);
+    const next = strings[i + 1] ?? "";
+    out += gap(out, v) + v + gap(v, next) + next;
+  }
+  return out;
+}
+
 export const DEFAULT_LINES = {
-  waiting: (at: string, option: string) => `不点的话，${at}到期，按 ${option} 执行。`,
-  stuck: () => "过期了，默认还没生效。",
-  applied: (option: string) => `你没点，已按默认 ${option} 执行。`,
+  waiting: (at: string, option: string) => cn`不点的话，${at}到期，按${option}执行。`,
+  /**
+   * t-292（pd 05:33 六，逐字）：这两句由 pd 改稿，原因写在它那条决策里，两重假话：
+   * ① 旧 `applied`「你没点，已按默认 X 执行。」**把服务做的事说成没有主语**，读起来像人自己做的；
+   * ② 它还暗示那件事发生在 ack_by 那一刻，而我们 09-07 量过：默认要么迟落、要么根本没落。
+   * 所以新 `applied` 说出主语（服务）、说出真正发生的时刻（<多久前>），并留一句出路；
+   * 新 `stuck` 把默认是哪一个也说出来——人要据它决定还改不改。
+   * **这两句同时出现在牌桌与命令行**：出处只有这一处，改它两边一起改（这是刻意的，不是顺手）。
+   */
+  stuck: (option: string) => cn`过期了，默认还没生效（默认是${option}）。`,
+  // t-292（pd 10:31 ①）：**去掉「在」。** pd 自己找出的真毛病——「在」要求后面是一个时间点，而梯子给的是
+  // 「刚刚」。所以「服务在 刚刚 按默认」别扭不在空格，在那个字；去掉它，空格交给 `cn` 按值算。
+  applied: (since: string, option: string) => cn`没人点，服务${since}按默认${option}执行了。你现在改还来得及。`,
   /**
    * t-190（pd 10:40）：第四态。**不许悄悄改回**——人要看得见我们没执行过，所以这一句自己说出那件事，
    * 而不是把卡默默变回「等你答」。它不说「已按默认」，因为那没发生；也不说「过期了」，因为期限已经重算。
    */
-  missed: (option: string) => `本该按默认执行，我们没有执行，现在仍在等你（默认是 ${option}）。`,
+  missed: (option: string) => cn`本该按默认执行，我们没有执行，现在仍在等你（默认是${option}）。`,
 };
+
+/**
+ * t-292（pd 05:33 六，逐字）：命令行「过期还没答」那一段的两句。
+ *
+ * 旧的是 `UNANSWERED (past ack_by, options still open)` 与每行 `(N past ack_by, <id>)`——**给人读的句子里出现了字段名**
+ * （`ack_by`）。pd 05:33 并定了通则：字段名只许出现在给机器的那一份（`board --json`、事件本身）。
+ */
+/**
+ * t-292 判据 3／4（pd 10:31 ③）：**LATE 那一段的段头与每一行。**
+ *
+ * 旧的两句是英文，而且句子里印着 `ack_by`——判据 4 那条通则的第四处就在这儿，`humanSentences` 只认中文，
+ * 所以冻结那道闸从来没看见过它。pd 把段头改成中文之后，**屏幕上再没有 `LATE` 这个词**，于是 `--help` 里
+ * 那张词条表还在解释一个不存在的词：pd 11:40 自己点出这一件，定稿下一轮给，不在这里顺手改。
+ *
+ * 每行用的是**第二把梯子**（`span`，「晚了 25 分钟」），不是第一把（`ago`，「25 分钟前」）：这里说的是
+ * 一段长度，不是一个距今多久。
+ */
+export const LATE_HEAD = "过了该回的时间，还没回（角色之间，不含给人的卡）";
+export const lateRow = (from: string, to: string, body: string, late: string, instruction: string): string =>
+  `${from} → ${to}: ${body}  ${cn`（晚了${late}，${instruction}）`}`;
+
+export const UNANSWERED_HEAD = "过期还没答（选项仍然开着）";
+export const unansweredRow = (to: string, from: string, body: string, past: string, event: string) =>
+  `${to} 还没答 ${from} 的「${body}」（过期 ${past}，${event}）`;
 
 /** t-147: the opening of a refusal, which is an answer and closes an instruction the way an answer does. */
 export const DECLINE_PREFIX = "不办：";
@@ -1221,6 +1291,46 @@ export const MOVED_MARK = "→";
  * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
  */
 export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/**
+ * t-292 判据 2（pd 05:33 五）：**「落后」与「分叉」是两件事，一句话只说得了一件。**
+ *
+ * 上面那一句结尾是「跑 git pull && pnpm build」。落后时它是对的；**分叉时它给的是错的动作**——两边各走了
+ * 一段，拉一下接不上，直接推也会被拒（release 17:25 撞到的那个 non-fast-forward）。而它分不出自己落在哪一种：
+ * 它数的是「上线名单里我这棵树没有的那几次」，那个数在落后和分叉两种情形下长得一模一样。
+ *
+ * frontend 08:45 的现场就是分叉那一种：同一句提醒说「比生产旧 2 次上线，跑 git pull」，而两个方向各数一遍是
+ * 生产 2 条、我 49 条——拉一下接不上，也推不上去。
+ *
+ * pd 的判据是**读者读完就知道该做哪一个动作**，所以一句话只给一个动作：落后给「拉一下」，分叉给「先并一次」。
+ */
+export type ApartFromLive =
+  | { kind: "behind"; theirs: number }
+  | { kind: "diverged"; mine: number; theirs: number };
+
+export const APART_LINES = {
+  behind: (theirs: number) => `你这份比线上旧了 ${theirs} 条。拉一下就能接上。`,
+  diverged: (mine: number, theirs: number) => `你这份和线上各走了一段：你 ${mine} 条、线上 ${theirs} 条。要先并一次，不能直接推。`,
+};
+
+/**
+ * 两个方向都要数，才分得出这两种。**一个方向只答得出「不是祖先」，而「不是祖先」里混着「我落后」和
+ * 「各走了一段」**——frontend 09-13 在 09256fd 上就是这样把「落后」读成了「分叉」，qa 当场纠正。
+ *
+ * `null` 是「说不出」，不是「你是最新的」：数不出来就一个字都不说（与 `behindDeploys` 同一条规矩，t-147）。
+ * 线上那边一条都不多（`theirs` 为 0）时这一句也没有话要说：领先与同版都不是毛病。
+ */
+export function apartFromLive(counts: { mine: number; theirs: number } | null | undefined): ApartFromLive | null {
+  if (!counts) return null;
+  const { mine, theirs } = counts;
+  if (!Number.isInteger(mine) || !Number.isInteger(theirs) || mine < 0 || theirs < 0) return null;
+  if (theirs === 0) return null;
+  return mine > 0 ? { kind: "diverged", mine, theirs } : { kind: "behind", theirs };
+}
+
+/** 那一句本身，没有话要说时给 null。 */
+export const apartLine = (a: ApartFromLive | null): string | null =>
+  a === null ? null : a.kind === "behind" ? APART_LINES.behind(a.theirs) : APART_LINES.diverged(a.mine, a.theirs);
 
 /**
  * t-211 第二种旧法，qa 16:02 量出来的：**只 git pull 不重编，那句「旧 N 次上线」当场消失，而跑着的还是旧的。**
@@ -1387,8 +1497,32 @@ export const PART_NAMES = {
  * 免得它靠谁记得。
  */
 export const PD_PLACEHOLDER = "（措辞待定）";
-export const alreadyDoneNotice = (what: string, at: string | null, clearWith: string): string =>
-  `⚠ ${PD_PLACEHOLDER}你那次「${what}」被拒，是因为它${at ? `已经在 ${at} 办好了` : "已经办过了"}——这一次是多余的，**不用重做**。这条提醒说完就划掉；要自己划：${clearWith}`;
+/**
+ * t-292 判据 7（pd 06:42「一」，定稿照抄）。
+ *
+ * 约束是 dev 的判据 1、3：不许说「没有落下去」、不许给「重做」、要印出已经发生的那一刻。pd 两处都答了：
+ * **相对在前、绝对进括号**——牌桌上正文放相对、title 放绝对，而命令行没有 title 可挂，所以绝对那串进括号；
+ * 读相对那半句就够判断「我不用再做了」，要去日志对账的，括号里那串是他的钥匙。**说不出时刻就说不出，
+ * 并且把原因写进那一句**，否则人会以为是坏了。
+ *
+ * pd 还删掉了占位里最后那半句（「要自己划：ateam sync --clear-refused」），并定下一条通则：
+ * **一句话的全部用意是「你不用做任何事」，它就不许以要人做一件事结尾。** 所以这一句不带划掉的办法——
+ * 提醒显示一次就自己退场（`sayIfRefused` 那一侧）。
+ */
+/**
+ * t-292 判据 7（qa 07:14 的活体 ＋ pd 10:31 ④ 的定稿）：**在一台把成功报成失败的服务器上，重发是正确的反应。**
+ *
+ * qa 量出的那一对：读的方向，解不开的 200 被报成成功；写的方向，落了的 ack 被报成失败。于是人看到「失败」
+ * 就会重发，而重发必然撞上这条消息——**这条消息不该把一个正确的反应说成一次多余的操作。**
+ *
+ * pd 10:31 ④ 把 qa 原来的说法「你这一次可能是重发」改掉了，理由是**不许暗示是谁的错**，改成条件句：
+ * 「如果你上一次看到的是失败，那个失败不准。」它不要人做任何事，所以仍然守着 pd 06:42 那条
+ * （一句话的全部用意是「你不用做任何事」，就不许以要人做一件事结尾）。
+ */
+export const alreadyDoneNotice = (since: string | null, at: string | null): string =>
+  since && at
+    ? `这件事已经办好了，${since}（${at}）。你这一次是多余的，不用重做——再发一次会被同样挡回来。如果你上一次看到的是失败，那个失败不准。`
+    : "这件事已经办好了（我说不出是什么时候，这一条规则没留下那一刻）。你这一次是多余的，不用重做。如果你上一次看到的是失败，那个失败不准。";
 
 export const partRefused = (what: string, why: string) => `✗ ${what}：${why}`;
 

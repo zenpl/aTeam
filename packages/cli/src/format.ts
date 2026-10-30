@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, SEAM_DIR_ONLY, containedSeamLine, seamDirs, waitingUnknownLine, lateLine, LATE_SHOWN, presenceClocks, STALLED_HEADING } from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -116,16 +116,19 @@ export function board(b: Board, me: string): string {
   // t-147: overdue is now one thing only — a card whose options nobody has answered past its time. Not acking is
   // not a debt any more, so it does not appear here; what is unread or read-and-untouched is the block below.
   if (b.overdue?.length) {
-    out.push("", "UNANSWERED (past ack_by, options still open)");
-    for (const o of b.overdue) out.push(`  ${who(o.to)} has not answered "${o.body}" from ${who(o.from)}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+    // t-292（pd 05:33 六）：这两句改稿归 pd，出处在 core——给人读的句子里不许出现字段名（旧的印着 ack_by）。
+    out.push("", UNANSWERED_HEAD);
+    for (const o of b.overdue) out.push(`  ${unansweredRow(who(o.to), who(o.from), o.body, ago(o.ack_by), o.instruction)}`);
   }
 
   // t-229：**角色间那条期限过了之后，从这里起有人说话。** 句子是 core 的（`lateLine`），这里只印；
   // 名单按「最久的在前」给，印头三条——判据 1 要的是那个数，而三条样本足够让人知道该去问谁。
   if (b.late?.count) {
-    out.push("", "LATE (role-to-role, past ack_by, not acked)");
+    // t-292（pd 10:31 ③）：段头与每行都换成 pd 定的中文；句子在 core 一处，这里只印。
+    out.push("", LATE_HEAD);
     out.push(`  ${lateLine(b.late)}`);
-    for (const o of b.late.instructions.slice(0, LATE_SHOWN)) out.push(`  ${who(o.from)} → ${who(o.to)}: ${o.body}  (${ago(o.ack_by)} past ack_by, ${o.instruction})`);
+    for (const o of b.late.instructions.slice(0, LATE_SHOWN))
+      out.push(`  ${lateRow(who(o.from), who(o.to), o.body, span(Math.max(0, now - Date.parse(o.ack_by))) ?? "", o.instruction)}`);
   }
 
   // t-139 + t-147: what nobody has acted on, split by whether the one who owes it is even there. The sentences are
@@ -133,7 +136,8 @@ export function board(b: Board, me: string): string {
   // address nobody had delivered to.
   const owed = b.overdue_by_presence;
   if (owed && Object.values(owed).some((g) => g.count)) {
-    out.push("", "NOBODY HAS ACTED ON");
+    // t-292（pd 12:57 二）：段头换成人看得见的词；括号那半句是 pd 要的，三栏并排而这一栏判法不同。
+    out.push("", NOBODY_ACTED_HEAD);
     for (const k of ["missing", "deaf", "listening"] as const) {
       const g = owed[k];
       if (g.count) out.push(`  ${g.roles.map(who).join(", ").padEnd(10)} ${g.line}`);
@@ -146,7 +150,9 @@ export function board(b: Board, me: string): string {
     for (const i of open) {
       const you = i.to === me ? "  ⇐ YOU" : "";
       const ask = i.options?.length ? `  [${i.options.join(" | ")}${i.default ? `; default ${i.default}` : ""}]` : "";
-      const defaulted = i.chosen?.by === "default" ? `  ⇒ ${i.chosen.option} by default at ack_by (human may still decide)` : "";
+      // t-292（pd 05:33 六）：旧那一句两重假话——把服务做的事说成没有主语，又把它说成发生在 ack_by 那一刻。
+      // 现在三态都由 core 的 `says_default` 算（牌桌与命令行同一处）：没到期不印这一行，其余照它说的印。
+      const defaulted = i.says_default && i.says_default.state !== "waiting" ? `  ⇒ ${i.says_default.line}` : "";
       // t-147: the column is how far it got, worked out from the recipient's own pulls and events, not from a
       // receipt. This board is read by agents, so the state keeps its id (REACH_WORDS holds pd's Chinese for the
       // page); `acted_by_event` is the event that proves the third, so a reader can go check rather than believe.

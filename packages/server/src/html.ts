@@ -560,7 +560,7 @@ function renderRest(b: Board, s: State, human: string, t: (iso: string) => strin
    * 现在按 pd 09:18 的三态说话，判定读的是**有没有那条事件**（`chosen.note`），不是时间过没过：
    * 落了就说「你没点，已按默认 X 执行。」，没落就照实说「过期了，默认还没生效。」——那是我们的故障，不许写成已执行。
    */
-  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? (i.chosen!.note ? DEFAULT_LINES.applied(i.chosen!.option) : DEFAULT_LINES.stuck()) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
+  if (decided.length) d.push(`<h4>${UI.decided}</h4><ul class="plain">${decided.slice(-DECIDED_SHOWN).map((i) => `<li>${esc(who(i.from))} → ${esc(who(i.to))}：${esc(i.body)} <b>${esc(i.chosen!.by === "default" ? (i.chosen!.note ? DEFAULT_LINES.applied(ago(i.chosen!.at), i.chosen!.option) : DEFAULT_LINES.stuck(i.chosen!.option)) : UI.chosen(who(i.chosen!.by), i.chosen!.option))}</b><span class="meta">，${t(i.chosen!.at)} · <code>${esc(i.id)}</code></span></li>`).join("")}</ul>`);
   d.push(`</section>`);
 
   const total = Object.values(b.tasks).reduce((n, xs) => n + xs.length, 0);

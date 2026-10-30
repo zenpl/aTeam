@@ -40,6 +40,19 @@ function common(): string {
     .replaceAll("{{default_rule}}", DEFAULT_RULE);
 }
 
+/**
+ * t-292（pd 05:30 ②，逐字）：**全局** `/manual/<角色>` 那条 404。
+ *
+ * 旧那句是假话：它说「这个项目没有 X 这个角色，去 project:roles 声明它」——**而这个地址上根本没有项目**
+ * （`/p/<id>` 不在路径里时服务退回默认项目）。它还把人指去做一件做过六次的事。pd 改稿之后这一句只说两件
+ * 它真知道的事：这里没有项目，以及带着项目 id 的那个地址在哪。
+ *
+ * 占位符 `<你的项目 id>` 与 `<角色>` 按 pd 原文留成字面——服务在这个地址上确实不知道项目 id；`<角色>` 它知道，
+ * 但判据 1 要「逐字落地」、判据 5 要「不在落地时顺手动」，所以我照抄，要不要填由 pd 定。
+ */
+export const NO_PROJECT_AT_THIS_ADDRESS =
+  "这个地址上没有项目，所以我说不出谁持有哪些职责。你的说明书在 /p/<你的项目 id>/manual/<角色>。";
+
 /** The tail of a role's manual: which responsibilities this project says the role holds (t-059). */
 export function responsibilityAppendix(role: string, ids: string[]): string {
   const names = new Map(RESPONSIBILITIES.map((r) => [r.id, r.name]));

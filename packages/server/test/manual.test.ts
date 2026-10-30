@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, manualRoles, RESPONSIBILITY_DOING } from "@ateam/core";
+import { MemoryStore, manualRoles, RESPONSIBILITY_DOING, NO_PROJECT_AT_THIS_ADDRESS } from "@ateam/core";
 import { readFileSync } from "node:fs";
 import { createApp } from "../src/app.js";
 
@@ -119,7 +119,11 @@ describe("t-081 · any declared role has a manual, assembled from its responsibi
   const get = (role: string) => fetch(`${base}/manual/${encodeURIComponent(role)}`);
   it("names this repository never heard of work once declared, their content follows the ids, and an undeclared name is still 404", async () => {
     expect((await get("release-manager")).status).toBe(404);
-    expect((await (await get("release-manager")).json()).message).toContain("project:roles");
+    // t-292（pd 05:30 ②）：**全局**这个地址上没有项目，所以它不再说「去 project:roles 声明」——那是假话。
+    // 两边都钉：全局说 pd 改稿那一句；带 `/p/<id>` 的那条路照旧指 project:roles（下面一条）。
+    expect((await (await get("release-manager")).json()).message).toBe(NO_PROJECT_AT_THIS_ADDRESS);
+    const inProject = await fetch(`${base}/p/${encodeURIComponent("default")}/manual/release-manager`);
+    if (inProject.status === 404) expect((await inProject.json()).message, "带项目的那条路仍该指 project:roles").toContain("project:roles");
     expect((await post("pm", { kind: "reading", surface: "project", key: "roles", value: { pm: ["R1", "R4"], be: ["R5", "R9"], fe: ["R5"], "release-manager": ["R9"], "ux-scanner": ["R12"] } })).status).toBe(201);
     for (const [role, must, mustNot] of [
       ["be", ["R5 做", "R9 上线", "claim 时把触点写宽"], ["R12"]],
