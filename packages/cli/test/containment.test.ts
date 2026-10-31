@@ -104,6 +104,11 @@ describe("t-325 判据⑥⑧ · 除许可的段之外相同算相同，而 [buil
     expect(m.not_contained, "不许把 t-late 说成不在生产上——`[build]` 不同不是「内容相同」的证明").toEqual([]);
     expect(m.contained.sort()).toEqual(["t-early", "t-late"]);
     expect(m.method, "基准是生产头自己，所以这一句一个字没改").toBe("git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）");
+    // **判据⑨ 要钉的那个性质，直接断言，不从 method 反推**：按段这一版**不会**把更早那个版本当成基准；
+    // 换成按路径豁免整个 fly.toml 时它会（注入时就是这一行先红）。而注入的前提条件 `[build]` 真的变了——
+    // 上面 `buildChanged()` 改的正是 dockerfile 那一行。
+    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, buildChanged), "基准不许是更早那个版本")
+      .toEqual({ sha: ROLL, rolled_back: false });
   });
 
   it("**git 答不上来差异** ⇒ 整桶说不出：排除不了回滚，就不许当成「没有回滚」", () => {
