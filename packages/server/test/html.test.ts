@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { MemoryStore, reduce, board, append, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW, PAGE_HISTORY_LINE} from "@ateam/core";
+import { MemoryStore, reduce, board, append, pull, SERVICE_ACTOR, VERIFIED_ON_THIS_VERSION, CONTACT_ASK, CONTACT_ASK_WAS, CONTACT_OPTIONS, PROJECT_SURFACE, type Board, DEFAULT_LINES, AGO_JUST_NOW, PAGE_HISTORY_LINE} from "@ateam/core";
 import { createApp } from "../src/app.js";
 import { ownerKeyOf } from "./owner.js";
 import { MemoryRegistry } from "../src/projects.js";
@@ -63,6 +63,9 @@ beforeAll(async () => {
   ask = await w.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证选私有还是公开？细节：私有要每次带 token，公开谁都能看。", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
   doIt = await w.post("pm", { kind: "instruction", to: HUMAN, body: "请把第 3 批推到 production：claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。", ack_by: soon() });
   tell = await w.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署了", ack_by: soon(), intent: "info" });
+  // t-335 ①（pd ㉖）：「不点的话，还有 N 分钟到期」只对一张**送到过**的卡成立——默认的计时从送达起算。
+  // 这一份原来没说他收到过，而页面照旧印那一句。从里面写（与上面那条注释同一个理由：这是服务自己的事实）。
+  await pull(w.store, HUMAN, null, new Date());
   await w.post("pm", { kind: "instruction", to: "dev", body: "claim t-1 now", ack_by: soon() });
   await w.post("pm", { kind: "instruction", to: "dev", body: "claim t-5 now, touching packages/core/src/rules.ts", ack_by: new Date(Date.now() - 60_000).toISOString() });
   // dev is listening (one pull), so the service raises no missing-role card for it (t-042/t-048); the cards below are the human's own
@@ -483,6 +486,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "请读部署说明", ack_by: soon() });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署", ack_by: soon(), intent: "info" });
+      await pull(z.store, HUMAN, null, new Date());   // t-335 ①：他收到过——那句「不点的话，」才成立
       await z.post("pm", { kind: "instruction", to: "dev", body: "认领 t-1", ack_by: new Date(Date.now() - 60_000).toISOString() });
       await z.post("pm", { kind: "instruction", to: "qa", body: "复核限流", ack_by: soon() });
       await z.post("pm", { kind: "task", op: "create", task: "t-1", title: "会话 cookie 标志", criteria: ["cookie 是 SameSite=Lax"] , no_human_impact: true});
@@ -1697,6 +1701,7 @@ describe("t-188 · 没有默认的卡也说得出什么时候到期", () => {
     const due = new Date(Date.now() + 3600_000);
     const plain = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "甲还是乙？", intent: "ask", options: ["甲", "乙"], ack_by: due.toISOString() });
     const withDefault = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "丙还是丁？", intent: "ask", options: ["丙", "丁"], default: "丁", ack_by: due.toISOString() });
+    await pull(w3.store, HUMAN, null, new Date());   // t-335 ①：他收到过——带默认那张卡才说得出「还有多久到期」
     const html = await w3.authedPage();
     const card = (id: string) => { const i = html.indexOf(`value="${id}"`); return html.slice(html.lastIndexOf("<article", i), html.indexOf("</article>", i)); };
     // pd 10:39：正文用相对，绝对只进 title——两种卡说的都是「还有多久」，不是一个光秃秃的 11:52

@@ -9,7 +9,7 @@
  * 正文是自由文本，服务重算不了**，所以出路是发卡人声明条件，不是让服务猜。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, dueDefaults, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, dueDefaults, pull, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -18,9 +18,14 @@ const at = (m: number) => new Date(T0 + m * 60_000);
 async function world() {
   const s = new MemoryStore();
   const put = (e: NewEvent, m: number) => append(s, e, { human: HUMAN, now: at(m) });
+  // t-335 ①（pd ㉖）：默认的计时从**送达**起算。这个文件里凡是要走到「到期」的那几格，都得先说出他收到过——
+  // 原来它们没说，而到期照样发生了。`seen` 就是那一句：他在这一刻拉过日志。
+  // 这些格子都把送达补在发卡的同一刻（-280），于是期限仍是卡上那个 ack_by，它们测的东西一个字没动：
+  // 发问人给的时长在这个文件里是 270 分钟，送达晚一分钟期限就跟着晚一分钟，那不是这几格要测的事。
+  const seen = (m: number) => pull(s, HUMAN, null, at(m));
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "release", "qa"] }, -300);
   await put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "babae6d" }, -290);
-  return { s, put };
+  return { s, put, seen };
 }
 const st = async (s: MemoryStore, m = 0) => reduce(await s.read(), at(m), HUMAN);
 
@@ -64,6 +69,7 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
   it("条件被改动过的卡：到期也不落那条「已执行」", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", depends_on: ["production:deployed.sha"] }, -280);
+    await w.seen(-280);   // t-335 ①：他收到过——否则这一格的 `[]` 是「没送到」给的，不是它要测的那条扣住
     await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
     expect(dueDefaults(await st(w.s), at(0))).toEqual([]);
   });
@@ -71,6 +77,7 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
   it("条件没被动过的卡：到期照常按默认结掉（不许把整条路一起关掉）", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", depends_on: ["production:deployed.sha"] }, -280);
+    await w.seen(-280);
     const due = dueDefaults(await st(w.s), at(0));
     expect(due).toHaveLength(1);
     expect((due[0] as { decides?: { option: string } }).decides?.option).toBe("A");
@@ -79,6 +86,7 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
   it("根本没声明条件的卡，行为一字未改", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A" }, -280);
+    await w.seen(-280);
     await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
     expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);
   });
@@ -95,6 +103,7 @@ describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的�
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目",
       ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", valid_until: at(-30).toISOString() }, -280);
+    await w.seen(-280);
     const s = await st(w.s);
     const one = [...s.instructions.values()][0];
     expect(one.stale_since).toBeTruthy();
@@ -105,6 +114,7 @@ describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的�
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(),
       options: ["A", "B"], default: "A", valid_until: at(600).toISOString() }, -280);
+    await w.seen(-280);
     const s = await st(w.s);
     expect([...s.instructions.values()][0].stale_since).toBeUndefined();
     expect(dueDefaults(s, at(0))).toHaveLength(1);
@@ -122,6 +132,7 @@ describe("t-215 判据 7② · 给一张已经发出去的卡补声明条件", (
   it("卡比字段老、一个条件都没声明过：后发一条 premise 补上钟点 ⇒ 被标出来，默认不再结掉", async () => {
     const w = await world();
     const old = await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时…", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A" }, -280);
+    await w.seen(-280);
     expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);      // 补声明之前：照落
     const p = await w.put({ kind: "premise", actor: "pd", of: old.id, valid_until: at(-30).toISOString() }, -20);
     const s = await st(w.s);

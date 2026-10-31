@@ -174,6 +174,11 @@ export interface InstructionState {
   /** t-190: 重算后的期限。人自这次记录之后还没露过面时是 undefined——他还没看到，就还没开始算。 */
   ack_by_again?: string;
   /**
+   * t-335 ①（pd ㉖）：**这张卡的默认按哪个时刻到期**——送达那一刻，加上发问人给的那段时长（`ack_by - at`）。
+   * **没送达就没有这回事**（undefined）：没有起点就没有「到期」，这张卡继续等，不许当他选过。
+   */
+  default_by?: string;
+  /**
    * For instructions with options: the option picked, by whom, and the decision note that records it.
    * `by: "default"` (no note) means nobody chose before ack_by and the default took effect; the human may still override it.
    */
@@ -720,8 +725,17 @@ export function settle(s: State, now: Date): State {
     // 收件人就是人本身：带选项的卡只能发给人（rules.ts），所以不必另把 human 传进来。
     const seenAgain = st.default_missed ? seenAfter(s, i.to, st.default_missed.at) : undefined;
     st.ack_by_again = st.default_missed && seenAgain ? new Date(Date.parse(seenAgain) + st.default_missed.window_ms).toISOString() : undefined;
-    const deadline = st.default_missed ? st.ack_by_again : i.ack_by;
-    st.default_due = !st.chosen && i.default !== undefined && !!i.options?.length && !!deadline && deadline < nowIso;
+    // t-335 ①（pd ㉖，定稿在 3a40fe9 的 docs/product.md:290）：**默认的计时从送达起算，不从发出起算；
+    // 没送达的提问不许到期。** 发问人给的那段时长照旧是他给的那一段（`ack_by - at`，与 t-190 记 `window_ms`
+    // 用的同一个量），换掉的只是起点。**没送达就没有「到期」这回事**：卡继续等，或者升级给别人，不许当他
+    // 选过——10-31 那张「要不要起一个 qa」正是这么没的（发出 15 分钟后默认替他定了，而它的 reach 至今 unread）。
+    const window = Math.max(0, Date.parse(i.ack_by) - Date.parse(i.at));
+    st.default_by = st.delivered_at ? new Date(Date.parse(st.delivered_at) + window).toISOString() : undefined;
+    // **两个钟答两个问题，不许合成一个**：默认问的是「他看见了、没点」（送达那个钟，上面这一个），
+    // overdue 问的是「我们还在等一个到不了的人」（发出那个钟，i.ack_by）。t-147 判据 7 那段理由仍然成立，
+    // 就在下面：没人开过牌桌的那几个小时恰恰最该说出来。把 overdue 一起挪到送达那个钟上，缺席就能让自己闭嘴。
+    const defaultDeadline = st.default_missed ? st.ack_by_again : st.default_by;
+    st.default_due = !st.chosen && i.default !== undefined && !!i.options?.length && !!defaultDeadline && defaultDeadline < nowIso;
     // t-147 判据 3 + 判据 7 (pm 07:04): overdue is a card with options, past its deadline, still unanswered.
     //
     // 判据 3 had a 「读到了」 clause and 判据 7 removed it, for a reason worth keeping next to the code: for an agent,
@@ -732,7 +746,8 @@ export function settle(s: State, now: Date): State {
     //
     // Options may only be addressed to the human (rules.ts), so this branch is only ever about the human's cards; the
     // agents' side is `owedTo` and t-139's three presence states, and nothing is counted in both.
-    st.overdue = !!deadline && deadline < nowIso && !!i.options?.length && !st.chosen;
+    const sentDeadline = st.default_missed ? st.ack_by_again : i.ack_by;
+    st.overdue = !!sentDeadline && sentDeadline < nowIso && !!i.options?.length && !st.chosen;
   }
   const focusId = s.latestReading.get(`${TEAM_SURFACE}:${FOCUS_KEY}`);
   s.focus = focusId ? s.readings.get(focusId)!.reading : undefined;

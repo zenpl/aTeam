@@ -135,6 +135,9 @@ describe("t-200 · 负数不是最小的那一档，是另一侧", () => {
     const now = new Date("2026-09-07T12:31:00Z");
     const card = {
       instruction: { ack_by: "2026-09-07T08:12:00Z", default: "B", options: ["A", "B"] },
+      // t-335 ①：这一格说的是「期限已经过去」，而期限从送达起算——所以这张卡得先送到过。
+      // 送达即到期那一刻（这一格不关心时长），于是「已经过去四小时」一字未改。
+      default_by: "2026-09-07T08:12:00Z",
     } as unknown as Parameters<typeof sayDefault>[0];
     const said = sayDefault(card, now)!;
     expect(said.line, "过期四小时说「还有不到 1 分钟」，那是这件事的原样").not.toContain("还有不到 1 分钟");

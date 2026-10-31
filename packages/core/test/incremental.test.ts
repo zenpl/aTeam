@@ -10,7 +10,7 @@
  * All times are relative to now: nothing here is pinned to a date.
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, Reduction, reduce, advance, settle, empty, runDueDefaults, DEFAULT_DECIDER, type State, type Event, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, Reduction, reduce, advance, settle, empty, runDueDefaults, pull, DEFAULT_DECIDER, type State, type Event, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.now();
@@ -105,6 +105,9 @@ describe("t-128 · an advanced reduction is the reduction", () => {
   it("到期这件事跟着时钟走，把钟拨回去它也跟着回去", async () => {
     const store = new MemoryStore();
     const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
+    // t-335 ①：默认的计时从送达起算，所以「到期跟着时钟走」这件事得先有一次送达；补在发出的同一刻，
+    // 于是期限仍是 at(20)，这一格测的「拨回去也跟着回去」一个字没动。
+    await pull(store, HUMAN, null, at(0));
     const r = new Reduction(store);
     expect((await r.at(at(30))).instructions.get(ask.id)!.default_due).toBe(true);
     expect((await r.at(at(10))).instructions.get(ask.id)!.default_due).toBe(false);
@@ -115,6 +118,7 @@ describe("t-128 · an advanced reduction is the reduction", () => {
   it("服务落下那条事件之后，它才是一个决定；而且一个 ack 抹不掉它", async () => {
     const store = new MemoryStore();
     const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
+    await pull(store, HUMAN, null, at(0));             // t-335 ①：同上，他收到过
     const r = new Reduction(store);
     await runDueDefaults(store, reduce(await store.read(), at(30)), HUMAN, at(30));
     expect((await r.at(at(30))).instructions.get(ask.id)!.chosen?.by).toBe(DEFAULT_DECIDER);

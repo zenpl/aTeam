@@ -71,6 +71,9 @@ describe("t-050 · call-outs", () => {
     const ask = await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "部署第 5 批。合并后推到 production", ack_by: new Date(w.now().getTime() + min(15)).toISOString() });
     await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "牌桌认证？", ack_by: new Date(w.now().getTime() + min(15)).toISOString(), options: ["A", "B"], default: "B" });
     await pull(w.store, "pm", null, w.now());
+    // t-335 ①（pd ㉖）：默认的计时从送达起算，所以这一格要的那个「已按默认定掉」得先有一次送达。
+    // 补在发卡的同一刻，期限仍是 +15 分钟——这一格要测的「已按默认定掉的那条不算在里面」一个字没动。
+    await pull(w.store, HUMAN, null, w.now());
     // t-190：默认要在它到期后不久就落下——晚过 DEFAULT_LATE_MS 就不是「刚好晚了一点」，服务会记一笔
     // 「我们没有执行」并把卡退回等人答，而不是替人把默认追认下去。这里模拟服务照常在跑。
     w.tick(min(16));

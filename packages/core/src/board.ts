@@ -120,7 +120,11 @@ export function sayDefault(st: InstructionState, now: Date): DefaultSay | undefi
   // 现在梯子答 null（见 otherSideOfNow），**由这里决定说什么**。我没有新写一句：`stuck` 那句「过期了，默认
   // 还没生效。」是 pd 早就定过的，而它此刻说的正是真的——期限过了、默认没生效。这不是替 pd 写字，是把它已经
   // 写好的那一句用在它本来就该用的地方；deaf 那种「要不要另说一句新话」的问题不在这里。
-  const left = until(Date.parse(i.ack_by) - now.getTime());
+  // t-335 ①：**没送达的卡，这一行什么都不说。**「过期了，默认还没生效」是一句故障报告（该落的默认没落下），
+  // 而一张从没送到的卡本来就不该到期——印它等于说我们欠一次执行，还暗示这个期限已经开始算了。
+  // 「还没送到，所以这个期限还没开始算」这一句**措辞归 pd**，我不自拟；定稿之前这里不印。不印不说假话。
+  if (!st.default_by) return undefined;
+  const left = until(Date.parse(st.default_by) - now.getTime());
   if (left === null) return { state: "stuck", line: DEFAULT_LINES.stuck(i.default) };
   return { state: "waiting", line: DEFAULT_LINES.waiting(left, i.default) };
 }

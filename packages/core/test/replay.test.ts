@@ -455,8 +455,14 @@ describe("t-017 · a task created on a false premise is withdrawn, not worked ar
 });
 
 describe("t-022 · an ask with a default answers itself at ack_by; the human may still override", () => {
-  const ask = (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string }> = {}) =>
-    emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
+  // t-335 ①（pd ㉖）：**这几格一直假设「他收到了」，而日志里原来没有这件事。** 默认的计时从送达起算，
+  // 所以这里把那次送达补上：卡发出即被他拉到，期限仍然是 `at + 60 分钟`，这几格要测的东西一个字没动。
+  // 不补的话它们测的会变成另一件事——「一张从没送到的卡到期了」，而那正是 ① 禁的那件事。
+  const ask = async (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string }> = {}) => {
+    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
+    await pull(store, HUMAN, null, c.now());
+    return q;
+  };
   const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
 
   /**
@@ -2956,8 +2962,13 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
 const LATE_ENOUGH = min(30);
 
 describe("t-190 · 默认只有真落成事件才算数", () => {
-  const ask = (store: MemoryStore, c: ReturnType<typeof clock>) =>
-    emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
+  // t-335 ①：送达补在这里。t-190 测的是「期限**重算**那一次要等他露面」，而 ① 说第一次也一样——
+  // 这几格要走到 default_missed 那一态，就得先有一次真的到期，而到期要先有送达。
+  const ask = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
+    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
+    await pull(store, HUMAN, null, c.now());
+    return q;
+  };
   const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
   const sweep = async (store: MemoryStore, c: ReturnType<typeof clock>) =>
     runDueDefaults(store, reduce(await store.read(), c.now()), HUMAN, c.now());
@@ -3083,8 +3094,12 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
  * 日志里却一个字都没有。t-181 之后 `chosen` 只由真事件产生，这里把它当回归钉住。
  */
 describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消失", () => {
-  const ask = (store: MemoryStore, c: ReturnType<typeof clock>, mins: number) =>
-    emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(mins)) });
+  // t-335 ①：同上，送达补在这里；卡发出即被他拉到，所以这几格里的期限仍是事件里那个 ack_by。
+  const ask = async (store: MemoryStore, c: ReturnType<typeof clock>, mins: number) => {
+    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(mins)) });
+    await pull(store, HUMAN, null, c.now());
+    return q;
+  };
   const at = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now());
 
   it("判据 1、3、5：卡上带着事件里那个 ack_by，一字不差", async () => {

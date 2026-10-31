@@ -182,7 +182,10 @@ export function dueDefaults(s: State, now: Date): NewEvent[] {
     // t-190 (pd 10:40)：晚到这个地步，只可能是这套机制当时没在跑。**那不是人的选择，是我们没执行**，所以不补落
     // 那个默认——记一笔「我们没有执行」，这张卡回到等人答，期限从人再看到那一刻重算。补落等于替他拍板。
     // 已经记过一笔的不再记第二笔：那时用的是重算后的期限，晚多少都是真的晚。
-    const deadline = st.default_missed ? st.ack_by_again ?? i.ack_by : i.ack_by;
+    // t-335 ①：这里也按送达那个钟算。按发出那个钟算的话，一张躺了半天才送到的卡会在送达的同一瞬间被判成
+    // 「晚过头了，是我们没执行」——而那半天他根本看不见它。走到这一行的前提是 `default_due`，它已经要求
+    // 这两个时刻里有一个存在，所以这里必有值。
+    const deadline = (st.default_missed ? st.ack_by_again : st.default_by)!;
     if (!st.default_missed && now.getTime() - Date.parse(deadline) > DEFAULT_LATE_MS) {
       out.push({ kind: "note", actor: SERVICE_ACTOR, body: defaultMissed(i.default), refs: [i.id] });
       continue;
