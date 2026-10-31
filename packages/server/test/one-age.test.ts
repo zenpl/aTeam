@@ -28,11 +28,11 @@ afterAll(() => Promise.all(apps.map((a) => new Promise<void>((r) => a.close(() =
 /**
  * 页上一个「年龄」长什么样，两族都算：
  * · 身份那一个，`ago()` 那把梯子印出来的四档（「3 天前」）；
- * · 正文自带的那一个，`missingCard` 那一族（「缺人 1062 分钟」「有 N 分钟没读日志了」）。
+ * · 正文自带的那一个，`missingCard` 那一族（t-341 之后走梯子：「缺人 17 小时」「有 N 小时没读日志了」）。
  * **两族都要数**，否则「只剩一个」会被一个数不到的年龄骗过去——我第一版只数了梯子那一族，于是正文里
  * 那个 1062 分钟压根没被数上，断言差点为了一个错的理由变绿。
  */
-const AGE = /(刚刚|\d+ 分钟前|\d+ 小时前|\d+ 天前|缺人 \d+ 分钟|有 \d+ 分钟没读日志了)/g;
+const AGE = /(刚刚|\d+ 分钟前|\d+ 小时前|\d+ 天前|缺人 (?:不到 1 分钟|\d+ (?:分钟|小时|天))|有 (?:不到 1 分钟|\d+ (?:分钟|小时|天))没读日志了)/g;
 
 async function up() {
   const store = new MemoryStore();
@@ -68,13 +68,15 @@ describe("t-334 · 一张卡上只许有一个年龄", () => {
     await w.put({ kind: "instruction", actor: "pm", to: "gone", body: "干一件", ack_by: new Date(nine + 3600_000).toISOString() }, nine);
     // 服务九月发的那张卡，一字照它当时的形状（正文里的数是发卡那一刻算的 5 分钟）
     const card = await w.put({ kind: "instruction", actor: SERVICE_ACTOR, to: HUMAN, intent: "do",
-      body: missingCard("gone", "missing", 5, 1), ack_by: new Date(nine + 3600_000).toISOString() }, nine);
+      // t-341：第三个参数是毫秒（取整与分档交给梯子），所以发卡那一刻那个 5 分钟写成毫秒。
+      body: missingCard("gone", "missing", 5 * 60_000, 1), ack_by: new Date(nine + 3600_000).toISOString() }, nine);
 
     const art = cardOf(await w.page(), "起一个 gone？");
-    expect(art, "正文照当下重述（t-210）").toContain("缺人 1062 分钟");
+    // t-341：时长此刻走梯子——1062 分钟 ≈ 17 小时。**这一格要钉的事没变**：正文自带一个现算的年龄。
+    expect(art, "正文照当下重述（t-210），时长走梯子（t-341）").toContain("缺人 17 小时");
     const ages = art.match(AGE) ?? [];
     expect(ages, `一张卡上只许有一个年龄，这里有 ${ages.length}：${ages.join("、")}`).toHaveLength(1);
-    expect(ages[0], "留下的那一个是正文里的那个").toBe("缺人 1062 分钟");
+    expect(ages[0], "留下的那一个是正文里的那个").toBe("缺人 17 小时");
     expect(art, "**53 天前**不许出现：它与正文那个 17 小时互相矛盾").not.toContain("53 天前");
   });
 

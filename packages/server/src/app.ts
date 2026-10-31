@@ -218,7 +218,8 @@ export function createApp(opts: ServerOptions) {
         if (lastAck && at.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
         const last = state.presence.get(role)?.last_pull;
         // never read the log: there is no moment to count from, so the card says that rather than inventing a duration
-        const minutes = last ? Math.max(1, Math.round((at.getTime() - Date.parse(last)) / 60_000)) : null;
+        // t-341：传毫秒给 `missingCard`，取整与分档交给 core 的那把梯子（`span`）——卡里不自己数分钟。
+        const minutes = last ? Math.max(0, at.getTime() - Date.parse(last)) : null;
         // t-139 (pd 05:15): which of pd's three words applies is the *presence* state, not a guess from whether
         // anything is undelivered — those are different questions, and answering the first with the second is how a
         // node that was plainly still talking got called 缺人. A listening role never reaches here at all.

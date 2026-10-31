@@ -1156,7 +1156,7 @@ export function contactAskAnswered(s: State, i: Instruction): boolean {
  * (t-118). The remedy differs with the state and so does the sentence: a role nobody is running has to be started;
  * a node that is alive but no longer pulling has to be listening again, and starting a second one is the crude way.
  */
-export function missingCard(role: string, status: "missing" | "deaf", awayMin: number | null, count: number): string {
+export function missingCard(role: string, status: "missing" | "deaf", awayMs: number | null, count: number): string {
   // t-202：**`deaf` 那一支此刻走不到了，而我没有删它——删掉一句人看得见的话是 pd 的决定，不是我的。**
   // 这张卡从此只在 `missing` 那一态起（起一个新的确实是出路的那一态）；deaf 的节点人仍然看得到，在
   // 分组那一层（overdue_by_presence.deaf），只是不再以「起一个 X？」的形状进首屏。
@@ -1170,7 +1170,13 @@ export function missingCard(role: string, status: "missing" | "deaf", awayMin: n
   // been away — there is no moment to count from. Both sides of this used to invent one anyway, and differently: the
   // board said 1 minute (a floor of one on zero) and the card said 10 (the length of the presence window), for the
   // same role at the same instant (qa 06:07). Saying what is missing is the rule this repo already has (t-091).
-  const been = awayMin === null ? "从没读过日志" : status === "deaf" ? `有 ${awayMin} 分钟没读日志了` : `缺人 ${awayMin} 分钟`;
+  // t-341（pd 要求⑱，pm 判据 1、5）：**时长走那把梯子，不在卡里自己数分钟。**
+  // 这张卡此前印的是「缺人 1286 分钟」——那个数要人自己换算成小时才读得出严重程度，而梯子早就在
+  // core 里（`span`，t-199 把分档与取整从三把梯子里抽出来放在 `band`）。**这里只换量的写法，一个新词都没造**：
+  // 四档的字（`不到 1 分钟`／`N 分钟`／`N 小时`／`N 天`）全是 `span` 自己的，也就是 pd 早就定过的那些。
+  // **参数改成毫秒**（原来是分钟）：按分钟传进来，59 秒在调用处就已经被取整成 1 分钟，最底下那一档
+  // （`不到 1 分钟`）永远走不到——判据 2 点名要那一档，所以取整必须留给梯子。
+  const been = awayMs === null ? "从没读过日志" : status === "deaf" ? `有 ${span(awayMs)}没读日志了` : `缺人 ${span(awayMs)}`;
   return status === "deaf"
     ? `${role} ${been}，${count} 条没送到——它还在写，只是没来读。起一个 ${role}？`
     : `${role} ${been}，${count} 条没送到。起一个 ${role}？`;
@@ -1193,7 +1199,8 @@ function restated(s: State, i: Instruction, now: Date, listenWindow: number, b: 
   const status = presenceStatus(s, role, now, listenWindow);
   if (status === "listening") return undefined;      // 这张卡此刻本来就该消失（t-202），不必替它重述
   const last = s.presence.get(role)?.last_pull;
-  const away = last ? Math.max(1, Math.round((now.getTime() - Date.parse(last)) / 60_000)) : null;
+  // t-341：传毫秒，取整交给梯子（见 `missingCard` 上面那段）。
+  const away = last ? Math.max(0, now.getTime() - Date.parse(last)) : null;
   const undelivered = b.undelivered.find((u) => u.to === role)?.count;
   const count = undelivered ?? owedTo(s, role).filter((x) => x.reach === "unread").length;
   return missingCard(role, status, away, count);

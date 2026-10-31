@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, AGO_JUST_NOW, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, missingRoleOf, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
+import { MemoryStore, Reduction, append, appendFrom, pull, reduce, board, openSeamsFor, projectRoles, roleResponsibilities, boardTask, slimBoard, importCounts, runFollowUps, runDueDefaults, defaultApplied, defaultMissed, DEFAULT_LINES, AGO_JUST_NOW, DEFAULT_LATE_MS, DEFAULT_RULE, atClock, until, SERVICE_ACTOR, surfaceResults, evidenceSha, splitTitle, manual, manualRoles, isMissing, missingRoleOf, missingCard, Rejected, PASS_ONLY_GATE, SAID_PREFIX, DEFER_PREFIX, type NewEvent, type Event, type Board } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-05T09:00:00Z");
@@ -3404,8 +3404,10 @@ describe("t-210 · 卡上的理由说当下，不说发卡那一刻", () => {
     const { store, c } = await world();
     c.tick(min(62));   // 很久没拉、也很久没说话：此刻是真失联
     // 按当下状态发一张卡：它说的就是当下
-    const away = Math.round(min(68) / 60_000);
-    const body = `dev 缺人 ${away} 分钟，1 条没送到。起一个 dev？`;
+    // t-341：卡里的时长走 core 那把梯子（`span`），68 分钟落在「1 小时」那一档。
+    // **这一格测的仍是同一件事**——理由仍成立时那张卡不被改写成另一句；换的只是「当下该怎么说」的写法，
+    // 而它从一个硬编码的分钟数换成了梯子本身，所以两边永远是同一句（这比写死一个数更钉得住）。
+    const body = missingCard("dev", "missing", min(68), 1);
     await emit(store, c, { kind: "instruction", actor: "ateam", to: HUMAN, intent: "do", body, ack_by: c.iso(min(600)) });
     expect((await cards(store, c))[0].body, "理由仍成立时不该被改写成另一句").toBe(body);
   });

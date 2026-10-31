@@ -87,15 +87,17 @@ describe("t-139 · 逾期按在场三态分组", () => {
   });
 
   it("the card the human gets says which state it is, and asks only what a human can do", () => {
-    expect(missingCard("qa", "missing", 20, 2)).toBe("qa 缺人 20 分钟，2 条没送到。起一个 qa？");
-    const deaf = missingCard("dev", "deaf", 40, 3);
+    // t-341：`missingCard` 的第三个参数改成**毫秒**（取整与分档交给 core 的梯子 `span`），
+    // 所以这里把 20／40 分钟写成毫秒。那两句话一个字没动——变的只是那个量怎么算出来。
+    expect(missingCard("qa", "missing", 20 * 60_000, 2)).toBe("qa 缺人 20 分钟，2 条没送到。起一个 qa？");
+    const deaf = missingCard("dev", "deaf", 40 * 60_000, 3);
     expect(deaf).toBe("dev 有 40 分钟没读日志了，3 条没送到——它还在写，只是没来读。起一个 dev？");
     // never read the log: no moment to count from, so neither side invents one (qa 06:07)
     expect(missingCard("qa", "missing", null, 1)).toBe("qa 从没读过日志，1 条没送到。起一个 qa？");
     expect(missingCard("dev", "deaf", null, 1)).toBe("dev 从没读过日志，1 条没送到——它还在写，只是没来读。起一个 dev？");
     for (const c of [missingCard("qa", "missing", null, 1), missingCard("dev", "deaf", null, 1)]) expect(c).not.toMatch(/\d+ 分钟/);
     // the difference is what is true, not a second instruction the human cannot carry out
-    for (const card of [missingCard("qa", "missing", 20, 2), deaf]) expect(card).toContain("起一个");
+    for (const card of [missingCard("qa", "missing", 20 * 60_000, 2), deaf]) expect(card).toContain("起一个");
     // the board is Chinese: the only Latin left is the role's own id, never an English word or a command name
     expect([...deaf.matchAll(/[A-Za-z][A-Za-z-]*/g)].map((m) => m[0])).toEqual(["dev", "dev"]);
   });
