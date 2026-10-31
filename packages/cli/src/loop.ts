@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, firstPullLine, WATCH_STOPPED } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, type Event, unrenderableLine, firstPullLine, WATCH_STOPPED } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -103,18 +103,52 @@ export function advance(cursor: CursorStore, next: string | null): boolean {
 }
 
 /** Render one pull the way `ateam sync` shows it. */
+/**
+ * t-340 要求㉙㉚（pd 的 decision `01M69N0XVK591XAJBME7ACGDFT`，措辞定稿在它的路标 cb655f2）：
+ * **一条渲染不出来的事件，不许只换来一句 JS 的话；也不许因此把它丢掉。**
+ *
+ * pd 18:51 亲历的那一次：看守与手跑 `sync` 两次都只打出 `Cannot read properties of undefined (reading 'join')`
+ * 就退——**既不说是哪一条，也不说还要不要再来**，而那一批从此不再出现。
+ *
+ * 这里按 pd ㉚「宁可丑，不可丢」办：渲染一条抛了，就把这一条**按原样**的那几项印出来（第几条、id、kind、
+ * actor、时刻），外加那句原因。**这一行就是这一条的交付**——所以它不挡游标：挡住的话，一条永远渲染不出来的
+ * 事件会把这个节点永久卡在原地，那是用一种「不动」换掉另一种「不见」，而 pd 要的是「看得见」。
+ *
+ * **与㉘ 的分工**：㉘ 管的是**整条渲染链**崩掉（这一批一个字都印不出来）——那时游标一步都不许动，见 `sync()`。
+ * 这里管的是**其中一条**崩掉：那一条有了它自己的一行，批次照常往下走。
+ * ㉙ 原话里还有半句「游标停在 01M… 没有推进」，它属于㉘ 那一半；我把它放在整链屏障那里，没有放在这里，
+ * **而这是一处我自己的裁定，已交回 pd**：按㉙ 的字面放在这里，就会出现上面那个永久卡住。
+ */
+export function renderOne(e: Event, me: string, i: number, total: number): string {
+  // **这一处差点蒙过我**：第一版我没 import `Event`，于是它解析成 DOM 里那个同名全局类型，而 build 照样过。
+  // 一个在类型上答「过」而意思上答错的签名，与今天那几条「量不到读成没发生」是同一族。
+  try {
+    return `${e.id}  ${fmt.event(e, me)}`;
+  } catch (err) {
+    const op = (e as { op?: string }).op;
+    // 那句话住在 core（人看得见的话只许有一个家）；这里只把量出来的那几项交给它。
+    return `${e.id}  ${unrenderableLine({
+      nth: i + 1, total,
+      kind: `${e.kind}${op ? `/${op}` : ""}`,
+      actor: (e as { actor?: string }).actor ?? "",
+      at: (e as { at?: string }).at ?? "",
+      why: err instanceof Error ? err.message : String(err),
+    })}`;
+  }
+}
+
 export function report(r: PullResult, me: string, after: string | null): string[] {
   const lines: string[] = [];
   if (!r.events.length) lines.push(after ? "nothing new" : "log is empty");
   const batch = new Set(r.events.map((e) => e.id));
-  for (const e of r.events) {
+  for (const [i, e] of r.events.entries()) {
     // t-206：**带上 id。** `fmt.event` 自己不印 id 是对的（印不印由调用方决定），漏的是这个调用方——而它正是
     // 「让指令叫醒你」那条路：从 watch 的流里读到一条给自己的指令，手上却没有那串 id，要引用它就得再去查一次
     // 日志，不查就只能凭印象敲。pm 今夜为此编造了六次不存在的 id，六次被服务拒。
     //
     // **这一处同时是 sync 的渲染器**（下面 77 行与 116 行两个调用方共用它），所以补它一处，两条路一起补上——
     // pm 12:52 的诊断先说「sync 不印 id」、13:15 更正成「只有 watch 那一处」，两句其实说的是同一行。
-    lines.push(`${e.id}  ${fmt.event(e, me)}`);
+    lines.push(renderOne(e, me, i, r.events.length));
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }
@@ -188,7 +222,12 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——
   // 那正是 `--quiet` 原来的形状，而它让那一批对这个节点永久消失。命令行那一侧此刻不再走这条路
   // （`--quiet` 改成把那一批收进本地那一叠），这里把口子也堵上：**下一个写 `sync(..., null)` 的人不会再踩它。**
-  if (print) { advance(from, r.cursor); if (from !== cursor) advance(cursor, r.cursor); }
+  // t-340 要求㉘（pd `01M69N0XVK591XAJBME7ACGDFT`）：**游标只许在整批都渲染出来之后推进。**
+  // 这一行原来在这里，而它后面还有两段 print（`owedSentences` 与 `behind` 那一块）——屏障只盖住了 `report`。
+  // 那两段里任何一处抛错，这一批就按 pd 描述的样子消失：行印过了（看守那一侧还被 grep 滤掉，人什么也没
+  // 看见）、游标已经动了、进程死掉，重启之后「毒已跳过」。而那两段恰好读的是随服务端状态变的东西
+  // （`r.owed`、`r.deploys`、`r.sha`），所以它会自己「好」——**重启成功不等于修好，等于那个状态过去了。**
+  // 所以 `advance` 挪到这个函数的最后一行（见下）。这里只留这段说明，免得下一个人再把它挪回来。
   // t-140 (pd 06:23): what I still owe, to me and only here. Not in watch's every round, not on the board — it is
   // this node's own business, not the team's and certainly not the human's. The sentences are core's, computed from
   // the server's `owed` (core's `owedNow`): what is owed does not empty out when the cursor moves, which is the
@@ -211,6 +250,9 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
     if (behind.built?.() === false) print(cliStaleBuildLine);
   }
+  // t-340 要求㉘：**整条渲染链都走完了，才算交付。** 上面任何一处抛错都到不了这里，于是游标停在上一个
+  // 成功的位置，那一批下次再来（t-245 的那句话仍然成立：没有人要这一批就不算交付，游标不动）。
+  if (print) { advance(from, r.cursor); if (from !== cursor) advance(cursor, r.cursor); }
   return r;
 }
 

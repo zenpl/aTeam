@@ -907,6 +907,7 @@ export const KEY_SYMBOLS = [
   "unansweredRow",
   "unknownParamLine",
   "unknownSpanReason",
+  "unrenderableLine",
   "until",
   "validate",
   "validateTask",
@@ -1612,6 +1613,20 @@ export const PART_NAMES = {
  * **措辞是占位的，定稿归 pd（队列第十四件）。** 上线前必须换成定稿；这一条写在任务判据里，也写在这里，
  * 免得它靠谁记得。
  */
+/**
+ * t-340 要求㉙㉚（pd 的 decision `01M69N0XVK591XAJBME7ACGDFT`）：**一条渲染不出来的事件，要说出它是谁。**
+ *
+ * pd 给的形状：「第 N 条、id 01M…、kind=note 渲染失败：<原因>；游标停在 01M… 没有推进」。
+ * 这一句照它写，**只少最后那半句**——「游标停在…没有推进」属于㉘ 那一半（整条渲染链崩掉），而这一行说的是
+ * 批次里**其中一条**崩了：那时这一行就是这一条的交付，批次照常往下走，游标也照常推进。两件事合在一句里，
+ * 其中一句必然是假的。**这是我自己的裁定，已交回 pd**（按㉙ 字面把游标也停在这里，一条永远渲染不出来的
+ * 事件会把这个节点永久卡住——那是用一种「不动」换掉另一种「不见」）。
+ *
+ * 住在 core 不是摆放习惯：人看得见的话只许有一个家（t-143／t-185 的那道闸——存量只减不增）。
+ * 我第一版把它写在 `packages/cli/src/loop.ts` 里，闸当场红了，这一处是那次红之后搬进来的。
+ */
+export const unrenderableLine = (x: { nth: number; total: number; kind: string; actor: string; at: string; why: string }) =>
+  `第 ${x.nth}/${x.total} 条渲染失败：${x.why}  kind=${x.kind} actor=${x.actor} at=${x.at}  （这一条照原样印在这里，取全文按它的 id 去日志找）`;
 export const PD_PLACEHOLDER = "（措辞待定）";
 /**
  * t-333（pd ㉕；定稿 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ③，照抄不改标点）：
