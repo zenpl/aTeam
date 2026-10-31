@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
+import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, runEndedCards, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, receiptPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -183,8 +183,15 @@ export function createApp(opts: ServerOptions) {
   const remindFor = async (projectId: string, store: EventStore): Promise<unknown[]> => {
     const events = await serialize(async () => {
       const at = now();
-      const state = await stateFor(projectId, store, at);
+      let state = await stateFor(projectId, store, at);
       const out: unknown[] = [];
+      // t-333（pd ㉕，定稿在 3a40fe9 的 docs/product.md:288）：**一张卡所说的事实不成立了，这张卡就结束。**
+      // 与到期的默认同一个道理（t-181）：没有人做了什么，正是它该发生的那一刻——所以服务在自己的时钟上把它
+      // 落成真事件，而不是只在显示期跳过它（那样 id 会一直被下一次同类的事实续用）。
+      // **放在发卡之前，并重算一次状态**：同一轮里先把结束了的结掉，这一轮新的缺人才铸得出新 id；
+      // 不重算的话下面那道闸看的还是撤回之前的状态，于是新卡要等下一轮才出得来。
+      const ended = await runEndedCards(store, state, human, real());
+      if (ended.length) { out.push(...ended); state = await stateFor(projectId, store, at); }
       const b = board(state, human, at);
       for (const role of projectRoles(state)) {
         // t-202：只在「起一个新的」真能解决问题的那一态才起这张卡。上一版的条件是 !isMissing——它只排掉
@@ -200,7 +207,13 @@ export function createApp(opts: ServerOptions) {
         const undelivered = b.undelivered.find((u) => u.to === role);
         if (!overdue.length && !undelivered) continue;
         const cards = [...state.instructions.values()].filter((st) => st.instruction.actor === SERVICE_ACTOR && missingRoleOf(st.instruction.body) === role);
-        if (cards.some((st) => !st.acked_at)) continue;
+        // t-333（pd ㉕）：**结束过的卡不再把下一次缺人挡在外面。** 这道闸原来只看 `acked_at`，于是一张
+        // 从没被 ack 的卡会永远挡住后面所有同类的卡——那正是 2026-09-07 那三个 id 承载今天事实的由来。
+        // 现在服务会在角色回来时撤回它自己那张卡（`endedCards`），而撤回过的不算「还开着」。
+        if (cards.some((st) => !st.acked_at && !st.withdrawn)) continue;
+        // **冷却只跟着 ack 走，不跟着撤回走**（t-333）：ack 之后的冷却是为了别在他刚答完就再问一遍；
+        // 而一次撤回说的是「上一次那件事结束了」，此刻这一次是**新的事实**，压住它就是把 ㉕ 禁的那件事
+        // 换一个地方再做一遍——人会再也看不到这一次。
         const lastAck = cards.map((st) => st.acked_at).filter((x): x is string => !!x).sort().pop();
         if (lastAck && at.getTime() - Date.parse(lastAck) < REMIND_COOLDOWN_MS) continue;
         const last = state.presence.get(role)?.last_pull;

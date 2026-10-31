@@ -796,6 +796,7 @@ export const KEY_SYMBOLS = [
   "cannotMeasureHere",
   "cannotSeeOutput",
   "capabilityKey",
+  "cardEnded",
   "cardTitleLine",
   "caughtBy",
   "checkShape",
@@ -1601,6 +1602,16 @@ export const PART_NAMES = {
  * 免得它靠谁记得。
  */
 export const PD_PLACEHOLDER = "（措辞待定）";
+/**
+ * t-333（pd ㉕；定稿 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ③，照抄不改标点）：
+ * **服务替自己撤回一张卡时，理由那一句。** 一句模板加一个槽，人在牌桌上读得到。
+ *
+ * 槽里是「事实，带时刻」。pd 把它的例句写成散文（「release 在 10-30 22:42 回来了」）并点明**别照抄那一句**，
+ * 所以这里填的是**量出来的那条事实本身**，用 pd 自己在 ㉕ 里的写法（「`last_pull` 是 2026-10-30T22:42:33Z」）：
+ * 一行 `<角色>.<键>=<ISO>`。这样两种「不再缺人」都填得出同一个形状——回来读日志的那种（`last_pull`）、
+ * 还在写只是没来读的那种（`last_event`）——而槽里一个字的中文都不是我写的。若 pd 要散文，换这一处即可。
+ */
+export const cardEnded = (fact: string) => `这张卡问的那件事已经不成立了：${fact}。卡到此结束；下次再出现同一类事，是另一张新卡（㉕）。`;
 /**
  * t-292 判据 7（pd 06:42「一」，定稿照抄）。
  *

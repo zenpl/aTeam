@@ -1,8 +1,8 @@
 import { append, Reduction, type EventStore, type AppendOptions } from "./store.js";
 import { reduce, type State } from "./reduce.js";
-import { projectRoles, importCounts, standIns } from "./board.js";
+import { projectRoles, importCounts, standIns, presenceStatus, missingRoleOf } from "./board.js";
 import { Rejected } from "./rules.js";
-import { VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
+import { cardEnded, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -212,6 +212,67 @@ export async function runDueDefaults(store: EventStore, s: State, human: string,
     } catch (err) {
       if (!(err instanceof Rejected)) throw err;
       out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `默认到期没能落下（${err.rule}）：${err.message}`, refs: ne.refs }, { human, now, mint }));
+    }
+  }
+  return out;
+}
+
+/**
+ * t-333（pd ㉕，定稿在 `3a40fe9` 的 `docs/product.md:288`）：**一张卡所说的事实不成立了，这张卡就结束；
+ * 下一次同类的事实要新的一张卡、新的 id。**
+ *
+ * 真样本：人那一页上那三张「<角色> 缺人 N 分钟，M 条没送到。起一个 <角色>？」的 id 全铸于 2026-09-07，
+ * 而正文的分钟数是现算的（t-210 让它随时间重述）。release 在九月那次缺人之后回来过——`last_pull` 是
+ * 2026-10-30T22:42:33Z——卡当初问的那件事早就结束了，卡没有结束，被下一次同类的缺人接着用。
+ * **人是按卡办事的，他办掉的是 id**：用九月的 id 承载今天的事，他分不清这是旧账还是新事。
+ *
+ * 我量过服务端（读数 `repo:card.terminal.storage`）：**没有任何字段表示「这张卡断言的事实不再成立」**，
+ * 最接近的 `stale_since` 自己写着「只是可能过期，不是不成立」。而今天那个「结束」只发生在显示期
+ * （`board.ts` 的那道 `continue`）——**什么都不落**，于是 id 一直被续用。
+ *
+ * 所以这里不新开一个事件种类：这一族卡的发信人就是服务自己，而 `untell` 已经是一个**落在日志里的终态**，
+ * 规则也允许发信人撤回自己没被 ack、没被决定的卡（rules.ts 的 `untell`）。角色不再 missing ⇒ 服务撤回它自己
+ * 那张卡。**判「不再成立」用的是与牌桌那道 `continue` 同一个条件**（`presenceStatus !== "missing"`）：
+ * 同一件事只许有一个定义，否则牌桌与日志会各说一套。
+ *
+ * **纯函数、幂等**：已经撤回过的、已经被 ack 的、已经被决定的都跳过——撤回不做第二次，而一张被 ack 的卡
+ * 本来就已经结束了（它的 ack 照旧按它自己的 id 查得到，判据③）。
+ *
+ * **理由那一句是 pd 的定稿**（判据⑪，pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ③，照抄不改标点）：
+ * `cardEnded(fact)`。槽里填量出来的那条事实，见那个常量上面那段说明。
+ */
+export function endedCards(s: State, now: Date, listenWindow?: number): NewEvent[] {
+  const out: NewEvent[] = [];
+  for (const st of s.instructions.values()) {
+    const i = st.instruction;
+    if (i.actor !== SERVICE_ACTOR) continue;
+    const role = missingRoleOf(i.body);
+    if (!role) continue;
+    if (st.withdrawn || st.acked_at || st.chosen) continue;
+    const status = presenceStatus(s, role, now, listenWindow);
+    if (status === "missing") continue;                 // 它说的那件事此刻仍然成立：卡不动
+    // 两种「不再缺人」填的是各自那条事实：回来读过日志的看 `last_pull`，还在写只是没来读的看 `last_event`。
+    const p = s.presence.get(role);
+    const [key, when] = status === "listening" ? ["last_pull", p?.last_pull] : ["last_event", p?.last_event];
+    if (!when) continue;                                // 说不出时刻就不说：没有时刻的「事实」不是一条事实
+    // **槽里一个字的中文都不是我写的**：`<角色>.<键>=<ISO>`，键与时刻按仓库里事实的写法原样放
+    // （队规：标识符、路径、sha 原样不译）。第一版我写成「<角色> 的 <键> 是 <ISO>」，而那三个字
+    // 「的」「是」就是我自拟的人可见措辞——闸当场把它列为新增一句。pd 若要散文，换这一处。
+    out.push({ kind: "untell", actor: SERVICE_ACTOR, of: i.id, reason: cardEnded(`${role}.${key}=${when}`) });
+  }
+  return out;
+}
+
+/** Append every card whose fact has ended. A rejection becomes a note, never a crash（与 `runDueDefaults` 同一形状）。 */
+export async function runEndedCards(store: EventStore, s: State, human: string, now: Date = new Date(), mint?: AppendOptions["mint"], listenWindow?: number): Promise<Event[]> {
+  const out: Event[] = [];
+  for (const ne of endedCards(s, now, listenWindow)) {
+    try {
+      out.push(await append(store, ne, { human, now, mint }));
+    } catch (err) {
+      if (!(err instanceof Rejected)) throw err;
+      // **这一条不带我自拟的话**：正文就是那次拒绝自己说的（规则名＋它的话），人看得见的字一个都不是新的。
+      out.push(await append(store, { kind: "note", actor: SERVICE_ACTOR, body: `${err.rule}: ${err.message}`, refs: [(ne as { of: string }).of] }, { human, now, mint }));
     }
   }
   return out;
