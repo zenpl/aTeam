@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { sync, report, renderOne } from "../src/loop.js";
+import { unrenderableLine, batchBrokeLine } from "@ateam/core";
 import type { PullResult } from "@ateam/core";
 import type { Event } from "@ateam/core";
 
@@ -56,6 +57,12 @@ describe("t-340 · 整条渲染链崩掉时，游标一步都不许动", () => {
     expect(out.some((l) => l.includes("01A")), "行是印出来过的——丢的不是显示，是游标").toBe(true);
     expect(seen.value, "**游标一步都不许动**：这一批下次还要来").toBeNull();
     expect(cursor.value).toBeNull();
+    // t-343 判据 3、5：**整批那一句要在，而且后半句「没推进、下次整个再来」必须在里面**（pd 20:25 定稿）。
+    // 两条都渲染出来了之后才断在尾巴上，所以它说的是「在第 2／2 条之后断了」。
+    expect(out.at(-1), "照抄 pd 定稿那一句").toBe(batchBrokeLine({ nth: 2, total: 2, cursor: "null" }));
+    expect(out.at(-1)).toContain("没有推进");
+    expect(out.at(-1)).toContain("下次 sync 会把这一批整个再来一遍");
+    expect(out.at(-1), "**这一句不许说成「算读过了」**：那是另一条路的话，处置正相反").not.toContain("算读过了");
 
     // 再跑一次：从同一个位置拉，拿到的是同一批（这一次不崩）
     const out2: string[] = [];
@@ -79,22 +86,41 @@ describe("t-340 · 其中一条渲染不出来：说出它是谁，并且不丢"
   /** 一条渲染必崩的事件：`task claim` 少了 touches，格式化那一行正是 `e.touches.join(", ")`。 */
   const poison = ev("01BAD", { kind: "task", op: "claim", task: "t-1", touches: undefined });
 
-  it("**判据③④（要求㉙㉚）**：印出第几条、id、kind、actor、时刻与原因，一行顶上去，不抛", () => {
+  it("**判据②④⑤（逐条那两行，照抄 pd 20:25 定稿）**：六项都在，而且带上「这一条算读过了」那半句", () => {
     const line = renderOne(poison, ME, 3, 7);
     expect(() => renderOne(poison, ME, 3, 7)).not.toThrow();
     expect(line).toContain("01BAD");                       // id
-    expect(line).toContain("第 4/7 条");                    // 第几条（人数的是 1 起）
-    expect(line).toContain("kind=task/claim");             // kind（带 op）
-    expect(line).toContain("actor=pm");                    // 谁写的
-    expect(line).toContain("2026-10-31T18:39:00.000Z");    // 时刻，按原样
+    expect(line).toContain("第 4／7 条");                    // 第几条／总数（人数的是 1 起）
+    expect(line).toContain("kind task(claim)");            // kind 带 op，pd 点名要这个写法
+    expect(line).toContain("actor pm");                    // 谁写的
+    expect(line).toContain("2026-10-31T18:39:00.000Z");    // 时刻，按原样（判据 4）
     expect(line, "那句 JS 的话也要在——它是原因，不是全部").toMatch(/join/);
+    // **判据 5 的要害**：这一行必须自己说出「会不会再来」，否则读的人分不清自己是丢了还是没丢
+    expect(line).toContain("这一条算读过了，游标会越过它");
+    expect(line, "**不许说成「还会来」**：那是整批那一条路的话").not.toContain("再来一遍");
+    expect(line, "逐字照 pd 定稿").toBe(unrenderableLine({
+      nth: 4, total: 7, id: "01BAD", kind: "task(claim)", actor: "pm",
+      at: "2026-10-31T18:39:00.000Z", why: "Cannot read properties of undefined (reading 'join')",
+    }));
+  });
+
+  it("**判据 5 的另一半**：逐条崩掉之后，游标确实越过了它（这一行就是它的交付）", async () => {
+    const p = puller([ev("01A"), poison, ev("01C")]);
+    const seen = cursorStore(null);
+    const cursor = cursorStore(null);
+    const out: string[] = [];
+    await sync(p as never, ME, cursor as never, 0, (l) => out.push(l), undefined, undefined, seen as never);
+    expect(seen.value, "越过它：这一批算交付了，不会永远卡在这一条上").toBe("01C");
+    expect(out.some((l) => l.includes("这一条算读过了")), "而那一行说出了这件事").toBe(true);
+    expect(out.some((l) => l.includes("整个再来一遍")), "**整批那一句不许在这里出现**").toBe(false);
   });
 
   it("**不丢**：一条崩了，整批照常印完，后面那些一条都不少", () => {
     const r = { events: [ev("01A"), poison, ev("01C")], cursor: "01C", owed: undefined } as unknown as PullResult;
     const lines = report(r, ME, "01PREV");
     expect(lines.filter((l) => l.startsWith("01A")).length).toBe(1);
-    expect(lines.filter((l) => l.startsWith("01BAD")).length).toBe(1);
+    // pd 的定稿把 id 写在句子里（`id 01M…`），所以这一行不再以 id 开头——按「出现过」数，不按「开头」数。
+    expect(lines.filter((l) => l.includes("01BAD")).length).toBe(1);
     expect(lines.filter((l) => l.startsWith("01C")).length, "**它后面那些不许因为它消失**").toBe(1);
   });
 

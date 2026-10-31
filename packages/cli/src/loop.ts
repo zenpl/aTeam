@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, type Event, unrenderableLine, firstPullLine, WATCH_STOPPED } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, type Event, unrenderableLine, batchBrokeLine, firstPullLine, WATCH_STOPPED } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -127,17 +127,24 @@ export function renderOne(e: Event, me: string, i: number, total: number): strin
   } catch (err) {
     const op = (e as { op?: string }).op;
     // 那句话住在 core（人看得见的话只许有一个家）；这里只把量出来的那几项交给它。
-    return `${e.id}  ${unrenderableLine({
-      nth: i + 1, total,
-      kind: `${e.kind}${op ? `/${op}` : ""}`,
+    // **不再在前面另印一次 id**：pd 的定稿把 id 写在句子里（`id 01M…`），前缀会让同一个 id 出现两次。
+    return unrenderableLine({
+      nth: i + 1, total, id: e.id,
+      kind: `${e.kind}${op ? `(${op})` : ""}`,        // pd 点名要这个写法：task(claim)
       actor: (e as { actor?: string }).actor ?? "",
-      at: (e as { at?: string }).at ?? "",
+      at: (e as { at?: string }).at ?? "",             // 判据 4：时刻按原样
       why: err instanceof Error ? err.message : String(err),
-    })}`;
+    });
   }
 }
 
-export function report(r: PullResult, me: string, after: string | null): string[] {
+/**
+ * t-343：**整批那一句要说出它断在第几条之后**，所以渲染到哪儿要数出来，不能猜。`tally` 是个可选的出参：
+ * 每渲染出一条事件就 +1。调用方不给就什么都不变（只走一条路的调用方照旧）。
+ * **限度写在这里**：它数的是「这一行造出来了」，不是「这一行已经印到屏幕上」。真正的打印发生在 `sync()` 里，
+ * 所以若 `print` 本身抛（管道断了那种），这个数会偏大一条。那一句的后半（没推进、会再来）仍然是真的。
+ */
+export function report(r: PullResult, me: string, after: string | null, tally?: { shown: number }): string[] {
   const lines: string[] = [];
   if (!r.events.length) lines.push(after ? "nothing new" : "log is empty");
   const batch = new Set(r.events.map((e) => e.id));
@@ -149,6 +156,7 @@ export function report(r: PullResult, me: string, after: string | null): string[
     // **这一处同时是 sync 的渲染器**（下面 77 行与 116 行两个调用方共用它），所以补它一处，两条路一起补上——
     // pm 12:52 的诊断先说「sync 不印 id」、13:15 更正成「只有 watch 那一处」，两句其实说的是同一行。
     lines.push(renderOne(e, me, i, r.events.length));
+    if (tally) tally.shown++;
     // t-064: an instruction to me taken back after I had already pulled it: say so, or I might still act on it
     if (e.kind === "untell" && !batch.has(e.of) && r.taken_back_seen?.includes(e.of)) lines.push(`  ⇐ 你已看过的这条被撤回了（${e.of}），不要照着做`);
   }
@@ -217,7 +225,14 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
    */
   const say = notice ?? print;
   if (say && after === null && r.events.length) say(firstPullLine(r.events.length, r.events[0].id, r.events[r.events.length - 1].id));
-  if (print) for (const line of report(r, me, after)) print(line);
+  /**
+   * t-343：**整批在中途断了，要有它自己的一句话**（pd 20:25 的定稿，与逐条那一句处置正相反，所以分开写）。
+   * 所以整条渲染链包在这里：中途任何一处抛，先把那一句印出去（它说「游标停在哪、没有推进、下次整个再来」），
+   * 再把错原样抛出去——抛出去之后 `advance` 到不了，这正是㉘ 要的屏障。
+   */
+  const tally = { shown: 0 };
+  try {
+  if (print) for (const line of report(r, me, after, tally)) print(line);
   if (print) await flush?.();
   // t-245：**没有人要这一批，就不算交付**，游标不动。`print` 为 null 的意思是「这一次谁也不看」——
   // 那正是 `--quiet` 原来的形状，而它让那一批对这个节点永久消失。命令行那一侧此刻不再走这条路
@@ -249,6 +264,13 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
     // qa 16:02：**只 git pull 不重编，上面那句当场消失，而跑着的还是旧的。** HEAD 不是跑着的那一版。
     // 说不出（built 给 null）就不说；这一句与上一句各说各的，两句都成立时两句都印。
     if (behind.built?.() === false) print(cliStaleBuildLine);
+  }
+  } catch (err) {
+    // **游标此刻还停在 `from.read()`**（屏障在下面，还没跑到），所以这一句说的是真的。
+    // 首次拉取时它本来就没有位置，于是那个槽里是 `null`——协议里它就是这个值，照原样印（标识符不译）。
+    // 这一处我没有替 pd 另写一句「还没有游标」，交回它定。
+    if (print) print(batchBrokeLine({ nth: tally.shown, total: r.events.length, cursor: String(from.read()) }));
+    throw err;
   }
   // t-340 要求㉘：**整条渲染链都走完了，才算交付。** 上面任何一处抛错都到不了这里，于是游标停在上一个
   // 成功的位置，那一批下次再来（t-245 的那句话仍然成立：没有人要这一批就不算交付，游标不动）。
