@@ -5,7 +5,7 @@
  * 还没有人验的，人那一页上显示成「已成为任务」。而人问的正是「我那句话落地了没有」。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, board, SAID_LABEL, SAID_PREFIX, DEPLOYED_TASKS_KEY, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, board, SAID_LABEL, SAID_PREFIX, CANNOT_TELL_LIVE_WHY, DEPLOYED_TASKS_KEY, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-09-12T12:00:00.000Z");
@@ -79,12 +79,18 @@ describe("t-237 ④a · 判决说「已上线，验过」，祖先只说「说�
     expect(row.status, "这一态此前是 live，而它的全部依据只是包含关系").toBe("live_unknown");
     expect(row.label).toBe("说不出上没上");
     expect(row.label, "pd 点名禁的那一个：不许用一个较早的状态冒充一个答不出的状态").not.toContain("已成为任务");
+    // 判据：理由**不进标签、进挖层那一行**。两边各钉一次，否则把理由挪进标签也能全绿。
+    expect(row.why, "挖层那一行说出它为什么说不出（pd 09:08 定稿，09:39 确认是它自己的话）").toBe(CANNOT_TELL_LIVE_WHY);
+    expect(row.label, "而标签里一个字都不许出现它").not.toContain("祖先");
+    // pd 09:39 授权的那处替换：这一格底下一个 sha 都没有，所以主语写成「那一件的证据 sha」
+    expect(row.why).toContain("那一件的证据 sha");
   });
 
   it("**对照**：既没判决、也不在那条包含事实里 ⇒ 仍是「已成为任务」（新那一态没有把一切都吞掉）", async () => {
     const row = await status(await world({ contained: ["t-999"] }));
     expect(row.status).toBe("task");
     expect(row.label).toBe("已成为任务：闸自己说实话");
+    expect(row.why, "**只有说不出那一态才有这一行**：别的态带上它就是无中生有").toBeUndefined();
   });
 
   it("判决与包含同时成立 ⇒ 仍然是「已上线，验过」：判决这一支不经过包含关系，所以它不等 t-325", async () => {

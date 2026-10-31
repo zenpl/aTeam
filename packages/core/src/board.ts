@@ -524,15 +524,17 @@ export interface BoardSaid {
 }
 
 export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线，验过", live_unknown: "说不出上没上" };
+export const CANNOT_TELL_LIVE_WHY = "我只看得出那一件的证据 sha 是不是祖先，看不出跑着的那一版里有没有它的内容。修法在 t-325。";
 /**
- * t-237 ④a：**挖层那一行此刻故意是空的，而这不是漏做。**
+ * t-237 ④a：**挖层那一行——这一态为什么说不出。** 标签只说结论，理由在这里。
  *
- * 判据要「理由进挖层那一行」，而那句理由的原文出自 **pm 09:09 的判据**，不是 pd 09:08 那条 decision——
- * 也就是说它是一句**人会读到、而 pd 还没定稿**的话。`WORDING_FROZEN` 开着，而那道闸的规矩是
- * 「pd 通过了新措辞」才写回快照；我若连它一起写回，等于替 pd 批了一句它没看过的话。
+ * 出处：pd 09:08 的 decision，逐字（pm 09:09 只是把它抄进了判据；我 09:39 问过它是谁的话，pd 09:39 答
+ * 「本来就是我的，定稿照抄」）。**我问过才写回快照**，而不是先写回再说——那道闸的规矩是「pd 通过了新措辞」。
  *
- * 所以这一笔只落 pd 自己定稿的那两个标签（「已上线，验过」／「说不出上没上」）——**它们才是止住那句假断言
- * 的那一半**——而挖层那一行等 pd 给字（我已把原句摆给它）。字段留着，值等定稿。
+ * **一处替换是 pd 同一条指令里授权的，而判断由我做，所以我写明我怎么判的**：pd 说「那个提交」在这一行里指的
+ * 是这一件的证据 sha，**若那一行上下文看不出来，就写成「那一件的证据 sha」**。这一行挂在「人说过的那句话」
+ * 那一格底下，**那一格里一个 sha 都没有**（它列的是需求与任务，不是提交），所以上下文确实看不出来 ⇒ 按 pd
+ * 给的那一条替换。
  */
 /**
  * t-243：**那句提示里的三个词，从此就是上面那张表里的三个词。**
@@ -1647,6 +1649,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
     b.said.push({
       id: n.id, body: n.body.slice(SAID_PREFIX.length).trim(), at: n.at, status, label,
+      ...(status === "live_unknown" ? { why: CANNOT_TELL_LIVE_WHY } : {}),
       links: { requirements, tasks: linked.map((t) => ({ id: t.id, title: t.title, status: t.status })) },
     });
   }
