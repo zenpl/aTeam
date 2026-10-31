@@ -54,7 +54,8 @@ export interface BoardTask {
   base_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
   shows?: string;
-  verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }[];
+  /** t-344：`repo` 那几条带上是在哪条支上验的（旧事件没有这一项）。 */
+  verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number; branch?: string }[];
   /** Every done, verify and reopen in order, with the round each belongs to. */
   history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
