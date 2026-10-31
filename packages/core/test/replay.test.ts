@@ -916,7 +916,10 @@ describe("t-030 · what the human said, and where it went", () => {
     expect((await said(store, c))[0].status).toBe("task");
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "production", pass: true });
     [x] = await said(store, c);
-    expect(x).toMatchObject({ status: "live", label: "已上线：登录后回到原页" });
+    // t-237 ④a：标签那个词按 pd 09:08 的定稿改了（「已上线」→「已上线，验过」），**而这一格的本意一个字没动**：
+    // 它量的是四态那条路走得通（received → requirement → task → live），走到 live 的条件仍然是一次生产判决。
+    // 词改了是因为「已上线」此前同时替两件事实说话；分开之后，这一格走的正是「有生产判决」那一支。
+    expect(x).toMatchObject({ status: "live", label: "已上线，验过：登录后回到原页" });
   });
 
   it("several tasks may answer one sentence; the label names them all; newest sentence first", async () => {

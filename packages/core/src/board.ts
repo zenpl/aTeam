@@ -454,7 +454,19 @@ export function titleAsShown(body: string): { title: string; detail: string } {
   return t.title ? t : tooLongTitle(body.trim());
 }
 
-export type SaidStatus = "received" | "requirement" | "task" | "live";
+/**
+ * t-237 ④a：**多一态「说不出上没上」。**
+ *
+ * 原来这一格只有四态，而「已上线」同时由两件事实产生：有生产判决、或者那条包含事实说它在跑着的那一版里。
+ * **一个词对两件事实**，而其中一件（包含）此刻答的是「那个提交是不是祖先」、不是「跑着的那一版里有没有它的
+ * 内容」——这个项目的回滚约定刻意保留祖先、退回内容（pm 08:23 量的，修法在 t-325）。
+ *
+ * pd 09:08 的定稿：窗口期内只用两态——**有生产判决 → 「已上线，验过」；其余一切 → 「说不出上没上」**，
+ * 把「已上线、没验」那一态关掉，因为它的全部依据就是那个会骗人的字段。**而不许回落成「已成为任务」**
+ * （frontend 09:10 量到的那条：那是用一个较早的状态冒充一个答不出的状态）。
+ * 好处是它自己会结束：t-325 落地后第三态自然可用，**没有任何过渡文字需要被谁记得删掉。**
+ */
+export type SaidStatus = "received" | "requirement" | "task" | "live" | "live_unknown";
 /**
  * t-129: what a packed batch is worth right now. `current` — it is still packed on where production is. `stale` — it
  * was packed on an older head but carries everything production carries, so re-packing is all it needs. `rollback` —
@@ -504,12 +516,24 @@ export interface BoardSaid {
   body: string;
   at: string;
   status: SaidStatus;
-  /** Ready to show: 已收到 / 已成为需求 / 已成为任务：<标题> / 已上线 */
+  /** Ready to show: 已收到 / 已成为需求 / 已成为任务：<标题> / 已上线，验过 / 说不出上没上 */
   label: string;
+  /** t-237 ④a：挖层那一行——这一态为什么说不出。只有 `live_unknown` 有它；标签里不许出现它。 */
+  why?: string;
   links: { requirements: string[]; tasks: { id: string; title: string; status: string }[] };
 }
 
-export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线" };
+export const SAID_LABEL: Record<SaidStatus, string> = { received: "已收到", requirement: "已成为需求", task: "已成为任务", live: "已上线，验过", live_unknown: "说不出上没上" };
+/**
+ * t-237 ④a：**挖层那一行此刻故意是空的，而这不是漏做。**
+ *
+ * 判据要「理由进挖层那一行」，而那句理由的原文出自 **pm 09:09 的判据**，不是 pd 09:08 那条 decision——
+ * 也就是说它是一句**人会读到、而 pd 还没定稿**的话。`WORDING_FROZEN` 开着，而那道闸的规矩是
+ * 「pd 通过了新措辞」才写回快照；我若连它一起写回，等于替 pd 批了一句它没看过的话。
+ *
+ * 所以这一笔只落 pd 自己定稿的那两个标签（「已上线，验过」／「说不出上没上」）——**它们才是止住那句假断言
+ * 的那一半**——而挖层那一行等 pd 给字（我已把原句摆给它）。字段留着，值等定稿。
+ */
 /**
  * t-243：**那句提示里的三个词，从此就是上面那张表里的三个词。**
  *
@@ -1611,10 +1635,14 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // 后者蕴含前者（没上线的东西验不了），所以这一句原来不是假话，但它**报少了**：一件已经在生产上跑、
     // 还没人验的，这里显示成「已成为任务」——而人问的是「我那句话落地了没有」。
     // 包含关系来自那条事实（production:deployed.tasks）；它答不出的那几件仍按有没有生产判决算。
+    // t-237 ④a：**两件事实分开，一个词只对一件。** 判决这一支不经过包含关系，所以它不等 t-325；
+    // 而「祖先成立但没判决」那一支此刻只配得上一句「说不出」——它不许回落成「已成为任务」。
     const shipped = deployedTasksFact(s);
-    const onProd = (t: TaskState) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass) || !!shipped?.contained.includes(t.id);
-    const live = linked.filter(onProd);
-    const status: SaidStatus = live.length ? "live" : linked.length ? "task" : requirements.length ? "requirement" : "received";
+    const verdict = (t: TaskState) => surfaceResults(t).some((r) => r.surface === HUMAN_SURFACE && r.pass);
+    const ancestorOnly = (t: TaskState) => !verdict(t) && !!shipped?.contained.includes(t.id);
+    const live = linked.filter(verdict);
+    const cannotTell = !live.length && linked.some(ancestorOnly);
+    const status: SaidStatus = live.length ? "live" : cannotTell ? "live_unknown" : linked.length ? "task" : requirements.length ? "requirement" : "received";
     const label = status === "task" ? `${SAID_LABEL.task}：${linked.map((t) => t.title).join("、")}`
       : status === "live" ? `${SAID_LABEL.live}：${live.map((t) => t.title).join("、")}` : SAID_LABEL[status];
     b.said.push({
