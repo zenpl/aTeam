@@ -1,4 +1,4 @@
-import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, type Event, unrenderableLine, batchBrokeLine, firstPullLine, WATCH_STOPPED } from "@ateam/core";
+import { owedSentences, behindDeploys, cliBehindLine, cliStaleBuildLine, apartFromLive, apartLine, morePagesLine, type PullResult, type Event, unrenderableLine, batchBrokeLine, fullPullLine, CURSOR_UNREADABLE, firstPullLine, WATCH_STOPPED } from "@ateam/core";
 import { ClientError, BadResponse } from "./client.js";
 import * as fmt from "./format.js";
 
@@ -11,6 +11,13 @@ export interface CursorStore {
    * 一次性命令由 `main` 在确认自己以 0 结束时提交；`watch` 没有那一刻，所以它每一轮交付完自己调一次。
    */
   commit?(): void;
+  /**
+   * t-351（pd 要求㉝）：**空不是「没有」。** `read()` 两种情形都给 `null`，而它们的处置相反——
+   * `"none"`（连文件都没有：这个节点真的没有游标，刚加入，该从头拉）与 `"empty"`（文件在、内容为空：
+   * 崩溃窗口里读到的那一种，一条都不该拉，当场说话）。不给这个方法就只有 `read()` 那两档，
+   * 调用方照旧（只走一条路的调用方与用例不必改）。
+   */
+  state?(): "none" | "empty" | "value";
 }
 
 /** The one call `sync` and `watch` need from the server. */
@@ -213,7 +220,27 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
   //
   // `seen` 不给就退回今天的行为（两者同一个位置）：那正是所有只走一条路的调用方与用例要的。
   const from = seen ?? cursor;
+  /**
+   * t-351 判据 2（pd 要求㉝）：**游标文件在、而读出来是空的 ⇒ 一条都不拉，当场说话。**
+   * 不这么做的话，空的 `after` 发出去，服务端把整份日志给他（pm 23:14 实测 14375 条、414 KB），
+   * 而这一发全量在日志里与一次正常 sync 长得一模一样。
+   * **这一句措辞归 pd，此刻是占位**（`CURSOR_UNREADABLE`）；停下这件事不等 measure。
+   */
+  const fromState = from.state?.() ?? (from.read() === null ? "none" : "value");
+  if (fromState === "empty") {
+    (notice ?? print)?.(CURSOR_UNREADABLE);
+    return { events: [], cursor: undefined, owed: undefined } as unknown as PullResult;
+  }
   const { after, r } = await pullBatch(client, from, waitMs);
+  /**
+   * t-351 判据 6（要求㉞，pd 定稿照抄）：**一次「从头全量」必须出声。**
+   * 上面那道闸让这条路走不到——而它仍然要在：`sync()` 不是唯一的调用方（`watch` 与别的客户端各有各的路），
+   * 而**一次没人看见的全量，正是 pd 要求出声的那件事**。两道都在，是刻意的：一道挡，一道在挡不住时出声。
+   */
+  // 条件是「这一次是从头拉的」——`after` 为 null **或空串**都算（一个只有 `read()` 的调用方把空读成空串发出来，
+  // 正是 pm 23:14 那一幕）。而 `fromState === "none"` 的那一种是刚加入，从头拉本来就对，不说这句话。
+  if (!after?.trim() && fromState !== "none" && r.events.length)
+    (notice ?? print)?.(fullPullLine(r.events.length, JSON.stringify(r.events).length));
   /**
    * t-293 判据 7：**这台机器此前没有读位置 ⇒ 这一批一印完就全被标成读过，所以先说清它是什么。**
    *

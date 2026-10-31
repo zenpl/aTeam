@@ -73,7 +73,14 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
  * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 144），再回头核它与 142 + 2
  * 对不对得上。两者一致。
  */
-const TOTAL = 144;
+/**
+ * **t-351：144 → 146。** 两处都在 `server/app.ts`（`/events` 与 `/log` 两条拉取路径上那道「空的 `after`
+ * 不许当成从头」的闸，pd 要求㉝），**两处都属「那件事没有发生」那一类**（不带 `{ at }`）：这一次一条都没发，
+ * 出路是客户端把游标读对了再来——而它此刻读到的是空，那是它那一侧的毛病。
+ *
+ * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 146），再回头核它与 144 + 2 对得上。
+ */
+const TOTAL = 146;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

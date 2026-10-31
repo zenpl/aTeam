@@ -155,7 +155,21 @@ function cursorFile(me: string, root: string, name = "cursor", key?: string) {
 export function fileCursor(me: string, root: string = process.cwd(), io: CursorIo = nodeIo, name = "cursor", key?: string): CursorStore {
   const dir = join(root, ".ateam");
   const text = (f: string) => (io.existsSync(f) ? io.readFileSync(f, "utf8").trim() || null : null);
+  /**
+   * t-351（pd 要求㉝）：**空不是「没有」。** 这三档的处置互不相同，所以它们不许共用一个表示：
+   * 连文件都没有 ⇒ 这个节点真的没有游标（刚加入，该从头拉）；文件在而内容为空 ⇒ 崩溃窗口里那一种
+   * （一条都不该拉，当场说话）；有值 ⇒ 照常。
+   * **上面那句注释（「空文件仍然读成 null，修之前留下来的那些 0 字节游标还在各人机器上」）此刻要连着读**：
+   * `read()` 照旧把空读成 `null`，所以每一个老调用方的行为一个字没变；分得出两档的是这个新方法，
+   * 而 `sync()` 用它来停下。
+   */
+  const stateOf = (): "none" | "empty" | "value" => {
+    const f = cursorFile(me, root, name, key);
+    if (!io.existsSync(f)) return key ? (text(cursorFile(me, root, name)) === null ? "none" : "value") : "none";
+    return io.readFileSync(f, "utf8").trim() ? "value" : "empty";
+  };
   return {
+    state: stateOf,
     // 空文件仍然读成 null：修之前留下来的那些 0 字节游标还在各人机器上，这一支要认得它们。
     read() {
       const mine = text(cursorFile(me, root, name, key));

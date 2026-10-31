@@ -713,6 +713,7 @@ export const KEY_SYMBOLS = [
   "DEFAULT_RULE",
   "DEFER_PREFIX",
   "DEPLOY_SOURCE",
+  "EMPTY_AFTER",
   "EMPTY_IS_NOT_NO_IMPACT",
   "FAIL_NOTICE",
   "FLAG_NEEDS_VALUE",
@@ -837,6 +838,7 @@ export const KEY_SYMBOLS = [
   "fixWhere",
   "followReduction",
   "followUps",
+  "fullPullLine",
   "gateHonesty",
   "honestyLine",
   "humanImpactPromised",
@@ -1642,6 +1644,32 @@ export const unrenderableLine = (x: { nth: number; total: number; id: string; ki
 export const batchBrokeLine = (x: { nth: number; total: number; cursor: string }) =>
   `这一批在第 ${x.nth}／${x.total} 条之后断了，游标停在 ${x.cursor}，没有推进：下次 sync 会把这一批整个再来一遍。`;
 export const PD_PLACEHOLDER = "（措辞待定）";
+/**
+ * t-351 要求㉞（pd 23:15 的 decision `01M6A3XSQKSZHP8BSHZWEQ87C1`，两行照抄不改标点）：
+ * **一次「从头全量」必须出声。**
+ *
+ * pm 23:14 的现场：崩溃重起的窗口里 `.ateam/cursor.pm` 读出来是空的，于是 `--after=` 空着发出去，
+ * 服务端把整份日志 14375 条、414 KB 全给了它；一分钟后同一个文件读出的是正常游标。
+ * pd 的理由：**一次 414 KB 的全量，在日志里和一次正常 sync 长得一模一样**，没有人会发现——
+ * 除了付钱的那一侧。**不出声的异常等于没发生。**
+ */
+export const fullPullLine = (n: number, bytes: number) =>
+  `这次从头拉了全部 ${n} 条（${Math.round(bytes / 1024)} KB），原因：游标读出来是空的。
+你不是刚加入的话，这是个毛病——别把它当正常的一次 sync。`;
+/**
+ * t-351 判据 2：游标文件在、而读出来是空的 ⇒ **一条都不拉，当场说话**（pd ㉝：空不是「没有」；
+ * 真正没有游标的节点是连文件都没有的那一个，而那一种该从头拉）。
+ * **这一句措辞归 pd，此刻是占位**：它是角色在终端里读到的字，而 pd 23:15 那条定稿只给了㉞ 那两行。
+ * 闸照旧停下、照旧说话——只是那句话还不是话。
+ */
+export const CURSOR_UNREADABLE = PD_PLACEHOLDER;
+/**
+ * t-351 判据 1（pd ㉝；M8「静默接受为零」）：**`after=` 带了却是空的，不许当成「从头开始」。**
+ * 真正没有游标的客户端根本不带这个参数；带了而为空，是它那一侧读游标出了错，该当场知道。
+ * 住在 core：人／角色看得见的话只许有一个家（t-143／t-185 那道闸——存量只减不增）。
+ * 我第一版把它写在 `packages/server/src/app.ts` 的两条路上，闸当场红（外部存量 335 → 337）。
+ */
+export const EMPTY_AFTER = "after= 空值：真正没有游标就别带这个参数；带了而为空是读游标出了错（t-351）";
 /**
  * t-344（pd 要求㉜，decision `01M69TGRYYAYV2KE38K6H8PJ8P`）：**`repo` 不是一个面，它至少是两个——
  * 「✓ repo」要说出是哪条支。**

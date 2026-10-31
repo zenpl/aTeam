@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
-import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, runEndedCards, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard } from "@ateam/core";
+import { contactEnabledIn, type Board, type State, CONTACT_ASK, CONTACT_FILL, CONTACT_FILL_WAS, CONTACT_OPTIONS, CONTACT_SKIP, isContactAsk, ALERT_WEBHOOK_KEY, ALERT_ASK_KEY, PROJECT_SURFACE, BOARD_SHAPE, slimBoard, alertContact, append, appendFrom, Reduction, pull, reduce, board, manual, runFollowUps, runDueDefaults, runEndedCards, welcome, inviteManual, projectRoles, roleResponsibilities, responsibilityAppendix, manualFor, isMissing, presenceStatus, missingRoleOf, missingCard, owedTo, owedNow, owedFull, postReply, deployHistory, MemoryStore, Rejected, PUSH_LEVELS, NODE_SURFACE, capabilityKey, type EventStore, type NewEvent, DEFAULT_DECIDER, SAID_PREFIX, SAID_MAX_CHARS, joinNotAsHuman, OWNER_URL_LOCKED, OWNER_URL_NEEDS_SECRET, DEFER_PREFIX, SERVICE_ACTOR, PRESENCE_WINDOW_MS, ulid, isCliRefusal, cliRefusalOp, CLI_REFUSAL_BATCH_MAX, type Refused, NO_PROJECT_AT_THIS_ADDRESS, MANUAL_ONLY_GENERIC, cliShaUnknownCard, checkQuery , livingBoard, EMPTY_AFTER } from "@ateam/core";
 import { renderBoard, renderTask, renderRelease, unauthorizedPage, tokenPage, receiptPage, pasteShape, notFoundPage, contactEnabled } from "./html.js";
 import { MemoryRegistry, type Registry, type KeyRecord } from "./projects.js";
 import { allocationFact } from "./allocation.js";
@@ -817,7 +817,12 @@ export function createApp(opts: ServerOptions) {
         return json(res, 200, url.searchParams.get("full") || !knowsSlim ? b : slimBoard(b));
       }
 
-      if (req.method === "GET" && path === "/log") return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
+      if (req.method === "GET" && path === "/log") {
+        // t-351 判据 1：同上，这一路也不许把空的 after 当成「从头」。
+        if (url.searchParams.has("after") && !url.searchParams.get("after")?.trim())
+          throw new Rejected("after", EMPTY_AFTER);
+        return json(res, 200, { events: await store.since(url.searchParams.get("after")) });
+      }
 
       /**
        * t-239：**「你欠什么」的全量，专门来要才给。** 每次拉取带的那一份里，`t-147` 之前那一桶只剩一个数——
@@ -841,6 +846,14 @@ export function createApp(opts: ServerOptions) {
         // t-291：**认不出来的参数在读任何一个之前就拒掉。** 放在第一行有两重意思：这一次什么都没发生（游标
         // 不动、长轮询不挂起），以及记账走 t-212 那个统一的 catch——这里一行都不补。
         checkQuery(url.searchParams.keys());
+        /**
+         * t-351 判据 1（pd 要求㉝；M8「静默接受为零」）：**`after=` 带了却是空的，不许当成「从头开始」。**
+         * pm 23:14 的现场：崩溃窗口里游标读出空值，空的 `after` 发出来，而这里把它当成「没有游标」，
+         * 于是整份日志 14375 条、414 KB 全发了出去——**而那一发在日志里与一次正常 sync 长得一模一样**。
+         * 真正没有游标的客户端**根本不带这个参数**；带了而为空，是它那一侧出了错，该当场知道。
+         */
+        if (url.searchParams.has("after") && !url.searchParams.get("after")?.trim())
+          throw new Rejected("after", EMPTY_AFTER);
         const after = url.searchParams.get("after");
         const wait = Math.min(Number(url.searchParams.get("wait") ?? 0) || 0, maxWait);
         // t-257：**这一次是不是一次普通拉取（不带 wait），记进游标那一行。**
