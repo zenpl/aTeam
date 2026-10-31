@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES, PD_PLACEHOLDER, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS_WORDS, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES, PD_PLACEHOLDER, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS_WORDS, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_MISSING, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus, evidenceSha } from "./board.js";
@@ -417,9 +417,11 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
           // **「还没定稿」与「这里没有规矩」不是一回事**：闸照旧拒，只是那句话此刻还不是话（措辞归 pd）。
           // 正文里一个我自拟的字都没有：占位 ＋ 这个闭集此刻的合法取值。
           const legal = [DEFAULT_DOER_NOTHING, ...projectRoles(state).filter((r) => r !== e.to)];
-          if (!doer) throw new Rejected("instruction", `${PD_PLACEHOLDER} --default-doer <${legal.join(" | ")}>`);
+          if (!doer) throw new Rejected("instruction", DEFAULT_DOER_MISSING);
           if (DEFAULT_DOER_AMBIGUOUS_WORDS.includes(doer.toLowerCase())) throw new Rejected("instruction", DEFAULT_DOER_AMBIGUOUS);
           if (doer === e.to) throw new Rejected("instruction", defaultDoerIsRecipient(e.default, doer));
+          // **第五档，pd 还没写它**（写了一个不在闭集里的值）：此刻是占位加上这个闸此刻的合法取值。
+          // 不是「这里没有规矩」——闸照旧拒，只是那句话还不是话。已报给 pd（17:4x 那一路）。
           if (!legal.includes(doer)) throw new Rejected("instruction", `${PD_PLACEHOLDER} --default-doer <${legal.join(" | ")}>`);
         }
       }

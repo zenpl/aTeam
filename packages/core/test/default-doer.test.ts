@@ -11,7 +11,7 @@
  * `--default-doer`，闭集是 `nothing` ∪ 本项目的角色名。pd 的两条建议都照了，见 `DEFAULT_DOER_NOTHING` 那段。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, Rejected, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient, PD_PLACEHOLDER, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, Rejected, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_MISSING, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient, PD_PLACEHOLDER, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const T0 = Date.parse("2026-10-31T14:46:58.000Z");
@@ -76,12 +76,15 @@ describe("t-335 判据⑧ · 到期之后这一项由谁执行，写 --default �
     expect(r!.message).toContain(PD_PLACEHOLDER);
   });
 
-  it("带默认却一个字都没说谁执行 ⇒ 拒（这就是⑧ 要的那道闸）", async () => {
+  it("带默认却一个字都没说谁执行 ⇒ 拒，pd 17:43 定稿那三行（**不写不等于 nothing**）", async () => {
     const w = await world();
     const r = await refusal(w.put(theCard()));
     expect(r, "原来这样发是过的——pm 那张真卡就是这么发出去的").toBeInstanceOf(Rejected);
     expect(r!.rule).toBe("instruction");
-    expect(r!.message).toContain(PD_PLACEHOLDER);
+    expect(r!.message).toContain(DEFAULT_DOER_MISSING);
+    // pd：最后那一行是这一档的全部意义。「没写」若被当成 nothing 放过，这道闸等于没有，㉗ 原样回来。
+    expect(r!.message).toContain("不写不等于 nothing");
+    expect((await w.s.read()).events.filter((e) => e.kind === "instruction"), "卡没有落库").toHaveLength(0);
   });
 
   it("写了执行人却没设默认 ⇒ 也拒，pd 定稿那一句", async () => {

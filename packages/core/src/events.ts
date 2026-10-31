@@ -705,6 +705,7 @@ export const KEY_SYMBOLS = [
   "DEFAULT_APPLIED_PREFIX",
   "DEFAULT_DOER_AMBIGUOUS",
   "DEFAULT_DOER_AMBIGUOUS_WORDS",
+  "DEFAULT_DOER_MISSING",
   "DEFAULT_DOER_WITHOUT_DEFAULT",
   "DEFAULT_LINES",
   "DEFAULT_MISSED_PREFIX",
@@ -1633,15 +1634,26 @@ export const PD_PLACEHOLDER = "（措辞待定）";
 export const DEFAULT_DOER_NOTHING = "nothing";
 /** 既能读成「无需执行」又能读成「没人做得到」的那几个词：这两种情形一个该过一个该拒，不许共用一个词。 */
 export const DEFAULT_DOER_AMBIGUOUS_WORDS = ["none", "nobody", "无"];
-/** pd 定稿，四行，照抄不改标点；两个槽是这张卡自己的值。 */
+/**
+ * pd 定稿，四行，照抄不改标点；两个槽是这张卡自己的值。
+ * pd 17:43 的 decision `01M69GY614EF45V52KY91AMPHD` 取代了 17:20 那一稿：**开头那个「拒：」去掉**——
+ * 真实前缀已经有两层（`REJECTED (动作)` 与规则名），它是第三层。这一处是我 17:42 报回去的，pd 复现后改的。
+ */
 export const defaultDoerIsRecipient = (def: string, doer: string) =>
-  `拒：--default 是「${def}」，而 --default-doer 写的是 ${doer}——他正是这张卡的收件人。
+  `--default 是「${def}」，而 --default-doer 写的是 ${doer}——他正是这张卡的收件人。
 到期的意思是他没在看；这一项到期之后只有他做得到，于是谁也执行不了（㉗）。
 改法三选一：换一个你自己收得了场的默认（不做／照旧，--default-doer nothing）；
 把执行人换成一个在场的角色；或者不设默认，让这张卡一直等他。`;
-/** pd 定稿，照抄不改标点。 */
-export const DEFAULT_DOER_AMBIGUOUS = `拒：--default-doer 不收 none / nobody——它们既可读成「无需执行」，也可读成「没人做得到」，
+/** pd 定稿，照抄不改标点（同上，「拒：」已去掉）。 */
+export const DEFAULT_DOER_AMBIGUOUS = `--default-doer 不收 none / nobody——它们既可读成「无需执行」，也可读成「没人做得到」，
 而这两种情形一个该过、一个该拒（㉗）。无需执行写 nothing；只有收件人做得到，就不能当默认。`;
+/**
+ * pd 17:43 定稿，照抄不改标点。**最后那一行是这一档的全部意义**（pd 原话）：如果「没写」被当成
+ * `nothing` 放过，这道闸就等于没有，㉗ 原样回来。这一档此前是占位（我向 pd 要的就是它）。
+ */
+export const DEFAULT_DOER_MISSING = `这张卡设了 --default，却没说到期之后由谁执行。
+写 --default-doer：无需任何人动手写 nothing，否则写一个在场的角色名。
+不写不等于 nothing——只有收件人做得到的默认，必须在这里现形（㉗）。`;
 /** pd 定稿，照抄不改标点。 */
 export const DEFAULT_DOER_WITHOUT_DEFAULT = "这一项没有默认，不需要执行人。";
 export const cardEnded = (fact: string) => `这张卡问的那件事已经不成立了：${fact}。卡到此结束；下次再出现同一类事，是另一张新卡（㉕）。`;
