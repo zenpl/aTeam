@@ -422,8 +422,8 @@ function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): str
 
   const whoLabel = (r: RoleRow) => {
     const state = r.status === "listening" ? (r.last_seen ? t(r.last_seen) : "")
-      : r.status === "deaf" ? esc(r.minutes === null ? UI.deafNever : UI.deaf(r.minutes))
-      : esc(r.minutes === null ? UI.missingNever : UI.missing(r.minutes));
+      : r.status === "deaf" ? esc(r.away_ms === null ? UI.deafNever : UI.deaf(r.away_ms))
+      : esc(r.away_ms === null ? UI.missingNever : UI.missing(r.away_ms));
     return r.undelivered ? `${state} · ${esc(UI.undelivered(r.undelivered))}` : state;
   };
   const whoChips = roles.length
@@ -474,7 +474,7 @@ export function missingRole(i: { body: string; role?: string; about?: { role?: s
   return i.role ?? i.about?.role ?? missingRoleOf(i.body.trim()) ?? null;
 }
 
-interface RoleRow { role: string; status: "listening" | "deaf" | "missing"; present: boolean; last_seen: string | null; since: string | null; minutes: number | null; overdue: string[]; undelivered: number; /** what the node said it may push (t-058) */ push: string }
+interface RoleRow { role: string; status: "listening" | "deaf" | "missing"; present: boolean; last_seen: string | null; since: string | null; away_ms: number | null; overdue: string[]; undelivered: number; /** what the node said it may push (t-058) */ push: string }
 
 /**
  * 谁在 by role (t-042/t-047/t-048): one presence row per declared role. listening = here; deaf = spoke but is not
@@ -485,10 +485,11 @@ export function rolesOf(b: Board, now = Date.parse(b.now)): RoleRow[] {
   return b.presence.filter((p) => p.role !== undefined).map((p) => {
     const status = p.status ?? (p.present ? "listening" : "missing");
     const since = p.since ?? (p.present ? p.last_seen : null);
-    const minutes = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 60_000)) : null;
+    // t-346：传毫秒给那两句（取整与分档交给 core 的梯子 `span`）；字段名跟着改成 `away_ms`。
+    const away_ms = since ? Math.max(0, now - Date.parse(since)) : null;
     const overdue = status === "listening" ? [] : b.overdue.filter((o) => o.to === p.role).map((o) => o.instruction);
     const undelivered = (b.undelivered ?? []).find((u) => u.to === p.role)?.count ?? 0;
-    return { role: p.role!, status, present: status === "listening", last_seen: p.last_seen, since: p.since, minutes, overdue, undelivered, push: p.push ?? "none" };
+    return { role: p.role!, status, present: status === "listening", last_seen: p.last_seen, since: p.since, away_ms, overdue, undelivered, push: p.push ?? "none" };
   });
 }
 

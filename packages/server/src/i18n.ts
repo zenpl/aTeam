@@ -1,4 +1,4 @@
-import { RECEIPT, SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine } from "@ateam/core";
+import { RECEIPT, SAY_HINT, SEAM_UNDECIDED, SEAM_SAME_FILE, lightSeamLine, DEPLOY_SOURCE, ago as agoOf, waitingUnknownLine, span } from "@ateam/core";
 /**
  * Every UI string on GET /, in one table (docs/board.md, pd). Content written by the team (titles, bodies,
  * criteria, notes, reading values) is never translated. Shipped language: zh. A second language is a second table.
@@ -47,14 +47,16 @@ export const UI = {
   inviteLine: "要更多 agent，把这个链接给它们：",
   copy: "复制",
   copied: "已复制",
-  missing: (min: number) => `缺人 ${min} 分钟`,
+  // t-346（pd 要求⑱：一律走梯子）：收毫秒，四档的字由 core 的 `span` 给——这里一个新词都没造。
+  // 收分钟不行：59 秒在调用处就被取整，「不到 1 分钟」那一档永远走不到（t-341 已证）。
+  missing: (ms: number) => `缺人 ${span(ms)}`,
   missingNever: "缺人",
   /**
    * t-140 · pd 05:42: the board says only what the server can actually see — how long since this role last read the
    * log. Not 「没在听」: whether it is listening is a state we do not observe. Whether its own watch process died is
    * something only that node knows, and it says so in its own terminal (t-102).
    */
-  deaf: (min: number) => `${min} 分钟没读日志了`,
+  deaf: (ms: number) => `${span(ms)}没读日志了`,   // t-346：同一把梯子（这一句与上一句同族，⑱ 说的是一律）
   deafNever: "没读过日志",
   undelivered: (n: number) => `${n} 条还没送到`,
   started: "起好了",

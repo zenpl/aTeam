@@ -65,7 +65,9 @@ describe("t-139 · 逾期按在场三态分组", () => {
     const g = b.overdue_by_presence;
     expect(g.deaf.roles).toEqual(["dev"]);
     expect(g.deaf.count).toBe(1);
-    expect(g.deaf.line).toMatch(/^有 \d+ 分钟没读日志了，1 条没送到$/);   // pd 06:04: the verb we can actually observe
+    // t-346：这一行的时长走梯子了（⑱ 一律），所以四档都可能出现——这一格测的仍是「deaf 自己一句话、
+    // 用的是我们真观察得到的那个动词」，不是「它必须以分钟计」。
+    expect(g.deaf.line).toMatch(/^有 (不到 1 分钟|\d+ (分钟|小时|天))没读日志了，1 条没送到$/);   // pd 06:04: the verb we can actually observe
     expect(g.missing.count).toBe(0);
     expect(g.listening.count).toBe(0);
     expect(g.missing.line).toBe("");                          // an empty state says nothing rather than "0"

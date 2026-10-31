@@ -2338,15 +2338,16 @@ export function overdueByPresence(b: Board, owed: { instruction: string; to: str
   }
   // null is not zero: a role that has never read the log has no "how long" to report, and the board says that rather
   // than rounding an absent fact up to one minute (qa 06:07).
-  const mins = (sec: number) => Math.max(1, Math.round(sec / 60));
+  // t-346（pd 要求⑱：一律走梯子）：这两行原来自己把秒取整成分钟，于是「21 小时」会印成「1286 分钟」。
+  // 现在交给 `span`——取整与分档都是它的事，四档的字也是它的（一个新词都没造）。
   if (out.missing.count)
     out.missing.line = out.missing.away_s === null
       ? `从没读过日志，${out.missing.count} 条没送到`
-      : `缺人 ${mins(out.missing.away_s)} 分钟，${out.missing.count} 条没送到`;
+      : `缺人 ${span(out.missing.away_s * 1000)}，${out.missing.count} 条没送到`;
   if (out.deaf.count)
     out.deaf.line = out.deaf.away_s === null
       ? `从没读过日志，${out.deaf.count} 条没送到`
-      : `有 ${mins(out.deaf.away_s)} 分钟没读日志了，${out.deaf.count} 条没送到`;
+      : `有 ${span(out.deaf.away_s * 1000)}没读日志了，${out.deaf.count} 条没送到`;
   // pd 05:40 retired 「确认」 with the receipt it named: what is true of a node that is here is that it read them and
   // has not moved yet, and that is what the line says now.
   if (out.listening.count) out.listening.line = `在听，${out.listening.count} 条读到了还没动`;
