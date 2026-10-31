@@ -92,23 +92,45 @@ describe("t-325 判据⑥⑧ · 除许可的段之外相同算相同，而 [buil
   });
 
   /**
-   * **判据⑧ 那一格，而我把它与 pm 11:09 写的方向差在哪也写在这里**（我随后 tell 了 pm，没有自己改判据）。
+   * **判据⑩ 取代了⑥ 的字面，而这一格此前写错了——错的是我，pm 读代码核出来的（11:31）。**
    *
-   * pm 要钉的是「`[build]` 的 dockerfile 变了却仍判树相等」。而按段判之后，`[build]` 变了的后果是
-   * **那个更早的版本不算基准**——于是基准落回生产头自己，两件都算在生产上。方向因此与 pm 描述的相反：
-   * 按**路径**豁免整个 `fly.toml` 时，那个更早的版本反而会被当成基准（下面断言的就是这两种结果不同）。
-   * **所以这一格钉的是「段与路径给出不同的答案」，而注入把段改回路径时它当场红。**
+   * 我上一版在这里写的是「`[build]` 变了 ⇒ 那个更早的版本不算基准，于是落回生产头、两件都算在生产上」，
+   * 并断言了那个结果。**而那正是一个洞**：回滚真的在生效时，这样做会把被回滚掉的那几件报成在生产上。
+   * ⑩ 把它分成三种（挡住的是应用代码 ⇒ 接着看；是声明过的配置文件而段不许可 ⇒ 说不出；段读不出 ⇒ 说不出），
+   * 所以这一格现在断言的是**说不出**。
+   *
+   * 判据⑨ 要的那个性质同时钉在这里：按路径豁免整个 `fly.toml` 时，更早那个版本**会**被当成基准
+   * （于是把被回滚掉的报成不在、而更晚落的报成在），按段这一版**不会**——注入时这一格当场红。
    */
-  it("**`[build]` 的 dockerfile 变了** ⇒ 那个更早的版本不算基准（按路径豁免会把它算成基准，方向相反）", () => {
+  it("**`[build]` 的 dockerfile 变了** ⇒ 排除不了回滚 ⇒ 整个基准说不出（判据⑩②）", () => {
+    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, buildChanged), "不许落回生产头：那会把被回滚的报成在生产上").toBeNull();
     const m = containment(board(ROLL, [D20, ROLL]), isAncestor, { treeOf: differentTrees, diffSegments: buildChanged })!;
-    expect(m.not_contained, "不许把 t-late 说成不在生产上——`[build]` 不同不是「内容相同」的证明").toEqual([]);
-    expect(m.contained.sort()).toEqual(["t-early", "t-late"]);
-    expect(m.method, "基准是生产头自己，所以这一句一个字没改").toBe("git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）");
-    // **判据⑨ 要钉的那个性质，直接断言，不从 method 反推**：按段这一版**不会**把更早那个版本当成基准；
-    // 换成按路径豁免整个 fly.toml 时它会（注入时就是这一行先红）。而注入的前提条件 `[build]` 真的变了——
-    // 上面 `buildChanged()` 改的正是 dockerfile 那一行。
-    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, buildChanged), "基准不许是更早那个版本")
-      .toEqual({ sha: ROLL, rolled_back: false });
+    expect(m.unmeasured.sort(), "宁可不答").toEqual(["t-early", "t-late"]);
+    expect(m.contained).toEqual([]);
+    expect(m.not_contained).toEqual([]);
+    expect(m.method).toContain("cannot tell");
+  });
+
+  it("**日常那一种（判据⑩①）**：挡住的是应用代码 ⇒ 生产确实往前走了，接着看，基准落回生产头", () => {
+    const appCode = () => [{ file: "packages/core/src/board.ts", content: "一行代码\n另一行", lines: [1] }];
+    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, appCode)).toEqual({ sha: ROLL, rolled_back: false });
+    const m = containment(board(ROLL, [D20, ROLL]), isAncestor, { treeOf: differentTrees, diffSegments: appCode })!;
+    expect(m.contained.sort(), "行为与 t-325 之前一字不变").toEqual(["t-early", "t-late"]);
+    expect(m.method).toBe("git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）");
+  });
+
+  /**
+   * **⑩③ 的字面我按「只对声明过的配置文件成立」收了一格，而这是我自己的用例逼出来的，不是我图方便。**
+   *
+   * 照字面（`blocked.section` 为 null 就说不出）会把⑩① 一起吞掉：应用代码文件里本来就没有 TOML 段头，
+   * 所以每一次日常的「生产往前走了」都会变成「说不出」——⑥ 字面那个过强的毛病又回来一次。
+   * 上面那一格（⑩①）先红，我才看见这件事；已 tell pm，没有自己改判据。
+   */
+  it("**段头读不出（判据⑩③）**：声明过的配置文件整文件增删 ⇒ 说不出；而应用代码没有段头是常态，不算说不出", () => {
+    const wholeConfig = () => [{ file: "fly.toml", content: "", lines: [] }];
+    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, wholeConfig), "配置文件整个被换掉：排除不了回滚").toBeNull();
+    const wholeCode = () => [{ file: "packages/cli/src/main.ts", content: "", lines: [] }];
+    expect(contentBase(board(ROLL, [D20, ROLL]), ROLL, differentTrees, wholeCode), "应用代码没有段头是常态，不该因此关掉整个能力").toEqual({ sha: ROLL, rolled_back: false });
   });
 
   it("**git 答不上来差异** ⇒ 整桶说不出：排除不了回滚，就不许当成「没有回滚」", () => {

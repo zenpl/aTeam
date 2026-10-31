@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent, CONTENT_BASE_IS_HEAD, CONTENT_BASE_UNKNOWN, contentBaseRolledBack, changesAllowed, contentBaseModuloConfig, type ConfigSegment} from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent, CONTENT_BASE_IS_HEAD, CONTENT_BASE_UNKNOWN, contentBaseRolledBack, changesAllowed, contentBaseModuloConfig, type ConfigSegment, ALLOWED_CONFIG_SEGMENTS} from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -290,8 +290,29 @@ export function contentBase(b: Board, prod: string, treeOf?: (sha: string) => st
     if (!files.length) return { sha: s, rolled_back: true };
     const verdict = changesAllowed(files);
     if (verdict.ok) return { sha: s, rolled_back: true, excluded: verdict.excluded };
-    // 差异落在许可之外（例如 `[build]` 改了 dockerfile）：**这一个不算基准**。它不是「没有回滚」的证明，
-    // 只是「这一个版本的内容与生产不同」——接着看下一个更早的版本。
+    /**
+     * t-325 判据⑩（pm 11:31 取代⑥ 的字面，`01M68VMS940PPQJFQHDW43Z4Q3`；第三种出路出自 frontend 的 note
+     * `01M68VHAV6DRK56XZH2EJX2CG1`）：**挡住的是什么，决定下一步是「接着看」还是「说不出」。**
+     *
+     * 我上一版在这里一律 `continue`，而 pm 读代码核出了那个洞：**回滚真的在生效、而被回滚的那一批与生产在
+     * `fly.toml` 的 `[build]` 上也不同时**，这一支会 continue 到底、落回生产头、`rolled_back: false`，
+     * 于是把被回滚掉的那几件报成在生产上——正是这张单要修的方向。所以按 `blocked` 分三种：
+     * ```
+     * ① 挡住的是应用代码           ⇒ 生产确实往前走了，这一个不算基准，接着看（日常那一种，行为一字不变）
+     * ② 挡住的是声明过的配置文件、
+     *    而那一段不在许可里（[build]）⇒ **排除不了回滚** ⇒ 整个基准说不出
+     * ③ 段头读不出（整文件增删等） ⇒ 同 ②，说不出
+     * ```
+     */
+    const blocked = verdict.blocked;
+    const declaredConfig = new Set(ALLOWED_CONFIG_SEGMENTS.map((x) => x.file));
+    if (!blocked) return null;
+    // **「段头读不出」这一条只对声明过的配置文件成立**，而⑩③ 的字面没有这个限定。
+    // 照字面写会把① 一起吞掉：应用代码文件里本来就没有 TOML 段头，`blocked.section` 必然是 null，
+    // 于是每一次日常的「生产往前走了」都会变成「说不出」——那正是⑥ 字面那个过强的毛病又回来一次。
+    // 我自己的用例当场抓到了这件事（⑩① 那一格先红），所以这里按**配置文件**限定，并把它 tell 给 pm。
+    if (declaredConfig.has(blocked.file)) return null;      // ②③：配置文件里挡住了 ⇒ 排除不了回滚
+    // ①：挡住的是应用代码——生产确实往前走了，这一个不算基准，接着看下一个更早的版本。
   }
   // 没有更早的版本与生产内容相同 ⇒ 生产头自己是基准（没有回滚在生效那一种）。
   if (treeOf(prod) === want) return { sha: prod, rolled_back: false };
