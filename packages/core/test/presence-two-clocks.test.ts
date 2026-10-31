@@ -66,8 +66,14 @@ describe("t-262 · 拉取的时刻与写入的时刻，分开给", () => {
     const dev = row("dev");
 
     // 键集逐字钉住：以后谁往这一行加一个 `stuck`、`idle_reason`、`looks_*`，这条当场红
+    //
+    // **t-217 往这个名单里加了一个 `behind_deploys`，而这条用例原本就该挡住它，所以我说清为什么它该进来**：
+    // 这一格钉的是「服务端不下判断」——不许出现 `stuck`／`idle_reason` 那一类**把结论写成字段**的东西。
+    // `behind_deploys` 是一个数（它比最新那次上线旧几次，数不出来是 `null`），**话在 core 的
+    // `cliBehindOnBoardLine`（pd 定稿），不在这一行里**；下面那条「整行不许出现中文」一个字没改，仍然守着。
+    // 换句话说：加进来的是量，不是判断，而判据 4 要求牌桌那一行真的带着它。
     expect(Object.keys(dev).sort()).toEqual([
-      "actor", "cli_sha", "idle_event_s", "idle_pull_s", "idle_s",
+      "actor", "behind_deploys", "cli_sha", "idle_event_s", "idle_pull_s", "idle_s",
       "last_event", "last_pull", "last_seen", "listening", "present", "push", "role", "since", "status",
     ]);
     // 判据 2：服务端不下判断。整行里不许出现任何给人读的话（中文），它只有时刻、秒数与既有的状态词

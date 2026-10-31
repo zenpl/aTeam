@@ -799,6 +799,7 @@ export const KEY_SYMBOLS = [
   "checkShape",
   "classifyFollowUp",
   "cliBehindLine",
+  "cliBehindOnBoardLine",
   "cliShaUnknownAfterPoll",
   "cliShaUnknownAfterSync",
   "cliStaleBuildLine",
@@ -1363,6 +1364,19 @@ export const MOVED_MARK = "→";
  * 这句话印在每回合都会跑的那条命令（`sync`）上，不靠谁记得：今晚已经六次证明记性不管用。
  */
 export const cliBehindLine = (n: number) => `你手上的命令行比生产旧 ${n} 次上线，跑 git pull && pnpm build`;
+
+/**
+ * t-217：**同一件事的另一半——牌桌上那一格，读者是全队与人，不是本人。**
+ *
+ * 上面那一句（`cliBehindLine`）是 t-211 的：它印在本人的 `sync` 上，只给他自己看。这一句印在牌桌上，
+ * 所以主语是第三人称，而且要说出**后果**——一个跑旧构建的节点量出来的数、看到的提醒都可能是旧的，
+ * 于是别人据它作判断之前得知道这件事。
+ *
+ * **逐字定稿 pd 10-30 22:35（指令 01M67F840S7HVT8P2ADCXA30Y4），中间那半句不许删**：
+ * 「它量出来的数、它看到的提醒，都可能是旧的」——那半句正是这一格对别人的用处所在，删了就只剩一句版本号。
+ */
+export const cliBehindOnBoardLine = (role: string, sha: string, n: number): string =>
+  `${role} 的命令行是 ${sha.slice(0, 7)}，比最新的上线旧 ${n} 次。它量出来的数、它看到的提醒，都可能是旧的——要它自己跑 git pull && pnpm build。`;
 
 /**
  * t-292 判据 2（pd 05:33 五）：**「落后」与「分叉」是两件事，一句话只说得了一件。**

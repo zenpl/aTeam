@@ -897,6 +897,11 @@ export interface BoardPresence {
    * 有了它，一条判决的证据也说得出它是用哪一版命令行量出来的。
    */
   cli_sha: string | null;
+  /**
+   * t-217：**它比最新的那一次上线旧几次**——数得出来才有值，数不出来是 `null`，而 `null` 不是「它是最新的」。
+   * 话在 core 的 `cliBehindOnBoardLine`（pd 定稿），这一格只出数。
+   */
+  behind_deploys: number | null;
 }
 
 export interface BoardOptions {
@@ -983,6 +988,36 @@ export function cliShaOf(s: State, role: string): string | null {
   const r = id ? s.readings.get(id) : undefined;
   const v = r?.valid && !r.expired ? r.reading.value : undefined;
   return typeof v === "string" && v ? v : null;
+}
+
+/**
+ * t-217：**牌桌上那一格——谁在跑旧的命令行。** 数据是 t-211 落下的 `node:<角色>:cli.sha.last`，
+ * 这一件只把它说给全队与人（判据 1、3）。
+ *
+ * **为什么这里是「在上线名单里数位置」，而不是问祖先关系**：祖先关系要 git，而牌桌是在服务端算出来的，
+ * 那儿没有仓库——`behindDeploys` 要一个 `TreeRelation`，那是节点自己机器上才有的东西。所以这一格只回答
+ * 它真数得出的那一问：**这个节点自报的构建，正好是上线过的某一版吗？**
+ * ```
+ * 是，而且不是最新那一版   ⇒ 落后几次数得出来，说
+ * 正好是最新那一版         ⇒ 不说一个字（判据 4 的反面那一格）
+ * 都不是（它跑的是自己分支上的某一笔，平时的常态）⇒ 也不说一个字
+ * ```
+ * **最后那一种是「说不出」，不是「你是最新的」**——与 `behindDeploys` 同一条规矩（t-147：缺字段是不知道）。
+ * 它也是今天那条教训的同一个形状：一个空的量与一个「没有」的量长得一样，所以这里把两者都落成 `null`，
+ * 而由话那一侧决定「什么都不说」，不去替它编一个 0。
+ *
+ * `+dirty` 也落在「说不出」里：一棵有未提交改动的树**不等于**它那个 sha，说它正好是某一次上线就是假话。
+ */
+export function behindOnBoard(s: State, role: string): number | null {
+  const reported = cliShaOf(s, role);
+  if (!reported || reported.includes("+dirty")) return null;
+  const deploys = deployHistory(s);
+  if (deploys.length < 2) return null;
+  const same = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
+  const at = deploys.findIndex((d) => same(d.sha, reported));
+  if (at < 0) return null;
+  const n = deploys.length - 1 - at;
+  return n > 0 ? n : null;
 }
 
 /** t-069: the state of "how to reach the human": the fact, or the card's answer, or neither. */
@@ -1621,7 +1656,7 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // t-202：三态从 presenceStatus 来，卡那一层读的是同一份——这里原本自己算一遍，于是两层各算各的
     const status = presenceStatus(s, actor, now, listenWindow);
     const listening = status === "listening";
-    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), cli_sha: cliShaOf(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
+    return { actor, role, status, present: listening, listening, push: pushLevelOf(s, actor), cli_sha: cliShaOf(s, actor), behind_deploys: behindOnBoard(s, actor), last_pull, last_event, idle_pull_s, idle_event_s, last_seen: last, idle_s: idleOf(last), since: last_pull };
   };
   for (const role of b.roles) { seen.add(role); b.presence.push(row(role, role)); }
   b.coverage = coverage(s, now, listenWindow);
