@@ -35,7 +35,8 @@ async function fixture() {
   await emit({ kind: "task", op: "done", actor: "frontend", task: "t-f", evidence: "提交 3456789：含 2345678" , no_human_impact: true});
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-e", surface: "repo", pass: true });
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-f", surface: "repo", pass: true });
-  await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], default: "登录", ack_by: new Date(t + 3_600_000).toISOString() });
+  // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+  await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["登录", "导出"], default: "登录", default_doer: "nothing", ack_by: new Date(t + 3_600_000).toISOString() });
   await emit({ kind: "instruction", actor: "pm", to: "dev", body: "认领 t-c", ack_by: new Date(t + 3_600_000).toISOString() });
   await emit({ kind: "reading", actor: "dev", surface: "staging", key: "users", value: 4 });
   return board(reduce(await store.read()), HUMAN);

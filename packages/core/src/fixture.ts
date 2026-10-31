@@ -21,7 +21,8 @@ export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder>
   await b.task.reopen("dev", "t-1", "补牌桌那一行");
   await b.task.done("dev", "t-1", { evidence: "def5678: 牌桌「线上」一行显示 sha", shows: "线上牌桌第一行是版本号" });
   await b.task.verify("qa", "t-1", "repo", true, { evidence: "本地起服务，两条判据都看到了" });
-  const q = await b.tell("pd", b.human, "牌桌的「线上」放首屏还是挖层？A 首屏；B 挖层。默认 A。", { options: ["A", "B"], default: "A", intent: "ask", ackByMs: 24 * 3600_000 });
+  const q = await b.tell("pd", b.human, "牌桌的「线上」放首屏还是挖层？A 首屏；B 挖层。默认 A。", // t-335 判据⑧：默认 A（放首屏）要有人去做，而做它的是 frontend——不是「照旧」，所以这里不写 nothing。
+    { options: ["A", "B"], default: "A", default_doer: "frontend", intent: "ask", ackByMs: 24 * 3600_000 });
   await b.ack(b.human, q.id);
   await b.note(b.human, `decision: ${q.id} -> A`, { decision: true, decides: { of: q.id, option: "A" }, refs: [q.id] });
   await b.note("dev", "friction: 想造一份样本日志时没有入口，只能手写 JSON", { task: "t-1" });

@@ -37,7 +37,8 @@ describe("t-011 · options on tell human, choice shown in sync and board", () =>
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const emit = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const ask = await emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B", default_doer: "nothing" });
 
     expect(fmt.event(ask, "pm")).toContain("INSTRUCTION → human: auth: A or B?  [ack by 23:59]  options: A | B (default B)");
     let b = board(reduce(await store.read()), HUMAN);
@@ -60,7 +61,7 @@ describe("t-014 · ateam decide validates before it acks", () => {
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B", default_doer: "nothing" });
     const plain = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "deploy now", ack_by: NEVER_DUE });
     const emitted: NewEvent[] = [];
     const client = {
@@ -131,7 +132,7 @@ describe("t-232 · decide 的两件有先后：ack 没成，决定就不发，�
     const store = new MemoryStore();
     let t = Date.parse("2026-09-06T06:00:00Z");
     const append_ = (e: NewEvent) => append(store, e, { human: HUMAN, now: new Date((t += 60_000)) });
-    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B" });
+    const ask = await append_({ kind: "instruction", actor: "pm", to: HUMAN, body: "auth: A or B?", ack_by: NEVER_DUE, options: ["A", "B"], default: "B", default_doer: "nothing" });
     return { store, ask, client: { board: async () => board(reduce(await store.read()), HUMAN) } };
   }
 

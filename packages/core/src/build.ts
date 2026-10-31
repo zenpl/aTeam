@@ -67,7 +67,7 @@ export class Builder {
     return this.emit({ kind: "reading", actor, key, value, surface: opts.surface ?? "repo", ...opts });
   }
   /** An instruction. `ackByMs` is how long from now (default 15 minutes); or pass `ack_by` as ISO. */
-  tell(actor: string, to: string, body: string, opts: { ackByMs?: number; ack_by?: string; options?: string[]; default?: string; intent?: InstructionIntent; refs?: string[]; writes?: string[] } = {}): Promise<Event> {
+  tell(actor: string, to: string, body: string, opts: { ackByMs?: number; ack_by?: string; options?: string[]; default?: string; default_doer?: string; intent?: InstructionIntent; refs?: string[]; writes?: string[] } = {}): Promise<Event> {
     const { ackByMs, ...rest } = opts;
     const ack_by = rest.ack_by ?? new Date(this.t + this.stepMs + (ackByMs ?? 15 * 60_000)).toISOString();
     return this.emit({ kind: "instruction", actor, to, body, ...rest, ack_by });

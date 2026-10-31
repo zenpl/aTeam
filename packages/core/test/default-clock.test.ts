@@ -24,7 +24,8 @@ async function theCard(opts: { deliveredAt?: number } = {}) {
   const put = (e: NewEvent, m: number) => append(s, e, { human: HUMAN, now: at(m) });
   await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa"] }, -10);
   const q = await put({ kind: "instruction", actor: "pm", to: HUMAN, intent: "ask",
-    body: "要不要起一个 qa？验收停了 10 件", ack_by: at(MIN15).toISOString(), options: ["起一个 qa", "把 R6 暂给 dev"], default: "起一个 qa" }, 0);
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    body: "要不要起一个 qa？验收停了 10 件", ack_by: at(MIN15).toISOString(), options: ["起一个 qa", "把 R6 暂给 dev"], default: "起一个 qa", default_doer: "nothing" }, 0);
   if (opts.deliveredAt !== undefined) await pull(s, HUMAN, null, at(opts.deliveredAt));
   return { s, q };
 }

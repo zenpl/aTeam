@@ -56,7 +56,16 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
  *
  * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 137），再回头核它与 132 + 5 对不对得上。
  */
-const TOTAL = 137;
+/**
+ * **t-335 判据⑧：137 → 142。** 五处全在 `core/rules.ts` 的 `case "instruction"`（`--default-doer` 那道闸），
+ * 而**五处都属「那件事没有发生」那一类**（不带 `{ at }`）：没有默认却写了执行人、带默认却没写执行人、
+ * 写成了 none／nobody 这类两读的词、写成了收件人本人、不在闭集里。它们都该留着、都该被重做——
+ * 没有一条是「你已经做过了」：每一条的出路都是改一次命令再发，而那张卡此刻**没有**落库。
+ *
+ * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 142），再回头核它与 137 + 5
+ * 对不对得上。两者一致。
+ */
+const TOTAL = 142;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

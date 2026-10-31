@@ -60,7 +60,8 @@ let ask: { id: string }, doIt: { id: string }, tell: { id: string };
 beforeAll(async () => {
   await w.start();
   await w.post("pm", { kind: "reading", surface: "team", key: "focus", value: "P0: <login> broken & nobody on it" });
-  ask = await w.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证选私有还是公开？细节：私有要每次带 token，公开谁都能看。", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
+  // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+  ask = await w.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证选私有还是公开？细节：私有要每次带 token，公开谁都能看。", ack_by: soon(), options: ["私有", "公开"], default: "公开", default_doer: "nothing" });
   doIt = await w.post("pm", { kind: "instruction", to: HUMAN, body: "请把第 3 批推到 production：claude/frontend-j8z8jj@80ecd1a 与 42586d4 合进集成分支，CI 会部署。", ack_by: soon() });
   tell = await w.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署了", ack_by: soon(), intent: "info" });
   // t-335 ①（pd ㉖）：「不点的话，还有 N 分钟到期」只对一张**送到过**的卡成立——默认的计时从送达起算。
@@ -483,7 +484,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
     await z.start();
     try {
       await z.post("pm", { kind: "reading", surface: "team", key: "focus", value: "人能读懂的看板" });
-      await z.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon(), options: ["私有", "公开"], default: "公开" });
+      await z.post("pm", { kind: "instruction", to: HUMAN, body: "看板认证：私有还是公开？", ack_by: soon(), options: ["私有", "公开"], default: "公开", default_doer: "nothing" });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "请读部署说明", ack_by: soon() });
       await z.post("pm", { kind: "instruction", to: HUMAN, body: "今天不再部署", ack_by: soon(), intent: "info" });
       await pull(z.store, HUMAN, null, new Date());   // t-335 ①：他收到过——那句「不点的话，」才成立
@@ -506,7 +507,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("dev", { kind: "task", op: "claim", task: "t-5", touches: ["api/export.ts"] });
       await z.post("dev", { kind: "task", op: "done", task: "t-5", evidence: "提交 3456789" , no_human_impact: true});
       await z.post("qa", { kind: "task", op: "verify", task: "t-5", surface: "repo", pass: true, evidence: "测试通过" });
-      const q = await z.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", ack_by: soon(), options: ["报表", "限流"], default: "报表" });
+      const q = await z.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", ack_by: soon(), options: ["报表", "限流"], default: "报表", default_doer: "nothing" });
       await z.post(HUMAN, { kind: "ack", of: q.id });
       await z.post(HUMAN, { kind: "note", body: "决定：先发报表", decision: true, decides: { of: q.id, option: "报表" } });
       await z.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", method: "读 /health" });
@@ -576,7 +577,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
   it("默认到期：落了事件说「已按默认执行」，没落就照实说「还没生效」; tokenPage escapes its fields", async () => {
     const state = reduce(await new MemoryStore().read());
     const b: Board = board(state, HUMAN);
-    const ask = { id: "01ASK", from: "pm", to: HUMAN, body: "部署方式 A 还是 B？", status: "acked" as const, sent: b.now, acked: b.now, options: ["A", "B"], default: "B" };
+    const ask = { id: "01ASK", from: "pm", to: HUMAN, body: "部署方式 A 还是 B？", status: "acked" as const, sent: b.now, acked: b.now, options: ["A", "B"], default: "B", default_doer: "nothing" };
     // ① 到期了、事件还没落：这是我们的故障，照实说
     b.instructions.push({ ...ask, chosen: { option: "B", by: "default", at: b.now } });
     const stuck = renderBoard(b, state, { human: HUMAN });
@@ -1565,7 +1566,7 @@ describe("t-125 · 按钮的标签就是它送出的值", () => {
     try {
       await v.post("pm", { kind: "reading", surface: "project", key: "alert.ask", value: true });
       await v.post("pm", { kind: "instruction", to: HUMAN, body: CONTACT_ASK, intent: "ask", options: CONTACT_OPTIONS, ack_by: soon() });
-      await v.post("pm", { kind: "instruction", to: HUMAN, body: "先上哪个？", intent: "ask", options: ["报表", "导出"], default: "导出", ack_by: soon() });
+      await v.post("pm", { kind: "instruction", to: HUMAN, body: "先上哪个？", intent: "ask", options: ["报表", "导出"], default: "导出", default_doer: "nothing", ack_by: soon() });
       await v.post("pd", { kind: "instruction", to: HUMAN, body: "这个项目是什么？说一句。", intent: "ask", options: ["说一句", "不要了"], ack_by: soon() });
       const html = await v.page({ cookie: await v.cookie() });
       const buttons = optionButtons(html);
@@ -1677,7 +1678,7 @@ describe("t-190 · 人打开牌桌算他看过了", () => {
   });
 
   it("记这一刻不会把他读到哪儿抹掉——发给他的东西不会因此变回「还没读到」", async () => {
-    const i = await w2.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: new Date(Date.now() + 3600_000).toISOString() });
+    const i = await w2.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: new Date(Date.now() + 3600_000).toISOString() });
     await w2.store.setCursor({ actor: HUMAN, last_event_id: i.id, at: new Date().toISOString() });
     expect(reduce(await w2.store.read()).read_upto.get(HUMAN)).toBe(i.id);
     await w2.authedPage();
@@ -1700,7 +1701,7 @@ describe("t-188 · 没有默认的卡也说得出什么时候到期", () => {
   it("有选项没默认：印期限；有默认：印那句按真状态说的话，不重复印期限", async () => {
     const due = new Date(Date.now() + 3600_000);
     const plain = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "甲还是乙？", intent: "ask", options: ["甲", "乙"], ack_by: due.toISOString() });
-    const withDefault = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "丙还是丁？", intent: "ask", options: ["丙", "丁"], default: "丁", ack_by: due.toISOString() });
+    const withDefault = await w3.post("pm", { kind: "instruction", actor: "pm", to: HUMAN, body: "丙还是丁？", intent: "ask", options: ["丙", "丁"], default: "丁", default_doer: "nothing", ack_by: due.toISOString() });
     await pull(w3.store, HUMAN, null, new Date());   // t-335 ①：他收到过——带默认那张卡才说得出「还有多久到期」
     const html = await w3.authedPage();
     const card = (id: string) => { const i = html.indexOf(`value="${id}"`); return html.slice(html.lastIndexOf("<article", i), html.indexOf("</article>", i)); };

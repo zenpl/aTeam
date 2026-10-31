@@ -50,7 +50,8 @@ async function alive(store: MemoryStore) {
   await put(store, { kind: "reading", actor: "pm", surface: "team", key: "focus", value: "P0：人那一页要打得开" });
   await put(store, { kind: "task", actor: "pm", op: "create", task: "t-alive", title: "在做的那一件", criteria: ["成立"], no_human_impact: true });
   await put(store, { kind: "task", actor: "frontend", op: "claim", task: "t-alive", touches: ["packages/server/src/html.ts"] });
-  await put(store, { kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？细节在任务上。", options: ["报表", "限流"], default: "报表", ack_by: soon() });
+  // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+  await put(store, { kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？细节在任务上。", options: ["报表", "限流"], default: "报表", default_doer: "nothing", ack_by: soon() });
 }
 
 async function page(rounds: number, extra?: (s: MemoryStore) => Promise<void>): Promise<string> {

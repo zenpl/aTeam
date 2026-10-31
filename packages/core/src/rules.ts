@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES, PD_PLACEHOLDER, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS_WORDS, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus, evidenceSha } from "./board.js";
@@ -199,7 +199,7 @@ const REQUIRED: Record<string, Record<string, FieldKind>> = {
 };
 /** Optional fields whose *type* still has to hold when they are present: a wrong type reads like a missing one. */
 const OPTIONAL: Record<string, Record<string, FieldKind>> = {
-  reading: {}, instruction: { options: "strings", default: "string", intent: "string", depends_on: "strings" }, ack: {}, untell: {},
+  reading: {}, instruction: { options: "strings", default: "string", default_doer: "string", intent: "string", depends_on: "strings" }, ack: {}, untell: {},
   note: { supersedes: "string", task: "string", label: "string" },
   premise: { depends_on: "strings", valid_until: "string" },
   "task:done": { evidence: "string", shows: "string", touches: "strings", no_human_impact: "boolean", internal_only: "strings", changed_files: "count", base_sha: "string" },
@@ -396,6 +396,31 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (opts.length < 2 || opts.some((o) => !o)) throw new Rejected("instruction", "give at least two non-empty options");
         if (new Set(opts).size !== opts.length) throw new Rejected("instruction", "options must be distinct");
         if (e.default !== undefined && !opts.includes(e.default)) throw new Rejected("instruction", `default "${e.default}" is not one of the options`);
+      }
+      /**
+       * t-335 判据⑧（pd ㉗，定稿 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ②）：
+       * **写 `--default` 的人要先答「到期之后这一项由谁执行」，而答案是收件人就拒。**
+       *
+       * 真样本：pm 14:46:58 那张「要不要起一个 qa」，默认是「起一个 qa」，15:02:27 默认替人定了——而
+       * 起一个会话**只有他做得到**，于是日志里写着「已定」，没有一个在场的人能执行它，卡又不在那一页上了。
+       * 诚实填写时那张卡的执行者只能是 `human`，所以它在这道闸下必须被拒（pm 17:16 要的自证）。
+       *
+       * **这里不要求那个角色此刻在场**，尽管 pd 的拒绝话里写着「换成一个在场的角色」：一是「在场」随时钟
+       * 变，同一条命令此刻拒、一分钟后过，不是一道说得清的闸；二是那一档被拒要另说一句话，而 pd 没有写它，
+       * 我不自拟。这一处的窄我写在 done 的证据里交回去（要不要加，归 pd／pm）。
+       */
+      {
+        const doer = e.default_doer?.trim();
+        if (doer !== undefined && e.default === undefined) throw new Rejected("instruction", DEFAULT_DOER_WITHOUT_DEFAULT);
+        if (e.default !== undefined) {
+          // **「还没定稿」与「这里没有规矩」不是一回事**：闸照旧拒，只是那句话此刻还不是话（措辞归 pd）。
+          // 正文里一个我自拟的字都没有：占位 ＋ 这个闭集此刻的合法取值。
+          const legal = [DEFAULT_DOER_NOTHING, ...projectRoles(state).filter((r) => r !== e.to)];
+          if (!doer) throw new Rejected("instruction", `${PD_PLACEHOLDER} --default-doer <${legal.join(" | ")}>`);
+          if (DEFAULT_DOER_AMBIGUOUS_WORDS.includes(doer.toLowerCase())) throw new Rejected("instruction", DEFAULT_DOER_AMBIGUOUS);
+          if (doer === e.to) throw new Rejected("instruction", defaultDoerIsRecipient(e.default, doer));
+          if (!legal.includes(doer)) throw new Rejected("instruction", `${PD_PLACEHOLDER} --default-doer <${legal.join(" | ")}>`);
+        }
       }
       return;
 

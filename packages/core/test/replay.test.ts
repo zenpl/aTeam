@@ -458,8 +458,9 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
   // t-335 ①（pd ㉖）：**这几格一直假设「他收到了」，而日志里原来没有这件事。** 默认的计时从送达起算，
   // 所以这里把那次送达补上：卡发出即被他拉到，期限仍然是 `at + 60 分钟`，这几格要测的东西一个字没动。
   // 不补的话它们测的会变成另一件事——「一张从没送到的卡到期了」，而那正是 ① 禁的那件事。
-  const ask = async (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string }> = {}) => {
-    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", ...extra });
+  const ask = async (store: MemoryStore, c: ReturnType<typeof clock>, extra: Partial<{ options: string[]; default: string; default_doer: string }> = {}) => {
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", default_doer: "nothing", ...extra });
     await pull(store, HUMAN, null, c.now());
     return q;
   };
@@ -541,7 +542,7 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
   it("判据 6：带默认却没有 ack_by 的卡被拒，拒绝话说清怎么补", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const r = await rejected(emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", options: ["private", "public"], default: "private" } as never));
+    const r = await rejected(emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "看板认证方式？", options: ["private", "public"], default: "private", default_doer: "nothing" } as never));
     expect(r.message).toContain("带默认的卡必须有 ack_by");
     expect(r.message).toContain("到期按 private");
     expect(r.message).toContain("--ack-by");
@@ -579,7 +580,8 @@ describe("t-022 · an ask with a default answers itself at ack_by; the human may
   it("without a default nothing changes: the ask stays with the human past ack_by; a plain instruction is owed nothing but the doing", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const q = await ask(store, c, { default: undefined });
+    // t-335 判据⑧：没有默认就没有「到期后谁执行」这回事——两个一起撤掉，否则这一格测的变成了那道新闸。
+    const q = await ask(store, c, { default: undefined, default_doer: undefined });
     const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy", ack_by: c.iso(min(10)) });
     c.tick(min(90));
     const b = await at(store, c);
@@ -1256,7 +1258,7 @@ describe("F11 · the human board is derived, never moved by hand", () => {
   it("t-019: needs_human holds only questions for the human, with their options and choice", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Board auth?", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private" });
+    const q = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "Board auth?", ack_by: c.iso(min(60)), options: ["private", "public"], default: "private", default_doer: "nothing" });
     await emit(store, c, { kind: "instruction", actor: "pm", to: "backend", body: "deploy 1.4.2", ack_by: c.iso(min(5)) });
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "a", criteria: ["x"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "b", criteria: ["y"] , no_human_impact: true});
@@ -1375,7 +1377,7 @@ describe("t-011 · instructions to the human carry options; a click is ack + dec
     expect((await rejected(emit(store, c, { ...ask, options: ["A"] }))).rule).toBe("instruction");
     expect((await rejected(emit(store, c, { ...ask, options: ["A", "A"] }))).rule).toBe("instruction");
     expect((await rejected(emit(store, c, { ...ask, options: ["A", "B"], default: "C" }))).rule).toBe("instruction");
-    const ok = await emit(store, c, { ...ask, options: ["A", "B"], default: "B" });
+    const ok = await emit(store, c, { ...ask, options: ["A", "B"], default: "B", default_doer: "nothing" });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.instructions[0]).toMatchObject({ id: ok.id, options: ["A", "B"], default: "B", status: "pending" });
     expect(b.needs_human[0].summary).toContain("[A | B; default B]");
@@ -1384,7 +1386,7 @@ describe("t-011 · instructions to the human carry options; a click is ack + dec
   it("a decision names one of the options, once, by the human; the board then shows the choice and needs-human clears", async () => {
     const store = new MemoryStore();
     const c = clock();
-    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "board auth: private (A) or public (B)?", ack_by: c.iso(min(30)), options: ["A", "B"], default: "B" });
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "board auth: private (A) or public (B)?", ack_by: c.iso(min(30)), options: ["A", "B"], default: "B", default_doer: "nothing" });
     const plain = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "claim t-1", ack_by: c.iso(min(30)) });
     const decide = (actor: string, of: string, option: string, decision = true): NewEvent =>
       ({ kind: "note", actor, body: `decision: ${option}`, decision, decides: { of, option } });
@@ -1567,7 +1569,7 @@ describe("t-064 · the sender takes an instruction back", () => {
     const store = new MemoryStore();
     const c = clock(Date.now() - min(60));
     const i = await emit(store, c, { kind: "instruction", actor: "pm", to: "dev", body: "改 t-1", ack_by: c.iso(min(15)) });
-    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "上 A 还是 B？", options: ["A", "B"], default: "B", ack_by: c.iso(min(15)) });
+    const ask = await emit(store, c, { kind: "instruction", actor: "pm", to: HUMAN, body: "上 A 还是 B？", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: c.iso(min(15)) });
     expect((await rejected(emit(store, c, { kind: "untell", actor: "qa", of: i.id, reason: "x" }))).message).toMatch(/only the sender or human/);
     expect((await rejected(emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: " " }))).message).toMatch(/say why/);
     const u = await emit(store, c, { kind: "untell", actor: "pm", of: i.id, reason: "t-1 已经不用改了" });
@@ -2965,7 +2967,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
   // t-335 ①：送达补在这里。t-190 测的是「期限**重算**那一次要等他露面」，而 ① 说第一次也一样——
   // 这几格要走到 default_missed 那一态，就得先有一次真的到期，而到期要先有送达。
   const ask = async (store: MemoryStore, c: ReturnType<typeof clock>) => {
-    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(60)) });
+    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: c.iso(min(60)) });
     await pull(store, HUMAN, null, c.now());
     return q;
   };
@@ -3096,7 +3098,7 @@ describe("t-190 · 默认只有真落成事件才算数", () => {
 describe("t-188 · 卡说得出自己什么时候到期，而且不会无声消失", () => {
   // t-335 ①：同上，送达补在这里；卡发出即被他拉到，所以这几格里的期限仍是事件里那个 ack_by。
   const ask = async (store: MemoryStore, c: ReturnType<typeof clock>, mins: number) => {
-    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: c.iso(min(mins)) });
+    const q = await emit(store, c, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: c.iso(min(mins)) });
     await pull(store, HUMAN, null, c.now());
     return q;
   };

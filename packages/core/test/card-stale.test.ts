@@ -48,7 +48,8 @@ describe("t-215 判据 1、2 · 一张卡说得出它活着的条件，那条事
 
   it("**卡还在，人还能答**——标出来不是删掉（判据 4；删一张没答的卡是 t-190 定过的错）", async () => {
     const w = await world();
-    const card = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString(), options: ["A", "B"], default: "B", depends_on: ["production:deployed.sha"] }, -280);
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const card = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString(), options: ["A", "B"], default: "B", default_doer: "nothing", depends_on: ["production:deployed.sha"] }, -280);
     await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
     const b = board(await st(w.s), HUMAN, at(0));
     const row = b.needs_human.find((x) => x.id === card.id)!;
@@ -68,7 +69,7 @@ describe("t-215 判据 1、2 · 一张卡说得出它活着的条件，那条事
 describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默认结掉", () => {
   it("条件被改动过的卡：到期也不落那条「已执行」", async () => {
     const w = await world();
-    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", depends_on: ["production:deployed.sha"] }, -280);
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", default_doer: "nothing", depends_on: ["production:deployed.sha"] }, -280);
     await w.seen(-280);   // t-335 ①：他收到过——否则这一格的 `[]` 是「没送到」给的，不是它要测的那条扣住
     await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
     expect(dueDefaults(await st(w.s), at(0))).toEqual([]);
@@ -76,7 +77,7 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
 
   it("条件没被动过的卡：到期照常按默认结掉（不许把整条路一起关掉）", async () => {
     const w = await world();
-    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", depends_on: ["production:deployed.sha"] }, -280);
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", default_doer: "nothing", depends_on: ["production:deployed.sha"] }, -280);
     await w.seen(-280);
     const due = dueDefaults(await st(w.s), at(0));
     expect(due).toHaveLength(1);
@@ -85,7 +86,7 @@ describe("t-215 判据 6 · 默认动作本身过期时，不许无声地按默�
 
   it("根本没声明条件的卡，行为一字未改", async () => {
     const w = await world();
-    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A" }, -280);
+    await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", default_doer: "nothing" }, -280);
     await w.seen(-280);
     await w.put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "c83e986", writes: ["production:deployed.sha"] }, -100);
     expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);
@@ -102,7 +103,7 @@ describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的�
   it("valid_until 过了：卡被标出来，且到期不落那条「已执行」", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时你在别的平台起一个项目",
-      ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", valid_until: at(-30).toISOString() }, -280);
+      ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", default_doer: "nothing", valid_until: at(-30).toISOString() }, -280);
     await w.seen(-280);
     const s = await st(w.s);
     const one = [...s.instructions.values()][0];
@@ -113,7 +114,7 @@ describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的�
   it("还没到那个时刻：一切照旧，默认照常结掉", async () => {
     const w = await world();
     await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "选一个", ack_by: at(-10).toISOString(),
-      options: ["A", "B"], default: "A", valid_until: at(600).toISOString() }, -280);
+      options: ["A", "B"], default: "A", default_doer: "nothing", valid_until: at(600).toISOString() }, -280);
     await w.seen(-280);
     const s = await st(w.s);
     expect([...s.instructions.values()][0].stale_since).toBeUndefined();
@@ -131,7 +132,7 @@ describe("t-215 判据 7① · 钟点那一路：过了这个时刻，它说的�
 describe("t-215 判据 7② · 给一张已经发出去的卡补声明条件", () => {
   it("卡比字段老、一个条件都没声明过：后发一条 premise 补上钟点 ⇒ 被标出来，默认不再结掉", async () => {
     const w = await world();
-    const old = await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时…", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A" }, -280);
+    const old = await w.put({ kind: "instruction", actor: "pd", to: HUMAN, body: "明早开工时…", ack_by: at(-10).toISOString(), options: ["A", "B"], default: "A", default_doer: "nothing" }, -280);
     await w.seen(-280);
     expect(dueDefaults(await st(w.s), at(0))).toHaveLength(1);      // 补声明之前：照落
     const p = await w.put({ kind: "premise", actor: "pd", of: old.id, valid_until: at(-30).toISOString() }, -20);
@@ -182,7 +183,7 @@ describe("t-215 判据 7② · 给一张已经发出去的卡补声明条件", (
   it("**仍然不删卡**（判据 4，两路都适用）：补声明之后卡还在牌桌上、还能答", async () => {
     const { board } = await import("../src/index.js");
     const w = await world();
-    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString(), options: ["A", "B"], default: "B" }, -280);
+    const old = await w.put({ kind: "instruction", actor: "release", to: HUMAN, body: "谁来推？", ack_by: at(600).toISOString(), options: ["A", "B"], default: "B", default_doer: "nothing" }, -280);
     await w.put({ kind: "premise", actor: "release", of: old.id, valid_until: at(-30).toISOString() }, -200);
     const row = board(await st(w.s), HUMAN, at(0)).needs_human.find((x) => x.id === old.id)!;
     expect(row).toBeTruthy();

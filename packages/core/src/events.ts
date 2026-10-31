@@ -65,6 +65,12 @@ export interface Instruction extends Base {
   options?: string[];
   /** One of `options`; what happens if nobody chooses. */
   default?: string;
+  /**
+   * t-335 判据⑧（pd ㉗）：**到期之后那个默认由谁执行。** 必填当且仅当带 `default`；闭集是
+   * `DEFAULT_DOER_NOTHING` ∪ 本项目的角色名，而**等于收件人就拒**——那正是 ㉗ 要挡的那件事：
+   * 到期的意思是他没在看，而这一项只有他做得到，于是日志里写着「已定」，没有一个在场的人能执行它。
+   */
+  default_doer?: string;
   /** For the human's board: a question to answer, a thing to do, or something to know. Derived when absent. */
   intent?: InstructionIntent;
   /**
@@ -697,6 +703,9 @@ export const KEY_SYMBOLS = [
   "DEADLINE_WORDS_HEAD",
   "DECLINE_PREFIX",
   "DEFAULT_APPLIED_PREFIX",
+  "DEFAULT_DOER_AMBIGUOUS",
+  "DEFAULT_DOER_AMBIGUOUS_WORDS",
+  "DEFAULT_DOER_WITHOUT_DEFAULT",
   "DEFAULT_LINES",
   "DEFAULT_MISSED_PREFIX",
   "DEFAULT_RULE",
@@ -808,6 +817,7 @@ export const KEY_SYMBOLS = [
   "cliStaleBuildLine",
   "containedSeamLine",
   "coverage",
+  "defaultDoerIsRecipient",
   "defaultMissed",
   "denominatorIs",
   "denominatorUnknown",
@@ -1611,6 +1621,29 @@ export const PD_PLACEHOLDER = "（措辞待定）";
  * 一行 `<角色>.<键>=<ISO>`。这样两种「不再缺人」都填得出同一个形状——回来读日志的那种（`last_pull`）、
  * 还在写只是没来读的那种（`last_event`）——而槽里一个字的中文都不是我写的。若 pd 要散文，换这一处即可。
  */
+/**
+ * t-335 判据⑧（pm 17:16 的裁定，形状）与 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ②（措辞，照抄不改标点）：
+ * **给 `--default` 时必须同时声明「到期之后这一项由谁执行」**，取值是闭集。
+ *
+ * 名字与取值归 dev（pm 17:18／pd 17:21：标志是节点键入的，不是人读的输出），我定 `--default-doer`，
+ * 闭集是 `nothing` ∪ 本项目的角色名。pd 两条建议都照了：
+ * · 不叫 `--default-done-by`——队里 `--ack-by` 收的是时长，两个 `-by` 一个收时长一个收人，下一个人会写 `--default-done-by 30m`；
+ * · 表示「无需任何人动手」的那个值**不许同时能读成「没人做得到」**，所以 `none`／`nobody`／`无`／空值都不收。
+ */
+export const DEFAULT_DOER_NOTHING = "nothing";
+/** 既能读成「无需执行」又能读成「没人做得到」的那几个词：这两种情形一个该过一个该拒，不许共用一个词。 */
+export const DEFAULT_DOER_AMBIGUOUS_WORDS = ["none", "nobody", "无"];
+/** pd 定稿，四行，照抄不改标点；两个槽是这张卡自己的值。 */
+export const defaultDoerIsRecipient = (def: string, doer: string) =>
+  `拒：--default 是「${def}」，而 --default-doer 写的是 ${doer}——他正是这张卡的收件人。
+到期的意思是他没在看；这一项到期之后只有他做得到，于是谁也执行不了（㉗）。
+改法三选一：换一个你自己收得了场的默认（不做／照旧，--default-doer nothing）；
+把执行人换成一个在场的角色；或者不设默认，让这张卡一直等他。`;
+/** pd 定稿，照抄不改标点。 */
+export const DEFAULT_DOER_AMBIGUOUS = `拒：--default-doer 不收 none / nobody——它们既可读成「无需执行」，也可读成「没人做得到」，
+而这两种情形一个该过、一个该拒（㉗）。无需执行写 nothing；只有收件人做得到，就不能当默认。`;
+/** pd 定稿，照抄不改标点。 */
+export const DEFAULT_DOER_WITHOUT_DEFAULT = "这一项没有默认，不需要执行人。";
 export const cardEnded = (fact: string) => `这张卡问的那件事已经不成立了：${fact}。卡到此结束；下次再出现同一类事，是另一张新卡（㉕）。`;
 /**
  * t-292 判据 7（pd 06:42「一」，定稿照抄）。

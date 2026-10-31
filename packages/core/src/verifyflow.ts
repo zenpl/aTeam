@@ -2,7 +2,7 @@ import { append, Reduction, type EventStore, type AppendOptions } from "./store.
 import { reduce, type State } from "./reduce.js";
 import { projectRoles, importCounts, standIns, presenceStatus, missingRoleOf } from "./board.js";
 import { Rejected } from "./rules.js";
-import { cardEnded, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
+import { cardEnded, DEFAULT_DOER_NOTHING, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -66,6 +66,9 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
     const t = s.tasks.get(e.task);
     const body = `${STAND_IN_ASK_TITLE}：${e.task}（${head(t?.title ?? e.task, STAND_IN_TITLE_CHARS)}）已经验过了，但还没上生产，所以 ${rows.who.join("、")} 今天手工做了 ${rows.count} 次它本该做的事。要现在把它上线吗？`;
     return [{ kind: "instruction", actor: SERVICE_ACTOR, to: human, intent: "ask", options: [...STAND_IN_OPTIONS], default: STAND_IN_OPTIONS[1],
+      // t-335 判据⑧（pd ㉗）：默认那一项是「先这样」——**照旧，不需要任何人动手**，所以执行人是 nothing。
+      // 服务端此刻唯一一张自己带默认的卡恰好就是合格的那一种，这一条不是我为了过闸挑的值。
+      default_doer: DEFAULT_DOER_NOTHING,
       body, ack_by: new Date(now.getTime() + STAND_IN_DAY_MS).toISOString(), refs: [e.id] }];
   }
   if (e.kind === "task" && e.op === "verify" && !e.pass) {

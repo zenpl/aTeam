@@ -46,7 +46,8 @@ function log(): Event[] {
     { ...ev({ kind: "instruction", actor: "pm", to: "dev", body: "认领 t-3", ack_by: at(-30) }, at(40)), id: cardAcked } as Event,
     ev({ kind: "ack", actor: "dev", of: cardAcked }, at(39)),
     // 带选项、签收过而没人选：t-193 判据 6，一次签收不替人把问题从桌上收走
-    { ...ev({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", ack_by: at(-30), options: ["报表", "限流"], default: "报表" }, at(38)), id: cardOptions } as Event,
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    { ...ev({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", ack_by: at(-30), options: ["报表", "限流"], default: "报表", default_doer: "nothing" }, at(38)), id: cardOptions } as Event,
     ev({ kind: "ack", actor: HUMAN, of: cardOptions }, at(37)),
     // 没人签收的
     { ...ev({ kind: "instruction", actor: "pm", to: "qa", body: "复核限流", ack_by: at(-30) }, at(36)), id: cardOpen } as Event,

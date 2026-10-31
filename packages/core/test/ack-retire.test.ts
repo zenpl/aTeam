@@ -196,7 +196,8 @@ describe("t-147 · 判据 6：拉取时随手给出「此刻你欠什么」", ()
 
   it("人拉取时，欠的是那些还没答的卡：同一个字段，两类都用得上", async () => {
     const w = await world();
-    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["A", "B"], default: "B", ack_by: at(10).toISOString() }, -60);
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const card = await w.put({ kind: "instruction", actor: "pm", to: HUMAN, body: "先发哪个？", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: at(10).toISOString() }, -60);
     await w.s.setCursor({ actor: HUMAN, last_event_id: card.id, at: at(-5).toISOString() });
     const o = owedNow(await st(w.s), HUMAN);
     expect(o.unanswered.map((x) => x.instruction)).toEqual([card.id]);

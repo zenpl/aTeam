@@ -83,7 +83,8 @@ describe("t-147 判据 6 · 拉取时把「你欠什么」一起给出来", () =
   it("角色手里不会有带选项的卡（规则只允许发给人），所以那一类对它必然是空的", async () => {
     const bad = await post("pm", { kind: "instruction", to: "dev", body: "你选一个", options: ["A", "B"], ack_by: soon() });
     expect(bad.status).toBe(409);
-    const card = await post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", options: ["A", "B"], default: "B", ack_by: soon() });
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const card = await post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: soon() });
     expect(card.status).toBe(201);
     expect((await sync("dev", null)).owed.unanswered).toEqual([]);
     // 人自己拉的时候，同一个字段装的是那张还没答的卡

@@ -37,7 +37,8 @@ async function bigDay() {
     if (i % 20) await b.ack(to, ins.id); // today: 14 of 486 still open
   }
   for (let i = 0; i < 5; i++) {
-    const ask = await b.tell("pd", b.human, `问题 ${i}：A 还是 B？`, { options: ["A", "B"], default: "B" });
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    const ask = await b.tell("pd", b.human, `问题 ${i}：A 还是 B？`, { options: ["A", "B"], default: "B", default_doer: "nothing" });
     await b.ack(b.human, ask.id);
     await b.note(b.human, `decision: ${ask.id} -> A`, { decision: true, decides: { of: ask.id, option: "A" }, refs: [ask.id] });
   }

@@ -46,7 +46,8 @@ every turn
 
 say things
   ateam tell <to> <body> [--ack-by 15m] [--kind ask|do|info] [--depends-on surface:key,...]   instruction: one recipient, ≤280 chars, must be acked; --kind only for human; --depends-on says what this card is true of, and the board marks it when that fact changes
-  ateam tell human <body> --option A --option B [--default B]        a decision for the human; the board shows one button per option
+  ateam tell human <body> --option A --option B [--default B --default-doer <nothing|role>]   a decision for the human; the board shows one button per option
+                                    --default-doer says who carries out the default once it comes due; required with --default, and refused when it is the recipient (t-335)
   ateam decide <id> <option>                                         choose for an instruction with options: acks it and records the decision
   ateam premise <instruction-id> [--depends-on surface:key,...] [--valid-until <iso> | --valid-for 8h]   say what an already-sent card is true of, or when it stops being true; the board marks it, nothing is deleted
   ateam reading <key> <value> --surface <s> [--depends-on a,b] [--assumes "..."]... [--valid-for 6h] [--method m]
@@ -679,7 +680,9 @@ async function main(argv: string[]) {
       // 与读数那一侧同一个开关名，因为是同一件事——只是读数会失效，卡只被标出来。
       return emit({ kind: "instruction", to, body, intent,
         ack_by: new Date(Date.now() + duration(str(a, "ack-by") ?? "15m")).toISOString(),
-        options: list(a, "option"), default: str(a, "default"), depends_on: list(a, "depends-on"),
+        // t-335 判据⑧：带 --default 就必须说出「到期之后这一项由谁执行」，闭集是 nothing | <本项目的角色>；
+        // 等于收件人的那一档服务端会拒（pd ㉗）。名字是 dev 定的（标志是节点键入的，不是人读的输出）。
+        options: list(a, "option"), default: str(a, "default"), default_doer: str(a, "default-doer"), depends_on: list(a, "depends-on"),
         valid_until: str(a, "valid-for") ? new Date(Date.now() + duration(str(a, "valid-for")!)).toISOString() : str(a, "valid-until") });
     }
     // t-215 判据 7：给一张**已经发出去的**卡补声明条件。卡是不可变事件，所以补声明是一条后发的事件指着它

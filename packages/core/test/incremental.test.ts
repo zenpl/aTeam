@@ -41,7 +41,8 @@ async function busyLog(store: MemoryStore): Promise<Event[]> {
   await put({ kind: "reading", actor: "qa", surface: "staging", key: "rows", value: 13, method: "又数了一遍" }, 3);
 
   // an ask with a default that nobody answers, one that gets acked, one that is taken back
-  await put({ kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, 4);
+  // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+  await put({ kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: iso(20) }, 4);
   await put({ kind: "instruction", actor: "pm", to: "dev", body: "先做这件", ack_by: iso(10) }, 5);
   await put({ kind: "instruction", actor: "pm", to: "qa", body: "算了，别做了", ack_by: iso(10) }, 6);
   await put({ kind: "ack", actor: "dev", of: out[5].id }, 7);
@@ -104,7 +105,7 @@ describe("t-128 · an advanced reduction is the reduction", () => {
    */
   it("到期这件事跟着时钟走，把钟拨回去它也跟着回去", async () => {
     const store = new MemoryStore();
-    const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
+    const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
     // t-335 ①：默认的计时从送达起算，所以「到期跟着时钟走」这件事得先有一次送达；补在发出的同一刻，
     // 于是期限仍是 at(20)，这一格测的「拨回去也跟着回去」一个字没动。
     await pull(store, HUMAN, null, at(0));
@@ -117,7 +118,7 @@ describe("t-128 · an advanced reduction is the reduction", () => {
 
   it("服务落下那条事件之后，它才是一个决定；而且一个 ack 抹不掉它", async () => {
     const store = new MemoryStore();
-    const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
+    const ask = await append(store, { kind: "instruction", actor: "pd", to: HUMAN, body: "A 还是 B？", intent: "ask", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: iso(20) }, { human: HUMAN, now: at(0) });
     await pull(store, HUMAN, null, at(0));             // t-335 ①：同上，他收到过
     const r = new Reduction(store);
     await runDueDefaults(store, reduce(await store.read(), at(30)), HUMAN, at(30));

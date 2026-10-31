@@ -128,7 +128,8 @@ describe("t-165 · 那个 || 回退删掉之后，判定与 core 一一对上", 
     const v = server();
     await v.start();
     try {
-      const card = await v.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？两个都行。", options: ["报表", "限流"], default: "报表", ack_by: new Date(Date.now() + 900_000).toISOString() });
+      // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+      const card = await v.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？两个都行。", options: ["报表", "限流"], default: "报表", default_doer: "nothing", ack_by: new Date(Date.now() + 900_000).toISOString() });
       await v.post(HUMAN, { kind: "note", body: "决定：先发报表", decision: true, decides: { of: card.id, option: "报表" } });
       await v.post(HUMAN, { kind: "note", body: `${DEFER_PREFIX}限流那条这周先不碰`, refs: [card.id] });
       const b = await v.board();

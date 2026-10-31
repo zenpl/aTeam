@@ -76,7 +76,8 @@ describe("t-241 · 真路：一次发两件，第二件被拒 ⇒ 下一条 sync
       const url = req.url ?? "/";
       res.writeHead(200, { "content-type": "application/json" });
       if (url.startsWith("/board")) {
-        return res.end(JSON.stringify({ shape: 2, instructions: [{ id: ID, from: "pm", to: "human", body: "A 还是 B？", status: "pending", sent: new Date().toISOString(), options: ["A", "B"], default: "B" }], tasks: {}, needs_human: [], seams: [], readings: [], presence: [] }));
+        // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+        return res.end(JSON.stringify({ shape: 2, instructions: [{ id: ID, from: "pm", to: "human", body: "A 还是 B？", status: "pending", sent: new Date().toISOString(), options: ["A", "B"], default: "B", default_doer: "nothing" }], tasks: {}, needs_human: [], seams: [], readings: [], presence: [] }));
       }
       res.end(JSON.stringify({ shape: 2, events: [], for_me: [], cursor: null, owed: { unanswered: [], untouched: [], legacy_before_acted_rule_count: 0 }, sha: "abc1234", deploys: [] }));
     });

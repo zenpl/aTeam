@@ -20,9 +20,10 @@ const REAL: Card[] = [
   card({ id: "01M1VNSX5KDRJ9ACJHH3STX70D", from: SERVICE_ACTOR, kind: "do", body: "pd 从没读过日志，239 条没送到。起一个 pd？", ack_by: "2026-09-07T12:00:00.000Z" }),
   card({ id: "01M1WSJF65FZ86AE7T3RVG4NEH", from: SERVICE_ACTOR, kind: "do", body: "release 从没读过日志，111 条没送到。起一个 release？", ack_by: "2026-09-07T13:00:00.000Z" }),
   card({ id: "01M1XJFRE9EB06FWJS0B23H8EV", from: SERVICE_ACTOR, kind: "do", body: "frontend 从没读过日志，357 条没送到。起一个 frontend？", ack_by: "2026-09-07T14:00:00.000Z" }),
-  card({ id: "01M2BCA5KHKSFXAQ3MCA43AY8F", body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试这条命令", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T05:57:46.253Z" }),
-  card({ id: "01M2BEKGPZ5RPBJDH1GQT1DKTF", body: "**给一个 https 的外呼地址。**", options: ["A 我给一个 https 地址", "B 先不给"], default: "B 先不给", ack_by: "2026-09-13T18:37:54.667Z" }),
-  card({ id: "01M2BSFXXXXXXXXXXXXXXXXXXX", body: "**把这一行粘进去，我们自己的主干就跟上了。**", options: ["A 我粘", "B 先不动"], default: "B 先不动", ack_by: "2026-09-13T19:50:05.019Z" }),
+  // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+  card({ id: "01M2BCA5KHKSFXAQ3MCA43AY8F", body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试这条命令", "B 先不动"], default: "B 先不动", default_doer: "nothing", ack_by: "2026-09-13T05:57:46.253Z" }),
+  card({ id: "01M2BEKGPZ5RPBJDH1GQT1DKTF", body: "**给一个 https 的外呼地址。**", options: ["A 我给一个 https 地址", "B 先不给"], default: "B 先不给", default_doer: "nothing", ack_by: "2026-09-13T18:37:54.667Z" }),
+  card({ id: "01M2BSFXXXXXXXXXXXXXXXXXXX", body: "**把这一行粘进去，我们自己的主干就跟上了。**", options: ["A 我粘", "B 先不动"], default: "B 先不动", default_doer: "nothing", ack_by: "2026-09-13T19:50:05.019Z" }),
 ];
 const titles = (cs: Card[]) => cs.map((c) => c.body);
 
@@ -43,18 +44,18 @@ describe("t-236 · 最急的那一张排到最上面", () => {
 
   it("同一档里先到期的在前，没有期限的排在有期限的之后；再平手才按 id", () => {
     const cs = [
-      card({ id: "01C", body: "没有期限的", options: ["A", "B"], default: "B" }),
-      card({ id: "01B", body: "明天到期", options: ["A", "B"], default: "B", ack_by: "2026-09-13T20:00:00.000Z" }),
-      card({ id: "01A", body: "一小时后到期", options: ["A", "B"], default: "B", ack_by: "2026-09-12T22:00:00.000Z" }),
-      card({ id: "01D", body: "与 01A 同刻", options: ["A", "B"], default: "B", ack_by: "2026-09-12T22:00:00.000Z" }),
+      card({ id: "01C", body: "没有期限的", options: ["A", "B"], default: "B", default_doer: "nothing" }),
+      card({ id: "01B", body: "明天到期", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: "2026-09-13T20:00:00.000Z" }),
+      card({ id: "01A", body: "一小时后到期", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: "2026-09-12T22:00:00.000Z" }),
+      card({ id: "01D", body: "与 01A 同刻", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: "2026-09-12T22:00:00.000Z" }),
     ];
     expect(needsHumanOrder(cs).map((c) => c.id)).toEqual(["01A", "01D", "01B", "01C"]);
   });
 
   it("t-190 重算过的期限算数：读的是 ack_by_again，不是那个已经过去的 ack_by", () => {
     const cs = [
-      card({ id: "01A", body: "原期限早就过了，重算到后天", options: ["A", "B"], default: "B", ack_by: "2026-09-01T00:00:00.000Z", ack_by_again: "2026-09-14T00:00:00.000Z" }),
-      card({ id: "01B", body: "今晚到期", options: ["A", "B"], default: "B", ack_by: "2026-09-12T23:00:00.000Z" }),
+      card({ id: "01A", body: "原期限早就过了，重算到后天", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: "2026-09-01T00:00:00.000Z", ack_by_again: "2026-09-14T00:00:00.000Z" }),
+      card({ id: "01B", body: "今晚到期", options: ["A", "B"], default: "B", default_doer: "nothing", ack_by: "2026-09-12T23:00:00.000Z" }),
     ];
     expect(needsHumanOrder(cs).map((c) => c.id)).toEqual(["01B", "01A"]);
   });
@@ -92,7 +93,7 @@ describe("t-236 · 真路：板算出来的那一份就是排好的", () => {
     await put({ kind: "reading", actor: "pm", surface: "project", key: "roles", value: ["pm", "dev", "qa", "pd"] }, -600);
     // 先建的是服务那张（所以按 id 升序它在最上面），后建的是那张 P0
     await put({ kind: "instruction", actor: SERVICE_ACTOR, to: HUMAN, intent: "do", body: "pd 从没读过日志，239 条没送到。起一个 pd？", ack_by: at(600).toISOString() }, -500);
-    await put({ kind: "instruction", actor: "pm", to: HUMAN, body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试", "B 先不动"], default: "B 先不动", ack_by: at(60).toISOString() }, -400);
+    await put({ kind: "instruction", actor: "pm", to: HUMAN, body: "**试一条命令，这个洞可能当场就关。**", options: ["A 我去试", "B 先不动"], default: "B 先不动", default_doer: "nothing", ack_by: at(60).toISOString() }, -400);
     const b = board(reduce(await s.read(), at(0), HUMAN), HUMAN, at(0));
     expect(b.needs_human).toHaveLength(2);
     expect(b.needs_human[0].body, "**这一步以前没有人做**：填完就是 id 的顺序").toContain("试一条命令");

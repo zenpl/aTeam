@@ -69,7 +69,8 @@ describe("t-050 · call-outs", () => {
     const w = world();
     await w.emit({ kind: "reading", actor: "pm", key: "alert.webhook", surface: "project", value: "https://hooks.example/human" });
     const ask = await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "部署第 5 批。合并后推到 production", ack_by: new Date(w.now().getTime() + min(15)).toISOString() });
-    await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "牌桌认证？", ack_by: new Date(w.now().getTime() + min(15)).toISOString(), options: ["A", "B"], default: "B" });
+    // t-335 判据⑧（pd ㉗）：这一份里的默认都不需要任何人动手（用例里没有谁去执行它），所以执行人是 nothing；这几格要测的东西与执行人无关。
+    await w.emit({ kind: "instruction", actor: "pm", to: HUMAN, body: "牌桌认证？", ack_by: new Date(w.now().getTime() + min(15)).toISOString(), options: ["A", "B"], default: "B", default_doer: "nothing" });
     await pull(w.store, "pm", null, w.now());
     // t-335 ①（pd ㉖）：默认的计时从送达起算，所以这一格要的那个「已按默认定掉」得先有一次送达。
     // 补在发卡的同一刻，期限仍是 +15 分钟——这一格要测的「已按默认定掉的那条不算在里面」一个字没动。
