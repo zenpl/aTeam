@@ -398,7 +398,8 @@ export function validate(state: State, e: NewEvent, human: string, now: Date = n
         if (e.default !== undefined && !opts.includes(e.default)) throw new Rejected("instruction", `default "${e.default}" is not one of the options`);
       }
       /**
-       * t-335 判据⑧（pd ㉗，定稿 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ②）：
+       * t-335 判据⑧（pd ㉗，`3a40fe9` 的 `docs/product.md:292`；拒绝话的定稿是 pd 17:20 的
+       * decision `01M69FMZ25DNVK689TG4JS2JFW` ②，照抄不改标点。行号只与那个 sha 一起成立）：
        * **写 `--default` 的人要先答「到期之后这一项由谁执行」，而答案是收件人就拒。**
        *
        * 真样本：pm 14:46:58 那张「要不要起一个 qa」，默认是「起一个 qa」，15:02:27 默认替人定了——而
