@@ -58,7 +58,13 @@ describe("t-351 · 游标文件在而读出来是空的，与连文件都没有�
       const r = await sync(p as never, ME, cur as never, 0, (l) => out.push(l));
       expect(p.calls, "**一次拉取都没有发生**：那个空的 after 根本没出门").toEqual([]);
       expect(r.events).toEqual([]);
-      expect(out, "当场说话（措辞归 pd，此刻是占位）").toContain(CURSOR_UNREADABLE);
+      expect(out, "当场说话——pd 23:29 定稿那三行，照抄").toContain(CURSOR_UNREADABLE);
+      // pd 点名：第一行必须**同时**说「没拉」和「游标也没有动」——只说没拉，读的人会以为自己又丢了一批
+      expect(CURSOR_UNREADABLE).toContain("一条都没拉，游标也没有动");
+      expect(CURSOR_UNREADABLE).toContain("过一会儿再试");
+      expect(CURSOR_UNREADABLE).toContain("从哪儿重新开始得由人定");
+      // 而它不许给一个此刻并不存在的入口（pd 刻意没写）
+      expect(CURSOR_UNREADABLE).not.toMatch(/--(full|from-start|all)\b/);
       expect(existsSync(join(t.root, ".ateam", `cursor.${ME}`)), "也没有把那个文件删掉或写坏").toBe(true);
     } finally { t.cleanup(); }
   });

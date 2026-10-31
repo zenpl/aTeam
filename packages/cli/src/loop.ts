@@ -224,7 +224,8 @@ export async function sync(client: Puller, me: string, cursor: CursorStore, wait
    * t-351 判据 2（pd 要求㉝）：**游标文件在、而读出来是空的 ⇒ 一条都不拉，当场说话。**
    * 不这么做的话，空的 `after` 发出去，服务端把整份日志给他（pm 23:14 实测 14375 条、414 KB），
    * 而这一发全量在日志里与一次正常 sync 长得一模一样。
-   * **这一句措辞归 pd，此刻是占位**（`CURSOR_UNREADABLE`）；停下这件事不等 measure。
+   * **那三行是 pd 23:29 的定稿**（`CURSOR_UNREADABLE`，照抄不改标点）：第一行同时说「没拉」与
+   * 「游标也没有动」，第二行给一个能改变它自己的动作（等一下再试），第三行是真丢了那一种（起点由人定）。
    */
   const fromState = from.state?.() ?? (from.read() === null ? "none" : "value");
   if (fromState === "empty") {
