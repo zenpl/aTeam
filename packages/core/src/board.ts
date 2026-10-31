@@ -600,6 +600,18 @@ export interface Board {
     options?: string[]; default?: string; chosen?: { option: string; by: string; at: string; /** t-189：落成这个决定的那条事件。缺席就是「还没真发生」——牌桌靠它分辨「该发生」与「发生了」，不靠时间过没过。 */ note?: string };
     /** t-181: 带默认的卡此刻真正在哪一态，以及照实说它的那句话（core 一处，页面与命令行都印它）。 */
     says_default?: DefaultSay;
+    /**
+     * t-334（pd ㉔，`3a40fe9` 的 `docs/product.md:286`）：**一张给人看的卡片上只许有一个年龄。**
+     *
+     * 这一项为真，说明**正文里自带一个现算的年龄**（`restated` 那一族：「<角色> 缺人 N 分钟……」，
+     * t-210 刻意让它随时间重述）。渲染的那一侧据它决定**不要再印第二个**——页上那句「几天前问的」
+     * 算的是这张卡的身份年龄，而两个年龄在同一张卡上会互相矛盾：pd 量到的那一张同时写着
+     * 「期限过了 53 天」与「缺人 1062 分钟」（约 17 小时）。
+     *
+     * **判定留在 core**：正文是不是自带年龄，与重述用的是同一个判断（同一件事只许有一个定义）。
+     * 印哪一个、怎么印，是渲染那一侧的事。
+     */
+    age_in_body?: true;
   }[];
   /**
    * t-106: the name to show for a role id, wherever a person reads one — presence, a task's owner, an instruction's
@@ -1509,12 +1521,14 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
       // （判据 3：冻结之下只让那句话说当下的事）。历史一个字没改：事件里的原文原样躺着，改的只是牌桌此刻显示什么。
       //
       // 与 t-202 的分工：那一件管**卡该不该在**（deaf 的不出卡，已在生产验过），这一件只管**卡上的话对不对**。
-      const body = restated(s, i, now, listenWindow, b) ?? i.body;
+      const live = restated(s, i, now, listenWindow, b);
+      const body = live ?? i.body;
       b.needs_human.push({
         kind: instructionKind(i), ...splitTitle(body), id: i.id, from: i.actor, body, summary: `${i.actor}: ${body}${ask}`, since: i.at,
         ack_by: i.ack_by, ack_by_again: st.ack_by_again,
         options: i.options, default: i.default, says_default: sayDefault(st, now),
         stale_since: st.stale_since, stale_by: st.stale_by,   // t-215：只出数据不出话
+        age_in_body: live ? true : undefined,                 // t-334：正文自带一个现算的年龄，别再印第二个
         chosen: undefined, // a decided ask never reaches needs_human; the field stays for consumers that read one shape
       });
     }

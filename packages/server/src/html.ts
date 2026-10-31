@@ -253,20 +253,25 @@ function renderPage(b: Board, s: State, opts: RenderOptions, shown: number): str
     }
     for (const i of asks) {
       const kind = cardKind(i);
+      // t-334（pd ㉔，`3a40fe9` 的 `docs/product.md:286`）：**一张卡上只许有一个年龄。** 正文自带一个现算的
+      // 年龄时（core 的 `age_in_body`），这里不再印「几天前问的」——那是这张卡的身份年龄，两个放在一起会
+      // 互相矛盾：pd 量到的那一张同时写着「期限过了 53 天」与「缺人 1062 分钟」（约 17 小时）。
+      // **没有新写一个字**：`askedBy` 就是「谁 · 什么时候」，不印年龄就只剩那个谁。
+      const asked = i.age_in_body ? who(i.from) : UI.askedBy(who(i.from), ago(i.since));
       // A short question answered by 说一句 keeps its whole sentence as the title (UC-S0: 「这个项目是什么？说一句。」).
       const { title, detail } = kind === "ask" && !i.options?.length && [...i.body.trim()].length <= TITLE_MAX ? { title: i.body.trim(), detail: "" } : cardTitle(i);
       if (isContactCard(i)) {
         // t-069: 请你做, with an input. t-118: the words are the card's own — the page keeps no second copy of the
         // question, so pd changing the instruction changes what the person reads, and the log and the page cannot
         // drift apart. The whole body shows (title + the rest), not folded behind 「细节」: it is short and it is the ask.
-        out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
+        out.push(`<article class="ask" data-kind="do"><div class="ask-top"><span class="kind">${esc(UI.kind.do)}</span><span class="meta">${esc(asked)}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else if (isMigrationCard(i)) {
         // t-095: the counts are the question; they are read, not folded away behind 「细节」.
-        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(asked)}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p><p class="body">${esc(detail)}</p>`);
       } else {
-        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(UI.askedBy(who(i.from), ago(i.since)))}</span></div>`);
+        out.push(`<article class="ask" data-kind="${kind}"><div class="ask-top"><span class="kind">${esc(UI.kind[kind])}</span><span class="meta">${esc(asked)}</span></div>`);
         out.push(`<p class="q">${esc(title)}</p>`);
         if (detail) out.push(`<details class="detail"><summary>${UI.detail}</summary><p>${esc(detail)}</p></details>`);
       }
