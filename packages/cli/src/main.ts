@@ -605,7 +605,7 @@ async function main(argv: string[]) {
       if (target === undefined) {
         // t-078: measure with git which candidates production already contains, record it when it changed, then show the three groups
         const g = realGit(process.cwd(), undefined);
-        const measured = containment(b, gitIsAncestor(), { has: (sha) => g.resolve(sha) !== null, shallow: () => g.isShallow(), treeOf: (sha) => g.treeOf?.(sha) ?? null });
+        const measured = containment(b, gitIsAncestor(), { has: (sha) => g.resolve(sha) !== null, shallow: () => g.isShallow(), treeOf: (sha) => g.treeOf?.(sha) ?? null, diffSegments: (a, b) => g.diffSegments?.(a, b) ?? null });
         const fact = containmentFact(b, measured);
         if (fact) { await emit(fact); b = await client.board(true); }
         // t-219：三种「没测」要分得开——尤其第三种（这棵树解不出上线的 sha），因为它此前会写下一份全是 0 的假事实。

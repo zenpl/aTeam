@@ -1941,3 +1941,60 @@ type DistributiveOmit<T, K extends keyof any> = T extends any ? Omit<T, K> : nev
 export type NewEvent = DistributiveOmit<Event, "id" | "at">;
 /** What a client sends: the server supplies actor from the authenticated identity. */
 export type ClientEvent = DistributiveOmit<Event, "id" | "at" | "actor">;
+
+/**
+ * t-325 判据⑥⑦（pm 11:09 定稿 `01M68TAY8BCHQKZE6W79T29HJH`，粒度那个成因出自 frontend 的 note
+ * `01M68T95X5S538MDD2R4Q8RJPC`）：**比树时许可的不是一个文件，是一处差异落在哪一段。**
+ *
+ * 为什么不能按路径豁免：`fly.toml` 里 `[[vm]]` 只改机器大小，而 `[build]`（dockerfile）与 `[env]`
+ * 能改镜像与运行环境——**按路径把整个文件豁免掉，就会把没在跑的代码报成在跑**，而那正是这张单要修的方向。
+ * 所以判法是：取两棵树的**全部差异**，每一处都要落在许可的段里，才算应用内容相同；有一处落在许可之外、
+ * 或落在判不出的地方（比如段头之前的顶层键）⇒ **整个基准说不出**，走「宁可不答」那一桶。
+ */
+export const DEPLOY_CONFIG_SEGMENTS_KEY = "deploy.config.segments";
+export interface ConfigSegment { file: string; section: string }
+/**
+ * 此刻许可的段，**冻在一道会红的闸后面**（判据⑦）：往里加一段，用例当场红，加的人要在证据里说出为什么。
+ * 今天只有一条：`fly.toml` 的 `[[vm]]`（机器大小）。**`[build]` 与 `[env]` 明确不在其中。**
+ */
+export const ALLOWED_CONFIG_SEGMENTS: readonly ConfigSegment[] = [{ file: "fly.toml", section: "[[vm]]" }];
+
+/** 从 `line`（1 起）往上找最近的段头（`[x]` 或 `[[x]]` 独占一行）。找不到就是 null——**那是「判不出」，不是「没有段」**。 */
+export function sectionAt(content: string, line: number): string | null {
+  const lines = content.split("\n");
+  for (let i = Math.min(line, lines.length) - 1; i >= 0; i--) {
+    const t = lines[i].trim();
+    if (/^\[\[?[^\]]+\]\]?$/.test(t)) return t;
+  }
+  return null;
+}
+
+/**
+ * 两棵树之间的全部差异，是不是每一处都落在许可的段里。
+ *
+ * `files` 的每一项是一个有差异的文件：`content` 是**新那一侧**的全文（段头要从它那里找），
+ * `lines` 是新那一侧有改动的行号。一个文件整体新增或删除时，`content` 给空串、`lines` 给空数组——
+ * 那是**判不出**（没有段可归），按上面那条规矩整个基准说不出。
+ */
+export function changesAllowed(files: { file: string; content: string; lines: number[] }[], allowed: readonly ConfigSegment[] = ALLOWED_CONFIG_SEGMENTS):
+  { ok: boolean; excluded: ConfigSegment[]; blocked?: { file: string; section: string | null } } {
+  const excluded: ConfigSegment[] = [];
+  for (const f of files) {
+    if (!f.lines.length) return { ok: false, excluded, blocked: { file: f.file, section: null } };
+    for (const line of f.lines) {
+      const section = sectionAt(f.content, line);
+      const ok = section !== null && allowed.some((a) => a.file === f.file && a.section === section);
+      if (!ok) return { ok: false, excluded, blocked: { file: f.file, section } };
+      if (!excluded.some((e) => e.file === f.file && e.section === section)) excluded.push({ file: f.file, section });
+    }
+  }
+  return { ok: true, excluded };
+}
+
+/**
+ * 判据⑦：每个判决的 `method` 要说出三件事——比了哪两棵树、排除了哪些段、依据是哪一档。
+ * **今天这一档是「读配置语义」，不是「核过 fly 构建产物」**；那个限度是 frontend 自己摆的，我原样带着它。
+ */
+export const CONFIG_TIER_READ_SEMANTICS = "tier: read the config semantics (nobody verified fly's build output)";
+export const contentBaseModuloConfig = (prod: string, base: string, excluded: readonly ConfigSegment[]): string =>
+  `content-tree modulo config: compared ${prod.slice(0, 7)} against ${base.slice(0, 7)}; every difference falls inside ${excluded.map((e) => `${e.file} ${e.section}`).join(", ") || "(none)"}; ${CONFIG_TIER_READ_SEMANTICS}`;

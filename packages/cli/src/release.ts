@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent, CONTENT_BASE_IS_HEAD, CONTENT_BASE_UNKNOWN, contentBaseRolledBack} from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent, CONTENT_BASE_IS_HEAD, CONTENT_BASE_UNKNOWN, contentBaseRolledBack, changesAllowed, contentBaseModuloConfig, type ConfigSegment} from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -269,7 +269,7 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
  * 最后那一种是本件的要点之一：**退回祖先就是退回缺陷**，所以它宁可一个都不答。而它答不出什么，`method`
  * 里写明（判据 3）。
  */
-export function contentBase(b: Board, prod: string, treeOf?: (sha: string) => string | null): { sha: string; rolled_back: boolean } | null {
+export function contentBase(b: Board, prod: string, treeOf?: (sha: string) => string | null, diffSegments?: (a: string, b: string) => { file: string; content: string; lines: number[] }[] | null): { sha: string; rolled_back: boolean; excluded?: ConfigSegment[] } | null {
   if (!treeOf) return null;
   const want = treeOf(prod);
   if (!want) return null;
@@ -278,13 +278,27 @@ export function contentBase(b: Board, prod: string, treeOf?: (sha: string) => st
   // **从最早那一个找起，不是从最新**。几个上线 sha 共用同一个树时（回滚就是这样造出来的），树里的内容
   // 是**最早那一版**的内容；之后落的那些正是被退掉的那几件。从新往旧找会先撞上生产头自己，于是
   // `rolled_back` 永远是 false——这个顺序错我自己的用例当场抓到了（第一版就是反的）。
+  // **只在比生产头更早的那些里找回滚基准**，从最早的找起：几个版本共用同一份内容时，内容是最早那一版的。
+  // 一个都没匹配上 ⇒ 没有回滚在生效，生产头自己就是基准（下面最后一行），行为与 t-325 之前一个字不差。
   for (const s of deploys) {
-    if (treeOf(s) === want) return { sha: s, rolled_back: !sameCommit(s, prod) };
+    if (sameCommit(s, prod)) break;                 // 到生产头了：更晚的不是「更早的版本」
+    if (treeOf(s) === want) return { sha: s, rolled_back: true };
+    if (!diffSegments) continue;
+    const files = diffSegments(s, prod);
+    // t-325 判据⑥：**判不出的那一种不许当成「没有回滚」**——git 答不上来时我们排除不了回滚，所以整个基准说不出。
+    if (!files) return null;
+    if (!files.length) return { sha: s, rolled_back: true };
+    const verdict = changesAllowed(files);
+    if (verdict.ok) return { sha: s, rolled_back: true, excluded: verdict.excluded };
+    // 差异落在许可之外（例如 `[build]` 改了 dockerfile）：**这一个不算基准**。它不是「没有回滚」的证明，
+    // 只是「这一个版本的内容与生产不同」——接着看下一个更早的版本。
   }
+  // 没有更早的版本与生产内容相同 ⇒ 生产头自己是基准（没有回滚在生效那一种）。
+  if (treeOf(prod) === want) return { sha: prod, rolled_back: false };
   return null;
 }
 
-export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null; treeOf?: (sha: string) => string | null } = {}):
+export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null; treeOf?: (sha: string) => string | null; diffSegments?: (a: string, b: string) => { file: string; content: string; lines: number[] }[] | null } = {}):
   { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; bad_evidence: string[]; no_evidence: string[]; method: string } | null {
   const sha = b.release?.deployed_sha;
   if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
@@ -292,10 +306,11 @@ export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha
   // 而它会盖掉别人从完整的树量出来的那一份。这不是阈值，是前提；理由见 core 的 cannotMeasureHere。
   if (opts.has && opts.has(sha) === false) return null;
   // t-325：比树那一问先走（上面 `contentBase` 的注释写着为什么）。拿不到基准时整桶说不出，而 `method` 说出是哪一种。
-  const base = contentBase(b, sha, opts.treeOf);
+  const base = contentBase(b, sha, opts.treeOf, opts.diffSegments);
   const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[],
     bad_evidence: [] as string[], no_evidence: [] as string[],
     method: !base ? CONTENT_BASE_UNKNOWN
+      : base.excluded ? contentBaseModuloConfig(sha, base.sha, base.excluded)
       : base.rolled_back ? contentBaseRolledBack(base.sha)
       : CONTENT_BASE_IS_HEAD };
   const shallow = opts.shallow?.() ?? null;
@@ -354,6 +369,11 @@ export interface Git {
   push(sha: string, branch: string): void;
   /** t-223：一个提交的树对象。回滚认的是**树**：内容与那一版逐字相同，而历史只进不退。 */
   treeOf?(sha: string): string | null;
+  /**
+   * t-325 判据⑥：两棵树之间有差异的文件，以及**新那一侧**每个文件的改动行号与全文。
+   * 段头要从新那一侧找（许可的是「此刻那份配置里的哪一段」）；答不上来就是 null，而 null 会让基准说不出。
+   */
+  diffSegments?(a: string, b: string): { file: string; content: string; lines: number[] }[] | null;
   /** t-223：拿 `tree` 做内容、`parent` 做父，造一个新提交。不改历史、不强推——这就是「反向提交再往前推」。 */
   commitTree?(tree: string, parent: string, message: string): string | null;
   /** Resolve a short sha to the full one, or null when unknown locally. */
@@ -381,6 +401,27 @@ export function realGit(cwd: string, token: string | undefined): Git {
     push: (sha, branch) => { const r = run(["push", remote(), `${sha}:refs/heads/${branch}`]); if (r.status !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/x-access-token:[^@]+@/g, "x-access-token:***@")); },
     resolve: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{commit}`]); return r.status === 0 ? r.stdout.trim() : null; },
     treeOf: (sha) => { const r = run(["rev-parse", "--verify", `${sha}^{tree}`]); return r.status === 0 ? r.stdout.trim() : null; },
+    // t-325 判据⑥：有差异的文件、新那一侧的全文与改动行号。**行号取新那一侧**，因为段头要从此刻那份配置里找。
+    // 任何一步 git 答不上来就整条返回 null——「问不出来」与「没有差异」是两件事，而后者会让基准被误认。
+    diffSegments: (a, b) => {
+      const names = run(["diff", "--name-only", a, b]);
+      if (names.status !== 0) return null;
+      const files = names.stdout.split("\n").map((x) => x.trim()).filter(Boolean);
+      const out: { file: string; content: string; lines: number[] }[] = [];
+      for (const file of files) {
+        const blob = run(["show", `${b}:${file}`]);
+        const content = blob.status === 0 ? blob.stdout : "";
+        const d = run(["diff", "-U0", a, b, "--", file]);
+        if (d.status !== 0) return null;
+        const lines: number[] = [];
+        for (const h of d.stdout.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+          const start = Number(h[1]), count = h[2] === undefined ? 1 : Number(h[2]);
+          for (let i = 0; i < count; i++) lines.push(start + i);
+        }
+        out.push({ file, content, lines });
+      }
+      return out;
+    },
     commitTree: (tree, parent, message) => { const r = run(["commit-tree", tree, "-p", parent, "-m", message]); return r.status === 0 ? r.stdout.trim() : null; },
   };
 }

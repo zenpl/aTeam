@@ -60,3 +60,56 @@ describe("t-325 判据 1、2 · 回滚在生效时，被退掉的那几件落 no
     expect(noList.unmeasured.sort(), "瘦身板上没有上线名单：拿不到基准，不猜").toEqual(["t-early", "t-late"]);
   });
 });
+
+/**
+ * t-325 判据⑥⑦⑧：**除许可的段之外逐字相同，也算「应用内容相同」——而许可的单位是一处差异落在哪一段。**
+ *
+ * 今天的真形状：生产头与第 20 批只差 `fly.toml` 里 `[[vm]]` 的一行（`memory` 256mb → 1gb，我自己量过：
+ * `git diff --name-only` 只有 `fly.toml`、`--shortstat` 是 1 file / 1 insertion / 1 deletion，而两个树对象**不同**）。
+ * 所以逐字相等那一条今天不成立，而按段判它成立。
+ *
+ * 判据⑧ 点名要钉**危险那一侧**：把许可从「段」改回「整个文件按路径豁免」，必须有一格红，
+ * 而且红的方式是「`[build]` 的 dockerfile 变了却仍判相等」——也就是「把没在跑的代码报成在跑」那条路。
+ * 下面第二格就是它，所以它断言的是 `null`（说不出），而不是某个基准。
+ */
+describe("t-325 判据⑥⑧ · 除许可的段之外相同算相同，而 [build] 变了不算", () => {
+  /** 每个 sha 各一棵树：**逐字相等那一条今天不成立**（生产那份 fly.toml 比第 20 批多一行改动），
+   *  所以下面几格走的是「按段判」那一条路。 */
+  const differentTrees = (sha: string) => `tree-of-${sha}`;
+  const FLY_VM = ['app = "ateam"', "", "[build]", '  dockerfile = "Dockerfile"', "", "[[vm]]", '  memory = "1gb"'].join("\n");
+  /** 只差 `[[vm]]` 那一行（第 7 行）。 */
+  const onlyVm = () => [{ file: "fly.toml", content: FLY_VM, lines: [7] }];
+  /** 差的是 `[build]` 的 dockerfile（第 4 行）——它能改镜像。 */
+  const buildChanged = () => [{ file: "fly.toml", content: FLY_VM, lines: [4] }];
+
+  it("**只有 `[[vm]]` 变** ⇒ 第 20 批算基准，而 method 说出比了哪两棵树、排除了哪一段、依据是哪一档", () => {
+    const m = containment(board(ROLL, [D20, ROLL]), isAncestor, { treeOf: differentTrees, diffSegments: onlyVm })!;
+    expect(m.not_contained, "第 20 批之后才落的那一件此刻不在生产上").toEqual(["t-late"]);
+    expect(m.contained).toEqual(["t-early"]);
+    expect(m.method).toContain(D20);
+    expect(m.method).toContain("fly.toml [[vm]]");
+    expect(m.method, "依据那一档要说出来，而且是 frontend 自己摆的那个限度").toContain("read the config semantics");
+  });
+
+  /**
+   * **判据⑧ 那一格，而我把它与 pm 11:09 写的方向差在哪也写在这里**（我随后 tell 了 pm，没有自己改判据）。
+   *
+   * pm 要钉的是「`[build]` 的 dockerfile 变了却仍判树相等」。而按段判之后，`[build]` 变了的后果是
+   * **那个更早的版本不算基准**——于是基准落回生产头自己，两件都算在生产上。方向因此与 pm 描述的相反：
+   * 按**路径**豁免整个 `fly.toml` 时，那个更早的版本反而会被当成基准（下面断言的就是这两种结果不同）。
+   * **所以这一格钉的是「段与路径给出不同的答案」，而注入把段改回路径时它当场红。**
+   */
+  it("**`[build]` 的 dockerfile 变了** ⇒ 那个更早的版本不算基准（按路径豁免会把它算成基准，方向相反）", () => {
+    const m = containment(board(ROLL, [D20, ROLL]), isAncestor, { treeOf: differentTrees, diffSegments: buildChanged })!;
+    expect(m.not_contained, "不许把 t-late 说成不在生产上——`[build]` 不同不是「内容相同」的证明").toEqual([]);
+    expect(m.contained.sort()).toEqual(["t-early", "t-late"]);
+    expect(m.method, "基准是生产头自己，所以这一句一个字没改").toBe("git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）");
+  });
+
+  it("**git 答不上来差异** ⇒ 整桶说不出：排除不了回滚，就不许当成「没有回滚」", () => {
+    const m = containment(board(ROLL, [D20, ROLL]), isAncestor, { treeOf: differentTrees, diffSegments: () => null })!;
+    expect(m.unmeasured.sort(), "宁可不答").toEqual(["t-early", "t-late"]);
+    expect(m.contained).toEqual([]);
+    expect(m.method).toContain("cannot tell");
+  });
+});
