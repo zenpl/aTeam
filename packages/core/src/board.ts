@@ -1207,6 +1207,36 @@ function restated(s: State, i: Instruction, now: Date, listenWindow: number, b: 
 }
 
 /**
+ * t-342 要求㉛：**同一个动作不许在人那一页占两张卡。**
+ *
+ * 真样本（pm 16:44 自己判的那一次）：人那一页上「起一个 qa」占两张——服务那张（`qa 缺人 1020 分钟，
+ * 0 条没送到。起一个 qa？`）与 pm 那张带选项的（`要不要起一个 qa？` ／ 选项 `起一个 qa` | `把 R6 暂给 dev`）。
+ * **收起服务那张，留带选项的那张**（判据 1、2）：后者带着他的另一条路，收走它就把路一起收走了。
+ *
+ * **「同一个动作」的判法不做自然语言比对**（判据 4）。我用两个都可判的条件**同时**成立：
+ * ① 选项里出现这张服务卡的角色名；② **那个选项的文字原样出现在这张服务卡的正文里**。
+ * ② 这一条不需要我新写任何一句话——服务卡的正文自己就带着那个动作（`……起一个 qa？`），所以
+ * 「选项是卡文的子串」就是「它说的是同一个动作」，而比对的是两边各自已有的字。
+ *
+ * **为什么不只用① （判据 4 的字面）**：pm 那张真卡的另一个选项是 `把 R6 暂给 dev`——它**也含**一个角色名
+ * （dev）。只按①，一张 dev 的服务卡会被这条与它无关的选项收走。这一处我收窄了判据 4，窄在它要的方向上
+ * （更不容易误收），**而这是我自己的裁定，已写进 done 的证据交回 pm**。
+ */
+export function actionAlsoOnAskCard(s: State, i: Instruction, human: string): boolean {
+  const role = missingRoleOf(i.body);
+  if (!role) return false;
+  for (const st of s.instructions.values()) {
+    const q = st.instruction;
+    if (q.id === i.id || q.to !== human || !q.options?.length) continue;
+    // 判据 3：**只在未决时生效。** 已决（人点了，或到期默认落了）、被撤回、或者已经过期／条件被动过的，
+    // 都不再是「他手上那条路」——那时服务卡该回来，否则这件事就没有任何一张卡在问他了。
+    if (st.chosen || st.withdrawn || st.overdue || st.stale_since) continue;
+    if (q.options.some((o) => o.trim().length > 1 && o.includes(role) && i.body.includes(o.trim()))) return true;
+  }
+  return false;
+}
+
+/**
  * The role a service card is about, from its first words; undefined for any other instruction.
  * The older openings stay recognised: cards sent before t-139 are still in the log and still name their role.
  */
@@ -1513,6 +1543,8 @@ export function board(s: State, human: string, now: Date = new Date(), opts: Boa
     // 结果是起一个正在交活的节点。deaf 那一态人仍然看得到，在分组那一层（NOBODY HAS ACTED ON），
     // 只是不再以「起一个 X？」的形状进首屏。
     if (i.actor === SERVICE_ACTOR && missingRoleOf(i.body) && presenceStatus(s, missingRoleOf(i.body)!, now, listenWindow) !== "missing") continue;
+    // t-342 要求㉛：同一个动作已经在一张带选项的卡上问他了 ⇒ 收起服务那张（留带选项的那张，它带着另一条路）。
+    if (i.actor === SERVICE_ACTOR && actionAlsoOnAskCard(s, i, human)) continue;
     if (i.actor === SERVICE_ACTOR && serviceNoticeStale(s, i)) continue; // the owner re-did the task, or it moved on
     if (contactAskAnswered(s, i)) continue; // t-069: the webhook fact exists, however it got there
     if (i.to === human) {
