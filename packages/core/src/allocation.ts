@@ -5,7 +5,7 @@
  */
 import { PM_ACTOR, type Instruction, type Note } from "./events.js";
 import { type State } from "./reduce.js";
-import { projectRoles, roleResponsibilities, responsibilityBoundaries } from "./board.js";
+import { projectRoles, roleResponsibilities, responsibilityBoundaries, atClock } from "./board.js";
 
 export type AllocationPattern = "重叠" | "低效" | "无效上下文移交" | "打破独立审核" | "负载陷阱";
 export const ALLOCATION_PATTERNS: AllocationPattern[] = ["重叠", "低效", "无效上下文移交", "打破独立审核", "负载陷阱"];
@@ -206,13 +206,35 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
   if (badHandoff) out.push({ pattern: "无效上下文移交", evidence: [badHandoff.text], hint: `${badHandoff.text}。建议：human 的话直接进日志（说一句），中间角色只加判据。` });
 
   // ---- 重叠 (runtime): two decision notes on one task within ten minutes, neither superseding the other
-  const decisions = s.notes.filter((n) => n.decision && n.task && inWindow(n.at));
+  /**
+   * t-345 判据 1（pm 20:25 自己撞上的那一次，它的 friction 我按归属引）：**照它的建议做，它要认。**
+   *
+   * 这条预警的 hint 写着「改决定用 `--supersedes`」，而判法此前**只认那一对里互指**
+   * （`a.supersedes === b.id || b.supersedes === a.id`）。pm 20:17 照建议做了——用一条**第三方**决策
+   * 取代了那一对里的一条——20:24 再量，预警一字不差地报同一条。**照它说的做，它不认**，于是这条预警
+   * 没有出口：队里每个人每次 board 都会再读到它一遍，而没有任何动作能让它消失（只剩 4 小时窗口滑出）。
+   *
+   * 所以判法扩到**任何一条取代**：日志里有一条 note 指着这一对中的任意一条，这一对就算处置过了。
+   * **不限在回看窗口内**——取代发生在什么时候不要紧，要紧的是它存在；窗口管的是「这一对有多新」，
+   * 不是「处置有多新」。也不限于决策 note：队规让人用 `--supersedes` 改决定，那就认这个动作本身。
+   */
+  const superseded = new Set(s.notes.map((n) => n.supersedes).filter((x): x is string => !!x));
+  /**
+   * **而只加上面那一条还不够，这是我做的时候才看见的一半**：pm 那个动作落下来的是**第三条决策**，
+   * 于是它自己又和剩下那一条凑成一对「互不取代」——照它的建议做，预警换了一对 id 继续报。
+   * 所以带 `supersedes` 的那一条**根本不进候选**：它按构造就是「我来取代那一条」，是队规给的那条出路本身，
+   * 不可能同时是一次**未处置**的重叠的一半。两条合起来，pm 20:17 做的那个动作才真的让它消失。
+   */
+  const decisions = s.notes.filter((n) => n.decision && n.task && inWindow(n.at) && !n.supersedes);
   const dup: Candidate[] = [];
   for (let i = 0; i < decisions.length; i++) for (let j = i + 1; j < decisions.length; j++) {
     const a = decisions[i], b = decisions[j];
     if (a.task !== b.task || Math.abs(Date.parse(a.at) - Date.parse(b.at)) > TEN_MIN) continue;
-    if (a.supersedes === b.id || b.supersedes === a.id) continue;
-    dup.push({ text: `${a.task} 十分钟内有两条互不取代的决策（${a.actor} ${a.id.slice(-6)} 与 ${b.actor} ${b.id.slice(-6)}）`, severity: 2 });
+    if (superseded.has(a.id) || superseded.has(b.id)) continue;
+    // t-345 判据 2：**带上这一对的时刻。** 一条预警因为窗口滑出而不再报，与因为被处置了而不再报，
+    // 此前在板上长成同一种消失；印出它依据的那一对是几点几分，读的人就分得出是哪一种
+    // （时刻已经贴着窗口边缘 ⇒ 它快到期了；时刻还新 ⇒ 它是真的被处置掉的）。时刻是数据，不是新话。
+    dup.push({ text: `${a.task} 十分钟内有两条互不取代的决策（${a.actor} ${a.id.slice(-6)}@${atClock(a.at)} 与 ${b.actor} ${b.id.slice(-6)}@${atClock(b.at)}）`, severity: 2 });
   }
   const near: Candidate[] = [];
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {

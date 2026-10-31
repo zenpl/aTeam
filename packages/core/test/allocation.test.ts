@@ -125,7 +125,9 @@ describe("runtime metrics over the last window", () => {
     await w.emit({ kind: "note", actor: "pm", body: "决策：B", decision: true, task: "t-1" });
     let ws = runtimeAllocation(await w.state(), w.at(), HUMAN);
     expect(ws.map((x) => x.pattern)).toEqual(["重叠"]);
-    expect(ws[0].evidence[0]).toMatch(/^t-1 十分钟内有两条互不取代的决策（pd \w+ 与 pm \w+）$/);
+    // t-345 判据 2：那一对的时刻也印出来（`<id 尾六位>@HH:MM`）——一条因窗口滑出而不再报的预警，
+    // 与一条被处置掉的，此前在板上长成同一种消失；印出时刻，读的人分得出是哪一种。
+    expect(ws[0].evidence[0]).toMatch(/^t-1 十分钟内有两条互不取代的决策（pd \w+@\d\d:\d\d 与 pm \w+@\d\d:\d\d）$/);
     const w2 = world();
     await w2.emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "x", criteria: ["x"] , no_human_impact: true});
     const a2 = await w2.emit({ kind: "note", actor: "pd", body: "决策：A", decision: true, task: "t-1" });
