@@ -80,7 +80,7 @@ describe("t-149 · 判据 1：那句话说全五件事，且一个数都不编",
     await w.put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-fix" }, -10);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-fix", touches: ["packages/cli/src/touches.ts"] }, -9);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-fix", evidence: "abc1234" , no_human_impact: true}, -8);
-    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-fix", surface: "repo", pass: true, evidence: "仓库上核过" }, -7);
+    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-fix", surface: "repo", branch: "dev/fixture", pass: true, evidence: "仓库上核过" }, -7);
 
     const h = gateHonesty(await st(w.s), "seam")!;
     expect(h).toMatchObject({ reported: 8, judged: 8, false_positives: 7, missed: 1, unjudged: 0 });
@@ -172,7 +172,8 @@ describe("t-170 判据 10 · 认不出的那一类，闸自己说出来", () => 
     if (opts.verified) {
       await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-178", touches: ["x"] }, -18);
       await w.put({ kind: "task", actor: "dev", op: "done", task: "t-178", evidence: "abc1234", no_human_impact: true }, -17);
-      await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-178", surface: opts.verified, pass: true, evidence: "核过" }, -16);
+      // t-344：这一处的面由 opts 给，可能是 repo——带上支名（repo 那一面要它，别的面它不收，所以只在 repo 时给）。
+      await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-178", surface: opts.verified, pass: true, evidence: "核过", ...(opts.verified === "repo" ? { branch: "dev/fixture" } : {}) }, -16);
     }
     return w;
   };

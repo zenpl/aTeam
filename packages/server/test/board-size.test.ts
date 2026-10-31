@@ -26,7 +26,7 @@ async function bigDay() {
     await b.note(owner, "note 正文也很长：".repeat(40), { task: id });
     await b.task.done(owner, id, { evidence: `${(1000000 + i).toString(16).padStart(7, "0")}abcd @ 分支：${"证据正文很长，逐条对应判据".repeat(40)}`, shows: "人能看到的一句话" });
     if (i % 3 === 0) {
-      await b.task.verify("qa", id, "repo", false, { evidence: "判据 2 未满足：".repeat(30) });
+      await b.task.verify("qa", id, "repo", false, { branch: "dev/fixture", evidence: "判据 2 未满足：".repeat(30) });
       await b.task.reopen(owner, id, "修");
       await b.task.done(owner, id, { no_human_impact: true, evidence: `${(2000000 + i).toString(16).padStart(7, "0")}abcd 改了：${"证据正文".repeat(60)}` });
     }

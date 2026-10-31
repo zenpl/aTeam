@@ -16,11 +16,11 @@ export async function sampleBuilder(opts: BuilderOptions = {}): Promise<Builder>
   await b.task.claim("dev", "t-1", ["packages/server/src/app.ts#health", "packages/server/src/html.ts#live"]);
   await b.pull("qa");
   await b.task.done("dev", "t-1", { evidence: "abc1234: /health 本地返回 sha", shows: "线上牌桌第一行是版本号" });
-  await b.task.verify("qa", "t-1", "repo", false, { evidence: "判据 2 未满足：牌桌没有「线上」一行" });
+  await b.task.verify("qa", "t-1", "repo", false, { branch: "dev/fixture", evidence: "判据 2 未满足：牌桌没有「线上」一行" });
   await b.pull("dev");
   await b.task.reopen("dev", "t-1", "补牌桌那一行");
   await b.task.done("dev", "t-1", { evidence: "def5678: 牌桌「线上」一行显示 sha", shows: "线上牌桌第一行是版本号" });
-  await b.task.verify("qa", "t-1", "repo", true, { evidence: "本地起服务，两条判据都看到了" });
+  await b.task.verify("qa", "t-1", "repo", true, { branch: "dev/fixture", evidence: "本地起服务，两条判据都看到了" });
   const q = await b.tell("pd", b.human, "牌桌的「线上」放首屏还是挖层？A 首屏；B 挖层。默认 A。", // t-335 判据⑧：默认 A（放首屏）要有人去做，而做它的是 frontend——不是「照旧」，所以这里不写 nothing。
     { options: ["A", "B"], default: "A", default_doer: "frontend", intent: "ask", ackByMs: 24 * 3600_000 });
   await b.ack(b.human, q.id);

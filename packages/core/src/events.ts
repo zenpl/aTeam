@@ -198,7 +198,8 @@ export type TaskOp =
        */
       base_sha?: string;
     }
-  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string }
+  /** t-344（pd 要求㉜）：`branch` 说出这次 `repo` 验收是在哪条支上做的；`repo` 必填，别的面不收。 */
+  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string; branch?: string }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
@@ -787,6 +788,9 @@ export const KEY_SYMBOLS = [
   "UNTIL_UNDER_A_MINUTE",
   "VERIFIED_ON_THIS_VERSION",
   "VERIFY_ASK",
+  "VERIFY_BRANCH_REQUIRED",
+  "VERIFY_BRANCH_UNRECORDED",
+  "VERIFY_BRANCH_UNRECORDED_WHY",
   "WATCH_LINES",
   "WATCH_STOPPED",
   "WHOLE_GATE_OFF",
@@ -1638,6 +1642,42 @@ export const unrenderableLine = (x: { nth: number; total: number; id: string; ki
 export const batchBrokeLine = (x: { nth: number; total: number; cursor: string }) =>
   `这一批在第 ${x.nth}／${x.total} 条之后断了，游标停在 ${x.cursor}，没有推进：下次 sync 会把这一批整个再来一遍。`;
 export const PD_PLACEHOLDER = "（措辞待定）";
+/**
+ * t-344（pd 要求㉜，decision `01M69TGRYYAYV2KE38K6H8PJ8P`）：**`repo` 不是一个面，它至少是两个——
+ * 「✓ repo」要说出是哪条支。**
+ *
+ * pd 量到的那一次：t-240／t-245／t-274 都是 `verified`、板上都显示 `✓ repo`，而那五笔只在三条交付支上，
+ * 能发车的那条支里一笔都没有——于是 pd 18:51 被一件「已验」的毛病咬了。**一个会到人手上，一个不会，
+ * 而两者在板上长得一模一样。**
+ *
+ * 「怎么分」pd 明说归实现与 pm（面名加后缀、还是另立一面）。我取的是**面名加支名**：`verify` 多一个
+ * `branch`（标识符，不译，队规：路径／sha／命令名原样），板上把支名原样印出来。于是两档天然不同行，
+ * **我不需要造「在交付支上验的」「在整合支上验的」这两句**——支名自己就说了，而且它说得更准（哪一条支）。
+ *
+ * **存量不回填**（判据 2）：旧的 282 条 `verified` 里没有这个字段，板上照实说「没记支名」——
+ * 不猜、不默认当成整合支。两句措辞是 pd 22:19 的定稿（`01M6A0RERQ89NCVSWQK4NBGCK1`），照抄。
+ * **人那一页上不印这个后缀**（pd 同一条）：他那一页只由「此刻还没完的事」算出来，旧的已验行本来就不在上面。
+ */
+/**
+ * pd 22:19 定稿（`01M6A0RERQ89NCVSWQK4NBGCK1` ①）：行内只加这个后缀，展开才解释。
+ * **「没记」不是「不知道」**——事实是当时没有记，不是此刻查不出来；「不知道」会让人以为再找找就有。
+ */
+export const VERIFY_BRANCH_UNRECORDED = "没记支名";
+/**
+ * pd 22:19 定稿（同上）：展开／鼠标停住时那一段。**最要紧的是第二句**——没有它，
+ * `✓ repo（没记支名）` 会被读成「反正是验过了」，那就把㉜ 要答的那个问题又藏回去了。
+ */
+export const VERIFY_BRANCH_UNRECORDED_WHY = `这条验收早于 --branch，记录里没有支名。它只说明「在某一条支上验过」，
+不说明它在不在你会拿到的那条支上——要判断，得自己核那条支。`;
+/** 板上一条验收显示成什么：`repo@<支名>`，或者旧事件那一档的后缀。非 repo 的面原样不动。 */
+export const verifiedSurface = (surface: string, branch?: string): string =>
+  surface !== REPO_SURFACE ? surface : branch?.trim() ? `${surface}@${branch.trim()}` : `${surface}（${VERIFY_BRANCH_UNRECORDED}）`;
+/**
+ * pd 22:19 定稿（同上 ②）：`repo` 验收不带 `--branch` 被拒那一句。不以「拒：」开头（服务端前缀已有两层）。
+ * `⟨支名⟩` 那个位置只填支名——pd 点名注意：别让句子变成「补上 --branch 一条支」那种读法。
+ */
+export const VERIFY_BRANCH_REQUIRED = `repo 面的验收要带 --branch：repo 不止一条支，没有支名的「验过」答不了「这件事会不会到我手上」。
+两条出路：补上 --branch ⟨支名⟩；或者这次你验的不是 repo，换成你真正验的那一面。`;
 /**
  * t-333（pd ㉕；定稿 pd 17:20 的 decision `01M69FMZ25DNVK689TG4JS2JFW` ③，照抄不改标点）：
  * **服务替自己撤回一张卡时，理由那一句。** 一句模板加一个槽，人在牌桌上读得到。

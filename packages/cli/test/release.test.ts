@@ -39,7 +39,7 @@ async function world(enable: unknown = true) {
     await emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     await emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha.slice(0, 7)} 完成` , no_human_impact: true});
-    if (verify) await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+    if (verify) await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true });
   };
   const b = async () => board(reduce(await store.read()), HUMAN);
   const log: string[] = [];
@@ -216,8 +216,8 @@ describe("t-093 · the deploy entry refuses a sha that adds unverified work", ()
     await w.emit({ kind: "task", op: "create", actor: "pm", task: id, title: id, criteria: ["x"] , no_human_impact: true});
     await w.emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     await w.emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha.slice(0, 7)} 完成` , no_human_impact: true});
-    if (how === "verified") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
-    if (how === "failed") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: false, evidence: "差一条" });
+    if (how === "verified") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true });
+    if (how === "failed") await w.emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: false, evidence: "差一条" });
   };
 
   it("all verified: it pushes; one done-but-unverified or failed: refused, naming the rule, the tasks and the sha-vs-branch trap", async () => {
@@ -284,7 +284,7 @@ describe("t-209 · 没有任务盖着的提交，发车前要被点名", () => {
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["a"] });
     // t-209：done 记下这一轮的起点。生产在 A，这件从 A 开始做，证据是 B ⇒ 它声称的产出是 (A, B]
     await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${evidence} 完成`, base_sha: A, no_human_impact: true });
-    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true });
     return board(reduce(await store.read()), HUMAN);
   };
 

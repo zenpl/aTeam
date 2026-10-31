@@ -47,17 +47,18 @@ describe("t-062 · Builder", () => {
     await expect(b.task.done("dev", "t-1", { no_human_impact: true })).rejects.toBeInstanceOf(Rejected);
     await b.task.claim("dev", "t-1", ["x"]);
     await b.task.done("dev", "t-1", { no_human_impact: true, evidence: "abc1234" });
-    await expect(b.task.verify("dev", "t-1", "repo", true)).rejects.toThrow(/owner cannot pass/);
-    await b.task.verify("qa", "t-1", "repo", false, { evidence: "不对" });
+    // t-344：repo 面的验收要带支名——这一格测的是「owner 不能验自己的活」，所以除了那一点之外要是合法的。
+    await expect(b.task.verify("dev", "t-1", "repo", true, { branch: "dev/fixture" })).rejects.toThrow(/owner cannot pass/);
+    await b.task.verify("qa", "t-1", "repo", false, { branch: "dev/fixture", evidence: "不对" });
     await expect(b.task.done("dev", "t-1", { no_human_impact: true })).rejects.toThrow(/is failed/); // must reopen (or claim) first
     await b.task.reopen("dev", "t-1", "改");
     await b.task.done("dev", "t-1", { no_human_impact: true, evidence: "def5678" });
-    await b.task.verify("qa", "t-1", "repo", true);
+    await b.task.verify("qa", "t-1", "repo", true, { branch: "dev/fixture" });
     const i = await b.tell("pm", "dev", "x");
     await expect(b.ack("qa", i.id)).rejects.toThrow(/addressed to dev/);
     const t = (await b.state()).tasks.get("t-1")!;
     expect(t.round).toBe(2);
-    expect(surfaceResults(t)).toEqual([{ surface: "repo", pass: true }]);
+    expect(surfaceResults(t)).toEqual([{ surface: "repo", pass: true, branch: "dev/fixture" }]);   // t-344：形状长了一项
     expect(t.verifications.map((v) => [v.round, v.pass])).toEqual([[1, false], [2, true]]);
     // nothing rejected made it into the log; the service's fail notice after the failed verify is there, as on the server
     expect((await b.log()).events.map((e) => e.kind + ("op" in e ? ":" + e.op : ""))).toEqual(["task:create", "task:claim", "task:done", "task:verify", "instruction", "task:reopen", "task:done", "task:verify", "instruction"]);

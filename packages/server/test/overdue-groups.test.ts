@@ -45,7 +45,7 @@ describe("t-152 · 在途只留人有杠杆的那一堆", () => {
       await emit({ kind: "task", op: "create", actor: "pm", task: id, title, criteria: ["能用"] , no_human_impact: true});
       await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [`src/${id}.ts`] });
       await emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha}：做完了`, no_human_impact: true });
-      await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "跑过了" });
+      await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" });
     };
     await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
     await finish("t-push", "推一次就没了", "1111111");

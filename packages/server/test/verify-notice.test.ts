@@ -50,7 +50,7 @@ describe("t-054 · verify --fail notifies the owner", () => {
     expect(notices(await state(), HUMAN, VERIFY_ASK)).toHaveLength(0);
 
     const reason = "criterion 2 not met: " + "细".repeat(80);
-    const v = await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: false, evidence: reason });
+    const v = await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: false, evidence: reason });
     expect(v.status).toBe(201);
     let s = await state();
     const [n] = notices(s, "dev", FAIL_NOTICE);
@@ -77,7 +77,7 @@ describe("t-054 · verify --fail notifies the owner", () => {
     expect(s.instructions.get(n.id)!.acked_at).toBeUndefined();
     expect(owed(b)).not.toContain(n.id);
     // a fail in the new round is a new notice
-    const v2 = await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: false });
+    const v2 = await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: false });
     const all = notices(await state(), "dev", FAIL_NOTICE);
     expect(all).toHaveLength(2);
     expect(all[1].refs).toEqual([v2.body.id]);
@@ -87,7 +87,7 @@ describe("t-054 · verify --fail notifies the owner", () => {
   it("nothing is generated when the one who failed it is the owner", async () => {
     const s = await state();
     const t = s.tasks.get("t-1")!;
-    const fake: Event = { id: "fake", at: new Date().toISOString(), kind: "task", op: "verify", actor: t.owner!, task: "t-1", surface: "repo", pass: false };
+    const fake: Event = { id: "fake", at: new Date().toISOString(), kind: "task", op: "verify", actor: t.owner!, task: "t-1", surface: "repo", branch: "dev/fixture", pass: false };
     expect(followUps(s, fake, HUMAN, new Date())).toEqual([]);
   });
 });
@@ -149,7 +149,7 @@ describe("t-087 · a fail notice goes stale when another role takes the task ove
   it("over the API: the notice leaves the human's and the owner's lists with the reason in the data, and the events stay", async () => {
     await task("t-9", "接手用例");
     await post("dev", { kind: "task", op: "done", task: "t-9", evidence: "abc1234" , no_human_impact: true});
-    const v = await post("qa", { kind: "task", op: "verify", task: "t-9", surface: "repo", pass: false, evidence: "少一条测试" });
+    const v = await post("qa", { kind: "task", op: "verify", task: "t-9", surface: "repo", branch: "dev/fixture", pass: false, evidence: "少一条测试" });
     expect(v.status).toBe(201);
     const later = new Date(Date.now() + 30 * 60_000);
     const notice = notices(await state(later), "dev", FAIL_NOTICE).find((i) => i.body.startsWith("t-9"))!;

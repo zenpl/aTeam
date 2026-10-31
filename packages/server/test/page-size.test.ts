@@ -31,7 +31,7 @@ async function aDay(): Promise<{ b: Board; s: State }> {
     const owner = i % 2 ? "dev" : "frontend";
     await bld.task.claim(owner, id, [`packages/x/${i}.ts`]);
     await bld.task.done(owner, id, { evidence: `${(1000000 + i).toString(16)}abcd：${"证据正文".repeat(20)}`, shows: "人能看到的一句话" });
-    if (i < 34) await bld.task.verify("qa", id, "repo", true, { evidence: "跑过了" });
+    if (i < 34) await bld.task.verify("qa", id, "repo", true, { branch: "dev/fixture", evidence: "跑过了" });
   }
   for (let i = 0; i < 150; i++) {
     await bld.tell("pm", ["dev", "qa", "frontend"][i % 3], `第 ${i} 条：${"请你去做这件事".repeat(6)}`, { ackByMs: 3600_000 });

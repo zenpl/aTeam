@@ -27,7 +27,7 @@ async function fixture(reRecord: boolean): Promise<Board> {
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-025", title: "早的那件", criteria: ["一条"], no_human_impact: true });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-025", touches: ["packages/core/src/rules.ts"] });
   await emit({ kind: "task", op: "done", actor: "dev", task: "t-025", evidence: `${WAS}：pd 那一支`, no_human_impact: true });
-  await emit({ kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "repo", pass: true, evidence: "判过了" });
+  await emit({ kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "repo", branch: "dev/fixture", pass: true, evidence: "判过了" });
   // 真的 t-025 就是这个形状：repo 过、production 没过（`✓ repo ✗ production`）。
   // **而这个形状是这条闸看得见它的前提**：`detectSeams` 跳过 `verified`，所以一件两面都过的任务不会再撞上谁。
   await emit({ kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "production", pass: false, evidence: "还没上线" });
@@ -96,7 +96,8 @@ describe("t-311 判据③④ · task show 上判决仍在，而两个 sha 都看
 
   it("而那张判决一个字没少：谁判的、在哪个表面、过没过，都还在", async () => {
     const text = shown(await fixture(true));
-    expect(text).toContain("✓ pass  repo  by qa");
+    // t-344（pd 要求㉜）：`repo` 那一面现在说得出是哪条支——这一行从 `repo` 变成 `repo@<支名>`。
+    expect(text).toContain("✓ pass  repo@dev/fixture  by qa");
     expect(text).toContain("✗ fail  production  by qa");
   });
 

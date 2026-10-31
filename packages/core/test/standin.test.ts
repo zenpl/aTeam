@@ -28,7 +28,7 @@ async function world() {
     await put({ kind: "task", op: "claim", actor: "dev", task: id, touches: [`packages/${id}.ts`] }, 2);
     await put({ kind: "task", op: "done", actor: "dev", task: id, evidence: `abc1234: ${id}` , no_human_impact: true}, 3);
   }
-  await put({ kind: "task", op: "verify", actor: "qa", task: "t-113", surface: "repo", pass: true }, 4);
+  await put({ kind: "task", op: "verify", actor: "qa", task: "t-113", surface: "repo", branch: "dev/fixture", pass: true }, 4);
   const stood = (mins: number, actor = "pm", task = "t-113", body = "我又手裁了一条接缝") =>
     put({ kind: "note", actor, body: `${STOOD_IN_PREFIX}${body}`, task }, mins);
   const state = async (mins: number) => reduce(await s.read(), at(mins));

@@ -28,7 +28,7 @@ const world = async () => {
 };
 const noCommits: CommitsSince = () => false;
 const noChanges: ChangedSince = () => [];
-const verdictOf = (pass: boolean) => ({ kind: "task", op: "verify", task: "t-a", surface: "repo", pass, evidence: "跑过了" } as unknown as ClientEvent);
+const verdictOf = (pass: boolean) => ({ kind: "task", op: "verify", task: "t-a", surface: "repo", branch: "dev/fixture", pass, evidence: "跑过了" } as unknown as ClientEvent);
 
 const run = async (parts: { what: string; event: ClientEvent }[], fails: (e: ClientEvent) => string | null) => {
   const out: string[] = [], err: string[] = [], sent: string[] = [];

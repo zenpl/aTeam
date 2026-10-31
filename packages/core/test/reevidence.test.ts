@@ -24,7 +24,7 @@ async function world() {
   await emit({ kind: "task", op: "create", actor: "pm", task: "t-025", title: "判据作者可给已建任务追加判据", criteria: ["pd 也能加"], no_human_impact: true });
   await emit({ kind: "task", op: "claim", actor: "dev", task: "t-025", touches: ["packages/core/src/rules.ts"] });
   await emit({ kind: "task", op: "done", actor: "dev", task: "t-025", evidence: `${WAS}：pd 那一支上的那一笔`, no_human_impact: true });
-  const verdict = await emit({ kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "repo", pass: true, evidence: "判过了" });
+  const verdict = await emit({ kind: "task", op: "verify", actor: "qa", task: "t-025", surface: "repo", branch: "dev/fixture", pass: true, evidence: "判过了" });
   return { store, emit, verdict };
 }
 const state = async (store: MemoryStore) => reduce(await store.read());

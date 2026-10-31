@@ -29,7 +29,7 @@ async function failOne(store: Counting, id: string, now: Date): Promise<Event> {
   await append(store, { kind: "task", op: "create", task: id, title: `活 ${id}`, criteria: ["能用"], actor: "pm", no_human_impact: true } as unknown as NewEvent, opts);
   await append(store, { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`], actor: "dev" } as unknown as NewEvent, opts);
   await append(store, { kind: "task", op: "done", task: id, evidence: "abc1234：做完了", actor: "dev", no_human_impact: true } as unknown as NewEvent, opts);
-  return append(store, { kind: "task", op: "verify", task: id, surface: "repo", pass: false, evidence: "没过", actor: "qa" } as unknown as NewEvent, opts);
+  return append(store, { kind: "task", op: "verify", task: id, surface: "repo", branch: "dev/fixture", pass: false, evidence: "没过", actor: "qa" } as unknown as NewEvent, opts);
 }
 
 describe("t-252 · 写入这条路读几次日志", () => {

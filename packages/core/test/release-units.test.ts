@@ -20,7 +20,7 @@ async function world() {
     await emit({ kind: "task", op: "create", actor: "pm", task: id, title: `任务 ${id}`, criteria: ["能用"] , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "dev", task: id, touches: [`src/${id}.ts`] });
     await emit({ kind: "task", op: "done", actor: "dev", task: id, evidence: `${sha}：做完了`, no_human_impact: true });
-    if (verify) await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "跑过了" });
+    if (verify) await emit({ kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" });
   };
   await emit({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "aaaaaaa1111" });
   // two whose code is already in production, one whose code is not, one not verified at all
@@ -56,7 +56,7 @@ describe("t-133 · 页面说能带上的，与牌桌说在等的，是同一个�
     await emit({ kind: "task", op: "create", actor: "pm", task: "t-1", title: "任务", criteria: ["能用"] , no_human_impact: true});
     await emit({ kind: "task", op: "claim", actor: "dev", task: "t-1", touches: ["src/a.ts"] });
     await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: "1111111：做完了" , no_human_impact: true });
-    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: true, evidence: "跑过了" });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" });
     // no deployed.sha at all: the board cannot say what is waiting, so neither may this page
     const b = board(reduce(await store.read()), HUMAN);
     const slim = { ...b, release: { ...b.release, pending_deploy: undefined } };

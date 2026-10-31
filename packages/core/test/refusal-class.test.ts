@@ -65,7 +65,15 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
  * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 142），再回头核它与 137 + 5
  * 对不对得上。两者一致。
  */
-const TOTAL = 142;
+/**
+ * **t-344：142 → 144。** 两处都在 `core/rules.ts` 的 `case "verify"`（pd 要求㉜ 那道闸），
+ * 而**两处都属「那件事没有发生」那一类**（不带 `{ at }`）：`repo` 面的验收没说支名、以及反过来
+ * 给非 repo 的面带了支名。两条的出路都是改一次命令再发，而那条验收**没有**落库。
+ *
+ * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 144），再回头核它与 142 + 2
+ * 对不对得上。两者一致。
+ */
+const TOTAL = 144;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

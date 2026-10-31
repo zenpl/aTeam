@@ -20,7 +20,7 @@ async function world(opts: { contained?: string[]; verified?: boolean }) {
   await put({ kind: "task", actor: "pm", op: "create", task: "t-1", title: "闸自己说实话", criteria: ["能用"], refs: [said.id], no_human_impact: true }, -400);
   await put({ kind: "task", actor: "dev", op: "claim", task: "t-1", touches: ["a.ts"] }, -390);
   await put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "bdbbfd1：做完了", no_human_impact: true }, -380);
-  await put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "仓库上核过" }, -370);
+  await put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "仓库上核过" }, -370);
   if (opts.verified) await put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "生产上走过" }, -360);
   await put({ kind: "reading", actor: "release", surface: "production", key: "deployed.sha", value: "09256fdd1c4f17e79fa128b7bc97544a9f61f60a" }, -350);
   if (opts.contained) await put({ kind: "reading", actor: "release", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: "09256fd", contained: opts.contained, not_contained: [], unmeasured: [], method: "git-ancestor" } }, -340);

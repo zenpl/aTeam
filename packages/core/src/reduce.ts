@@ -84,17 +84,20 @@ export interface TaskState {
 
 export type TaskHistoryEntry =
   | { op: "done"; id: string; by: string; at: string; round: number; evidence?: string }
-  | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string }
+  | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string; branch?: string }
   | { op: "reopen"; id: string; by: string; at: string; round: number; reason: string }
   | { op: "evidence"; id: string; by: string; at: string; round: number; sha: string; was: string | null; why: string };
 
-export interface TaskVerification { id: string; surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number }
+export interface TaskVerification { id: string; surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number;
+  /** t-344（pd 要求㉜）：这次 `repo` 验收是在哪条支上做的。旧事件没有它——**不回填**，板上照实说不知道。 */
+  branch?: string }
 
 /** Latest result per surface in the current round: what the board shows next to the task. */
-export function surfaceResults(t: TaskState): { surface: string; pass: boolean }[] {
-  const latest = new Map<string, boolean>();
-  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, v.pass);
-  return [...latest].map(([surface, pass]) => ({ surface, pass }));
+export function surfaceResults(t: TaskState): { surface: string; pass: boolean; branch?: string }[] {
+  // t-344：连这一面最后那一次的支名一起带出来——板上那一行要说得出「在哪条支上验的」。
+  const latest = new Map<string, { pass: boolean; branch?: string }>();
+  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, { pass: v.pass, branch: v.branch });
+  return [...latest].map(([surface, x]) => ({ surface, pass: x.pass, branch: x.branch }));
 }
 
 /** Everyone who wrote a criterion of this task: none of them may judge it met. */
@@ -878,9 +881,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
       // stands, per surface); a fail with nothing passed yet is a plain failed.
       const passedBefore = surfaceResults(t).some((r) => r.pass);
-      t.verifications.push({ id: e.id, surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round });
+      t.verifications.push({ id: e.id, surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round, branch: e.branch });
       if (e.pass && e.shows?.trim()) t.shows = e.shows.trim();
-      t.history.push({ op: "verify", id: e.id, by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence });
+      t.history.push({ op: "verify", id: e.id, by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence, branch: e.branch });
       t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
     }

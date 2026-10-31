@@ -40,7 +40,7 @@ async function world(rounds: { base?: string; evidence: string }[], extra?: (emi
     if (i > 0) await emit({ kind: "task", op: "reopen", actor: "dev", task: "t-1", reason: "再来一轮" });
     await emit({ kind: "task", op: "done", actor: "dev", task: "t-1", evidence: `${r.evidence} 完成`, ...(r.base ? { base_sha: r.base } : {}), no_human_impact: true });
     // 中间那几轮判 fail 才重开得了（verified 是终局）——今天 t-166 三轮正是这么走的
-    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", pass: i === rounds.length - 1, evidence: "看过了" });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-1", surface: "repo", branch: "dev/fixture", pass: i === rounds.length - 1, evidence: "看过了" });
   }
   if (extra) await extra(emit);
   return board(reduce(await store.read()), HUMAN);

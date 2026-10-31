@@ -75,7 +75,7 @@ beforeAll(async () => {
   await w.post("pm", { kind: "task", op: "create", task: "t-1", title: "Cookie flags", criteria: ["cookie is SameSite=Lax", "no <script> on the page"] , no_human_impact: true});
   await w.post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["api/session.ts"] });
   await w.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "sha 1234567" , no_human_impact: true});
-  await w.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "tests 14/14" });
+  await w.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "tests 14/14" });
   await w.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "ede0f06b9d08c4d7de900832bb32d829cad92ee6", method: "GET /health" });
   await w.post("qa", { kind: "task", op: "verify", task: "t-1", surface: "production", pass: true, evidence: "seen on ateam.fly.dev" });
   await w.post("pm", { kind: "task", op: "create", task: "t-2", title: "Rate limit", criteria: ["429 after 100 rps"] , no_human_impact: true});
@@ -506,7 +506,7 @@ describe("验收 5 · 公开/私有开关不变；说一句；中文界面", () 
       await z.post("pm", { kind: "task", op: "create", task: "t-5", title: "导出报表", criteria: ["能导出表格"] , no_human_impact: true});
       await z.post("dev", { kind: "task", op: "claim", task: "t-5", touches: ["api/export.ts"] });
       await z.post("dev", { kind: "task", op: "done", task: "t-5", evidence: "提交 3456789" , no_human_impact: true});
-      await z.post("qa", { kind: "task", op: "verify", task: "t-5", surface: "repo", pass: true, evidence: "测试通过" });
+      await z.post("qa", { kind: "task", op: "verify", task: "t-5", surface: "repo", branch: "dev/fixture", pass: true, evidence: "测试通过" });
       const q = await z.post("pm", { kind: "instruction", to: HUMAN, body: "先发哪个？", ack_by: soon(), options: ["报表", "限流"], default: "报表", default_doer: "nothing" });
       await z.post(HUMAN, { kind: "ack", of: q.id });
       await z.post(HUMAN, { kind: "note", body: "决定：先发报表", decision: true, decides: { of: q.id, option: "报表" } });
@@ -1039,7 +1039,7 @@ describe("t-091 · 「线上」下常显：有 N 件已验的等一次部署", (
     await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["可用"] , no_human_impact: true});
     await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
     await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}: 全绿` , no_human_impact: true});
-    await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "测试通过" });
+    await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", branch: "dev/fixture", pass: true, evidence: "测试通过" });
   };
   const setup = async (v: ReturnType<typeof server>) => {
     await v.post("dev", { kind: "reading", surface: "production", key: "deployed.sha", value: "aaaaaaa1111", method: "读 /health" });
@@ -1467,10 +1467,10 @@ describe("t-114 · 轻接缝在牌桌上说一句", () => {
       // 「验收不挡」, so verify one side of the light seam and assert it goes through — and that the heavy seam
       // next to it still blocks, or the sentence would be true of everything and mean nothing.
       await v.post("dev", { kind: "task", op: "done", task: "t-1", evidence: "1111111：可用" , no_human_impact: true});
-      const ok = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true, evidence: "跑过了" }) });
+      const ok = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" }) });
       expect(ok.status).toBe(201);
       await v.post("dev", { kind: "task", op: "done", task: "t-3", evidence: "3333333：可用" , no_human_impact: true});
-      const blocked = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-3", surface: "repo", pass: true, evidence: "跑过了" }) });
+      const blocked = await fetch(`${v.base}/events`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "x-actor": "qa", "content-type": "application/json" }, body: JSON.stringify({ kind: "task", op: "verify", task: "t-3", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" }) });
       expect(blocked.status).toBe(409);
     } finally { await v.stop(); }
   });

@@ -138,7 +138,7 @@ describe("t-166 · 标不了的三种情况，每种说一句不同的话", () =
   it("已 verified 的件标得了搬迁：标注不改动被判过的内容，而已验正是它要标的那一批", async () => {
     const w = await world();
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-141", evidence: "abc1234", no_human_impact: true }, -120);
-    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", pass: true, evidence: "看过了：判据 1、2、3" }, -110);
+    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", branch: "dev/fixture", pass: true, evidence: "看过了：判据 1、2、3" }, -110);
     await w.put({ kind: "task", actor: "pm", op: "criteria", task: "t-141", moved: { index: 3, to: "t-148" } }, -100);
     const t = (await st(w.s)).tasks.get("t-141")!;
     expect(t.status).toBe("verified");
@@ -188,7 +188,7 @@ describe("t-166 收口 · 已验之后仍标得了搬迁，但仍追加不了判
     await put({ kind: "task", actor: "pm", op: "create", task: "t-148", title: "接走的那件", criteria: ["接过来"], no_human_impact: true }, -199);
     await put({ kind: "task", actor: "dev", op: "claim", task: "t-141", touches: ["x"] }, -190);
     await put({ kind: "task", actor: "dev", op: "done", task: "t-141", evidence: "abc1234", no_human_impact: true }, -180);
-    await put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", pass: true, evidence: "跑过了" }, -170);
+    await put({ kind: "task", actor: "qa", op: "verify", task: "t-141", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" }, -170);
     expect((await st(s)).tasks.get("t-141")!.status).toBe("verified");
     return { s, put };
   }
@@ -238,7 +238,7 @@ describe("t-166 收口二 · 搭车：一次搬迁不许捎一条新判据进来
     await put({ kind: "task", actor: "pm", op: "create", task: "t-y", title: "承接方", criteria: ["接过来"], no_human_impact: true }, -199);
     await put({ kind: "task", actor: "dev", op: "claim", task: "t-x", touches: ["x"] }, -190);
     await put({ kind: "task", actor: "dev", op: "done", task: "t-x", evidence: "abc1234", no_human_impact: true }, -180);
-    await put({ kind: "task", actor: "qa", op: "verify", task: "t-x", surface: "repo", pass: true, evidence: "跑过了" }, -170);
+    await put({ kind: "task", actor: "qa", op: "verify", task: "t-x", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" }, -170);
     expect((await st(s)).tasks.get("t-x")!.status).toBe("verified");
     return { s, put };
   }

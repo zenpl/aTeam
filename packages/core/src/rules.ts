@@ -1,4 +1,4 @@
-import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES, PD_PLACEHOLDER, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS_WORDS, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_MISSING, DEFAULT_DOER_WITHOUT_DEFAULT, defaultDoerIsRecipient } from "./events.js";
+import { type Event, type NewEvent, type ReadingShape, EVENTS_PARAMS, unknownParamLine, HANDOVER_ONLY_WHEN_MISSING, INSTRUCTION_MAX_CHARS, instructionBodyLength, instructionTooLong, seamSettleAdvice, TITLE_MAX_CHARS, MIGRATION_DONE_KEY, MIGRATION_ASK_TITLE, MIGRATION_OK, INSTRUCTION_INTENTS, PM_ACTOR, PD_ACTOR, SERVICE_ACTOR, EVIDENCE_SHA_RE, EVIDENCE_SHA_FORM, REEVIDENCE_WHY, reevidenceNothingYet, reevidenceSame, reevidenceWho, SHOWS_MAX_CHARS, VERIFIER_ROLES, VERIFY_RESPONSIBILITY, PROJECT_SURFACE, HUMAN_SURFACE, ROLES_KEY, ROLE_ID_RE, ALERT_REACHED_KEY, STOOD_IN_PREFIX, DEPLOYED_TASKS_KEY, SEAM_VERDICTS, SURFACES, NO_HUMAN_IMPACT, EMPTY_IS_NOT_NO_IMPACT, NO_SYMBOL_MEANS_UNCLEAR, isDefaultApplied, touchesHumanVisible, RENDERING_FILES, PD_PLACEHOLDER, DEFAULT_DOER_NOTHING, DEFAULT_DOER_AMBIGUOUS_WORDS, DEFAULT_DOER_AMBIGUOUS, DEFAULT_DOER_MISSING, DEFAULT_DOER_WITHOUT_DEFAULT, REPO_SURFACE, VERIFY_BRANCH_REQUIRED, defaultDoerIsRecipient } from "./events.js";
 import { SECOND_HOME_FROZEN } from "./sayings.js";
 import { type State, type TaskState, openSeamsFor, blockingSeamsIfTouches, passedOn, shapeFor, criteriaAuthors, DEFAULT_DECIDER } from "./reduce.js";
 import { projectRoles, roleResponsibilities, deployedTasksFact, verifierEligibility, presenceStatus, evidenceSha } from "./board.js";
@@ -820,7 +820,29 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       if (t.status !== "done" && t.status !== "verified") throw new Rejected("verify", `${t.id} is ${t.status}, not done`);
       // t-132：这句提示从 SURFACES 生成，不再手写——加一个表面而这句话忘了改，正是手写名单每次的下场。
       if (!e.surface) throw new Rejected("verify", `name the surface you verified on (${SURFACES.join("/")}/...)`);
-      // What stands on this surface right now: the latest verification of this round. A pass that was overturned no
+      /**
+       * t-344 判据 3（pd 要求㉜）：**`repo` 验收必须说出是哪条支。** 一件在交付支上验过、而在能发车的那条
+       * 支上并不存在的修复，对读的人等于不存在——而板上它与「在整合支上验过」长得一模一样。
+       *
+       * **pass 与 fail 一律要**：一条 `repo` 上的 fail 不说支，同样答不出「这件事会不会到我手上」。
+       * 这个 throw 在 `if (e.pass)` 之外，所以它不进 PASS_ONLY_GATE 那一族（那一族只管「放行被拒」）。
+       * **位置**：它与上面那条「说出你验的是哪一面」是同一类——**形状上的前提**，所以紧挨着它，放在
+       * pass／fail 分岔之前。放到分岔之后会落进 t-112 那道结构闸的扫描范围（「fail 那一支里不许有闸」），
+       * 而它不是那一类：它挡的不是「谁在说」，是「这条验收没说清它在哪条支上」——pass 与 fail 一律。
+       * 别的面不收这个字段：`staging`／`production` 是一个面就是一个面，没有这一层歧义。
+       * **拒绝那一句是 pd 22:19 的定稿**（`01M6A0RERQ89NCVSWQK4NBGCK1` ②），照抄不改标点，两条出路在它里面。
+       */
+      // **一处例外，而我把它当缺口写明、已交回 pm／pd**：人在牌桌上点「过」时，落那条 verify 的是服务
+      // （t-055 的那一路，`followUps` 里那一行，actor 是人自己但事件由服务组装）。**服务不知道是哪条支**
+      // ——它手上没有仓库。所以这一路放过，而它落下来的那一条在板上就是「repo（没记支名）」：那正是
+      // pd 为这一档定的那个后缀，说的是真的。
+      // **缺口在这里**：一个角色若想绕开支名，可以不自己验、改去请人判。要不要堵（比如让那张卡把
+      // done 证据里的支名带上），归 pm 排；我不在这一单里自己决定。
+      if (e.surface === REPO_SURFACE && !e.branch?.trim() && e.actor !== human)
+        throw new Rejected("verify", VERIFY_BRANCH_REQUIRED);
+      // 反过来那一档 pd 没有写话，而它也不需要一句新话：说清形状就够（别的面不收这个字段）。
+      if (e.branch !== undefined && e.surface !== REPO_SURFACE)
+        throw new Rejected("verify", `--branch: ${REPO_SURFACE}`);
       // longer blocks (t-104 ② presupposes the next pass is possible — by someone else); a standing pass still does.
       const mine = t.verifications.filter((v) => v.round === t.round && v.surface === e.surface);
       const standing = mine[mine.length - 1];
@@ -851,6 +873,7 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
         if (passer === e.actor && !namesCriterion(e.evidence, t.criteria.length))
           throw new Rejected("verify", `你在推翻自己在 ${e.surface} 上判的 pass：证据要指名推翻的是哪一条判据（写「判据 3」或「第 3 条」，这件共 ${t.criteria.length} 条），否则没人复核得了，也说不清改完算不算好了`);
       }
+      // What stands on this surface right now: the latest verification of this round. A pass that was overturned no
       return;
     }
     case "block":

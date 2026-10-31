@@ -17,7 +17,7 @@ async function world(after: boolean): Promise<Board> {
   await b.task.create("pm", "t-1", "第一件", ["判据"], { no_human_impact: true });
   await b.task.claim("dev", "t-1", ["a.ts"]);
   await b.task.done("dev", "t-1", { evidence: `${SHA.slice(0, 7)} 完成`, no_human_impact: true });
-  await b.task.verify("qa", "t-1", "repo", true, { evidence: "跑过了" });
+  await b.task.verify("qa", "t-1", "repo", true, { branch: "dev/fixture", evidence: "跑过了" });
   await b.reading("release", "deployed.sha", SHA, { surface: "production" });
   // 这条事实把 t-1 判成「还没进生产」，所以 pending_deploy 是 1——**这一格才分得出改动前后**：
   // 0 件那一格在改动之前就已经被既有的「unknown > 0」那一支接住了（我核过），它不是这次修的那一半。
@@ -26,7 +26,7 @@ async function world(after: boolean): Promise<Board> {
     await b.task.create("pm", "t-2", "事实之后才做的那一件", ["判据"], { no_human_impact: true });
     await b.task.claim("dev", "t-2", ["b.ts"]);
     await b.task.done("dev", "t-2", { evidence: `${"b".repeat(7)} 完成`, no_human_impact: true });
-    await b.task.verify("qa", "t-2", "repo", true, { evidence: "跑过了" });
+    await b.task.verify("qa", "t-2", "repo", true, { branch: "dev/fixture", evidence: "跑过了" });
   }
   return b.board(new Date());
 }

@@ -58,7 +58,8 @@ export interface BoardTask {
   /** Every done, verify and reopen in order, with the round each belongs to. */
   history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
-  surfaces: { surface: string; pass: boolean }[];
+  /** t-344：带上这一面最后那次验收的支名（`repo` 才有；旧事件没有）。 */
+  surfaces: { surface: string; pass: boolean; branch?: string }[];
   /** t-076: surfaces whose pass was later overturned by a fail, with who, when and why. */
   overturned?: { surface: string; by: string; at: string; evidence?: string; passed_by: string }[];
   /** Surfaces whose latest result since the task was last done is a pass. */

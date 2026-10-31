@@ -48,13 +48,14 @@ describe("t-003 · ateam task show", () => {
     expect(fmt.task(boardTask(b, "t-002")!, b.seams, b.omitted)).toContain("stacked (t-002 on t-001, blocks nothing)  with t-001: packages/server/src/app.ts");
 
     await emit({ kind: "task", op: "seam", actor: "pm", tasks: ["t-001", "t-002"], resolution: "frontend adds routes below /health only" });
-    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-001", surface: "repo", pass: true, evidence: "ran dist locally" });
+    await emit({ kind: "task", op: "verify", actor: "qa", task: "t-001", surface: "repo", branch: "dev/fixture", pass: true, evidence: "ran dist locally" });
     await emit({ kind: "task", op: "done", actor: "frontend", task: "t-002" , no_human_impact: true});
     await emit({ kind: "task", op: "verify", actor: "qa", task: "t-002", surface: "production", pass: false, evidence: "GET / is still json" });
     b = board(reduce(await store.read()), HUMAN);
     const text = fmt.task(boardTask(b, "t-001")!, b.seams, b.omitted);
     expect(text).toContain("status     verified");
-    expect(text).toContain("✓ pass  repo  by qa");
+    // t-344（pd 要求㉜）：`repo` 那一面现在说得出是哪条支——这一行从 `repo` 变成 `repo@<支名>`。
+    expect(text).toContain("✓ pass  repo@dev/fixture  by qa");
     expect(text).toContain(": ran dist locally");
     expect(text).toContain("resolved by pm  with t-002: packages/server/src/app.ts");
     const failed = fmt.task(boardTask(b, "t-002")!, b.seams, b.omitted);

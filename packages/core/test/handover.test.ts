@@ -35,7 +35,7 @@ async function upTo(w: ReturnType<typeof world>, id: string, status: "working" |
   await w.emit({ kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`], actor: "frontend" } as unknown as NewEvent);
   if (status === "working") return;
   await w.emit({ kind: "task", op: "done", task: id, evidence: "abc1234：做完了", actor: "frontend", no_human_impact: true } as unknown as NewEvent);
-  if (status === "failed") await w.emit({ kind: "task", op: "verify", task: id, surface: "repo", pass: false, evidence: "没过", actor: "qa" } as unknown as NewEvent);
+  if (status === "failed") await w.emit({ kind: "task", op: "verify", task: id, surface: "repo", branch: "dev/fixture", pass: false, evidence: "没过", actor: "qa" } as unknown as NewEvent);
 }
 
 /** dev 想接走。返回拒绝话，或 null（接走了）。 */

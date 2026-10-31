@@ -38,7 +38,7 @@ function log(): Event[] {
     ev({ kind: "task", actor: "pm", op: "create", task: "t-2", title: "验过了等上线", criteria: ["成立"], no_human_impact: true }, at(46)),
     ev({ kind: "task", actor: "dev", op: "claim", task: "t-2", touches: ["src/b.ts"] }, at(45)),
     ev({ kind: "task", actor: "dev", op: "done", task: "t-2", evidence: "提交 2222222", no_human_impact: true }, at(44)),
-    ev({ kind: "task", actor: "qa", op: "verify", task: "t-2", surface: "repo", pass: true, evidence: "测试通过" }, at(43)),
+    ev({ kind: "task", actor: "qa", op: "verify", task: "t-2", surface: "repo", branch: "dev/fixture", pass: true, evidence: "测试通过" }, at(43)),
     // 还在做的
     ev({ kind: "task", actor: "pm", op: "create", task: "t-3", title: "在做", criteria: ["成立"], no_human_impact: true }, at(42)),
     ev({ kind: "task", actor: "frontend", op: "claim", task: "t-3", touches: ["src/c.ts"] }, at(41)),

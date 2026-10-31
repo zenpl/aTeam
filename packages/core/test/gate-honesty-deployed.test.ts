@@ -26,7 +26,7 @@ async function world(fact?: { contained: string[]; not_contained: string[] }) {
   await put({ kind: "reading", actor: "pm", surface: PROJECT_SURFACE, key: gateFixKey("seam"), value: "t-160" }, -80);
   await put({ kind: "task", actor: "dev", op: "claim", task: "t-160", touches: ["packages/cli/src/touches.ts"] }, -70);
   await put({ kind: "task", actor: "dev", op: "done", task: "t-160", evidence: "bdbbfd1：做完了", no_human_impact: true }, -60);
-  await put({ kind: "task", actor: "qa", op: "verify", task: "t-160", surface: "repo", pass: true, evidence: "仓库上核过" }, -50);
+  await put({ kind: "task", actor: "qa", op: "verify", task: "t-160", surface: "repo", branch: "dev/fixture", pass: true, evidence: "仓库上核过" }, -50);
   if (fact) await put({ kind: "reading", actor: "release", surface: "production", key: DEPLOYED_TASKS_KEY, value: { sha: "09256fd", ...fact, unmeasured: [], method: "git-ancestor" } }, -40);
   return s;
 }

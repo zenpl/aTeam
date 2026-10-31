@@ -22,7 +22,7 @@ beforeAll(async () => {
   await post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["app.ts"] });
   await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234: 本地看到", shows: "牌桌第一行是版本" });
   await post("frontend", { kind: "task", op: "claim", task: "t-2", touches: ["app.ts"] });
-  await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true });
+  await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true });
   await post("pd", { kind: "note", body: "评审过了", task: "t-1" });
 });
 afterAll(() => new Promise<void>((r) => app.close(() => r())));

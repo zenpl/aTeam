@@ -41,7 +41,7 @@ describe("t-132 · staging 是一个表面，不是生产的别名", () => {
 
   it("判据 3：「验过」说得出是在哪个表面验的——两个表面各验一次，两个都在", async () => {
     const w = await world();
-    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", pass: true }, -60);
+    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true }, -60);
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "staging", pass: true }, -50);
     const b = board(await st(w.s), HUMAN, at(0));
     const row = (b.tasks.verified ?? []).find((x) => x.id === "t-1")!;
@@ -78,14 +78,14 @@ describe("t-132 · staging 是一个表面，不是生产的别名", () => {
   it("表面对 pass 独立，对 fail 不独立：一次 fail 之后，别的表面也要等一次新的 done", async () => {
     const w = await world();
     await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "staging", pass: false, evidence: "staging 上第 2 条不成立" }, -50);
-    const err = await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", pass: true }, -40).catch((x) => x as Rejected);
+    const err = await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true }, -40).catch((x) => x as Rejected);
     expect(err, "staging 上的一次 fail 挡住了 repo 上的验收").toBeInstanceOf(Rejected);
     expect(err.message).toContain("failed");
     // 新的一轮之后，别的表面又能判了——挡住的是「这一轮」，不是这个表面
     await w.put({ kind: "task", actor: "dev", op: "reopen", task: "t-1", reason: "staging 上那一条要重做" }, -35);
     await w.put({ kind: "task", actor: "dev", op: "claim", task: "t-1", touches: ["x"] }, -33);
     await w.put({ kind: "task", actor: "dev", op: "done", task: "t-1", evidence: "def5678", no_human_impact: true }, -30);
-    const e = await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", pass: true }, -20);
+    const e = await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true }, -20);
     expect(e.kind).toBe("task");
   });
 

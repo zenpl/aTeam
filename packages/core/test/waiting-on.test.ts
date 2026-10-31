@@ -43,7 +43,7 @@ describe("t-231 判据 1、2、3 · 「等谁」按状态算，不按 owner 算"
     await task(w, "t-1", "pm", "dev", "working");
     await w.put({ kind: "task", actor: "pm", op: "create", task: "t-2", title: "没人认领", criteria: ["能用"], no_human_impact: true }, -200);
     await task(w, "t-3", "pm", "dev");
-    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-3", surface: "repo", pass: true, evidence: "跑过了" }, -100);
+    await w.put({ kind: "task", actor: "qa", op: "verify", task: "t-3", surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" }, -100);
     const b = await boardAt(w);
     expect(of(b, "t-1").waiting_on).toEqual(["dev"]);
     expect(of(b, "t-2").waiting_on).toEqual([]);

@@ -14,14 +14,14 @@ async function world(after: boolean): Promise<Board> {
   await b.task.create("pm", "t-1", "第一件", ["判据"], { no_human_impact: true });
   await b.task.claim("dev", "t-1", ["a.ts"]);
   await b.task.done("dev", "t-1", { evidence: `${SHA.slice(0, 7)} 完成`, no_human_impact: true });
-  await b.task.verify("qa", "t-1", "repo", true, { evidence: "跑过了" });
+  await b.task.verify("qa", "t-1", "repo", true, { branch: "dev/fixture", evidence: "跑过了" });
   await b.reading("release", "deployed.sha", SHA, { surface: "production" });
   await b.reading("release", "deployed.tasks", { sha: SHA, contained: ["t-1"], not_contained: [], unmeasured: [], method: "git-ancestor" }, { surface: "production" });
   if (after) {
     await b.task.create("pm", "t-2", "事实之后才做的那一件", ["判据"], { no_human_impact: true });
     await b.task.claim("dev", "t-2", ["b.ts"]);
     await b.task.done("dev", "t-2", { evidence: `${"b".repeat(7)} 完成`, no_human_impact: true });
-    await b.task.verify("qa", "t-2", "repo", true, { evidence: "跑过了" });
+    await b.task.verify("qa", "t-2", "repo", true, { branch: "dev/fixture", evidence: "跑过了" });
   }
   return b.board(new Date());
 }

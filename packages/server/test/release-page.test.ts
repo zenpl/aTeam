@@ -31,7 +31,7 @@ async function task(v: ReturnType<typeof server>, id: string, title: string, sha
   await v.post("pm", { kind: "task", op: "create", task: id, title, criteria: ["能用"] , no_human_impact: true});
   await v.post("dev", { kind: "task", op: "claim", task: id, touches: [`src/${id}.ts`] });
   await v.post("dev", { kind: "task", op: "done", task: id, evidence: `${sha}：做完了` , no_human_impact: true});
-  if (status === "verified") await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", pass: true, evidence: "跑过了" });
+  if (status === "verified") await v.post("qa", { kind: "task", op: "verify", task: id, surface: "repo", branch: "dev/fixture", pass: true, evidence: "跑过了" });
 }
 
 describe("t-133 · 上线详情页", () => {

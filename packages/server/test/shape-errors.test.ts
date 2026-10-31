@@ -50,7 +50,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
       [{ kind: "task", op: "claim", task: "t-1" }, "task:claim 要带 touches"],
       [{ kind: "task", op: "done" , no_human_impact: true}, "task:done 要带 task"],
       [{ kind: "task", op: "verify", task: "t-1", pass: true }, "task:verify 要带 surface"],
-      [{ kind: "task", op: "verify", task: "t-1", surface: "repo" }, "task:verify 要带 pass"],
+      [{ kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture" }, "task:verify 要带 pass"],
       [{ kind: "task", op: "block", task: "t-1" }, "task:block 要带 on"],
       [{ kind: "task", op: "withdraw", task: "t-1" }, "task:withdraw 要带 reason"],
       [{ kind: "task", op: "obsolete", task: "t-1" }, "task:obsolete 要带 decision"],
@@ -69,7 +69,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
   it("类型不对读起来和缺了一样，也一律 4xx：数组写成字符串、布尔写成字符串、嵌套字段写歪", async () => {
     const cases: [unknown, string][] = [
       [{ kind: "task", op: "claim", task: "t-1", touches: "a.ts" }, "task:claim 要带 touches（一个字符串数组）"],
-      [{ kind: "task", op: "verify", task: "t-1", surface: "repo", pass: "true" }, "task:verify 要带 pass（true 或 false）"],
+      [{ kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: "true" }, "task:verify 要带 pass（true 或 false）"],
       [{ kind: "task", op: "seam", tasks: ["t-1"], resolution: "x" }, "task:seam 要带 tasks"],
       [{ kind: "task", op: "seam", tasks: "t-1,t-2", resolution: "x" }, "task:seam 要带 tasks"],
       [{ kind: "task", op: "create", task: "t-1", title: "题", criteria: "能用" , no_human_impact: true}, "task:create 要带 criteria（一个字符串数组）"],
@@ -94,7 +94,7 @@ describe("t-109 · a wrong shape is a refusal, not a crash", () => {
     expect((await post("pm", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] , no_human_impact: true})).status).toBe(201);
     expect((await post("dev", { kind: "task", op: "claim", task: "t-1", touches: ["a.ts"] })).status).toBe(201);
     expect((await post("dev", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" , no_human_impact: true})).status).toBe(201);
-    expect((await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true })).status).toBe(201);
+    expect((await post("qa", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true })).status).toBe(201);
     expect((await post("pm", { kind: "note", body: "记一笔" })).status).toBe(201);
     expect((await post("pm", { kind: "reading", key: "k", surface: "project", value: { any: "shape" } })).status).toBe(201);
   });

@@ -59,6 +59,6 @@ describe("t-106 · role ids over the wire", () => {
     expect((await post("editor", { kind: "task", op: "create", task: "t-1", title: "题", criteria: ["能用"] , no_human_impact: true})).status).toBe(201);
     expect((await post("writer", { kind: "task", op: "claim", task: "t-1", touches: ["x"] })).status).toBe(201);
     expect((await post("writer", { kind: "task", op: "done", task: "t-1", evidence: "abc1234" , no_human_impact: true})).status).toBe(201);
-    expect((await post("reviewer", { kind: "task", op: "verify", task: "t-1", surface: "repo", pass: true })).status).toBe(201);
+    expect((await post("reviewer", { kind: "task", op: "verify", task: "t-1", surface: "repo", branch: "dev/fixture", pass: true })).status).toBe(201);
   });
 });

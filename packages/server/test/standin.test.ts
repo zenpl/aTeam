@@ -28,7 +28,7 @@ beforeAll(async () => {
     await post("dev", { kind: "task", op: "claim", task: id, touches: [`packages/${id}.ts`] });
     await post("dev", { kind: "task", op: "done", task: id, evidence: `abc1234: ${id}` , no_human_impact: true});
   }
-  await post("qa", { kind: "task", op: "verify", task: "t-113", surface: "repo", pass: true });
+  await post("qa", { kind: "task", op: "verify", task: "t-113", surface: "repo", branch: "dev/fixture", pass: true });
 });
 afterAll(() => new Promise<void>((r) => app.close(() => r())));
 

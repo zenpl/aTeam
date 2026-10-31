@@ -80,8 +80,10 @@ describe("t-112 · each gate, driven for real: the pass is refused with pd's sen
   };
   const refusal = async (s: MemoryStore, ne: NewEvent, mins: number) =>
     append(s, ne, { human: HUMAN, now: at(mins) }).catch((e: Rejected) => e) as Promise<Rejected>;
-  const pass = (actor: string, surface = "repo") => ({ kind: "task", op: "verify", actor, task: "t-1", surface, pass: true }) as NewEvent;
-  const fail = (actor: string, surface = "repo", evidence?: string) => ({ kind: "task", op: "verify", actor, task: "t-1", surface, pass: false, evidence }) as NewEvent;
+  // t-344：repo 面的验收要带支名，所以这个造 pass 的小工具一并带上（它造的全是 repo 那一面的）。
+  // t-344：支名只对 repo 那一面成立（别的面不收这个字段），所以按面给——这两个小工具造的面是参数化的。
+  const pass = (actor: string, surface = "repo") => ({ kind: "task", op: "verify", actor, task: "t-1", surface, pass: true, ...(surface === "repo" ? { branch: "dev/fixture" } : {}) }) as NewEvent;
+  const fail = (actor: string, surface = "repo", evidence?: string) => ({ kind: "task", op: "verify", actor, task: "t-1", surface, pass: false, evidence, ...(surface === "repo" ? { branch: "dev/fixture" } : {}) }) as NewEvent;
 
   it("owner", async () => {
     const { s } = await ready();

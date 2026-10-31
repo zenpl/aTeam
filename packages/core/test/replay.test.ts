@@ -111,12 +111,12 @@ describe("F5 · separation of duties is a rule, not a role", () => {
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t1", title: "x", criteria: ["y"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "backend", task: "t1", touches: ["a"] });
     // "done" is a claim, not a verdict
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/not done/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/not done/);
     await emit(store, c, { kind: "task", op: "done", actor: "backend", task: "t1", evidence: "guard test added" , no_human_impact: true});
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "backend", task: "t1", surface: "repo", pass: true }))).message).toMatch(/owner/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "repo", pass: true }))).message).toMatch(/criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "backend", task: "t1", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/owner/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/criteria/);
     // the human is the policy authority and may verify anything
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", pass: false, evidence: "guard test file never pushed" });
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", branch: "dev/fixture", pass: false, evidence: "guard test file never pushed" });
     expect(reduce(await store.read(), c.now()).tasks.get("t1")!.status).toBe("failed");
   });
 
@@ -127,7 +127,7 @@ describe("F5 · separation of duties is a rule, not a role", () => {
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "t1", touches: ["Banner.tsx"] });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t1" , no_human_impact: true});
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "", pass: true }))).message).toMatch(/surface/);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true, evidence: "grep found new copy" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "grep found new copy" });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.tasks.verified[0].verified_on).toEqual(["repo"]); // visibly not "production"
   });
@@ -145,15 +145,16 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     const store = new MemoryStore();
     const c = clock();
     await doneTask(store, c);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true, evidence: "ran dist" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true, evidence: "ran dist" });
     expect(await status(store, c)).toBe("verified");
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true, evidence: "curl /health" });
     expect(await status(store, c)).toBe("verified");
-    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }));
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(again.rule).toBe("verify");
     expect(again.message).toMatch(/already passed on repo/);
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.tasks.verified[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: true }]);
+    // t-344：repo 那一面的结果带上支名（形状长了一项，不是行为变了）
+    expect(b.tasks.verified[0].surfaces).toEqual([{ surface: "repo", pass: true, branch: "dev/fixture" }, { surface: "production", pass: true, branch: undefined }]);
     expect(b.tasks.verified[0].verified_on).toEqual(["repo", "production"]);
     expect(b.tasks.verified[0].verifications).toHaveLength(2);
   });
@@ -162,11 +163,11 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     const store = new MemoryStore();
     const c = clock();
     await doneTask(store, c);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: false, evidence: "sha is unknown" });
     expect(await status(store, c)).toBe("done");
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
-    expect(b.tasks.done[0].surfaces).toEqual([{ surface: "repo", pass: true }, { surface: "production", pass: false }]);
+    expect(b.tasks.done[0].surfaces).toEqual([{ surface: "repo", pass: true, branch: "dev/fixture" }, { surface: "production", pass: false, branch: undefined }]);
     expect(b.tasks.done[0].verified_on).toEqual(["repo"]);
     // t-104 ② (pd 00:12): one fail closes that surface to every pass until a new done — a redeploy is not one, and
     // "someone else passes it instead" is changing judges, not overturning. The owner says it again, then production
@@ -174,21 +175,21 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true }))).message).toMatch(/要等一次新的 done/);
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "t1", reason: "重新部署" });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1", evidence: "无需改动：重新部署后 /health 报的就是这个 sha" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "production", pass: true });
     expect(await status(store, c)).toBe("verified");
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true }))).message).toMatch(/repo/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/repo/);
   });
 
   it("a failed task that is reclaimed and done again starts a new round: repo may pass again, history is kept", async () => {
     const store = new MemoryStore();
     const c = clock();
     await doneTask(store, c);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: false, evidence: "no sha field" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: false, evidence: "no sha field" });
     expect(await status(store, c)).toBe("failed");
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t1", touches: ["app.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1", evidence: "abc1234" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true });
     expect(await status(store, c)).toBe("verified");
     const t = reduce(await store.read(), c.now()).tasks.get("t1")!;
     expect(t.verifications.map((v) => [v.round, v.surface, v.pass])).toEqual([[1, "repo", false], [2, "repo", true]]);
@@ -198,7 +199,7 @@ describe("t-006 · verified on one surface is not verified on another", () => {
     const store = new MemoryStore();
     const c = clock();
     await doneTask(store, c);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t1", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t1", surface: "production", pass: true }))).message).toMatch(/owner/);
     expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t1", surface: "production", pass: true }))).message).toMatch(/criteria/);
 
@@ -229,7 +230,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     expect(b.seams[0].stacked).toEqual({ done: "A", on: "B" });
     expect(b.seams[0].open).toBe(false);
     expect(b.needs_human).toHaveLength(0);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
@@ -244,7 +245,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     expect(b.seams[0].stacked).toBeUndefined();
     expect(b.seams[0].open).toBe(true);
     expect(b.needs_human).toHaveLength(0); // a seam is the team's to own, never a question for the human
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/seam/);
   });
 
   it("a stacked seam turns back into a collision if the done task fails and is reclaimed while the other is still in flight", async () => {
@@ -254,7 +255,7 @@ describe("t-009 · a seam with a task that was done before you claimed is stacki
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["cli/main.ts"] });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "test missing" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "test missing" });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["cli/main.ts"] });
     const b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.seams[0].stacked).toBeUndefined();
@@ -422,7 +423,7 @@ describe("t-017 · a task created on a false premise is withdrawn, not worked ar
     expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is working; only an open or blocked task/);
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t1" , no_human_impact: true});
     expect((await rejected(withdraw(store, c, "t1", HUMAN))).message).toMatch(/t1 is done/);
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t1", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await rejected(withdraw(store, c, "t1", "pm"))).message).toMatch(/t1 is verified/);
     expect(reduce(await store.read(), c.now()).tasks.get("t1")!.status).toBe("verified");
   });
@@ -446,7 +447,7 @@ describe("t-017 · a task created on a false premise is withdrawn, not worked ar
     expect(b.seams[0].stacked).toEqual({ done: "B", on: "C" });
     expect(b.seams.filter((x) => x.open)).toHaveLength(0);
     // B is no longer blocked by A: verify goes through
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     // a new claim over the same file does not seam against the withdrawn task
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "D", touches: ["cli/main.ts"] });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
@@ -643,7 +644,7 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     const { store, c } = await setup();
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" , no_human_impact: true});
     // t-104: pass 收窄到持 R6 的角色，这里 qa 写了判据，只剩 human 能落
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await rejected(emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["再加一条"] }))).message).toMatch(/t-020 is verified; its criteria are what was judged/);
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "t-x", title: "x", criteria: ["y"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "t-x", reason: "重复" });
@@ -655,25 +656,25 @@ describe("t-025 · criteria can be added to an unfinished task; the adder become
     await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "t-020", add: ["空状态有一句话说明"] });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" , no_human_impact: true});
     expect((await task(store, c)).criteria_added.map((a) => a.by)).toEqual(["pd"]);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true }); // t-104: qa 写了判据，只剩 human
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/wrote the criteria/);
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", branch: "dev/fixture", pass: true }); // t-104: qa 写了判据，只剩 human
   });
 
   it("whoever added a criterion cannot verify the task any more; the human still can", async () => {
     const { store, c } = await setup();
     await emit(store, c, { kind: "task", op: "criteria", actor: "pm", task: "t-020", add: ["空状态有一句话说明"] });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "t-020" , no_human_impact: true});
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/wrote the criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/wrote the criteria/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/wrote the criteria/);
     // t-104: dev 不持 R6，落不了 pass 了——这个项目里除了写了判据的 qa 就只剩 human
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", pass: true }))).message).toMatch(/不持 R6/);
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/不持 R6/);
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await task(store, c)).status).toBe("verified");
     // the human is the policy authority even when they added a criterion
     const s2 = await setup();
     await emit(s2.store, s2.c, { kind: "task", op: "criteria", actor: HUMAN, task: "t-020", add: ["x"] });
     await emit(s2.store, s2.c, { kind: "task", op: "done", actor: "frontend", task: "t-020" , no_human_impact: true});
-    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", pass: true });
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: HUMAN, task: "t-020", surface: "repo", branch: "dev/fixture", pass: true });
   });
 });
 
@@ -780,19 +781,19 @@ describe("t-028 · the owner can reopen a done task to change it; every round st
 
   it("an existing repo pass stays on record but no longer counts: the new round must be verified again", async () => {
     const { store, c } = await setup();
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true, evidence: "tests green" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true, evidence: "tests green" });
     expect((await task(store, c)).status).toBe("verified");
     // verified is final; a failed one can be reopened
     expect((await rejected(emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "t-020", reason: "改" }))).message).toMatch(/t-020 is verified; only a done or failed task can be reopened \(verified is final/);
 
     const s2 = await setup();
-    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: false, evidence: "missing empty state" });
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", branch: "dev/fixture", pass: false, evidence: "missing empty state" });
     await emit(s2.store, s2.c, { kind: "task", op: "reopen", actor: "pm", task: "t-020", reason: "qa 的失败点要修" });
     await emit(s2.store, s2.c, { kind: "task", op: "done", actor: "frontend", task: "t-020", evidence: "fix" , no_human_impact: true});
     const t = await task(s2.store, s2.c);
     expect(t.verifications).toHaveLength(1); // kept
     expect(surfaceResults(t)).toEqual([]);   // but nothing counts in round 2
-    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", pass: true });
+    await emit(s2.store, s2.c, { kind: "task", op: "verify", actor: "qa", task: "t-020", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await task(s2.store, s2.c)).status).toBe("verified");
   });
 
@@ -827,7 +828,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     c.tick(min(1));
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true, evidence: "tests green" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true, evidence: "tests green" });
   };
   const release = async (store: MemoryStore, c: ReturnType<typeof clock>) => board(reduce(await store.read(), c.now()), HUMAN, c.now()).release;
 
@@ -887,7 +888,7 @@ describe("t-029 · board.release lists what passed on repo and not yet on produc
     expect((await release(store, c)).candidates).toEqual([]); // being changed: the old sha must not ship (qa, t-029 repo FAIL)
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "D", evidence: "2222222" , no_human_impact: true});
     expect((await release(store, c)).candidates).toEqual([]);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "D", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await release(store, c)).candidates[0]).toMatchObject({ task: "D", evidence_sha: "2222222" });
   });
 });
@@ -920,7 +921,7 @@ describe("t-030 · what the human said, and where it went", () => {
 
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "t-40", touches: ["auth"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-40", evidence: "abc1234" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await said(store, c))[0].status).toBe("task");
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-40", surface: "production", pass: true });
     [x] = await said(store, c);
@@ -1031,9 +1032,9 @@ describe("t-045 · a seam between two tasks of one owner is sequential work, not
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ id: "seam:A+B", same_owner: true, open: false });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     const st = reduce(await store.read(), c.now());
     expect(st.tasks.get("A")!.status).toBe("verified");
     expect(st.tasks.get("B")!.status).toBe("verified");
@@ -1048,18 +1049,18 @@ describe("t-045 · a seam between two tasks of one owner is sequential work, not
     expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", open: true });
     expect((await seams(store, c))[0].same_owner).toBeUndefined();
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" , no_human_impact: true});
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/seam/);
     // C is dev's too; A fails and dev reopens it: A+C stays same-owner and never blocks
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
     await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "B 合并 A" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "x" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "x" });
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "修" });
     const s = await seams(store, c);
     expect(s.find((x) => x.id === "seam:A+C")).toMatchObject({ same_owner: true, open: false });
     expect(s.find((x) => x.id === "seam:B+C")).toMatchObject({ open: true });
     // a failed task taken over by someone else turns the seam into a collision
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "y" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "y" });
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "A", touches: ["app.ts"] });
     expect((await seams(store, c)).find((x) => x.id === "seam:A+C")).toMatchObject({ open: true });
   });
@@ -1295,9 +1296,9 @@ describe("F11 · the human board is derived, never moved by hand", () => {
       await emit(store, c, { kind: "task", op: "claim", actor: who, task: id, touches: [id] });
       await emit(store, c, { kind: "task", op: "done", actor: who, task: id , no_human_impact: true});
     }
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["C"] });
     await emit(store, c, { kind: "task", op: "withdraw", actor: "pm", task: "D", reason: "duplicate" });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
@@ -1446,7 +1447,7 @@ describe("t-056 · evidence has a layer for the owner: shows", () => {
     let b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
     expect(b.tasks.done.map((t) => [t.id, t.shows, t.evidence])).toEqual([["A", "牌桌上多了一行「线上」", "abc1234: 测试全绿"], ["B", undefined, "abc1234: 测试全绿"]]);
 
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, shows: long }))).rule).toBe("verify");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true, shows: long }))).rule).toBe("verify");
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "production", pass: true, shows: "线上打开牌桌，第一行是部署 sha" });
     await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "production", pass: true });
     b = board(reduce(await store.read(), c.now()), HUMAN, c.now());
@@ -1469,7 +1470,7 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     for (const id of ["A", "B", "C", "D", "E"]) await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
     for (const id of ["A", "B", "C", "E"]) await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: ["packages/server/src/html.ts"] });
     for (const id of ["A", "B", "C"]) await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: "abc1234", shows: "按钮现在永远可点" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "不对" }); // B: failed
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: false, evidence: "不对" }); // B: failed
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "D", touches: ["packages/server/src/html.ts"] }); // D stacks on every dev task: a seam each
     return { store, c, decision, plain };
   };
@@ -1497,14 +1498,14 @@ describe("t-057 · finished work a decision made moot ends as obsolete", () => {
     for (const e of [
       { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] },
       { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再来" },
-      { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true },
+      { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true },
       { kind: "task", op: "obsolete", actor: "pm", task: "A", decision: decision.id },
     ] as const) expect((await rejected(emit(store, c, e as never))).message).toMatch(/is obsolete/);
   });
 
   it("verified is final; open and blocked are for withdraw; working waits; only the scope owners may say it", async () => {
     const { store, c, decision } = await setup();
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "C", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "C", surface: "repo", branch: "dev/fixture", pass: true });
     expect((await rejected(obsolete(store, c, "C", "pm", decision.id))).message).toMatch(/verified is final/);
     const e = await rejected(obsolete(store, c, "E", "pm", decision.id)); // working
     expect(e.rule).toBe("obsolete");
@@ -1636,13 +1637,13 @@ describe("t-067 · the side that was done before the other claimed is never bloc
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "aaaaaaa1 完成" , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts"] });
     expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", stacked: { done: "A", on: "B" }, open: false });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // released by the rule, not by pm
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }); // released by the rule, not by pm
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
     // C (dev) claims while B is in flight: a collision, same as ever
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "C", touches: ["app.ts"] });
     expect((await seams(store, c)).find((x) => x.id === "seam:B+C")).toMatchObject({ open: true, stacked: undefined });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "bbbbbbb1 合并了 aaaaaaa1" , no_human_impact: true});
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }))).message).toMatch(/seam:B\+C/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/seam:B\+C/);
   });
 
   it("re-done after a reopen is judged on the newest done: a reopened A back in flight collides with B, and once A is done again it depends on who claimed when", async () => {
@@ -1666,7 +1667,7 @@ describe("t-067 · the side that was done before the other claimed is never bloc
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "再补" });
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts", "html.ts"] });
     expect((await seams(store, c))[0].stacked).toEqual({ done: "B", on: "A" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
   });
 });
@@ -1720,7 +1721,7 @@ describe("t-073 · both sides done and the later absorbed the earlier: the seam 
     const c = clock(Date.now() - min(30));
     await collide(store, c);
     expect((await seams(store, c))[0]).toMatchObject({ id: "seam:A+B", open: true, absorbed: undefined });
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }))).message).toMatch(/seam/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/seam/);
   });
 
   it("named-sha form: judged from the log — the later side's evidence names the earlier's sha; not named, still open; both in flight, unchanged", async () => {
@@ -1730,8 +1731,8 @@ describe("t-073 · both sides done and the later absorbed the earlier: the seam 
     await collide(store, c);
     const s = (await seams(store, c))[0];
     expect(s).toMatchObject({ open: false, absorbed: { later: "B", earlier: "A", basis: "后者证据写明含前者 aaaaaaa（named-sha）" } });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     // not named: open
     const store2 = new MemoryStore();
     await emit(store2, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "named-sha" });
@@ -1755,7 +1756,7 @@ describe("t-073 · both sides done and the later absorbed the earlier: the seam 
     await emit(store, c, { kind: "task", op: "seam", actor: "frontend", tasks: ["A", "B"], resolution: "absorbed: 后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）" });
     const s = (await seams(store, c))[0];
     expect(s).toMatchObject({ open: false, resolved: "frontend", absorbed: { later: "B", earlier: "A", basis: "后者 bbbbbbb 含前者 aaaaaaa（git-ancestor）", by: "frontend" } });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
   });
 });
 
@@ -1766,7 +1767,7 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234 全绿" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true, evidence: "看过了" });
     return { store, c };
   };
   it("owner, criteria author and the one who passed it are refused; a pass never overrides a pass; a third party's fail with evidence overturns, status goes to done, history stays", async () => {
@@ -1775,16 +1776,16 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
     // t-104 (pd 23:59): a pass never overrides a pass, and a fail still owes evidence. What is no longer refused is
     // *who* is failing: the owner, the criteria author and the passer may all say "not met".
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }))).message).toMatch(/a pass does not override a pass/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false }))).message).toMatch(/needs --evidence/);
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "我漏验了" }))).message).toMatch(/证据要指名推翻的是哪一条判据/);
-    const o = await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false, evidence: "证据说含 c3cfeee，git 说不含" });
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", branch: "dev/fixture", pass: true }))).message).toMatch(/a pass does not override a pass/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", branch: "dev/fixture", pass: false }))).message).toMatch(/needs --evidence/);
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "我漏验了" }))).message).toMatch(/证据要指名推翻的是哪一条判据/);
+    const o = await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "证据说含 c3cfeee，git 说不含" });
     const s = reduce(await store.read(), c.now());
     const t = s.tasks.get("A")!;
     expect(t.status).toBe("done"); // not working: nobody reopened it
     expect(t.round).toBe(1);
     expect(t.verifications.map((v) => [v.surface, v.pass, v.by])).toEqual([["repo", true, "qa"], ["repo", false, "frontend"]]); // both kept, in time order
-    expect(surfaceResults(t)).toEqual([{ surface: "repo", pass: false }]);
+    expect(surfaceResults(t)).toEqual([{ surface: "repo", pass: false, branch: "dev/fixture" }]);
     expect(t.history.map((h) => h.op)).toEqual(["done", "verify", "verify"]);
     // no event was rewritten
     const after = (await store.read()).events.map((e) => JSON.stringify(e));
@@ -1798,11 +1799,11 @@ describe("t-076 · a verified task whose evidence is overturned: a fail by a thi
     // the owner fixes it and someone verifies again on the same surface: allowed, since the latest result there is a fail
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补合并" });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678 真合了" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
     // the human may overturn too, but not their own pass
     const { store: s2, c: c2 } = await setup();
-    await emit(s2, c2, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", pass: false, evidence: "线上没看到" });
+    await emit(s2, c2, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "线上没看到" });
     expect(reduce(await s2.read(), c2.now()).tasks.get("A")!.status).toBe("done");
   });
 });
@@ -1924,7 +1925,7 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
       await emit(store, c, { kind: "task", op: "create", actor: "pm", task: id, title: `题 ${id}`, criteria: ["works"] , no_human_impact: true});
       await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
       await emit(store, c, { kind: "task", op: "done", actor: "dev", task: id, evidence: sha ? `${sha} 完成` : "没有 sha 的证据" , no_human_impact: true});
-      await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+      await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true });
       if (verifyProd) await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "production", pass: true });
     };
     await emit(store, c, { kind: "reading", actor: "pm", surface: "project", key: "absorb.form", value: "git-ancestor" });
@@ -1960,7 +1961,7 @@ describe("t-078 · 未上线 vs 已上线未验 vs 判不出", () => {
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "E", title: "题 E", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "E", touches: ["E"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "E", evidence: "fffffff6 完成" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "E", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "E", surface: "repo", branch: "dev/fixture", pass: true });
     r = await rel(store, c);
     expect(r.unknown!.find((x) => x.task === "E")!.reason).toContain("没有覆盖 E");
     // a new deploy invalidates the fact: everything is unknown again, saying which sha the fact was measured against
@@ -2087,7 +2088,7 @@ describe("t-087 · a fail notice stops being true when someone else takes the ta
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "A", title: "题", criteria: ["works"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "abc1234" , no_human_impact: true});
-    const v = await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没满足" });
+    const v = await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "判据 2 没满足" });
     const notice = await emit(store, c, { kind: "instruction", actor: "ateam", to: "dev", body: `A${" 验收未过："}判据 2 没满足。改完重新 done。`, ack_by: c.iso(min(15)), refs: [v.id] });
     return { store, c, notice };
   };
@@ -2145,7 +2146,7 @@ describe("t-092 · the service counts what an import landed and asks the human t
       await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: id, touches: [id] });
     }
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "t-3", evidence: "来自 pm/单据#3" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-3", surface: "repo", pass: true }); // verified: not in flight
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "t-3", surface: "repo", branch: "dev/fixture", pass: true }); // verified: not in flight
     const old = await emit(store, c, { kind: "note", actor: "pm", body: "旧决定：A", decision: true, from: "pm/台账#1" });
     await emit(store, c, { kind: "note", actor: "pm", body: "现行决定：B", decision: true, supersedes: old.id, from: "pm/台账#2" });
     for (const [key, from] of [["users.count", "pm/进度板"], ["deployed.sha", "pm/发布页"]]) {
@@ -2313,80 +2314,80 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
   it("only an R6 holder may pass; the refusal names who has it, and the list is computed, never a second copy", async () => {
     const { store, c } = await world({ ...FIVE, frontend: ["R5", "R6"] });
     // dev is the owner *and* holds no R6: both reasons are true, the owner rule speaks first
-    const own = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    const own = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(own.rule).toBe("verify");                                  // 判据 4 of t-101：拒绝仍要说出规则名
     expect(own.message).toMatch(/owner cannot pass their own task/);
     expect(own.message).toContain("可以由谁来落 pass：frontend、qa");
     // a role with no R6 is refused even though no separation rule touches it (t-104 判据 1)
-    const noR6 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "A", surface: "repo", pass: true }));
+    const noR6 = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pd", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(noR6.message).toContain("pd 不持 R6 验收职责，落不了 pass");
     expect(noR6.message).toContain(PASS_ONLY_GATE);   // t-112 round 2: pd's one sentence, not a second way of saying it
     expect(noR6.message).toContain("可以由谁来落 pass：frontend、qa");
     // 判据：名单是算出来的。pd 给 frontend 补一条判据，frontend 就该从名单里消失，没人去改任何清单
     await emit(store, c, { kind: "task", op: "criteria", actor: "pd", task: "A", add: ["文案按定稿"] });
     await emit(store, c, { kind: "task", op: "criteria", actor: "frontend", task: "A", add: ["空态有说明"] }).catch(() => {});
-    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(again.message).toContain("可以由谁来落 pass：frontend、qa");
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
   it("the criteria author is refused with the same list; a project that renamed its roles gets its own names back", async () => {
     const { store, c } = await world({ pm: ["R1"], dev: ["R5"], ux: ["R6"], sre: ["R6"] });
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", pass: true }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "pm", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(r.message).toMatch(/whoever wrote the criteria cannot judge them met/);
     expect(r.message).toContain("可以由谁来落 pass：ux、sre");        // 名单来自 project:roles，不是写死的五个
   });
 
   it("t-088 的活样本：qa 判过 pass 后自己发现漏验，自己就能落 fail——不必再借 frontend", async () => {
     const { store, c } = await world(FIVE);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true, evidence: "看过了" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true, evidence: "看过了" });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
     // ①：不指名哪一条判据的自我推翻被拒，并说清要怎么写
-    const vague = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "我漏验了" }));
+    const vague = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "我漏验了" }));
     expect(vague.message).toContain("你在推翻自己在 repo 上判的 pass");
     expect(vague.message).toContain("这件共 2 条");
     // 指名了就落得下去，不必找第三个人
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 2 没验：没有测试覆盖空输入" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "判据 2 没验：没有测试覆盖空输入" });
     const t = reduce(await store.read(), c.now()).tasks.get("A")!;
     expect(t.status).toBe("done");
     expect(t.verifications.map((v) => [v.surface, v.pass, v.by])).toEqual([["repo", true, "qa"], ["repo", false, "qa"]]);
     // ② (pd 00:12)：一次 fail 之后，这个表面的下一次 pass 要等一次新的 done——换个人来判也不行，那是换裁判
-    const back = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    const back = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(back.message).toContain("这一轮已经在 repo 上判过 fail（qa）");
     expect(back.message).toContain("要等一次新的 done，换个人来判不算");
     expect(back.message).toContain("owner 重发 done，证据写明无需改动及为什么");
-    const other = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: true }));
+    const other = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(other.message).toContain("要等一次新的 done");                     // 换裁判的洞堵上了
     await emit(store, c, { kind: "task", op: "reopen", actor: "dev", task: "A", reason: "补测试" });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", evidence: "def5678 补了" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }); // 新一轮，同一人可以
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }); // 新一轮，同一人可以
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
   it("fail is open to everyone: the owner, the criteria author and a role with no R6 may all say 'not met'", async () => {
     for (const who of ["dev", "pm", "pd"]) {
       const { store, c } = await world(FIVE);
-      await emit(store, c, { kind: "task", op: "verify", actor: who, task: "A", surface: "repo", pass: false, evidence: `${who} 跑了一遍，判据 1 不成立` });
+      await emit(store, c, { kind: "task", op: "verify", actor: who, task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: `${who} 跑了一遍，判据 1 不成立` });
       const t = reduce(await store.read(), c.now()).tasks.get("A")!;
       expect(t.status, who).toBe("failed");
       expect(t.verifications.map((v) => v.by), who).toEqual([who]);
     }
     // 一个 fail 从来不必带名单——谁都能落，没有「可以由谁来落」可说。没有 pass 要推翻时连证据都不强求
     const { store, c } = await world(FIVE);
-    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", pass: false });
+    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "A", surface: "repo", branch: "dev/fixture", pass: false });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("failed");
     // 而推翻别人判过的 pass 仍然要证据，只是不再挑人
     const w2 = await world(FIVE);
-    await emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
-    const noEvidence = await rejected(emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: false }));
+    await emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
+    const noEvidence = await rejected(emit(w2.store, w2.c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", branch: "dev/fixture", pass: false }));
     expect(noEvidence.message).toMatch(/needs --evidence/);
     expect(noEvidence.message).not.toMatch(/可以由谁来落/);
   });
 
   it("nobody can pass: it says so and why, never an empty list, and still points at what happens by itself", async () => {
     const { store, c } = await world({ pm: ["R1"], dev: ["R5"] });
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", pass: true }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "dev", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(r.message).toContain("本项目没人能给这一件落 pass：pm 不持 R6、写了判据；dev 不持 R6、是 owner");
     // pd 23:50：先说自动会发生的事。这个项目没有 qa 类角色，t-055 的自动退化确实会发生
     expect(r.message).toContain(`这件的验收会进 ${HUMAN} 的「需要你」由他来判`);
@@ -2397,18 +2398,18 @@ describe("t-101/t-104 · pass needs standing and says who has it; fail is open t
     // human 不算在候选里——把他算进去就永远不会出现「一个都没有」，而这正是最该说清楚的一种
     expect(r.message).not.toMatch(/可以由谁来落 pass：[^。]*human/);
     // 而 human 自己什么都能落：不持 R6 也一样，他是策略权威
-    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: HUMAN, task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
   it("nobody can pass but the project does have a verifier role: it does not promise the t-055 escalation that will not happen", async () => {
     const { store, c } = await world({ dev: ["R5"], qa: ["R6"] }, "dev", "qa");
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(r.message).toContain("本项目没人能给这一件落 pass：dev 不持 R6、写了判据；qa 是 owner");
     expect(r.message).toContain(`项目里有验收角色，所以验收不会自动转给 ${HUMAN}`);
     expect(r.message).not.toContain("会进");                            // 不承诺一件不会发生的事
     // 出路是真的：qa 落不了 pass，但落得了 fail
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: false, evidence: "判据 1 不成立" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: false, evidence: "判据 1 不成立" });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("failed");
   });
 });
@@ -2554,7 +2555,7 @@ describe("t-106 · a role id is ASCII; the name people read is not", () => {
     await emit(store, c, { kind: "task", op: "create", actor: "editor", task: "A", title: "题", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "writer", task: "A", touches: ["x"] });
     await emit(store, c, { kind: "task", op: "done", actor: "writer", task: "A", evidence: "abc1234" , no_human_impact: true});
-    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "writer", task: "A", surface: "repo", pass: true }))).message).toContain("可以由谁来落 pass：reviewer");
+    expect((await rejected(emit(store, c, { kind: "task", op: "verify", actor: "writer", task: "A", surface: "repo", branch: "dev/fixture", pass: true }))).message).toContain("可以由谁来落 pass：reviewer");
   });
 
   it("ids already in the log are not touched, not migrated, not cleaned: they keep working (判据 3)", async () => {
@@ -2568,7 +2569,7 @@ describe("t-106 · a role id is ASCII; the name people read is not", () => {
     await emit(store, c, { kind: "task", op: "create", actor: "pm", task: "B", title: "题", criteria: ["能用"] , no_human_impact: true});
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "B", touches: ["y"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "B", evidence: "abc1234" , no_human_impact: true});
-    await emit(store, c, { kind: "task", op: "verify", actor: "å®¡ç¨¿", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "å®¡ç¨¿", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
     await pull(store, "å®¡ç¨¿", null, c.now());
     expect(board(reduce(await store.read(), c.now()), HUMAN, c.now()).presence.find((p) => p.role === "å®¡ç¨¿")).toBeTruthy();
@@ -2611,30 +2612,30 @@ describe("t-112 · a gate against releasing early never blocks the news that it 
     const { store, c } = await collided();
     expect(openSeamsFor(reduce(await store.read(), c.now()), "B")).toHaveLength(1);
     // 坏消息畅通
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: false, evidence: "pnpm build 退出码 2：format.ts(178,36) TS2345" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: false, evidence: "pnpm build 退出码 2：format.ts(178,36) TS2345" });
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("failed");
     // 好消息仍要先把接缝定下来，并且说清它挡的是哪一边
     await emit(store, c, { kind: "task", op: "reopen", actor: "frontend", task: "B", reason: "修类型" });
     await emit(store, c, { kind: "task", op: "done", actor: "frontend", task: "B", evidence: "def5678" , no_human_impact: true});
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(r.rule).toBe("verify");
     expect(r.message).toContain("unresolved seam");
     expect(r.message).toContain("这挡住的是通过，不是不通过；要记它坏了，直接落 fail。");
     // 定了接缝就放行
     await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "frontend 先落，dev 合它的 sha" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("verified");
   });
 
   it("the other pass-only gate says the same thing in the same words", async () => {
     const { store, c } = await collided();
     await emit(store, c, { kind: "task", op: "seam", actor: "pm", tasks: ["A", "B"], resolution: "frontend 先落" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true });
-    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", pass: true }));
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true });
+    const again = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(again.message).toContain("a pass does not override a pass");
     expect(again.message).toContain("这挡住的是通过，不是不通过；要记它坏了，直接落 fail。");
     // 而那条 fail 真的落得下去，不需要任何旁路
-    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", pass: false, evidence: "判据 1 不成立：build 是坏的" });
+    await emit(store, c, { kind: "task", op: "verify", actor: "frontend", task: "B", surface: "repo", branch: "dev/fixture", pass: false, evidence: "判据 1 不成立：build 是坏的" });
     expect(reduce(await store.read(), c.now()).tasks.get("B")!.status).toBe("done");
   });
 
@@ -2668,7 +2669,7 @@ describe("t-113 · a seam is judged at the finest granularity both sides declare
   };
   const seamOf = async (w: { store: MemoryStore; c: ReturnType<typeof clock> }) => [...reduce(await w.store.read(), w.c.now()).seams.values()][0];
   const canVerify = async (w: { store: MemoryStore; c: ReturnType<typeof clock> }) =>
-    emit(w.store, w.c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", pass: true }).then(() => true, (e) => { if (e instanceof Rejected) return false; throw e; });
+    emit(w.store, w.c, { kind: "task", op: "verify", actor: "qa", task: "B", surface: "repo", branch: "dev/fixture", pass: true }).then(() => true, (e) => { if (e instanceof Rejected) return false; throw e; });
 
   const F = "packages/core/test/replay.test.ts";
 
@@ -2788,7 +2789,7 @@ describe("t-113 · 同一个测试文件三次挡住验收：现在只是一句�
     expect(shared.every((x) => x.light || x.same_owner || x.stacked)).toBe(true);
     for (const id of pairs.flatMap(([a, , b]) => [a, b])) expect(openSeamsFor(s, id), id).toEqual([]);
     // qa 真正要做的事：一条条落验收，不必先去找人裁决
-    for (const id of pairs.flatMap(([a, , b]) => [a, b])) await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", pass: true });
+    for (const id of pairs.flatMap(([a, , b]) => [a, b])) await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: id, surface: "repo", branch: "dev/fixture", pass: true });
     const after = reduce(await store.read(), c.now());
     for (const id of pairs.flatMap(([a, , b]) => [a, b])) expect(after.tasks.get(id)!.status, id).toBe("verified");
   });
@@ -2898,7 +2899,7 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "bbbbbbb" });
     expect((await seamOf(store, c)).stacked).toEqual({ done: "A", on: "B" });
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 
@@ -2910,7 +2911,7 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
     await emit(store, c, { kind: "task", op: "claim", actor: "dev", task: "A", touches: ["app.ts"] });
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa" });
     expect((await seamOf(store, c)).stacked).toBeUndefined();
-    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true }));
+    const r = await rejected(emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true }));
     expect(r.message).toMatch(/unresolved seam/);
   });
 
@@ -2922,7 +2923,7 @@ describe("t-160 · 在它 done 之后才 claim 的任务，不挡它的验收", 
     await emit(store, c, { kind: "task", op: "done", actor: "dev", task: "A", no_human_impact: true, evidence: "aaaaaaa" });
     await emit(store, c, { kind: "task", op: "claim", actor: "frontend", task: "B", touches: ["app.ts", "html.ts", "board.ts"] });
     expect([...(await seamOf(store, c)).overlap].sort()).toEqual(["app.ts", "board.ts", "html.ts"]);
-    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", pass: true });
+    await emit(store, c, { kind: "task", op: "verify", actor: "qa", task: "A", surface: "repo", branch: "dev/fixture", pass: true });
     expect(reduce(await store.read(), c.now()).tasks.get("A")!.status).toBe("verified");
   });
 

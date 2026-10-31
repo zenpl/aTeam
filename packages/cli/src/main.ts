@@ -68,7 +68,8 @@ tasks
                                              --touches-only 表示「我写的这几条就是全部」——一条分支上连做几件时 diff 分不出是哪一件的，
                                              
                                              --no-touches 原样沿用声明。重算后冒出新接缝会挡住 done。另外，若已定接缝的另一侧没并进你的证据 sha，会告警
-  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."]
+  ateam task verify <id> --surface <s> (--pass|--fail) [--evidence "..."] [--shows "..."] [--branch <git branch>]
+                                             --branch is required with --surface repo: repo is more than one branch, so a pass there must say which (t-344)
   ateam task block <id> --on "..." | ateam task unblock <id>
   ateam task withdraw <id> --reason "..."   terminal; only open/blocked tasks, by the criteria author, pm or human
   ateam task obsolete <id> --by <decision note id> [--reason "..."]   terminal; a done/failed task a decision made moot, by the criteria author, pm, pd or human
@@ -807,7 +808,8 @@ async function main(argv: string[]) {
           // t-191：落 pass 之前先问一句——挡着它的那几条接缝里，有没有是因为「对方 claim 了却还没写代码」
           // 而无从判定的。判在这一头，因为服务端没有仓库（同 t-160 判据 6）。判不了的照旧挡着，只说一句。
           // fail 不走这一段：一条接缝从来只挡 pass，不挡「它坏了」这条消息（t-112）。
-          const verdict = { kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows") } as ClientEvent;
+          // t-344（pd 要求㉜）：`repo` 面的验收要带 `--branch`（支名原样，不译）——服务端挡着不带的那一种。
+          const verdict = { kind: "task", op, task, surface: str(a, "surface") ?? "", pass: bool(a, "pass"), evidence: str(a, "evidence"), shows: str(a, "shows"), branch: str(a, "branch") } as ClientEvent;
           // t-232：接缝那几条与判决本身从此走 done 那一路同一个公共层，组装在 verifyparts.ts（用例测的就是它）
           const need_ = bool(a, "pass") && !bool(a, "no-seam-check");
           const v = verifyParts(need_ ? await client.board() : ({ seams: [], tasks: {} } as unknown as Board), task, verdict,
