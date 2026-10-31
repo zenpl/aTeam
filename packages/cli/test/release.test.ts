@@ -163,10 +163,14 @@ describe("t-078 · ateam release measures containment with git and shows three g
     await w.ship("t-1", A);
     await w.ship("t-2", X);
     let b = await w.b();
-    expect(containment(b, fakeGit().isAncestor)).toBeNull(); // no deployed sha yet: nothing to measure
+    // t-325：这三处多给了一个常量 `treeOf`，**断言一条没动**。理由：`containment()` 此后先问「生产那个树
+    // 等不等于某一次上过线的版本的树」，拿不到基准就整桶说不出。常量树 ⇒ 生产头自己就是基准，也就是
+    // **没有回滚在生效**那一种——而 t-078 这一份量的正是那种情形下的三桶与写事实。
+    const tree = () => "same-tree";
+    expect(containment(b, fakeGit().isAncestor, { treeOf: tree })).toBeNull(); // no deployed sha yet: nothing to measure
     await w.emit({ kind: "reading", actor: "pm", key: "deployed.sha", surface: "production", value: B, method: "ateam release --deploy 推到 production", depends_on: ["production:deployed.sha"] });
     b = await w.b();
-    const measured = containment(b, fakeGit().isAncestor)!;
+    const measured = containment(b, fakeGit().isAncestor, { treeOf: tree })!;
     expect(measured.sha).toBe(B);
     expect(measured.contained).toEqual(["t-1"]); // A is an ancestor of B
     expect(measured.not_contained).toEqual(["t-2"]); // X is unrelated
@@ -176,7 +180,7 @@ describe("t-078 · ateam release measures containment with git and shows three g
     await w.emit({ ...(fact as { key: string; value: unknown; surface: string }), actor: "pm" } as never);
     expect(containmentFact(await w.b(), measured)).toBeNull(); // nothing changed: no second reading
     // git that cannot tell leaves the task unmeasured, and the board will call it unknown
-    const blind = containment(await w.b(), () => null)!;
+    const blind = containment(await w.b(), () => null, { treeOf: tree })!;
     expect(blind.unmeasured.sort()).toEqual(["t-1", "t-2"]);
     expect(blind.contained).toEqual([]);
     // t-203 判据 1：三桶一个不少地写进事实——unmeasured 算出来了，就得落进日志

@@ -5,7 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent } from "@ateam/core";
+import { evidenceSha, orphanReason, unknownSpanReason, wideBaseReason, rollbackMessage, notARollbackTarget, rollbackCommitsLine, ROLLBACK_LINES, PUSH_LINES, DEPLOYED_TASKS_KEY, HUMAN_SURFACE, REPO_SURFACE, type Board, type BoardTask, type PushLevel, type ClientEvent, CONTENT_BASE_IS_HEAD, CONTENT_BASE_UNKNOWN, contentBaseRolledBack} from "@ateam/core";
 import { absorbFormOf } from "./seamcheck.js";
 
 export const DEPLOY_KEY = "deploy.enabled";
@@ -251,16 +251,53 @@ export function orphanCommits(sha: string, deployed: string | null | undefined, 
  * (project:absorb.form); any other form, or no deployed sha, is nothing to measure. Candidates git cannot place
  * (object missing locally, no evidence sha) are neither contained nor not: the board lists them as unknown.
  */
-export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null } = {}):
+/**
+ * t-325：**「在生产上跑着」要比树，不要只问祖先。**
+ *
+ * 这个项目的回滚约定是 t-223 定的「向前提交、内容退回」（生产历史里 `3e50e5b` 的原话：内容与那一版逐字相同，
+ * 历史只进不退）。于是**每一次回滚之后，`--is-ancestor` 对被退掉的那几件仍然答「含」**——而待上线清单、
+ * release 那张卡的分母、pm 的发车判断都读这条事实。pm 08:23 量到的那一例：生产 `30aa368` 的树与第 20 批
+ * `d57acbc` 几乎一样，而 t-219 的证据 `278dca0` 改过的 `main.ts` 与生产树差 29 行——此刻却被列在 `contained` 里。
+ *
+ * **所以这里先问一个树的问题，再决定怎么数**（判据 5 要的那个分叉，写成代码而不是注释里的假设）：
+ * 生产那个树，是不是**正好等于**某一次上过线的版本的树？
+ * ```
+ * 等于最新那一次（没有回滚在生效）  ⇒ 照旧对生产头问祖先，一个字不变
+ * 等于某个更早的版本（回滚在生效）  ⇒ 对**那个更早的版本**问祖先：它之后落的内容此刻不在生产树里
+ * 一个都不等于 ／ 拿不到树          ⇒ **说不出**（整桶 unmeasured），而不是退回只问祖先
+ * ```
+ * 最后那一种是本件的要点之一：**退回祖先就是退回缺陷**，所以它宁可一个都不答。而它答不出什么，`method`
+ * 里写明（判据 3）。
+ */
+export function contentBase(b: Board, prod: string, treeOf?: (sha: string) => string | null): { sha: string; rolled_back: boolean } | null {
+  if (!treeOf) return null;
+  const want = treeOf(prod);
+  if (!want) return null;
+  const deploys = b.live?.deploys ?? [];
+  if (!deploys.length) return null;          // 瘦身板上没有这份名单：拿不到基准，不猜
+  // **从最早那一个找起，不是从最新**。几个上线 sha 共用同一个树时（回滚就是这样造出来的），树里的内容
+  // 是**最早那一版**的内容；之后落的那些正是被退掉的那几件。从新往旧找会先撞上生产头自己，于是
+  // `rolled_back` 永远是 false——这个顺序错我自己的用例当场抓到了（第一版就是反的）。
+  for (const s of deploys) {
+    if (treeOf(s) === want) return { sha: s, rolled_back: !sameCommit(s, prod) };
+  }
+  return null;
+}
+
+export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha: string) => boolean | null; shallow?: () => boolean | null; treeOf?: (sha: string) => string | null } = {}):
   { sha: string; contained: string[]; not_contained: string[]; unmeasured: string[]; bad_evidence: string[]; no_evidence: string[]; method: string } | null {
   const sha = b.release?.deployed_sha;
   if (!sha || absorbFormOf(b) !== "git-ancestor") return null;
   // t-219：**连上线那个 sha 都解不出来，就一个候选也测不了**——那时写下的「事实」全是 0 与「量不出」，
   // 而它会盖掉别人从完整的树量出来的那一份。这不是阈值，是前提；理由见 core 的 cannotMeasureHere。
   if (opts.has && opts.has(sha) === false) return null;
+  // t-325：比树那一问先走（上面 `contentBase` 的注释写着为什么）。拿不到基准时整桶说不出，而 `method` 说出是哪一种。
+  const base = contentBase(b, sha, opts.treeOf);
   const out = { sha, contained: [] as string[], not_contained: [] as string[], unmeasured: [] as string[],
     bad_evidence: [] as string[], no_evidence: [] as string[],
-    method: "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）" };
+    method: !base ? CONTENT_BASE_UNKNOWN
+      : base.rolled_back ? contentBaseRolledBack(base.sha)
+      : CONTENT_BASE_IS_HEAD };
   const shallow = opts.shallow?.() ?? null;
   for (const c of b.release.candidates ?? []) {
     // t-219：**「说不出」原来是一个桶，里面装着三件不同的事**，而它们的出路完全不同：
@@ -272,7 +309,9 @@ export function containment(b: Board, isAncestor: IsAncestor, opts: { has?: (sha
     // **不许把 ①② 说成 not_contained**（qa 16:31 更正了它自己的第一版建议）：那会让它们进「已验没上线，
     // 谁来推」，而它们**推不了**——那个提交不存在。把「还没上线」说大与说小一样坏。
     if (!c.evidence_sha) { out.no_evidence.push(c.task); continue; }
-    const r = isAncestor(c.evidence_sha, sha);
+    // t-325：没有基准就一件都不答——**退回只问祖先，就是退回这张单要修的那个缺陷**。
+    if (!base) { out.unmeasured.push(c.task); continue; }
+    const r = isAncestor(c.evidence_sha, base.sha);
     if (r === true) { out.contained.push(c.task); continue; }
     if (r === false) { out.not_contained.push(c.task); continue; }
     const has = opts.has?.(c.evidence_sha) ?? null;

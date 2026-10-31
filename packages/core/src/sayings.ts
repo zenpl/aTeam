@@ -48,7 +48,10 @@ export const SECOND_HOMES_ROOT = "packages";
 // （`--body-file` 那一路要求两条命令共用同一个取正文的地方）。344 → 343。
 // t-243 再搬走 5 句：i18n.ts 里 `saidStatus` 那份与 core `SAID_LABEL` 逐字相同的拷贝（四个词），
 // 以及 `sayHint` 里把其中三个词又抄了一遍的那句转述——它现在由 core 拼出来，文字一个字没变。343 → 338。
-export const SECOND_HOME_FROZEN: number = 336;
+// t-325 再搬走 1 句：`release.ts` 里那条 `method`（「git-ancestor（…逐件测）」）进了 core 的
+// `CONTENT_BASE_IS_HEAD`。搬它的理由不是整理：本件给这个字段加了另外两条路径，**而三条路径的话必须住在一处**，
+// 否则「没有回滚在生效时那一句一个字不改」这件事下一个人改得动却看不见。文字一个字没变。336 → 335。
+export const SECOND_HOME_FROZEN: number = 335;
 /**
  * 冻结时各处的分布，留着是为了让下一个人一眼看出搬走的是哪一处。**这份分布是量出来的**（见
  * sayings.test.ts 里那条闸：每一处都不许比冻结时多，合计等于 SECOND_HOME_FROZEN），不是手写的清单。
@@ -58,7 +61,7 @@ export const SECOND_HOME_AT_FREEZE: Record<string, number> = {
   "packages/cli/src/format.ts": 31,
   "packages/server/src/app.ts": 35,
   "packages/cli/src/trace.ts": 26,
-  "packages/cli/src/release.ts": 21,
+  "packages/cli/src/release.ts": 20,   // t-325：那条 `method` 搬进 core 的 CONTENT_BASE_IS_HEAD，这一处因此少一句
   "packages/cli/src/main.ts": 18,   // t-265：那句「……牌桌上这张卡没有标题」搬进 core（cardTitleLine）并改了措辞，这一处因此少一句
   "packages/cli/src/touches.ts": 13,
   "packages/cli/src/seamcheck.ts": 12,

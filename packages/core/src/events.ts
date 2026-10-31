@@ -692,6 +692,7 @@ export const KEY_SYMBOLS = [
   "CONTACT_FILL_WAS",
   "CONTACT_SKIP",
   "CONTACT_SKIP_WAS",
+  "CONTENT_BASE_IS_HEAD",
   "DEADLINE_WORDS",
   "DEADLINE_WORDS_HEAD",
   "DECLINE_PREFIX",
@@ -1448,6 +1449,22 @@ export const CLI_SHA_METHOD = "sync 顺手记的：读的是这份 dist 边上�
  *
  * 判准不是一个阈值（阈值要拍脑袋），是一条前提：**连上线那个 sha 都解不出来，就一个候选也测不了。**
  */
+/**
+ * t-325：**这条事实是怎么量出来的，三种路径各说一句。**
+ *
+ * 判据 3 要 `method` 说出它实际的量法。原来那一句（「git-ancestor（…逐件测）」）**本身是诚实的**——
+ * 骗人的是 `contained` 这个名字；所以**没有回滚在生效时那一句一个字不改**（行为也一个字没改），
+ * 只有新增的两条路径需要新的话。
+ *
+ * **这三句是英文的，而那是一个选择**：`WORDING_FROZEN` 开着，人可见的中文每多一句都是 pd 要逐条裁的一条账，
+ * 而判据 3 自己写明「`contained` 这个词叫什么归 pd 定，本件只负责它算得对」。所以我不替它造中文；
+ * 要中文定稿，一句一行、随时可换（我在交付里把这件事摆给 pd）。
+ */
+export const CONTENT_BASE_IS_HEAD = "git-ancestor（ateam release 用 git merge-base --is-ancestor 逐件测）";
+export const CONTENT_BASE_UNKNOWN = "cannot tell: production's tree matches no sha we ever deployed (or the deploy list / git tree was unavailable), so containment was not measured at all — falling back to plain --is-ancestor is the very defect t-325 is about";
+export const contentBaseRolledBack = (base: string): string =>
+  `content-tree: production's tree is byte-identical to ${base.slice(0, 7)}, an earlier deployed sha (a rollback committed forward, t-223), so containment is measured with --is-ancestor against ${base.slice(0, 7)}, not against the production head`;
+
 export const cannotMeasureHere = (sha: string) =>
   `这棵树里没有 ${sha.slice(0, 7)} 这个对象，量不了谁在里面——先 git fetch，或换一棵有它的树。没有写下任何事实。`;
 
