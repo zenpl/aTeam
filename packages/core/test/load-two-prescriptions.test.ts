@@ -12,14 +12,19 @@
  * 写在 `packedHeavy` 的注释与 t-349 的证据里，不在这儿假装它判了。
  */
 import { describe, it, expect } from "vitest";
-import { MemoryStore, append, reduce, allocation, runtimeAllocation, staticAllocation, packedHeavy, type NewEvent } from "../src/index.js";
+import { MemoryStore, append, reduce, allocation, runtimeAllocation, staticAllocation, packedHeavy, nextSibling, type NewEvent } from "../src/index.js";
 
 const HUMAN = "human";
 const min = (n: number) => n * 60_000;
 /** 「拆」那两句（pd 的原话，一字不改）：声明那一处与运行时那一处各一句。 */
 const 拆_静态 = "建议：把能改成规则或服务的职责先拿走。";
 const 拆_运行时 = "建议：把它持有的、能改成规则或服务的职责先拿走。";
-const 扩 = (who: string) => `建议：它的职责包本身正常，别拆——再起一个同职责包的角色（${who}-2），任务按 claim 分流。`;
+/**
+ * 「扩」那一句，pd 01:25 定稿（`01M6AB9KY93T6MGJF3Y76ZYS5Y`，指令 `01M6ABCA69G52VFHWNXEQMQKHH`）。
+ * 末句「起会话只有 human 做得到」必须在：起会话只有他做得到，否则又是 ㉗ 那张脸——一句读的人自己执行不了的建议。
+ * 传进来的是**那个号已经算好的名字**（下一个没用过的号），所以这个工具自己不猜数。
+ */
+const 扩 = (sibling: string) => `建议：它的职责包正常，不是该拆的那一格——再起一个同职责包的角色（${sibling}），任务按 claim 分流。起会话只有 human 做得到。`;
 
 function world() {
   const store = new MemoryStore();
@@ -42,8 +47,19 @@ describe("t-349 判据③ · 两格方向相反", () => {
     const got = await w.load();
     expect(got!.evidence).toEqual(["lead 持有 5 项职责（R1 R3 R4 R8 R13），其他角色中位数 1 项"]);
     expect(got!.hint).toBe(`${got!.evidence[0]}。${拆_静态}`);
-    expect(got!.hint, "活不多的那一格不许印「扩」").not.toContain("别拆");
+    expect(got!.hint, "活不多的那一格不许印「扩」").not.toContain("不是该拆的那一格");
     expect(got!.hint).not.toContain("-2");
+  });
+
+  it("那个号取下一个没用过的：队里已经有 dev-2 时，建议的是 dev-3（pd 01:25）", async () => {
+    const w = world();
+    await w.pack({ pm: ["R1", "R3", "R4"], dev: ["R5", "R9"], "dev-2": ["R5", "R9"], qa: ["R6"] });
+    for (let i = 0; i < 8; i++) await w.say("dev", `第 ${i} 件事，各不相同：${"甲乙丙丁戊己庚辛"[i]}`, min(12));
+    for (let i = 0; i < 3; i++) await w.say("pm", `另一件 ${i}：${"壬癸子"[i]}`, min(12));
+    const got = await w.load();
+    expect(got!.hint, "再建议一个已经存在的 dev-2 是一句废话").toContain(扩("dev-3"));
+    expect(nextSibling(["dev", "dev-2", "dev-3"], "dev")).toBe("dev-4");
+    expect(nextSibling(["dev"], "dev"), "没有兄弟时就是 2").toBe("dev-2");
   });
 
   it("职责包正常、指令流入过半 ⇒ 只许印「扩」（今晚 dev 那个局）", async () => {
@@ -52,8 +68,10 @@ describe("t-349 判据③ · 两格方向相反", () => {
     for (let i = 0; i < 3; i++) await w.say("pm", `另一件 ${i}：${"壬癸子"[i]}`, min(12));
     const got = await w.load();
     expect(got!.evidence).toEqual(["dev 收到 73% 的指令（8/11）"]);
-    expect(got!.hint).toBe(`dev 收到 73% 的指令（8/11）。${扩("dev")}`);
+    expect(got!.hint).toBe(`dev 收到 73% 的指令（8/11）。${扩("dev-2")}`);
     expect(got!.hint, "包正常的那一格不许印「拿走职责」").not.toContain("拿走");
+    expect(got!.hint, "pd 把「杂」从措辞里去掉了：不为了留一个词去编一个分类").not.toContain("杂");
+    expect(got!.hint.endsWith("起会话只有 human 做得到。"), "末句必须在：处方不许把动作给一个做不到的人").toBe(true);
   });
 });
 
@@ -65,7 +83,7 @@ describe("t-349 判据①④ · 处方按被点名那个角色的职责包选，
     const got = await w.load();   // 默认职责包里 pm 持有六项，所以它是「多」那一档
     expect(got!.evidence).toEqual(["pm 收到 73% 的指令（8/11）"]);
     expect(got!.hint).toBe(`pm 收到 73% 的指令（8/11）。${拆_运行时}`);
-    expect(got!.hint).not.toContain("别拆");
+    expect(got!.hint).not.toContain("不是该拆的那一格");
   });
 
   it("声明那一处与运行时那一处判在同一个角色上时，并成一条，处方仍只有「拆」那一张", async () => {
@@ -79,7 +97,7 @@ describe("t-349 判据①④ · 处方按被点名那个角色的职责包选，
       "lead 收到 73% 的指令（8/11）",
     ]);
     expect(got!.hint, "处方跟着第一条证据，而两处判的是同一把尺，所以不会一条说拆一条说扩").toContain(拆_静态);
-    expect(got!.hint).not.toContain("别拆");
+    expect(got!.hint).not.toContain("不是该拆的那一格");
   });
 
   it("自我更正率那一条走同一条规矩：包正常就是「扩」", async () => {
@@ -97,7 +115,7 @@ describe("t-349 判据①④ · 处方按被点名那个角色的职责包选，
     for (let i = 0; i < 18; i++) await w.say("dev", `修 ${i}`, min(1));   // 稀释流入占比，让更正率那一条成为最响的
     const got = await w.load();
     expect(got!.evidence[0]).toContain("pd 17% 的指令是自己写错后更正的（3/18）");
-    expect(got!.hint, "pd 的默认职责包是两项，不杂").toContain(扩("pd"));
+    expect(got!.hint, "pd 的默认职责包是两项，不杂").toContain(扩("pd-2"));
   });
 
   it("最小团队不判「拆」：一人多顶帽子在那里是设计", async () => {
@@ -107,7 +125,7 @@ describe("t-349 判据①④ · 处方按被点名那个角色的职责包选，
     for (let i = 0; i < 3; i++) await w.say("dev", `另一件 ${i}：${"壬癸子"[i]}`, min(12));
     expect(staticAllocation(await w.state()), "声明那一处本来就不判最小团队").toEqual([]);
     const got = await w.load();
-    expect(got!.hint, "运行时这一处也不许改口说「拆」").toContain(扩("lead"));
+    expect(got!.hint, "运行时这一处也不许改口说「拆」").toContain(扩("lead-2"));
   });
 });
 

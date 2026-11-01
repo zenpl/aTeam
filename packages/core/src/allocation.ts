@@ -104,6 +104,17 @@ export function packedHeavy(packing: Record<string, string[]>, role: string): bo
   return mine >= 4 && mine >= 2 * Math.max(otherMedian(packing, role), 1);
 }
 
+/**
+ * t-349（pd 01:25 定稿 `01M6AB9KY93T6MGJF3Y76ZYS5Y`）：**那个数要取下一个没用过的号。** 队里已经有 dev-2 的时候
+ * 再建议一个 dev-2 是一句废话，而读的人要照着它去起一个真节点。号从 2 起，按此刻的角色集合往上找第一个空位。
+ *
+ * 名单取的是**项目声明的角色集合**——与那把尺（`packedHeavy`）同一处来源。它看不见的写在明处：一个以 dev-2
+ * 自称、却没有进 `project:roles` 的节点，这里数不到它，于是会再建议一次 dev-2。
+ */
+export function nextSibling(roles: string[], who: string): string {
+  for (let n = 2; ; n++) if (!roles.includes(`${who}-${n}`)) return `${who}-${n}`;
+}
+
 /** 其他角色各持几项的中位数——上面那把尺的分母，印在证据里的也是它。 */
 export function otherMedian(packing: Record<string, string[]>, role: string): number {
   const rest = Object.keys(packing).filter((r) => r !== role).map((r) => (packing[r] ?? []).length).sort((a, b) => a - b);
@@ -306,7 +317,7 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
     const heavy = badLoad.role ? packedHeavy(roleResponsibilities(s), badLoad.role) : false;
     const hint = heavy
       ? `${badLoad.text}。建议：把它持有的、能改成规则或服务的职责先拿走。`
-      : `${badLoad.text}。建议：它的职责包本身正常，别拆——再起一个同职责包的角色（${badLoad.role}-2），任务按 claim 分流。`;
+      : `${badLoad.text}。建议：它的职责包正常，不是该拆的那一格——再起一个同职责包的角色（${nextSibling(projectRoles(s), badLoad.role ?? "")}），任务按 claim 分流。起会话只有 human 做得到。`;
     out.push({ pattern: "负载陷阱", evidence: [badLoad.text], hint });
   }
 
