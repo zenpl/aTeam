@@ -197,9 +197,22 @@ export type TaskOp =
        * 缺这个字段的老任务按「区间不可知」处理：明说算不出，不许猜（判据 7）。
        */
       base_sha?: string;
+      /**
+       * t-347（t-344 自报的那个缺口的另一半）：**这一轮交在哪条支上。**
+       *
+       * 它存在的理由不是让 `done` 多说一句，而是**让人在牌桌点「过」那一下落得出支名**：那条验收是服务替他
+       * 组装的，而服务手上没有仓库——它只能从这件 `done` 抄。命令行从本地 git HEAD **量**它（不是猜，也不是
+       * 从证据正文里认字）；量不出来（没有 git、不是检出）就不带，而那一档板上另有一句话（见 `verifiedSurface`）。
+       * 不回填历史：老的 `done` 没有它，照实说不知道。
+       */
+      branch?: string;
     }
-  /** t-344（pd 要求㉜）：`branch` 说出这次 `repo` 验收是在哪条支上做的；`repo` 必填，别的面不收。 */
-  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string; branch?: string }
+  /**
+   * t-344（pd 要求㉜）：`branch` 说出这次 `repo` 验收是在哪条支上做的；`repo` 必填，别的面不收。
+   * t-347：`branch_unknown` 只由**服务**在替人落那条验收、而那件 done 没有支名可抄时带上——
+   * 它与「存量没有这个字段」是两种处境（当时没记 ／ 此刻服务不知道），板上说的话也不同。
+   */
+  | { op: "verify"; task: string; surface: string; pass: boolean; evidence?: string; shows?: string; branch?: string; branch_unknown?: true }
   | { op: "block"; task: string; on: string }
   | { op: "unblock"; task: string }
   /** Terminal: the task was created on a false premise. Only while open or blocked; by its criteria author, pm or the human. */
@@ -790,6 +803,9 @@ export const KEY_SYMBOLS = [
   "UNTIL_UNDER_A_MINUTE",
   "VERIFIED_ON_THIS_VERSION",
   "VERIFY_ASK",
+  "VERIFY_BRANCH_BY_HUMAN",
+  "VERIFY_BRANCH_BY_HUMAN_SHORT",
+  "VERIFY_BRANCH_BY_HUMAN_WHY",
   "VERIFY_BRANCH_REQUIRED",
   "VERIFY_BRANCH_UNRECORDED",
   "VERIFY_BRANCH_UNRECORDED_WHY",
@@ -1681,6 +1697,30 @@ export const CURSOR_UNREADABLE = `游标文件在，内容是空的：这一次�
  */
 export const EMPTY_AFTER = "after= 空值：真正没有游标就别带这个参数；带了而为空是读游标出了错（t-351）";
 /**
+ * t-347 判据 2：人点「过」时服务替他落的那条 `repo` 验收，而那件 `done` 没有支名可抄——板上这一档说什么。
+ * **不许与存量那一档共用「没记支名」**：存量是「当时没有记」，这一档是「此刻服务不知道，而它手上没有仓库」
+ * ——两种处境，处置也不同（前者是历史，后者此刻就能补：交活的人在 `done` 上带上支名）。
+ * **措辞归 pd，此刻是占位**；闸与记号照旧，只是那句话还不是话。
+ */
+/**
+ * pd 00:00 的定稿（`01M6A6FGCHXXF2MVH5BMKF36HW`，照抄不改标点）：
+ * 行内 `✓ repo（人点的；支名不在记录里）`，而 pd 另给一个条件——
+ * **那一行若已经印了验收人（human），就不要再写「人点的」，只留后半**（两处说同一件事就是重复）。
+ * 所以这里是两个词，由渲染处按它那一行印不印验收人来选；pd 把这个判断留给看得见代码的人。
+ * **我量过的**（本支 `packages/cli/src/format.ts`）：逐条判决那一行印 `by <谁>` ⇒ 用后半；
+ * 聚合那两行（任务一行里的 `✓ repo`、`task show` 的那一串）与 history 那一行**都不印** ⇒ 用全句。
+ */
+export const VERIFY_BRANCH_BY_HUMAN = "人点的；支名不在记录里";
+/** 同上，那一行已经印了验收人时只留后半（pd 的那个条件）。 */
+export const VERIFY_BRANCH_BY_HUMAN_SHORT = "支名不在记录里";
+/**
+ * pd 00:00 定稿，展开那一段（三句照抄）。**与存量那一档的分别在最后的下一步**：
+ * 这一档是「拿它证据里的 sha 自己查」，存量那一档是「自己核那条支」。
+ */
+export const VERIFY_BRANCH_BY_HUMAN_WHY = `这条验收是人在牌桌上点的「过」，由服务代落。服务手上没有仓库，那件 done 也没有带支名，
+所以记录里没有支名——要知道是哪条支，拿它证据里的 sha 自己查。
+它只说明「在某一条支上验过」，不说明它在不在你会拿到的那条支上。`;
+/**
  * t-344（pd 要求㉜，decision `01M69TGRYYAYV2KE38K6H8PJ8P`）：**`repo` 不是一个面，它至少是两个——
  * 「✓ repo」要说出是哪条支。**
  *
@@ -1707,9 +1747,15 @@ export const VERIFY_BRANCH_UNRECORDED = "没记支名";
  */
 export const VERIFY_BRANCH_UNRECORDED_WHY = `这条验收早于 --branch，记录里没有支名。它只说明「在某一条支上验过」，
 不说明它在不在你会拿到的那条支上——要判断，得自己核那条支。`;
-/** 板上一条验收显示成什么：`repo@<支名>`，或者旧事件那一档的后缀。非 repo 的面原样不动。 */
-export const verifiedSurface = (surface: string, branch?: string): string =>
-  surface !== REPO_SURFACE ? surface : branch?.trim() ? `${surface}@${branch.trim()}` : `${surface}（${VERIFY_BRANCH_UNRECORDED}）`;
+/**
+ * 板上一条验收显示成什么：`repo@<支名>`，或者两种「没有支名」各自那一档。非 repo 的面原样不动。
+ * t-347：**两种没有支名不共用一句话**——`unknown` 为真是「服务替人落的那一条，没有支名可抄」，
+ * 没有这个记号的就是存量那一档（当时没有记）。
+ */
+export const verifiedSurface = (surface: string, branch?: string, opts: { unknown?: boolean; showsWho?: boolean } = {}): string =>
+  surface !== REPO_SURFACE ? surface
+  : branch?.trim() ? `${surface}@${branch.trim()}`
+  : `${surface}（${opts.unknown ? (opts.showsWho ? VERIFY_BRANCH_BY_HUMAN_SHORT : VERIFY_BRANCH_BY_HUMAN) : VERIFY_BRANCH_UNRECORDED}）`;
 /**
  * pd 22:19 定稿（同上 ②）：`repo` 验收不带 `--branch` 被拒那一句。不以「拒：」开头（服务端前缀已有两层）。
  * `⟨支名⟩` 那个位置只填支名——pd 点名注意：别让句子变成「补上 --branch 一条支」那种读法。

@@ -2,7 +2,7 @@ import { append, Reduction, type EventStore, type AppendOptions } from "./store.
 import { reduce, type State } from "./reduce.js";
 import { projectRoles, importCounts, standIns, presenceStatus, missingRoleOf } from "./board.js";
 import { Rejected } from "./rules.js";
-import { cardEnded, DEFAULT_DOER_NOTHING, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
+import { cardEnded, DEFAULT_DOER_NOTHING, REPO_SURFACE, VERIFIER_ROLES, FAIL_NOTICE, VERIFY_ASK, SERVICE_ACTOR, INSTRUCTION_MAX_CHARS, PROJECT_SURFACE, IMPORT_DONE_PREFIX, MIGRATION_ASK_TITLE, MIGRATION_OPTIONS, MIGRATION_OK, MIGRATION_FINISH, MIGRATION_PATCH, STOOD_IN_PREFIX, STAND_IN_ASK_TITLE, STAND_IN_OPTIONS, STAND_IN_TRIGGER, STAND_IN_DAY_MS, defaultApplied, defaultMissed, DEFAULT_LATE_MS, type Event, type NewEvent } from "./events.js";
 
 /** Reading key (surface project) naming where a task is judged when the human judges it; "repo" when unset. */
 export const VERIFY_SURFACE_KEY = "verify.surface";
@@ -105,7 +105,18 @@ export function followUps(s: State, e: Event, human: string, now: Date): NewEven
     const done = t?.history.find((h) => h.op === "done" && h.id === ref);
     if (!t || !done || done.round !== t.round) return []; // the owner did it again since: this ask is about an old round
     const pass = e.decides.option === "过";
-    return [{ kind: "task", op: "verify", actor: e.actor, task: t.id, surface: verifySurface(s), pass, evidence: pass ? "human 在牌桌上确认" : "human 在牌桌上判不过", refs: [e.id] }];
+    /**
+     * t-347（t-344 自报的那个缺口）：**这条验收是服务替人组装的，而服务手上没有仓库。**
+     * 所以支名只能从这件 `done` 抄（`t.branch`，`done --branch` 量出来的那个）；抄不到就带上
+     * `branch_unknown`，板上那一档另有一句话——**不与存量那一档共用**（存量是当时没有记，这一档是
+     * 此刻服务不知道，两者的下一步也不同：那一档自己核那条支，这一档拿证据里的 sha 查）。
+     * **不拒他**（判据 3）：他是政策权威，不是被判的人；拿不到支名也照旧落下去。
+     * 这一条只在 `repo` 那一面成立——别的面压根不收支名（t-344）。
+     */
+    const surface = verifySurface(s);
+    const branch = surface === REPO_SURFACE ? t.branch?.trim() || undefined : undefined;
+    return [{ kind: "task", op: "verify", actor: e.actor, task: t.id, surface, pass, evidence: pass ? "human 在牌桌上确认" : "human 在牌桌上判不过", refs: [e.id],
+      ...(branch ? { branch } : surface === REPO_SURFACE ? { branch_unknown: true as const } : {}) }];
   }
   return [];
 }

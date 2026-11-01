@@ -80,7 +80,13 @@ function sites(): { file: string; line: number; rule: string; already: boolean }
  *
  * 这个数照旧是**量出来的**：我跑的是本文件 `sites()` 同一段代码（量具印 146），再回头核它与 144 + 2 对得上。
  */
-const TOTAL = 146;
+/**
+ * **t-347：146 → 147。** 一处，在 `core/rules.ts` 的 `case "verify"`：`branch_unknown` 那个记号只有
+ * 人那一路能带（服务替他落），**一个角色带着它来等于自己给自己免掉支名**（判据 4 要堵的那条绕路）。
+ * 它属「那件事没有发生」那一类（不带 `{ at }`）：出路是自己带上 `--branch` 再来。
+ * 量出来的：量具印 147，与 146 + 1 对得上。
+ */
+const TOTAL = 147;
 const ALREADY = [
   "cli/decide.ts decide", "core/rules.ts ack", "core/rules.ts decide", "core/rules.ts disown", "core/rules.ts disown",
   "core/rules.ts reading", "core/rules.ts seam", "core/rules.ts seam", "core/rules.ts stand-in", "core/rules.ts task",

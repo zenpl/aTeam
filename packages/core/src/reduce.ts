@@ -56,6 +56,8 @@ export interface TaskState {
   touched_all: string[];
   /** t-209：这一轮的起点 sha（claim/reopen 那一刻分支在哪儿）。缺席 = 这件任务没记过，区间不可知。 */
   base_sha?: string;
+  /** t-347：这一轮交在哪条支上（`done` 声明的）。人点「过」时服务抄它；老任务没有它。 */
+  branch?: string;
   status: TaskStatus;
   blocked_on?: string;
   /** Set once the task is withdrawn (terminal). The id stays in the log; nothing else happens to it. */
@@ -84,20 +86,23 @@ export interface TaskState {
 
 export type TaskHistoryEntry =
   | { op: "done"; id: string; by: string; at: string; round: number; evidence?: string }
-  | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string; branch?: string }
+  | { op: "verify"; id: string; by: string; at: string; round: number; surface: string; pass: boolean; evidence?: string; branch?: string; branch_unknown?: true }
   | { op: "reopen"; id: string; by: string; at: string; round: number; reason: string }
   | { op: "evidence"; id: string; by: string; at: string; round: number; sha: string; was: string | null; why: string };
 
 export interface TaskVerification { id: string; surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number;
   /** t-344（pd 要求㉜）：这次 `repo` 验收是在哪条支上做的。旧事件没有它——**不回填**，板上照实说不知道。 */
-  branch?: string }
+  branch?: string;
+  /** t-347：服务替人落这一条时没有支名可抄。与「存量没有这个字段」是两种处境，板上说的话也不同。 */
+  branch_unknown?: true }
 
 /** Latest result per surface in the current round: what the board shows next to the task. */
-export function surfaceResults(t: TaskState): { surface: string; pass: boolean; branch?: string }[] {
+export function surfaceResults(t: TaskState): { surface: string; pass: boolean; branch?: string; branch_unknown?: true }[] {
   // t-344：连这一面最后那一次的支名一起带出来——板上那一行要说得出「在哪条支上验的」。
-  const latest = new Map<string, { pass: boolean; branch?: string }>();
-  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, { pass: v.pass, branch: v.branch });
-  return [...latest].map(([surface, x]) => ({ surface, pass: x.pass, branch: x.branch }));
+  // t-347：没有支名的那两种处境也要分得开，所以那个记号一起带出来。
+  const latest = new Map<string, { pass: boolean; branch?: string; branch_unknown?: true }>();
+  for (const v of t.verifications) if (v.round === t.round) latest.set(v.surface, { pass: v.pass, branch: v.branch, branch_unknown: v.branch_unknown });
+  return [...latest].map(([surface, x]) => ({ surface, pass: x.pass, branch: x.branch, branch_unknown: x.branch_unknown }));
 }
 
 /** Everyone who wrote a criterion of this task: none of them may judge it met. */
@@ -851,6 +856,9 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       t.status = "done"; t.evidence = e.evidence; t.round += 1;
       if (e.shows?.trim()) t.shows = e.shows.trim();
       if (e.base_sha?.trim()) t.base_sha = e.base_sha.trim();   // t-209：这一轮从哪儿开始算的
+      // t-347：这一轮交在哪条支上。人点「过」时服务替他落那条验收，只能从这里抄——它手上没有仓库。
+      // 不带就不覆盖上一轮的值：reopen 之后又交一次而那次量不出支名，不该把上一次量到的擦掉。
+      if (e.branch?.trim()) t.branch = e.branch.trim();
       t.history.push({ op: "done", id: e.id, by: e.actor, at: e.at, round: t.round, evidence: e.evidence });
       // t-105: done's touches are the final value, and seams are recomputed from it — the same rules, nothing new.
       // `undefined` says nothing; `[]` says "it touched nothing", which is a fact like any other (qa 00:29)
@@ -881,9 +889,10 @@ function applyTask(s: State, e: Event & { kind: "task" }) {
       // A fail on a later surface after a pass elsewhere sends the task back to done (the earlier pass still
       // stands, per surface); a fail with nothing passed yet is a plain failed.
       const passedBefore = surfaceResults(t).some((r) => r.pass);
-      t.verifications.push({ id: e.id, surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round, branch: e.branch });
+      t.verifications.push({ id: e.id, surface: e.surface, pass: e.pass, by: e.actor, at: e.at, evidence: e.evidence, round: t.round, branch: e.branch, branch_unknown: e.branch_unknown });
       if (e.pass && e.shows?.trim()) t.shows = e.shows.trim();
-      t.history.push({ op: "verify", id: e.id, by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence, branch: e.branch });
+      t.history.push({ op: "verify", id: e.id, by: e.actor, at: e.at, round: t.round, surface: e.surface, pass: e.pass, evidence: e.evidence, branch: e.branch, branch_unknown: e.branch_unknown });
+      // t-347：服务替人落那一条时要抄这件 done 声明的支名，所以它得留在状态里（见 `case "done"`）。
       t.status = e.pass ? "verified" : passedBefore ? "done" : "failed";
       return;
     }

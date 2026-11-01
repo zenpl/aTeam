@@ -1,4 +1,4 @@
-import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING, reachCountLine, reevidenceLine, reevidenceShort, verifiedSurface, VERIFY_BRANCH_UNRECORDED_WHY, REPO_SURFACE } from "@ateam/core";
+import { band, type Band, MOVED_MARK, UNANSWERED_HEAD, unansweredRow, LATE_HEAD, lateRow, NOBODY_ACTED_HEAD, span, DEPLOY_SOURCE, overturnedLine, describeShape, ambiguousLabels, taskHeading, roleNamer, nameRoles, type Event, type Board, type BoardRelease, type BoardTask, SEAM_UNDECIDED, SEAM_SAME_FILE, alsoHere, nobodyElse, lightSeamLine, seamFiles, waitingUnknownLine, lateLine, LATE_SHOWN, SEAM_DIR_ONLY, containedSeamLine, seamDirs, presenceClocks, STALLED_HEADING, reachCountLine, reevidenceLine, reevidenceShort, verifiedSurface, VERIFY_BRANCH_UNRECORDED_WHY, VERIFY_BRANCH_BY_HUMAN_WHY, REPO_SURFACE } from "@ateam/core";
 
 const hhmm = (iso: string) => iso.slice(11, 16);
 
@@ -181,7 +181,7 @@ export function board(b: Board, me: string): string {
   for (const status of ["blocked", "working", "done", "failed", "open", "verified", "withdrawn", "obsolete"]) {
     for (const t of b.tasks[status] ?? []) {
       // t-344（pd 要求㉜）：`repo` 那一面要说出是哪条支——`verifiedSurface` 一处组装，四个渲染点共用。
-      const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true, branch: undefined })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${verifiedSurface(r.surface, r.branch)}`).join(" ");
+      const results = (t.surfaces ?? t.verified_on?.map((surface) => ({ surface, pass: true, branch: undefined })) ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${verifiedSurface(r.surface, r.branch, { unknown: r.branch_unknown })}`).join(" ");
       const overturned = (t.overturned ?? []).map((o) => overturnedLine(o.surface, o.by)).join("；");   // t-162：句子在 core 一处
       const extra = status === "blocked" ? ` ⏸ ${t.blocked_on}` : status === "withdrawn" ? `  ✗ ${t.withdrawn?.reason ?? ""}` : status === "obsolete" ? `  已被 ${t.obsolete?.decision ?? "?"} 取代` : results ? `  ${results}${overturned ? `（${overturned}）` : ""}` : "";
       out.push(`  ${status.padEnd(9)} ${t.id.padEnd(14)} ${taskHeading(t, ambiguous)}${t.owner ? `  @${who(t.owner)}` : ""}${extra}`);
@@ -303,16 +303,20 @@ export function task(t: BoardTask, seams: Board["seams"], omitted: string[], who
   for (const r of t.evidence_recorded ?? []) out.push(`  ${reevidenceLine(r.was, r.sha, who(r.by), hhmm(r.at), r.why)}`);
   for (const o of t.overturned ?? []) out.push(`overturned ${o.surface} 验过（${o.passed_by}），后被 ${o.by} 推翻 ${hhmm(o.at)}${o.evidence ? `：${o.evidence}` : ""}`);
   out.push("verifications");
-  if (left("verifications")) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${verifiedSurface(r.surface, r.branch)}`).join("  ") || "(none)"}`);
+  if (left("verifications")) out.push(`  ${(t.surfaces ?? []).map((r) => `${r.pass ? "✓" : "✗"} ${verifiedSurface(r.surface, r.branch, { unknown: r.branch_unknown })}`).join("  ") || "(none)"}`);
   else if (!verifications.length) out.push("  (none)");
-  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${verifiedSurface(v.surface, v.branch)}  by ${who(v.by)} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
+  for (const v of verifications) out.push(`  ${v.pass ? "✓ pass" : "✗ fail"}  ${verifiedSurface(v.surface, v.branch, { unknown: v.branch_unknown, showsWho: true })}  by ${who(v.by)} ${hhmm(v.at)}${v.evidence ? `: ${v.evidence}` : ""}`);
   // t-344：旧那一档的后缀只说「没记支名」，为什么要紧那一段在这里展开（pd 定稿，照抄）。
-  if (verifications.some((v) => v.surface === REPO_SURFACE && !v.branch?.trim())) for (const line of VERIFY_BRANCH_UNRECORDED_WHY.split("\n")) out.push(`    ${line}`);
+  // t-347：两档各自那一段，不共用（存量：当时没有记，下一步自己核那条支；人点的：服务没有仓库可量，
+  // 下一步拿证据里的 sha 查）。两档同时出现时各印一次。
+  const noBranch = verifications.filter((v) => v.surface === REPO_SURFACE && !v.branch?.trim());
+  if (noBranch.some((v) => !v.branch_unknown)) for (const line of VERIFY_BRANCH_UNRECORDED_WHY.split("\n")) out.push(`    ${line}`);
+  if (noBranch.some((v) => v.branch_unknown)) for (const line of VERIFY_BRANCH_BY_HUMAN_WHY.split("\n")) out.push(`    ${line}`);
   if (t.history?.length) {
     out.push("history");
     for (const h of t.history) {
       const line = h.op === "done" ? `done${h.evidence ? `: ${h.evidence}` : ""}`
-        : h.op === "verify" ? `${h.pass ? "✓ pass" : "✗ fail"} ${verifiedSurface(h.surface, h.branch)}${h.evidence ? `: ${h.evidence}` : ""}`
+        : h.op === "verify" ? `${h.pass ? "✓ pass" : "✗ fail"} ${verifiedSurface(h.surface, h.branch, { unknown: h.branch_unknown })}${h.evidence ? `: ${h.evidence}` : ""}`
         : h.op === "evidence" ? reevidenceShort(h.was, h.sha, h.why)
         : `reopened: ${h.reason}`;
       out.push(`  r${h.round} ${hhmm(h.at)} ${who(h.by)}  ${line}`);

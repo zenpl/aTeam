@@ -61,6 +61,8 @@ tasks
   ateam task show <id>                       title, status, owner, criteria, touches, evidence, verifications, seams
   ateam task create <id> <title> --criteria "..." [--criteria "..."]
   ateam task claim <id> --touches a,b        declare the paths/symbols/fields you will change
+                                             done also records which branch you delivered on, measured from the local git HEAD
+                                             (--branch overrides; nothing is recorded when git cannot say — t-347)
   ateam task done <id> [--evidence "..."] [--shows "一句话：人能看到什么" | --no-human-impact] [--touches 符号,字段] [--no-touches] [--no-seam-check] [--no-seam-check-for <接缝 id>]
                                              --internal-only "文件#符号,…" 碰了人可见的文件、但只动了里面的内部符号时，具体说出是哪几个
                                              claim 的 touches 是声明，done 的是事实：默认从本分支相对 claim 起点的 diff 量出实际改动的文件，
@@ -351,6 +353,13 @@ function gitDiff(): Diff {
   const git = (args: string[]) => spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
   return {
     head: () => { const r = git(["rev-parse", "HEAD"]); return r.status === 0 ? r.stdout.trim() : null; },
+    /**
+     * t-347：**这一轮交在哪条支上，量出来的，不猜。** `done` 带上它，人在牌桌点「过」时服务才抄得到支名
+     * （那条验收是服务替他组装的，而服务手上没有仓库）。
+     * 答不出来就给 null：不是 git、不是检出、或者 HEAD 游离（`rev-parse --abbrev-ref HEAD` 给 `HEAD`）。
+     * **游离头不编一个名字**——那正是「说不出就说不出」那一条。
+     */
+    branch: () => { const r = git(["rev-parse", "--abbrev-ref", "HEAD"]); const b = r.status === 0 ? r.stdout.trim() : ""; return b && b !== "HEAD" ? b : null; },
     base: (task) => { try { return readFileSync(baseFile(task), "utf8").trim() || null; } catch { return null; } },
     // t-138: what this task changed, not what the branch did — a merge brings in other people's files, and merging
     // is what the seam rules ask for. The three questions and their blind spots live next to changedFiles.
@@ -785,6 +794,8 @@ async function main(argv: string[]) {
           // .ateam/base.<task> 里——日志里没有，于是「这条提交属于哪件任务」在别的机器上只能靠可达性猜，
           // 而那样任何一条孤儿提交被后来的任务盖在下面就消失（qa 14:29 在真仓库上量到 9ac8cee 正是这样没的）。
           const baseSha = gitDiff().base(task) ?? undefined;
+          // t-347：支名量出来就带上（`--branch` 可以覆盖；量不出来就不带，而那一档板上另有一句话）。
+          const branch = str(a, "branch") ?? gitDiff().branch?.() ?? undefined;
           for (const line of rev.lines) console.error(line);
           // t-201：--no-seam-check 是把所有接缝义务一起免掉的那把钥匙，留着但不再是唯一的出路；
           // --no-seam-check-for <接缝 id | 对方任务 id> 只免一条，其余照判，且被免的那条会随 done 落在日志上。
@@ -799,7 +810,7 @@ async function main(argv: string[]) {
             // t-228：这条命令要发三种事件（done、退回说明、解决接缝），从此每一件各自报结果——
             // 在这之前，后面任何一件被拒都会让「done 已经落库」这个事实在终端上消失。
             await sendAll([
-              { what: PART_NAMES.done(task), event: { kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) } as ClientEvent },
+              { what: PART_NAMES.done(task), event: { kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, touches: rev.touches, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}), ...(branch ? { branch } : {}) } as ClientEvent },
               // t-074: a fallback is never silent — what could not be verified goes on record next to the done
               ...(check.unverified.length ? [{ what: PART_NAMES.seamFallback(), event: { kind: "note", body: `接缝检查退回（无法验证吸收）：${check.unverified.join("；")}`, task } as ClientEvent }] : []),
               // t-073: seams this done settles by itself: recorded right after, with the basis
@@ -810,7 +821,7 @@ async function main(argv: string[]) {
             ]);
             return;
           }
-          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}) });
+          return emit({ kind: "task", op, task, evidence, shows: str(a, "shows"), ...impact, ...internal, ...(rev.changed_files === undefined ? {} : { changed_files: rev.changed_files }), ...(baseSha ? { base_sha: baseSha } : {}), ...(branch ? { branch } : {}) });
         }
         case "verify": {
           if (bool(a, "pass") === bool(a, "fail")) throw new Error("say --pass or --fail");

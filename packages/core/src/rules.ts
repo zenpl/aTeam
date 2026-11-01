@@ -840,6 +840,12 @@ function validateTask(state: State, e: NewEvent & { kind: "task" }, human: strin
       // done 证据里的支名带上），归 pm 排；我不在这一单里自己决定。
       if (e.surface === REPO_SURFACE && !e.branch?.trim() && e.actor !== human)
         throw new Rejected("verify", VERIFY_BRANCH_REQUIRED);
+      /**
+       * t-347 判据 4：**堵住那条绕路。** `branch_unknown` 是服务替人落那一条时的记号，不是谁都能带的
+       * 免签——一个角色若带着它来，等于自己给自己免掉支名。只有人那一路（`actor === human`）允许它。
+       */
+      if (e.branch_unknown && e.actor !== human)
+        throw new Rejected("verify", VERIFY_BRANCH_REQUIRED);
       // 反过来那一档 pd 没有写话，而它也不需要一句新话：说清形状就够（别的面不收这个字段）。
       if (e.branch !== undefined && e.surface !== REPO_SURFACE)
         throw new Rejected("verify", `--branch: ${REPO_SURFACE}`);

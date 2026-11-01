@@ -54,13 +54,13 @@ export interface BoardTask {
   base_sha?: string;
   /** One sentence for the owner, above the evidence (t-056). */
   shows?: string;
-  /** t-344：`repo` 那几条带上是在哪条支上验的（旧事件没有这一项）。 */
-  verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number; branch?: string }[];
+  /** t-344：`repo` 那几条带上是在哪条支上验的（旧事件没有这一项）。t-347：服务替人落而无支名可抄的那一档另有记号。 */
+  verifications?: { surface: string; pass: boolean; by: string; at: string; evidence?: string; round: number; branch?: string; branch_unknown?: true }[];
   /** Every done, verify and reopen in order, with the round each belongs to. */
   history?: TaskHistoryEntry[];
   /** Latest result per surface since the task was last done, e.g. repo ✓ production ✗. */
-  /** t-344：带上这一面最后那次验收的支名（`repo` 才有；旧事件没有）。 */
-  surfaces: { surface: string; pass: boolean; branch?: string }[];
+  /** t-344：带上这一面最后那次验收的支名（`repo` 才有；旧事件没有）。t-347：没有支名的那两档也要分得开。 */
+  surfaces: { surface: string; pass: boolean; branch?: string; branch_unknown?: true }[];
   /** t-076: surfaces whose pass was later overturned by a fail, with who, when and why. */
   overturned?: { surface: string; by: string; at: string; evidence?: string; passed_by: string }[];
   /** Surfaces whose latest result since the task was last done is a pass. */

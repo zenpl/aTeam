@@ -12,6 +12,12 @@ export interface Diff {
   changed(base: string): string[] | null;
   /** The current commit, to record as a base at claim time. Null when there is no git here. */
   head(): string | null;
+  /**
+   * t-347：这一轮交在哪条支上（`done` 记它，人点「过」时服务抄它）。
+   * 答不出来给 null：不是 git、不是检出、或者游离头——**说不出就说不出，不编一个名字**。
+   * 可以不给（老的调用方与用例照旧）。
+   */
+  branch?(): string | null;
 }
 
 export interface Revision {
