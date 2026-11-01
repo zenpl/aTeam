@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sync } from "../src/loop.js";
-import { fileCursor } from "../src/main.js";
+import { fileCursor, cursorForCommand } from "../src/main.js";
 import { CURSOR_UNREADABLE, fullPullLine, type PullResult, type Event } from "@ateam/core";
 
 const ME = "pm";
@@ -47,6 +47,28 @@ describe("t-351 · 游标文件在而读出来是空的，与连文件都没有�
       const t = tree(kind);
       try { expect(fileCursor(ME, t.root).read()).toBeNull(); } finally { t.cleanup(); }
     }
+  });
+
+  /**
+   * 重交补的那一格（pd 10:45 报的方向）：**上面那一格喂给 `sync()` 的是裸的 `fileCursor`，而真实路径上
+   * 它永远是 `cursorForCommand()` 包过的那一层**——而那一层上一版只转发 `read`／`write`／`commit`，
+   * 把 `state` 丢了。于是判据 2 在用例里成立、在真路径上不成立：空游标被读成「没有游标」，从头拉。
+   *
+   * 本地实测过那个后果：`cursor.<me>.<key>` 与 `seen.<me>.<key>` 都清成 0 字节，`sync` 从头拉了 909 条。
+   * 所以这一格钉的是**经过包装之后还认不认得空**，而不是 `sync()` 自己的判断（那一格在上面）。
+   */
+  it("**判据 2，真路径**：经过 cursorForCommand 之后，空游标照样一条都不拉", async () => {
+    const t = tree("empty");
+    try {
+      const p = puller([ev("01A"), ev("01B")]);
+      const out: string[] = [];
+      const cur = cursorForCommand(fileCursor(ME, t.root));
+      expect(cur.state?.(), "包过的那一层也要答得出「空」").toBe("empty");
+      const r = await sync(p as never, ME, cur as never, 0, (l) => out.push(l));
+      expect(p.calls, "一次拉取都没有发生").toEqual([]);
+      expect(r.events).toEqual([]);
+      expect(out.join("\n")).toContain(CURSOR_UNREADABLE.split("\n")[0]);
+    } finally { t.cleanup(); }
   });
 
   it("**判据 2**：文件在而读出空 ⇒ 一条都不拉，当场说话", async () => {

@@ -221,6 +221,21 @@ export function deferredCursor(inner: CursorStore): CursorStore & { commit(): vo
   return {
     read: () => (pending !== undefined ? pending : inner.read()),
     write(c) { pending = c; },
+    /**
+     * t-351 重交：**三档的分别必须穿过这一层。**
+     *
+     * 上一版只转发 `read`／`write`／`commit`，于是 `sync()` 的 `from.state?.()` 在真实路径上**拿不到东西**，
+     * 退回「`read()` 把空读成 `null` ⇒ 没有游标」——空游标又变成从头拉，判据 2 就是这样在真路径上失效的
+     * （本地实测：`cursor.<me>.<key>` 与 `seen.<me>.<key>` 都清成 0 字节，`sync` 从头拉了 909 条）。
+     * pd 10:45 在生产上撞的是同一族（它手搓了影子副本恢复），dev 10:47 误打那一发全量也是同一个口子。
+     *
+     * 这一轮里写过的值优先（那才是「此刻的读位置」）；没写过就问里层，里层答不上来才退回老口径——
+     * 所以**没有 `state` 的调用方行为一个字不变**。
+     */
+    state: () => {
+      if (pending !== undefined) return pending === null ? "none" : pending.trim() ? "value" : "empty";
+      return inner.state?.() ?? (inner.read() === null ? "none" : "value");
+    },
     commit() {
       if (pending === undefined) return;
       const v = pending;
