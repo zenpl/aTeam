@@ -13,6 +13,13 @@
 #   bin/inject packages/core/src/board.ts 'a && b' 'a' -- packages/core/test/x.test.ts
 # 它做四件事：改这一处、重新 build、跑测试、还原。退出码是**注入之后测试的退出码**——
 # 注入之后仍然 0（全绿），说明那条断言在它要守的东西不见了的时候什么都没说，这正是要发现的。
+#
+# t-350：**它说「build 没过」的时候要说出是谁红的，并且把编译器原样说的话带上。**
+# 出处是 dev 22:50 自己栽的那一处：它看得见的只有「换一个注入点」，而真相是**它自己那棵树本来就是红的**——
+# 于是它去指控这个工具误报，两小时后才发现，代价是两小时加一张撤掉的单（t-348）。
+# 所以 build 没过时多做一步：**把注入还原回去再 build 一次**，用两次的输出把三种处境分开——
+# 还原之后过了＝这次注入的责任；还原之后仍然红＝这棵树自己红；两次里一条编译器诊断都没有＝不是编译器在说话。
+# 这一步只在失败那条路上跑，正常那条路（注入后测试红＝注入成功）一次 build 都不多跑。
 set -e
 
 usage() { echo "用法: bin/inject <文件> <原文> <替换> [-- <vitest 参数…>]" >&2; exit 2; }
@@ -29,6 +36,14 @@ cd "$root"
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "$root 不是 git 仓库，还原没有依据，拒绝注入" >&2; exit 2; }
 git diff --quiet -- "$file" || { echo "$file 有未提交的改动：还原会把它一起丢掉。先提交或 stash。" >&2; exit 2; }
 
+# 输出与留痕都放在 .ateam/ 下：它在 .gitignore 里，不会把这些东西算进任何人的 diff。
+mkdir -p "$root/.ateam"
+injected_log="$root/.ateam/inject.build.log"
+base_log="$root/.ateam/inject.build.base.log"
+trail="$root/.ateam/inject.abandoned.jsonl"
+# 报给人的命令要**能原样粘回去手跑一次**：所以它带着 cd，而不是只有 pnpm 那半截。
+build="cd $root && pnpm -r build"
+
 # t-205：**还原源码不等于还原这棵树。** 上一版只 `git checkout` 那个文件，而 `dist` 仍是**按注入过的源码**编出来的
 # ——下一条不重新 build 的命令读到的是一棵源码里已经不存在的树。frontend 13:10 就据此看到过一次假的「基线 3 failed」，
 # 差点当成本件的真失败报上去。这与它自己在这个脚本头上记的那个坑（「一次失败的注入把已经损坏的树备份了进去」）
@@ -42,19 +57,106 @@ restore() {
 }
 trap restore EXIT INT TERM        # 注入中途出任何事都还原，包括 set -e 打断
 
+# t-350 判据④：**被放弃的注入点要留痕**——文件、符号、形状、放弃的理由，各一行 JSON。
+# 不留痕的话，「有多少次该红的注入被放过了」连量都量不到，而那个数正是这套做法可不可信的那个数。
+mark() {
+  python3 - "$file" "$from" "$trail" "$1" <<'PY'
+import sys, json, re, datetime
+path, old, trail, why = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+src = open(path, encoding="utf-8").read()
+at = src.find(old)
+sym, last = None, None
+if at >= 0:
+    for m in re.finditer(
+        r"^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+        r"(?:function|const|let|var|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)",
+        src[:at], re.M):
+        last = m
+    sym = last.group(1) if last else None
+rec = {
+    "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "why": why,
+    "file": path,
+    "line": src.count("\n", 0, at) + 1 if at >= 0 else None,
+    "symbol": sym,
+    "shape": {"head": old[:60], "chars": len(old), "lines": old.count("\n") + 1},
+}
+with open(trail, "a", encoding="utf-8") as f:
+    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+  echo "这个注入点记在 $trail，放过去的注入点要能被数出来" >&2
+}
+
+# 判据①：说「没过」的时候，命令、退出码、首条与末条原文都要出现。
+# 没有编译器诊断时不空着手走：那就把非空行的首末两行当原文印出来——「它说了什么」比「它该说什么」重要。
+say_build() {
+  echo "跑的是 $build，退出码 $2。下面是它原样说的话：" >&2
+  lines=$(grep -E 'error TS[0-9]+' "$1" || true)
+  [ -n "$lines" ] || lines=$(grep -v '^[[:space:]]*$' "$1" || true)
+  n=$(printf '%s' "$lines" | grep -c '' || true)
+  [ -n "$lines" ] || n=0
+  [ "$n" -lt 1 ] || printf '%s\n' "$lines" | head -1 >&2
+  [ "$n" -lt 3 ] || echo "（中间另有 $((n - 2)) 行，全文在 $1）" >&2
+  [ "$n" -lt 2 ] || printf '%s\n' "$lines" | tail -1 >&2
+}
+
+said() { grep -qE 'error TS[0-9]+' "$1"; }
+
+# 两条路都会走到这一句，而**同一句话在这个脚本里只许出现一处**（t-187 那条对齐闸按句数核，多一处就红），
+# 所以它住在一个函数里，不在两个分支里各抄一遍。
+not_compiler() { echo "这不是编译器在说话：build 这件事自己没跑成——跑的是下面那条命令，和你手里那条可能不是同一条" >&2; }
+
+set +e
 python3 - "$file" "$from" "$to" <<'PY'
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 src = open(path, encoding="utf-8").read()
 n = src.count(old)
 if n == 0:
-    sys.exit(f"注入点没找到，一处都没有：{old!r}")
+    print(f"注入点没找到，一处都没有：{old!r}", file=sys.stderr)
+    sys.exit(4)
 if n > 1:
-    sys.exit(f"注入点有 {n} 处，改哪一处不确定——把原文写长一点：{old!r}")
+    print(f"注入点有 {n} 处，改哪一处不确定——把原文写长一点：{old!r}", file=sys.stderr)
+    sys.exit(5)
 open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
 PY
+sited=$?
+set -e
+[ $sited -eq 4 ] && { mark "no-site"; exit 2; }
+[ $sited -eq 5 ] && { mark "many-sites"; exit 2; }
+[ $sited -eq 0 ] || exit $sited
 
-pnpm -r build >/dev/null 2>&1 || { echo "注入之后 build 就没过——这不算「断言会红」，换一个注入点" >&2; exit 3; }
+set +e
+pnpm -r build > "$injected_log" 2>&1
+built=$?
+set -e
+if [ $built -ne 0 ]; then
+  # 先把注入撤掉，再 build 一次：**这一次的红白，才是「谁红的」这个问题的答案。**
+  git checkout -- "$file"
+  set +e
+  pnpm -r build > "$base_log" 2>&1
+  base=$?
+  set -e
+  if [ $base -ne 0 ]; then
+    if said "$base_log"; then
+      echo "注入之前这棵树就是红的——红的是你这处改动，不是注入点；先让 build 过，再来注入" >&2
+    else
+      not_compiler
+    fi
+    say_build "$base_log" "$base"
+    mark "tree-already-red"
+  else
+    if said "$injected_log"; then
+      echo "注入之后 build 就没过——这不算「断言会红」，换一个注入点" >&2
+    else
+      not_compiler
+    fi
+    say_build "$injected_log" "$built"
+    mark "site-does-not-compile"
+  fi
+  exit 3
+fi
+
 set +e
 npx vitest run "$@"
 code=$?

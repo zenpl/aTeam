@@ -102,6 +102,26 @@ export const INJECT_BUILD_BROKE = "注入之后 build 就没过——这不算�
 export const INJECT_STILL_GREEN = "注入之后测试仍然全绿：被守的东西不见了，没有一条断言说话。";
 
 /**
+ * t-350 · 它说「build 没过」时还要说出**是谁红的**，并且把编译器原样说的话带上（pd 待定稿，草稿见 note
+ * `01M6A8CHVQAB466RNTPTYJ606P`）。
+ *
+ * 出处：dev 22:50 自己栽的那一处。它看得见的只有上面那句「换一个注入点」，而真相是**它自己那棵树本来就是红的**——
+ * 于是它去指控工具误报，两个小时后才发现。一句话把两件不同的事说成了同一件，代价是两小时加一张撤掉的单（t-348）。
+ *
+ * 三种处境分三句，分法是**量出来的**，不是凭感觉挑的：注入之后 build 没过时，把注入还原回去再 build 一次——
+ * 还原之后过了，红的就是这次注入（上面那句，照旧）；还原之后仍然红，红的就是这棵树自己（`INJECT_BUILD_OWN_RED`）；
+ * 两次输出里一条编译器诊断都没有，就谁也归不到，只能把命令原样交回给人（`INJECT_BUILD_NOT_COMPILER`）。
+ */
+export const INJECT_BUILD_OWN_RED = "注入之前这棵树就是红的——红的是你这处改动，不是注入点；先让 build 过，再来注入";
+export const INJECT_BUILD_NOT_COMPILER = "这不是编译器在说话：build 这件事自己没跑成——跑的是下面那条命令，和你手里那条可能不是同一条";
+/** 判据①要的三样：命令（带它跑的那棵树）、退出码、以及紧跟其后的首条与末条原文。 */
+export const injectBuildRan = (cmd: string, code: string) => `跑的是 ${cmd}，退出码 ${code}。下面是它原样说的话：`;
+/** 首条与末条之间省掉的那些。全文在哪儿要说出来，否则「原样」只剩两行。 */
+export const injectBuildMore = (n: string, path: string) => `（中间另有 ${n} 行，全文在 ${path}）`;
+/** 判据④：被放弃的注入点要留痕，否则「有多少次该红的注入被放过了」连量都量不到。 */
+export const injectAbandonedAt = (path: string) => `这个注入点记在 ${path}，放过去的注入点要能被数出来`;
+
+/**
  * t-162 · 「没在听」的四句，整句在这里算出来（pd 05:50 的位置规则 + pm 的「数据进、句子出」）。
  *
  * 它们原来住在 `packages/cli/src/deaf.ts`，是**与变量拼成一句**的那一类：CLI 拿到毫秒数、自己拼中文。
@@ -259,6 +279,11 @@ export const SAYINGS: readonly Saying[] = [
   { key: "inject.many_sites", where: ["script"], from: "injectManySites" },
   { key: "inject.build_broke", where: ["script"], from: "INJECT_BUILD_BROKE" },
   { key: "inject.still_green", where: ["script"], from: "INJECT_STILL_GREEN" },
+  { key: "inject.build_own_red", where: ["script"], from: "INJECT_BUILD_OWN_RED" },
+  { key: "inject.build_not_compiler", where: ["script"], from: "INJECT_BUILD_NOT_COMPILER" },
+  { key: "inject.build_ran", where: ["script"], from: "injectBuildRan" },
+  { key: "inject.build_more", where: ["script"], from: "injectBuildMore" },
+  { key: "inject.abandoned_at", where: ["script"], from: "injectAbandonedAt" },
 ];
 
 /** t-143 判据 1：一个 key 只登记一次——重复的 key 意味着两句话共用一个名字，改一个会动到另一个。 */
