@@ -41,8 +41,8 @@ mkdir -p "$root/.ateam"
 injected_log="$root/.ateam/inject.build.log"
 base_log="$root/.ateam/inject.build.base.log"
 trail="$root/.ateam/inject.abandoned.jsonl"
-# 报给人的命令要**能原样粘回去手跑一次**：所以它带着 cd，而不是只有 pnpm 那半截。
-build="cd $root && pnpm -r build"
+# 报给人的那条命令与它跑的那棵树是两样东西（pd 定稿里是两个空位）：命令在这儿，树是上面那个 $root。
+build="pnpm -r build"
 
 # t-205：**还原源码不等于还原这棵树。** 上一版只 `git checkout` 那个文件，而 `dist` 仍是**按注入过的源码**编出来的
 # ——下一条不重新 build 的命令读到的是一棵源码里已经不存在的树。frontend 13:10 就据此看到过一次假的「基线 3 failed」，
@@ -84,15 +84,22 @@ rec = {
 with open(trail, "a", encoding="utf-8") as f:
     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 PY
-  echo "这个注入点记在 $trail，放过去的注入点要能被数出来" >&2
+  echo "这个注入点记在 $trail；放过去的注入点都在那里，可以数。" >&2
 }
 
-# 判据①：说「没过」的时候，命令、退出码、首条与末条原文都要出现。
-# 没有编译器诊断时不空着手走：那就把非空行的首末两行当原文印出来——「它说了什么」比「它该说什么」重要。
+said() { grep -qE 'error TS[0-9]+' "$1"; }
+
+# 判据①：说「没过」的时候，命令、它跑的那棵树、退出码、首条与末条原文都要出现。
+# 框那一句分两档（pd 定稿第三处）：有诊断时说「编译器自己的话」，一条都没有时**不许这么说**——
+# 后面跟着的其实是 pnpm 的噪声，而一句话盖两种相反的处境，就是今天栽过两次的那个形状。
 say_build() {
-  echo "跑的是 $build，退出码 $2。下面是它原样说的话：" >&2
-  lines=$(grep -E 'error TS[0-9]+' "$1" || true)
-  [ -n "$lines" ] || lines=$(grep -v '^[[:space:]]*$' "$1" || true)
+  if said "$1"; then
+    echo "跑的是 $build（在 $root），退出码 $2。下面是编译器自己的话：" >&2
+    lines=$(grep -E 'error TS[0-9]+' "$1")
+  else
+    echo "跑的是 $build（在 $root），退出码 $2。下面是它打出来的全部内容，里面没有一条 error TS：" >&2
+    lines=$(grep -v '^[[:space:]]*$' "$1" || true)
+  fi
   n=$(printf '%s' "$lines" | grep -c '' || true)
   [ -n "$lines" ] || n=0
   [ "$n" -lt 1 ] || printf '%s\n' "$lines" | head -1 >&2
@@ -100,11 +107,12 @@ say_build() {
   [ "$n" -lt 2 ] || printf '%s\n' "$lines" | tail -1 >&2
 }
 
-said() { grep -qE 'error TS[0-9]+' "$1"; }
-
 # 两条路都会走到这一句，而**同一句话在这个脚本里只许出现一处**（t-187 那条对齐闸按句数核，多一处就红），
 # 所以它住在一个函数里，不在两个分支里各抄一遍。
-not_compiler() { echo "这不是编译器在说话：build 这件事自己没跑成——跑的是下面那条命令，和你手里那条可能不是同一条" >&2; }
+not_compiler() {
+  echo "这不是编译器在说话：一条 error TS 都没有，build 这件事自己没跑成。" >&2
+  echo "照下面那条命令和那个目录手跑一次——不要把这次失败算在代码上。" >&2
+}
 
 set +e
 python3 - "$file" "$from" "$to" <<'PY'
@@ -139,7 +147,8 @@ if [ $built -ne 0 ]; then
   set -e
   if [ $base -ne 0 ]; then
     if said "$base_log"; then
-      echo "注入之前这棵树就是红的——红的是你这处改动，不是注入点；先让 build 过，再来注入" >&2
+      echo "注入之前这棵树就是红的：还原注入之后再 build 一次，仍然红——所以红的不是注入点。" >&2
+      echo "先让 build 过，再来注入。" >&2
     else
       not_compiler
     fi

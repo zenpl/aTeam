@@ -19,8 +19,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  INJECT_BUILD_BROKE, INJECT_BUILD_OWN_RED, INJECT_BUILD_NOT_COMPILER,
-  injectBuildRan, injectBuildMore, injectAbandonedAt,
+  INJECT_BUILD_BROKE, INJECT_BUILD_OWN_RED, INJECT_BUILD_OWN_RED_DO,
+  INJECT_BUILD_NOT_COMPILER, INJECT_BUILD_NOT_COMPILER_DO,
+  injectBuildRan, injectBuildRanQuiet, injectBuildMore, injectAbandonedAt,
 } from "@ateam/core";
 
 const INJECT = new URL("../../../bin/inject", import.meta.url).pathname;
@@ -75,7 +76,7 @@ function repo(kind: Build, testExit = 1) {
     const p = join(dir, ".ateam/inject.abandoned.jsonl");
     return existsSync(p) ? readFileSync(p, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [];
   };
-  return { dir, inject, trail, cmd: `cd ${dir} && pnpm -r build` };
+  return { dir, inject, trail, ran: (code: string) => injectBuildRan("pnpm -r build", dir, code), quiet: (code: string) => injectBuildRanQuiet("pnpm -r build", dir, code) };
 }
 
 describe("t-350 · 三种处境分三句，谁红的说得出来", () => {
@@ -86,7 +87,7 @@ describe("t-350 · 三种处境分三句，谁红的说得出来", () => {
     expect(r.said).toContain(INJECT_BUILD_BROKE);
     expect(r.said, "这棵树自己没红，不许把责任推给它").not.toContain(INJECT_BUILD_OWN_RED);
     // 判据①：命令、退出码、首条与末条错误，四样都在
-    expect(r.said).toContain(injectBuildRan(w.cmd, "2"));
+    expect(r.said).toContain(w.ran("2"));
     expect(r.said, "首条").toContain(DIAG[0]);
     expect(r.said, "末条").toContain(DIAG[3]);
     expect(r.said).toContain(injectBuildMore("2", join(w.dir, ".ateam/inject.build.log")));
@@ -98,8 +99,10 @@ describe("t-350 · 三种处境分三句，谁红的说得出来", () => {
     const r = w.inject();
     expect(r.status).toBe(3);
     expect(r.said, "这正是 22:50 那一处：当时它说的是「换一个注入点」").toContain(INJECT_BUILD_OWN_RED);
+    expect(r.said, "pd 定稿：说完量到的那件事，还要给动作").toContain(INJECT_BUILD_OWN_RED_DO);
+    expect(r.said, "量到的只是「还原后仍然红」，不许写成指控").not.toContain("红的是你这处改动");
     expect(r.said).not.toContain(INJECT_BUILD_BROKE);
-    expect(r.said, "基线那次 build 的退出码").toContain(injectBuildRan(w.cmd, "1"));
+    expect(r.said, "基线那次 build 的退出码").toContain(w.ran("1"));
     expect(r.said).toContain(DIAG[0]);
     expect(r.said).toContain(DIAG[3]);
   });
@@ -109,10 +112,12 @@ describe("t-350 · 三种处境分三句，谁红的说得出来", () => {
     const r = w.inject();
     expect(r.status).toBe(3);
     expect(r.said).toContain(INJECT_BUILD_NOT_COMPILER);
+    expect(r.said, "这一档的全部意义就是挡住错误归因").toContain(INJECT_BUILD_NOT_COMPILER_DO);
     expect(r.said).not.toContain(INJECT_BUILD_BROKE);
     expect(r.said).not.toContain(INJECT_BUILD_OWN_RED);
     expect(r.said, "它说了什么就印什么，哪怕不是编译器说的").toContain(NOISE);
-    expect(r.said).toContain(injectBuildRan(w.cmd, "7"));
+    expect(r.said, "这一档不许说「编译器自己的话」：后面跟着的是 pnpm 的噪声").toContain(w.quiet("7"));
+    expect(r.said).not.toContain(w.ran("7"));
   });
 
   it("判据③反向：build 其实是绿的——一句失败都不许报，退出码就是那次测试的", () => {

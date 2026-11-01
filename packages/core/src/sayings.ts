@@ -112,14 +112,32 @@ export const INJECT_STILL_GREEN = "注入之后测试仍然全绿：被守的东
  * 还原之后过了，红的就是这次注入（上面那句，照旧）；还原之后仍然红，红的就是这棵树自己（`INJECT_BUILD_OWN_RED`）；
  * 两次输出里一条编译器诊断都没有，就谁也归不到，只能把命令原样交回给人（`INJECT_BUILD_NOT_COMPILER`）。
  */
-export const INJECT_BUILD_OWN_RED = "注入之前这棵树就是红的——红的是你这处改动，不是注入点；先让 build 过，再来注入";
-export const INJECT_BUILD_NOT_COMPILER = "这不是编译器在说话：build 这件事自己没跑成——跑的是下面那条命令，和你手里那条可能不是同一条";
-/** 判据①要的三样：命令（带它跑的那棵树）、退出码、以及紧跟其后的首条与末条原文。 */
-export const injectBuildRan = (cmd: string, code: string) => `跑的是 ${cmd}，退出码 ${code}。下面是它原样说的话：`;
-/** 首条与末条之间省掉的那些。全文在哪儿要说出来，否则「原样」只剩两行。 */
+/**
+ * pd 00:37 定稿（`01M6A8MSPJKPA1V5FFSADE5KGX`）。它改了我草稿的三处，每一处都是一类错，照抄不改标点：
+ * ① 草稿写「红的是**你这处改动**」——我们量到的只是「还原之后仍然红」，红可能来自别人的提交、一份过期的
+ *    dist、或者这条支本来就红。**把推断写成指控，错一次就再没人信这句话。** 所以先说量到的那件事，再给动作。
+ * ② 草稿只点到成因（「和你手里那条可能不是同一条」）而没给动作，而这一档的全部意义就是**挡住错误归因**，
+ *    所以「不要把这次失败算在代码上」必须在。
+ * ③ 框那一句要**分两档**：第三档压根没有编译器输出，草稿照旧写「下面是编译器自己的话」，而后面跟着的其实是
+ *    pnpm 的噪声——一句话盖了两种相反的处境。
+ *
+ * **为什么是八个常量而不是五个**：②③ 各是两行，而 t-187 那条对齐闸的单位是「脚本里一个引号串」，
+ * 一个跨两行的串在它眼里是两个。所以一行一个常量登记，句子的形状仍是 pd 定的那两行。
+ */
+export const INJECT_BUILD_OWN_RED = "注入之前这棵树就是红的：还原注入之后再 build 一次，仍然红——所以红的不是注入点。";
+export const INJECT_BUILD_OWN_RED_DO = "先让 build 过，再来注入。";
+export const INJECT_BUILD_NOT_COMPILER = "这不是编译器在说话：一条 error TS 都没有，build 这件事自己没跑成。";
+export const INJECT_BUILD_NOT_COMPILER_DO = "照下面那条命令和那个目录手跑一次——不要把这次失败算在代码上。";
+/** 判据①要的三样：命令、它跑的那棵树、退出码；紧跟其后是首条与末条原文。 */
+export const injectBuildRan = (cmd: string, root: string, code: string) =>
+  `跑的是 ${cmd}（在 ${root}），退出码 ${code}。下面是编译器自己的话：`;
+/** 同一件事的第三档：一条诊断都没有，所以不许说「编译器自己的话」——后面跟着的是 pnpm 的噪声。 */
+export const injectBuildRanQuiet = (cmd: string, root: string, code: string) =>
+  `跑的是 ${cmd}（在 ${root}），退出码 ${code}。下面是它打出来的全部内容，里面没有一条 error TS：`;
+/** 首条与末条之间省掉的那些。**`n` 是省掉的行数，不是总行数**——印的是「另有」。 */
 export const injectBuildMore = (n: string, path: string) => `（中间另有 ${n} 行，全文在 ${path}）`;
 /** 判据④：被放弃的注入点要留痕，否则「有多少次该红的注入被放过了」连量都量不到。 */
-export const injectAbandonedAt = (path: string) => `这个注入点记在 ${path}，放过去的注入点要能被数出来`;
+export const injectAbandonedAt = (path: string) => `这个注入点记在 ${path}；放过去的注入点都在那里，可以数。`;
 
 /**
  * t-162 · 「没在听」的四句，整句在这里算出来（pd 05:50 的位置规则 + pm 的「数据进、句子出」）。
@@ -280,8 +298,11 @@ export const SAYINGS: readonly Saying[] = [
   { key: "inject.build_broke", where: ["script"], from: "INJECT_BUILD_BROKE" },
   { key: "inject.still_green", where: ["script"], from: "INJECT_STILL_GREEN" },
   { key: "inject.build_own_red", where: ["script"], from: "INJECT_BUILD_OWN_RED" },
+  { key: "inject.build_own_red_do", where: ["script"], from: "INJECT_BUILD_OWN_RED_DO" },
   { key: "inject.build_not_compiler", where: ["script"], from: "INJECT_BUILD_NOT_COMPILER" },
+  { key: "inject.build_not_compiler_do", where: ["script"], from: "INJECT_BUILD_NOT_COMPILER_DO" },
   { key: "inject.build_ran", where: ["script"], from: "injectBuildRan" },
+  { key: "inject.build_ran_quiet", where: ["script"], from: "injectBuildRanQuiet" },
   { key: "inject.build_more", where: ["script"], from: "injectBuildMore" },
   { key: "inject.abandoned_at", where: ["script"], from: "injectAbandonedAt" },
 ];

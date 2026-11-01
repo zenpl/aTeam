@@ -43,7 +43,10 @@ function split(line: string): { strings: string[]; bare: string } {
 /** 一句登记过的话去掉占位符之后剩下的固定片段。占位符用哨兵填，所以不必知道它是 $x 还是 {x}。 */
 function fixedParts(from: string): string[] {
   const v = (core as Record<string, unknown>)[from];
-  const text = typeof v === "function" ? (v as (...a: string[]) => string)(HOLE, HOLE) : String(v);
+  // 填几个哨兵**按那个函数自己的参数个数**算，不钉死两个：钉死之后，三个空位的那一句会拼出一个
+  // "undefined" 来，于是它在脚本里永远找不到对应的一句——闸红在自己身上，不是红在脚本上。
+  const holes = typeof v === "function" ? Array.from({ length: Math.max((v as Function).length, 1) }, () => HOLE) : [];
+  const text = typeof v === "function" ? (v as (...a: string[]) => string)(...holes) : String(v);
   return text.split(HOLE).filter((x) => x.length > 0);
 }
 
