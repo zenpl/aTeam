@@ -82,8 +82,33 @@ export function caughtBy(s: State, a: Instruction, correctedAt: string): Caught 
  * nobody reads. `severity` is how far past its own threshold a finding is — dimensionless, so findings measured in
  * percentages, minutes and counts can still be compared to each other.
  */
-interface Candidate { text: string; severity: number }
+interface Candidate { text: string; severity: number; role?: string }
 const worst = (cs: Candidate[]): Candidate | null => cs.length ? cs.reduce((a, b) => (b.severity > a.severity ? b : a)) : null;
+
+/**
+ * t-349 · **负载陷阱有两种成因，两张处方**（pd 的 T13：职责太杂就拆，职责包合理但活太多就扩——再起一个
+ * 同职责包的角色，任务按 claim 分流）。这个函数是分档用的那把尺，**声明那一处与运行时那一处叫的是同一个**：
+ * 两边各写一遍的话，「同一把尺」就只是一条断言在说它们相等（t-286 那一族的教训）。
+ *
+ * 判的是「多」，而且是数：这个角色持有 ≥4 项，且 ≥ 其他角色中位数的两倍。最小团队（≤2 个角色）一律不算——
+ * 一人多顶帽子在那里是设计，不是陷阱。
+ *
+ * **判据②里的「杂」此刻量不出来，写在明处**：`RESPONSIBILITIES` 每项只有 id、name、holder，没有任何分组，
+ * 而 `DEFAULT_RESPONSIBILITIES` 只覆盖默认那五个角色名。所以这里只判「多」。要「杂」真进判，先得有一个
+ * 「职责属于哪一类」的声明——那是 pm／pd 的决定，这里不替它编一个分类（dev 01:1x 已交回，note 在 t-349 上）。
+ */
+export function packedHeavy(packing: Record<string, string[]>, role: string): boolean {
+  const roles = Object.keys(packing);
+  if (roles.length <= 2) return false;
+  const mine = (packing[role] ?? []).length;
+  return mine >= 4 && mine >= 2 * Math.max(otherMedian(packing, role), 1);
+}
+
+/** 其他角色各持几项的中位数——上面那把尺的分母，印在证据里的也是它。 */
+export function otherMedian(packing: Record<string, string[]>, role: string): number {
+  const rest = Object.keys(packing).filter((r) => r !== role).map((r) => (packing[r] ?? []).length).sort((a, b) => a - b);
+  return rest[Math.floor(rest.length / 2)] ?? 0;
+}
 
 /** Reading key (surface project) the service writes the warnings to. */
 export const ALLOCATION_KEY = "allocation";
@@ -139,13 +164,10 @@ export function staticAllocation(s: State): AllocationWarning[] {
       hint: `${said}。它${with_[0] === "R3" ? "定标准" : "做"}的东西只能由 owner 验；建议把 ${with_[0]} 交给 owner 或再起一个角色。` });
   }
   // 负载陷阱: one role holds far more than the others (not a two-node team: that is one person many hats by design)
-  if (roles.length > 2) {
-    const counts = roles.map((r) => [r, packing[r].length] as const).sort((a, b) => b[1] - a[1]);
-    const [top, n] = counts[0];
-    const rest = counts.slice(1).map((x) => x[1]);
-    const median = rest.sort((a, b) => a - b)[Math.floor(rest.length / 2)];
-    if (n >= 4 && n >= 2 * Math.max(median, 1)) {
-      const carried = `${top} 持有 ${n} 项职责（${packing[top].join(" ")}），其他角色中位数 ${median} 项`;
+  {
+    const top = [...roles].sort((a, b) => packing[b].length - packing[a].length)[0];
+    if (top && packedHeavy(packing, top)) {
+      const carried = `${top} 持有 ${packing[top].length} 项职责（${packing[top].join(" ")}），其他角色中位数 ${otherMedian(packing, top)} 项`;
       out.push({ pattern: "负载陷阱", evidence: [carried], hint: `${carried}。建议：把能改成规则或服务的职责先拿走。` });
     }
   }
@@ -253,7 +275,7 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
     const by = tally(sent.map((i) => i.to));
     const [who, n] = by[0];
     const share = n / sent.length;
-    if (share > 0.5) load.push({ text: `${who} 收到 ${pct(n, sent.length)} 的指令（${n}/${sent.length}）`, severity: share / 0.5 });
+    if (share > 0.5) load.push({ text: `${who} 收到 ${pct(n, sent.length)} 的指令（${n}/${sent.length}）`, severity: share / 0.5, role: who });
   }
   // t-175（pm 00:07 给的两条路，我先取了「整行先不出」，qa 00:47 判不过之后换成另一条：「句子与数都不动」）。
   //
@@ -274,10 +296,19 @@ export function runtimeAllocation(s: State, now: Date, human: string): Allocatio
     const 更正 = c.自己 + c.别人;
     const rate = 更正 / c.sent;
     const aside = c.更新 || c.说不好 ? `；另有 ${c.更新} 条是情况变了才重发的、${c.说不好} 条说不好，都不计入` : "";
-    if (rate >= 0.15) load.push({ text: `${who} ${pct(更正, c.sent)} 的指令是自己写错后更正的（${更正}/${c.sent}）${aside}`, severity: rate / 0.15 });
+    if (rate >= 0.15) load.push({ text: `${who} ${pct(更正, c.sent)} 的指令是自己写错后更正的（${更正}/${c.sent}）${aside}`, severity: rate / 0.15, role: who });
   }
   const badLoad = worst(load);
-  if (badLoad) out.push({ pattern: "负载陷阱", evidence: [badLoad.text], hint: `${badLoad.text}。建议：把它持有的、能改成规则或服务的职责先拿走。` });
+  if (badLoad) {
+    // t-349 判据①②④：处方按**被点名那个角色自己的职责包**选，而不是这一条指标是怎么来的。
+    // 包太杂（同一把尺，`packedHeavy`）⇒ 拿走职责，那是「拆」那一张，也就是现有这一句；
+    // 包正常而活太多 ⇒ 「扩」。同一个角色不可能既太杂又正常，所以两张处方不会同时落在一条证据上。
+    const heavy = badLoad.role ? packedHeavy(roleResponsibilities(s), badLoad.role) : false;
+    const hint = heavy
+      ? `${badLoad.text}。建议：把它持有的、能改成规则或服务的职责先拿走。`
+      : `${badLoad.text}。建议：它的职责包本身正常，别拆——再起一个同职责包的角色（${badLoad.role}-2），任务按 claim 分流。`;
+    out.push({ pattern: "负载陷阱", evidence: [badLoad.text], hint });
+  }
 
   return out;
 }
