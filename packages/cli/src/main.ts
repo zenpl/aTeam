@@ -282,6 +282,10 @@ export function seenCursor(me: string, root: string = process.cwd(), io: CursorI
   return {
     read: () => own.read(),
     write: (c) => own.write(c),
+    // t-351 重交（第二层）：**`sync()` 读的是 `seen ?? cursor`，所以空不空由这一处说。**
+    // 这个手写的转发对象原来只给 read／write，于是 `state` 丢在这里——比 deferredCursor 那一层更靠前，
+    // 两层都补上之前，端到端那个实验照旧从头拉 909 条（我先只补了后一层，实验原样复现，才找到这一处）。
+    state: () => own.state?.() ?? (own.read() === null ? "none" : "value"),
   };
 }
 

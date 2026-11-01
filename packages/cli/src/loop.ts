@@ -337,6 +337,7 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
   const sleep = opts.sleep ?? realSleep;
   let failures = 0;
   let last: PullResult = { events: [], for_me: [], cursor: cursor.read() };
+  let saidEmpty = false;
   for (;;) {
     if (opts.signal?.aborted) {
       // t-300 判据 4：这一路是**用例／调用方自己中断**。现场按 Ctrl-C 走的是 main 里的 SIGINT handler，
@@ -346,6 +347,24 @@ export async function watch(client: Puller, me: string, cursor: CursorStore, int
       return last;
     }
     opts.heartbeat?.();
+    /**
+     * t-351 重交（第三层）：**判据 2 对看守也成立，而它原来只在 `sync()` 里。**
+     *
+     * 端到端量到的：两个游标文件都清成 0 字节之后，`sync` 按定稿拒了，而 `watch --once` 照旧从头拉了 909 条
+     * ——看守走的是 `pullBatch` 这条路，压根没有经过那道闸。对着没有首拉上限的生产，那一发是整份日志，
+     * **而看守是每个节点一直在跑的那个东西**（pd 10:45 撞的就是它）。我自己在 t-351 的注释里写过
+     * 「`sync()` 不是唯一的调用方」，却只在 `sync()` 里设了闸。
+     *
+     * 处置按 pd 定稿那三句的字面：**一条都不拉、游标不动、过一会儿再试**——所以这里不退出、不推进，
+     * 睡一轮再来。那三句只在**进入这个状态时说一次**：每 60 秒重复一遍是噪音，而它说的是同一件事。
+     */
+    if (cursor.state?.() === "empty") {
+      if (!saidEmpty) { print(CURSOR_UNREADABLE); saidEmpty = true; }
+      if (opts.once) return last;
+      await sleep(intervalMs);
+      continue;
+    }
+    saidEmpty = false;
     let after: string | null;
     let r: PullResult;
     try {

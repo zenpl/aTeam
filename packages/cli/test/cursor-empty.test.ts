@@ -12,8 +12,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sync } from "../src/loop.js";
-import { fileCursor, cursorForCommand } from "../src/main.js";
+import { sync, watch } from "../src/loop.js";
+import { fileCursor, cursorForCommand, seenCursor } from "../src/main.js";
 import { CURSOR_UNREADABLE, fullPullLine, type PullResult, type Event } from "@ateam/core";
 
 const ME = "pm";
@@ -57,14 +57,39 @@ describe("t-351 · 游标文件在而读出来是空的，与连文件都没有�
    * 本地实测过那个后果：`cursor.<me>.<key>` 与 `seen.<me>.<key>` 都清成 0 字节，`sync` 从头拉了 909 条。
    * 所以这一格钉的是**经过包装之后还认不认得空**，而不是 `sync()` 自己的判断（那一格在上面）。
    */
-  it("**判据 2，真路径**：经过 cursorForCommand 之后，空游标照样一条都不拉", async () => {
+  /**
+   * 第三格（端到端量出来的）：**看守走的是另一条路。** 两个游标文件都清成 0 字节之后，`sync` 按定稿拒了，
+   * 而 `watch --once` 照旧从头拉了 909 条——它走 `pullBatch`，压根没经过 `sync()` 里那道闸。
+   * 而看守是每个节点一直在跑的那个东西，所以这一格比上面两格更贴近真实伤害（pd 10:45 撞的就是它）。
+   *
+   * 处置按定稿那三句的字面：不拉、不推进、过一会儿再试。`once` 的调用方直接拿回空结果（用例靠它收场）。
+   */
+  it("**判据 2，看守那条路**：空游标 ⇒ 看守也一条都不拉，而且说同样那三句", async () => {
     const t = tree("empty");
     try {
       const p = puller([ev("01A"), ev("01B")]);
       const out: string[] = [];
       const cur = cursorForCommand(fileCursor(ME, t.root));
-      expect(cur.state?.(), "包过的那一层也要答得出「空」").toBe("empty");
-      const r = await sync(p as never, ME, cur as never, 0, (l) => out.push(l));
+      const r = await watch(p as never, ME, cur as never, 60_000, (l) => out.push(l), { once: true, sleep: async () => {} });
+      expect(p.calls, "看守也没有发出那一次拉取").toEqual([]);
+      expect(r.events).toEqual([]);
+      expect(out.join("\n")).toContain(CURSOR_UNREADABLE.split("\n")[0]);
+    } finally { t.cleanup(); }
+  });
+
+  it("**判据 2，真路径**：按 main.ts 那个组合（两层包装 ＋ seen）喂进去，空游标照样一条都不拉", async () => {
+    const t = tree("empty");
+    try {
+      // 真路径上 sync() 收到的就是这两个：cursor 与 seen 各自 fileCursor → seenCursor → cursorForCommand，
+      // 而它读的是 `seen ?? cursor`。所以这一格把两边都造成「文件在、读出来是空的」。
+      writeFileSync(join(t.root, ".ateam", `seen.${ME}`), "");
+      const p = puller([ev("01A"), ev("01B")]);
+      const out: string[] = [];
+      const cur = cursorForCommand(fileCursor(ME, t.root));
+      const seen = cursorForCommand(seenCursor(ME, t.root));
+      expect(cur.state?.(), "送到了那一层答得出「空」").toBe("empty");
+      expect(seen.state?.(), "读过了那一层也要答得出「空」——sync 读的是它").toBe("empty");
+      const r = await sync(p as never, ME, cur as never, 0, (l) => out.push(l), undefined, undefined, seen as never);
       expect(p.calls, "一次拉取都没有发生").toEqual([]);
       expect(r.events).toEqual([]);
       expect(out.join("\n")).toContain(CURSOR_UNREADABLE.split("\n")[0]);
